@@ -25,7 +25,8 @@ set -euo pipefail
 . "$(cd "$(dirname "$0")" && pwd)/../plugins/dev-workflow/scripts/lib/common.sh"
 dw_require gh jq
 
-usage() { sed -n '2,/^# GraphQL の変数/{/^# GraphQL の変数/d;s/^# \{0,1\}//;p;}' "$0"; }
+# macOS の BSD sed が日本語で失敗しないよう、バイト列として扱わせる
+usage() { LC_ALL=C sed -n '2,/^# GraphQL の変数/{/^# GraphQL の変数/d;s/^# \{0,1\}//;p;}' "$0"; }
 
 # オプションの値を取り出す。無ければ使い方の誤り（64）で終了する
 need_value() {

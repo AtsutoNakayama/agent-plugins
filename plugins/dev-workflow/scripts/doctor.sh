@@ -37,7 +37,7 @@ if has gh; then
   check gh true error "$(gh --version | head -n 1)"
   if gh auth status -h github.com >/dev/null 2>&1; then
     check gh-auth true error "github.com にログイン済み"
-    scopes="$(gh api -i user 2>/dev/null | tr -d '\r' | sed -n 's/^[Xx]-[Oo][Aa]uth-[Ss]copes: *//p')"
+    scopes="$(gh api -i user 2>/dev/null | tr -d '\r' | LC_ALL=C sed -n 's/^[Xx]-[Oo][Aa]uth-[Ss]copes: *//p')"
     if [ -z "$scopes" ]; then
       check gh-project-scope false warn "トークンのスコープを確認できません（fine-grained token など）"
     elif printf '%s\n' "$scopes" | tr ',' '\n' | sed 's/^ *//' | grep -qx project; then
