@@ -86,6 +86,8 @@ issues() {
 
 run_setup() {
   run "${TEST_BASH:-bash}" "$BATS_TEST_DIRNAME/../scripts/setup-project.sh" "$@"
+  # bats は失敗したテストの標準出力だけを表示するので、原因を追えるよう出力を残す
+  printf '%s\n' "$output"
   # 標準エラーの警告の後ろに出る JSON だけを取り出す
   # macOS の BSD sed は日本語を含む入力で失敗することがあるので、バイト列として扱わせる
   json="$(printf '%s\n' "$output" | LC_ALL=C sed -n '/^{/,$p')"
