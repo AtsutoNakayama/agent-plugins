@@ -65,7 +65,7 @@ github_defaults() {
 }
 
 run_setup() {
-  run "${TEST_BASH:-bash}" "$BATS_TEST_DIRNAME/../scripts/setup-labels.sh" "$@"
+  run "${TEST_BASH:-bash}" "$SCRIPTS/setup/setup-labels.sh" "$@"
   # bats は失敗したテストの標準出力だけを表示するので、原因を追えるよう出力を残す
   printf '%s\n' "$output"
   # 標準エラーの警告の後ろに出る JSON だけを取り出す
