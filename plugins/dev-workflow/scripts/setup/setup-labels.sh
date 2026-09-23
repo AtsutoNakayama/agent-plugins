@@ -61,19 +61,12 @@ remote=false
 tmp="$(mktemp -d)"
 trap 'rm -rf "$tmp"' EXIT
 
-# 対象のリポジトリの既定のブランチからファイルを取り出し、$tmp に置いてそのパスを出力する。
-# 無ければ何も出力しない。404 以外の失敗は、違う定義で変更しないよう終了する。
+# 対象のリポジトリのファイルを $tmp に置いてそのパスを出力する。無ければ何も出力しない
 fetch_remote() {
-  local out err
+  local out
   out="$tmp/$(basename "$1")"
-  if gh api -H 'Accept: application/vnd.github.raw' "repos/$repo_nwo/contents/$1" >"$out" 2>"$tmp/err"; then
+  if dw_fetch_repo_file "$repo_nwo" "$1" "$out"; then
     printf '%s\n' "$out"
-  else
-    err="$(cat "$tmp/err")"
-    case "$err" in
-      *"HTTP 404"*) ;;
-      *) dw_die "${repo_nwo} の $1 を読めません: $err" ;;
-    esac
   fi
 }
 
