@@ -83,7 +83,9 @@ args_of() { grep "^$1" "$CALLS" | tail -n 1 | sed "s/^$1 \{0,1\}//"; }
   echo bug >.github/ISSUE_TEMPLATE/bug.md
   run_all
   assert_success
-  [ ! -e .github/pull_request_template.md ]
+  # macOS は大文字小文字を区別しないので、ファイルの有無ではなく中身と数で確かめる
+  assert_equal "$(cat .github/PULL_REQUEST_TEMPLATE.md)" mine
+  assert_equal "$(find .github -mindepth 1 -maxdepth 1 | wc -l | tr -d ' ')" 2
   [ ! -e .github/ISSUE_TEMPLATE/task.md ]
   assert_equal "$(jq -c '[.templates.skipped[].existing]' <<<"$json")" '[".github/PULL_REQUEST_TEMPLATE.md",".github/ISSUE_TEMPLATE"]'
 }
@@ -201,8 +203,9 @@ SH
   echo '{"pr": {"template": null}}' >.claude/workflow.json
   run_all
   assert_success
+  # macOS は大文字小文字を区別しないので、ファイルの有無ではなく中身と数で確かめる
   assert_equal "$(cat .github/Pull_Request_Template.md)" mine
-  [ ! -e .github/pull_request_template.md ] || [ "$(cat .github/pull_request_template.md)" = mine ]
+  assert_equal "$(find .github -maxdepth 1 -iname 'pull_request_template.md' | wc -l | tr -d ' ')" 1
   assert_equal "$(jq -r '.templates.skipped[0].existing' <<<"$json")" ".github/Pull_Request_Template.md"
 }
 
