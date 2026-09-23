@@ -26,7 +26,7 @@ has() { command -v "$1" >/dev/null 2>&1; }
 if [ "${BASH_VERSINFO[0]}" -gt 3 ] || { [ "${BASH_VERSINFO[0]}" -eq 3 ] && [ "${BASH_VERSINFO[1]}" -ge 2 ]; }; then
   check bash true error "$BASH_VERSION"
 else
-  check bash false error "bash 3.2 以上が必要です（現在 $BASH_VERSION）"
+  check bash false error "bash 3.2 以上が必要です（現在 ${BASH_VERSION}）"
 fi
 
 check jq true error "$(jq --version)"

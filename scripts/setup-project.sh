@@ -78,7 +78,7 @@ mutate() {
 }
 
 msg_status() { printf 'Status 列に %s を追加する' "$(jq -r 'join(" / ")' <<<"$1")"; }
-msg_sp="Story Point（数値）の項目「$sp_name」を追加する"
+msg_sp="Story Point（数値）の項目「${sp_name}」を追加する"
 
 # --- リポジトリと所有者 ---------------------------------------------------------
 repo_json="$(gh repo view ${repo:+"$repo"} --json id,name,nameWithOwner,owner)"
@@ -88,7 +88,7 @@ repo_nwo="$(jq -r .nameWithOwner <<<"$repo_json")"
 if $write_config && [ -n "$repo" ]; then
   here_nwo="$(gh repo view --json nameWithOwner -q .nameWithOwner 2>/dev/null || true)"
   [ "$here_nwo" = "$repo_nwo" ] \
-    || dw_die "--write-config は対象のリポジトリ（$repo_nwo）の中で実行してください" 64
+    || dw_die "--write-config は対象のリポジトリ（${repo_nwo}）の中で実行してください" 64
 fi
 
 # --number も --title も無ければ、設定済みの Project を使う
@@ -145,7 +145,7 @@ if [ -n "$number" ]; then
 else
   project="$(find_by_title)"
   if [ "$project" = null ]; then
-    note "Project「$title」を作成し、リポジトリ $repo_nwo と紐付ける"
+    note "Project「${title}」を作成し、リポジトリ $repo_nwo と紐付ける"
     created=true
     project="$(mutate 'mutation CreateProject($owner: ID!, $title: String!, $repo: ID!) {
       createProjectV2(input: {ownerId: $owner, title: $title, repositoryId: $repo}) { projectV2 { id number title url } }
@@ -190,7 +190,7 @@ if [ -z "$project_id" ]; then
   # dry-run で Project を新しく作る場合。以降は作成後にしか確かめられないので、予定だけを記録する
   note "Status 列に不足する列（$(jq -r 'join(" / ")' <<<"$status_names") のうち無いもの）があれば追加する"
   note "$msg_sp"
-  note "オープンな Issue $(gh issue list -R "$repo_nwo" --state open --limit 1000 --json number -q length) 件を追加し、「$todo_name」にする"
+  note "オープンな Issue $(gh issue list -R "$repo_nwo" --state open --limit 1000 --json number -q length) 件を追加し、「${todo_name}」にする"
 else
   workflows_url="https://github.com/$owner_path/projects/$project_number/workflows"
 
@@ -238,7 +238,7 @@ else
       createProjectV2Field(input: {projectId: $p, dataType: NUMBER, name: $n}) { projectV2Field { ... on ProjectV2FieldCommon { id } } }
     }' "$(jq -nc --arg p "$project_id" --arg n "$sp_name" '{p: $p, n: $n}')" >/dev/null
   elif [ "$sp_type" != NUMBER ]; then
-    dw_warn "項目「$sp_name」が数値ではありません（$sp_type）。合計を表示できないので数値の項目にしてください"
+    dw_warn "項目「${sp_name}」が数値ではありません（${sp_type}）。合計を表示できないので数値の項目にしてください"
   fi
 
   # --- 5. 入っていない Issue だけ追加し、Status が空なら todo にする --------------
@@ -273,7 +273,7 @@ else
     fi
   done <<<"$issues"
   [ "$items_added" -eq 0 ] || note "オープンな Issue $items_added 件を Project に追加する"
-  [ "$items_todo" -eq 0 ] || note "Status が空の Issue $items_todo 件を「$todo_name」にする"
+  [ "$items_todo" -eq 0 ] || note "Status が空の Issue $items_todo 件を「${todo_name}」にする"
 
   # --- 6. 組み込みの自動化の確認 ------------------------------------------------
   auto_add="$(jq 'any(.workflows.nodes[]; .name == "Auto-add to project" and .enabled)' <<<"$project_detail")"
@@ -281,7 +281,7 @@ else
   if [ "$auto_add" != true ]; then
     dw_warn "自動追加（Auto-add to project）が無効です。API では有効にできないので、次の画面で有効にしてください:"
     dw_warn "  $workflows_url"
-    dw_warn "  「Auto-add to project」→ リポジトリに $repo_nwo、フィルターに is:issue を指定 → Save and turn on workflow"
+    dw_warn "  「Auto-add to project」→ リポジトリに ${repo_nwo}、フィルターに is:issue を指定 → Save and turn on workflow"
   fi
   if [ "$item_closed" != true ]; then
     dw_warn "「Item closed」（Issue が閉じたら Done に移す）が無効です。同じ画面で有効にしてください"
