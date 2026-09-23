@@ -57,3 +57,11 @@ dw_check_json() {
   jq -se 'length == 1 and (.[0] | type) == "object"' "$1" >/dev/null 2>&1 \
     || dw_die "JSON のオブジェクトとして読めません: $1" 2
 }
+
+# GitHub の GraphQL API を呼び、応答の JSON を出力する。
+# テストの偽 gh が応答を切り替えられるよう、クエリには必ず操作名を付ける（query Foo(...)）。
+# 使い方: dw_gql <クエリ> [変数の JSON]
+dw_gql() {
+  jq -n --arg q "$1" --argjson v "${2:-"{}"}" '{query: $q, variables: $v}' \
+    | gh api graphql --input -
+}
