@@ -13,13 +13,13 @@ jobs:
       - name: shellcheck
         run: |
           # tests/lib は外部のライブラリ（git submodule）なので対象にしない
-          find plugins scripts tests -path tests/lib -prune -o -type f \( -name '*.sh' -o -name '*.bash' \) -print 2>/dev/null \
+          find plugins tests -path tests/lib -prune -o -type f \( -name '*.sh' -o -name '*.bash' \) -print 2>/dev/null \
             | xargs -r shellcheck -x
           shellcheck -s bash tests/*.bats
       - name: non-ASCII right after $var
         # macOS の bash 3.2 は "$var」" のように日本語が続くと、その文字のバイトまで変数名とみなすので "${var}」" と書く
         run: |
-          if grep -rnP '\$[A-Za-z_][A-Za-z0-9_]*[^\x00-\x7F]' --include='*.sh' --include='*.bash' --exclude-dir='bats-*' plugins scripts tests | grep -vP '^[^:]+:\d+:\s*#'; then
+          if grep -rnP '\$[A-Za-z_][A-Za-z0-9_]*[^\x00-\x7F]' --include='*.sh' --include='*.bash' --exclude-dir='bats-*' plugins tests | grep -vP '^[^:]+:\d+:\s*#'; then
             echo '日本語などの直前の変数は ${var} と波括弧で囲んでください' >&2
             exit 1
           fi

@@ -21,8 +21,8 @@
 # shellcheck disable=SC2016
 set -euo pipefail
 
-# shellcheck source=../plugins/dev-workflow/scripts/lib/common.sh
-. "$(cd "$(dirname "$0")" && pwd)/../plugins/dev-workflow/scripts/lib/common.sh"
+# shellcheck source=../lib/common.sh
+. "$(cd "$(dirname "$0")" && pwd)/../lib/common.sh"
 dw_require gh jq
 
 # macOS の BSD sed が日本語で失敗しないよう、バイト列として扱わせる

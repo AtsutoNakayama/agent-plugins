@@ -20,11 +20,11 @@ plugins/dev-workflow/scripts/doctor.sh
 
 ```bash
 # type ラベル（feat / fix など）を作成・更新し、GitHub の既定のラベルを削除する
-scripts/setup-labels.sh
+plugins/dev-workflow/scripts/setup/setup-labels.sh
 
 # 既定のラベルを残す・変更せずに予定だけを確認する
-scripts/setup-labels.sh --keep-defaults
-scripts/setup-labels.sh --dry-run
+plugins/dev-workflow/scripts/setup/setup-labels.sh --keep-defaults
+plugins/dev-workflow/scripts/setup/setup-labels.sh --dry-run
 ```
 
 定義は `plugins/dev-workflow/defaults/labels.json`。リポジトリに `.claude/labels.json` を置くとそちらを使います（`--file` でも指定できます）。`--repo` で別のリポジトリを指定したときは、そのリポジトリの既定のブランチにある `.claude/labels.json` を読みます。
@@ -35,13 +35,13 @@ scripts/setup-labels.sh --dry-run
 
 ```bash
 # Project を作成（同じ名前があれば再利用）し、Story Point の追加・Issue の取り込みを行う
-scripts/setup-project.sh --write-config
+plugins/dev-workflow/scripts/setup/setup-project.sh --write-config
 
 # 既存の Project に接続する
-scripts/setup-project.sh --number 3 --write-config
+plugins/dev-workflow/scripts/setup/setup-project.sh --number 3 --write-config
 
 # 変更せずに、行う予定の操作だけを確認する
-scripts/setup-project.sh --dry-run
+plugins/dev-workflow/scripts/setup/setup-project.sh --dry-run
 ```
 
 Project に組み込みの自動追加（Auto-add to project）は API で有効にできないため、スクリプトが表示する URL の画面で1回だけ手動で有効にしてください。
@@ -54,7 +54,7 @@ Project に組み込みの自動追加（Auto-add to project）は API で有効
 
 ```bash
 git submodule update --init   # 初回だけ
-shellcheck -x plugins/dev-workflow/scripts/*.sh plugins/dev-workflow/scripts/lib/*.sh
+shellcheck -x plugins/dev-workflow/scripts/*.sh plugins/dev-workflow/scripts/*/*.sh
 bats tests/
 TEST_BASH=/bin/bash bats tests/   # macOS では標準の bash 3.2 で確認する
 claude plugin validate .

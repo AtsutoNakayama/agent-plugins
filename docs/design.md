@@ -8,6 +8,7 @@
 - リポジトリは公開。リポジトリごとに異なる値（Project の番号、列名など）は設定ファイルに外出しする。
 - プラグインは `dev-workflow` の1つにまとめる。レビューだけ使いたい人が出てきたら分割を検討する。
 - チームに配るときは、対象リポジトリの `.claude/settings.json` に `extraKnownMarketplaces` と `enabledPlugins` を書く。
+- プラグインとして入れると、プラグインのディレクトリの外にあるファイルは使えない（キャッシュにコピーされない）。スキルから呼ぶものは、初期設定用のスクリプトも含めてすべてプラグインの中に置く。
 
 ```
 agent-plugins/
@@ -18,7 +19,8 @@ agent-plugins/
 │   ├── hooks/         # ガードレール
 │   ├── review/        # 共通のレビュー観点
 │   └── scripts/       # スキルから呼ぶスクリプト（lib/common.sh を含む）
-└── scripts/           # リポジトリの初期設定用（プラグインの外）
+│       └── setup/     # リポジトリの初期設定用
+└── tests/
 ```
 
 ## 2. ブランチ運用とマージ
@@ -135,7 +137,7 @@ agent-plugins/
 | `pr-comment.sh` | 該当行へのコメントをまとめて投稿する |
 | `cleanup.sh` | マージを確認し、ワークツリーとブランチを削除し、main を最新にする |
 
-| 初期設定用（`scripts/`） | 役割 |
+| 初期設定用（`plugins/dev-workflow/scripts/setup/`） | 役割 |
 |---|---|
 | `setup-labels.sh` | ラベルを登録する（何度実行しても同じ結果になる） |
 | `setup-project.sh` | Project を作るか既存のものに接続し、リポジトリと紐付け、Story Point の項目を追加し、列を揃え、自動追加の設定を案内する |
