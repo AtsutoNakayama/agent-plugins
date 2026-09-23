@@ -14,6 +14,23 @@ claude --plugin-dir plugins/dev-workflow
 plugins/dev-workflow/scripts/doctor.sh
 ```
 
+## リポジトリの初期設定
+
+`gh` に `project` スコープが必要です（`gh auth refresh -h github.com -s project` を普通のターミナルで実行）。
+
+```bash
+# Project を作成（同じ名前があれば再利用）し、Story Point の追加・Issue の取り込みを行う
+scripts/setup-project.sh --write-config
+
+# 既存の Project に接続する
+scripts/setup-project.sh --number 3 --write-config
+
+# 変更せずに、行う予定の操作だけを確認する
+scripts/setup-project.sh --dry-run
+```
+
+Project に組み込みの自動追加（Auto-add to project）は API で有効にできないため、スクリプトが表示する URL の画面で1回だけ手動で有効にしてください。
+
 ## 開発
 
 必要なもの：`git`、`gh`、`jq`、`shellcheck`、`bats`
