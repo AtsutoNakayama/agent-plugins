@@ -75,6 +75,13 @@ run_setup() {
 
 called() { grep -c "^$1 " "$CALLS" || true; }
 
+# 変更を伴う呼び出しが1つも無いことを確かめる。あれば記録を表示して失敗する
+assert_no_calls() {
+  if [ -s "$CALLS" ]; then
+    fail "$(printf '呼ばれないはずの操作が呼ばれました:\n%s' "$(cat "$CALLS")")"
+  fi
+}
+
 @test "新しいリポジトリでは type ラベル 10 個を作り、既定のラベルを削除する" {
   setup_fake_gh
   current "$(github_defaults)"
@@ -93,7 +100,7 @@ called() { grep -c "^$1 " "$CALLS" || true; }
   current "$(jq -c 'map(.color |= ascii_upcase)' "$BATS_TEST_DIRNAME/../plugins/dev-workflow/defaults/labels.json")"
   run_setup
   assert_success
-  assert_equal "$(cat "$CALLS")" ""
+  assert_no_calls
   assert_equal "$(jq -r .labels.unchanged <<<"$json")" 10
   assert_equal "$(jq -c .actions <<<"$json")" '[]'
 }
@@ -137,7 +144,7 @@ called() { grep -c "^$1 " "$CALLS" || true; }
   current "$(github_defaults)"
   run_setup --dry-run
   assert_success
-  assert_equal "$(cat "$CALLS")" ""
+  assert_no_calls
   assert_equal "$(jq -r .dry_run <<<"$json")" true
   assert_equal "$(jq -r '.actions[0]' <<<"$json")" "ラベル「feat」を作成する"
   assert_equal "$(jq -r '.actions[-1]' <<<"$json")" "既定のラベル「wontfix」を削除する"
@@ -203,7 +210,7 @@ called() { grep -c "^$1 " "$CALLS" || true; }
   run_setup --repo me/demo
   assert_failure
   assert_output --partial "me/demo の .claude/labels.json を読めません"
-  assert_equal "$(cat "$CALLS")" ""
+  assert_no_calls
 }
 
 @test "設定の type ラベルが定義に無ければ警告する" {
@@ -220,7 +227,7 @@ called() { grep -c "^$1 " "$CALLS" || true; }
   run_setup --file labels.json
   assert_failure 2
   assert_output --partial "ラベルの定義を読めません"
-  assert_equal "$(cat "$CALLS")" ""
+  assert_no_calls
 }
 
 @test "名前が大文字小文字違いで重複していればエラーになる" {
