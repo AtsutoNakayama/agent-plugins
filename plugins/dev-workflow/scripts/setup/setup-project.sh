@@ -292,8 +292,15 @@ fi
 if $write_config; then
   repo_root="$(dw_repo_root)" || dw_die "リポジトリの中で実行してください"
   config_file="$repo_root/.claude/workflow.json"
-  note "$config_file の project を $owner/${project_number:-（作成後の番号）} にする"
-  if ! $dry_run; then
+  # 既に同じ project なら書き直さない（書式の違いで空白だけの差分を作らない）
+  write=true
+  if [ -n "$project_number" ] && [ -f "$config_file" ] \
+    && jq -e --arg o "$owner" --argjson n "$project_number" '.project.owner == $o and .project.number == $n' \
+      "$config_file" >/dev/null 2>&1; then
+    write=false
+  fi
+  $write && note "$config_file の project を $owner/${project_number:-（作成後の番号）} にする"
+  if $write && ! $dry_run; then
     mkdir -p "$repo_root/.claude"
     current='{}'
     if [ -f "$config_file" ]; then

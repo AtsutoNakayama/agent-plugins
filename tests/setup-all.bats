@@ -159,6 +159,21 @@ SH
   assert_output --partial "git に無視されているのでコミットできません: .claude/workflow.json"
 }
 
+@test "git に無視され、管理もされていない .claude/workflow.json は、中身が変わらなくても案内する" {
+  setup_fake_plugin
+  mkdir -p .github/ISSUE_TEMPLATE
+  touch .github/pull_request_template.md .github/ISSUE_TEMPLATE/x.md
+  echo '.claude/' >.gitignore
+  echo '{"project": {"owner": "me", "number": 3}}' >.claude/workflow.json
+  echo '{"actions": [], "project": {"owner": "me", "number": 3, "created": false}, "workflows": {"auto_add": true}}' >"$FIX/setup-project.json"
+  for mode in --dry-run ""; do
+    run_all ${mode:+"$mode"}
+    assert_success
+    assert_equal "$(jq -r '.next_steps[0]' <<<"$json")" ".claude/workflow.json をコミットし、PR で main にマージする"
+    assert_output --partial "git に無視されているのでコミットできません: .claude/workflow.json"
+  done
+}
+
 @test "自動追加が無効なら、有効にするよう案内する" {
   setup_fake_plugin
   echo '{"actions": [], "workflows": {"auto_add": false, "url": "https://example.com/w"}}' >"$FIX/setup-project.json"
@@ -207,6 +222,26 @@ SH
   assert_equal "$(cat .github/Pull_Request_Template.md)" mine
   assert_equal "$(find .github -maxdepth 1 -iname 'pull_request_template.md' | wc -l | tr -d ' ')" 1
   assert_equal "$(jq -r '.templates.skipped[0].existing' <<<"$json")" ".github/Pull_Request_Template.md"
+}
+
+@test "個人の設定の pr.template があっても、リポジトリに無ければテンプレートを作る" {
+  setup_fake_plugin
+  echo '{"pr": {"template": "mine.md"}}' >"$WORKFLOW_USER_DIR/workflow.json"
+  echo '{"pr": {"template": "local.md"}}' >.claude/workflow.local.json
+  run_all
+  assert_success
+  cmp .github/pull_request_template.md "$PLUGIN/templates/pull_request_template.md"
+}
+
+@test "チームの設定で pr.template が null でも、docs やリポジトリ直下のテンプレートがあれば作らない" {
+  setup_fake_plugin
+  mkdir -p docs
+  echo mine >docs/PULL_REQUEST_TEMPLATE.md
+  echo '{"pr": {"template": null}}' >.claude/workflow.json
+  run_all
+  assert_success
+  [ ! -e .github/pull_request_template.md ]
+  assert_equal "$(jq -r '.templates.skipped[0].existing' <<<"$json")" "docs/PULL_REQUEST_TEMPLATE.md"
 }
 
 @test "PR テンプレートのディレクトリや古い形式の Issue テンプレートがあれば作らない" {

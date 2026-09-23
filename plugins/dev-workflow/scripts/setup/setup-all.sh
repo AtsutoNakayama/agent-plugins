@@ -78,15 +78,11 @@ else
 fi
 
 # --- テンプレート ---------------------------------------------------------------
-config="$("$BASH" "$DW_SCRIPTS_DIR/config.sh")"
 created='[]' skipped='[]'
-# 使い方: place <テンプレート> <置き場所> <設定で分かっている既存のもの（空なら無い）>
-# 設定はチームの層で null に上書きできるので、置き場所に実際にファイルがあるかも確かめ、上書きしない
+# 使い方: place <テンプレート> <置き場所> <既にあるもの（空なら無い）>
 place() {
-  local existing="$3"
-  [ -n "$existing" ] || existing="$(dw_find_nocase . "$2" || true)"
-  if [ -n "$existing" ]; then
-    skipped="$(jq -c --arg p "$2" --arg e "$existing" '. + [{path: $p, existing: $e}]' <<<"$skipped")"
+  if [ -n "$3" ]; then
+    skipped="$(jq -c --arg p "$2" --arg e "$3" '. + [{path: $p, existing: $e}]' <<<"$skipped")"
     return
   fi
   created="$(jq -c --arg p "$2" '. + [$p]' <<<"$created")"
@@ -95,28 +91,38 @@ place() {
     cp "$DW_PLUGIN_ROOT/templates/$1" "$2"
   fi
 }
+# 既にあるかは、設定（個人の層で書き換えたり、チームの層で null にしたりできる）ではなく、
+# GitHub がテンプレートを探す場所にある実際のファイルで決める。候補は空白区切りの一覧なので、わざと分割して渡す
+# shellcheck disable=SC2086
 place pull_request_template.md .github/pull_request_template.md \
-  "$(jq -r '.pr.template // .detected.pr_templates // empty' <<<"$config")"
-place ISSUE_TEMPLATE/task.md .github/ISSUE_TEMPLATE/task.md "$(jq -r '.detected.issue_templates // empty' <<<"$config")"
+  "$(dw_find_nocase . $DW_PR_TEMPLATE_FILES $DW_PR_TEMPLATE_DIRS || true)"
+# shellcheck disable=SC2086
+place ISSUE_TEMPLATE/task.md .github/ISSUE_TEMPLATE/task.md "$(dw_find_nocase . $DW_ISSUE_TEMPLATES || true)"
 
 # --- 次にやること ---------------------------------------------------------------
 # コミットが必要なファイル（dry-run では作る予定のもの）
 files="$created"
+# .claude/workflow.json を git が管理していないか、コミットしていない変更がある。
+# git に無視されていると git status に出ないので、管理しているかは ls-files で確かめる
+config_uncommitted() {
+  [ -f .claude/workflow.json ] || return 1
+  ! git ls-files --error-unmatch -- .claude/workflow.json >/dev/null 2>&1 \
+    || [ -n "$(git status --porcelain -- .claude/workflow.json)" ]
+}
 if $dry_run; then
   # 書き込む予定の project と今のファイルが違えば、変わる予定とみなす。
-  # Project を新しく作る予定なら番号はまだ無いので必ず変わり、未コミットのファイルもコミットが要る
+  # Project を新しく作る予定なら番号はまだ無いので必ず変わり、コミットしていないファイルもコミットが要る
   config_changes=true
   if [ -f .claude/workflow.json ] \
     && [ "$(jq -r '.project.created' <<<"$project")" != true ] \
-    && [ -z "$(git status --porcelain -- .claude/workflow.json)" ] \
+    && ! config_uncommitted \
     && jq -e --argjson p "$project" \
       '.project.owner == $p.project.owner and .project.number == $p.project.number' .claude/workflow.json >/dev/null 2>&1; then
     config_changes=false
   fi
 else
   config_changes=false
-  if [ "$(cat .claude/workflow.json 2>/dev/null || true)" != "$config_before" ] \
-    || [ -n "$(git status --porcelain -- .claude/workflow.json)" ]; then
+  if [ "$(cat .claude/workflow.json 2>/dev/null || true)" != "$config_before" ] || config_uncommitted; then
     config_changes=true
   fi
 fi

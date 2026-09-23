@@ -242,6 +242,16 @@ called() { grep -c "^$1 " "$CALLS" || true; }
   assert_equal "$(jq -c . .claude/workflow.json)" '{"language":"en","project":{"owner":"me","number":7}}'
 }
 
+@test "--write-config は、project が同じならファイルを書き直さず、予定にも出さない" {
+  setup_fake_gh
+  printf '%s\n' '{"project":{"owner":"me","number":9},"language":"ja"}' >.claude/workflow.json
+  fix ProjectByNumber.json '{"data": {"repositoryOwner": {"projectV2": {"id": "P9", "number": 9, "title": "demo", "url": "u"}}}}'
+  run_setup --write-config
+  assert_success
+  assert_equal "$(cat .claude/workflow.json)" '{"project":{"owner":"me","number":9},"language":"ja"}'
+  assert_equal "$(jq '[.actions[] | select(contains("workflow.json"))] | length' <<<"$json")" 0
+}
+
 @test "--repo が今いるリポジトリと違うとき --write-config はエラーになる" {
   setup_fake_gh
   fix here.json '{"nameWithOwner": "me/here"}'
