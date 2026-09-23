@@ -65,3 +65,41 @@ dw_gql() {
   jq -n --arg q "$1" --argjson v "${2:-"{}"}" '{query: $q, variables: $v}' \
     | gh api graphql --input -
 }
+
+# リポジトリの既定のブランチにあるファイルを取り出して <出力先> に書く。
+# 無ければ（404）1 を返す。それ以外の失敗は、違う内容で進めないよう終了する。
+# 使い方: dw_fetch_repo_file <OWNER/NAME> <パス> <出力先>
+dw_fetch_repo_file() {
+  local err
+  if err="$(gh api -H 'Accept: application/vnd.github.raw' "repos/$1/contents/$2" 2>&1 >"$3")"; then
+    return 0
+  fi
+  case "$err" in
+    *"HTTP 404"*) return 1 ;;
+    *) dw_die "${1} の ${2} を読めません: $err" ;;
+  esac
+}
+
+# <ルート> からの相対パスの候補を、大文字小文字を区別せずに順に探し、見つかった実際のパスを出力する
+# （GitHub のテンプレートの探し方に合わせる）。末尾が / の候補はディレクトリだけに当てはまる。
+# 使い方: dw_find_nocase <ルート> <候補>...
+dw_find_nocase() {
+  local root="$1" f dir base want entry name
+  shift
+  for f in "$@"; do
+    dir="$(dirname "$f")"
+    base="$(basename "$f")"
+    want="$(printf '%s' "$base" | tr '[:upper:]' '[:lower:]')"
+    [ -d "$root/$dir" ] || continue
+    for entry in "$root/$dir"/* "$root/$dir"/.[!.]*; do
+      [ -e "$entry" ] || continue
+      case "$f" in */) [ -d "$entry" ] || continue ;; esac
+      name="$(basename "$entry")"
+      if [ "$(printf '%s' "$name" | tr '[:upper:]' '[:lower:]')" = "$want" ]; then
+        if [ "$dir" = . ]; then printf '%s\n' "$name"; else printf '%s\n' "$dir/$name"; fi
+        return 0
+      fi
+    done
+  done
+  return 1
+}

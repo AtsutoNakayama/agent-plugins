@@ -97,3 +97,18 @@ load test_helper
   WORKFLOW_REPO_ROOT="$TMP/wt" run_script config.sh .language
   assert_output "en"
 }
+
+@test "テンプレートは大文字小文字を区別せずに検出し、実際のパスを返す" {
+  mkdir -p docs .github/Issue_Template
+  touch docs/PULL_REQUEST_TEMPLATE.md
+  run_script config.sh '[.pr.template, .detected.issue_templates, .detected.pr_templates] | tojson'
+  assert_success
+  assert_output '["docs/PULL_REQUEST_TEMPLATE.md",".github/Issue_Template",null]'
+}
+
+@test "テンプレートのディレクトリの候補に、同じ名前のファイルは当てはめない" {
+  mkdir -p .github
+  touch .github/pull_request_template .github/ISSUE_TEMPLATE.md
+  run_script config.sh '[.detected.pr_templates, .detected.issue_templates] | tojson'
+  assert_output '[null,".github/ISSUE_TEMPLATE.md"]'
+}

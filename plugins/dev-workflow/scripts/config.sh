@@ -45,20 +45,24 @@ first_existing() {
 
 # 層3: リポジトリに既にある規約を見つける
 detect_existing() {
-  local pr_tpl commitlint contributing issue_tpl=""
-  pr_tpl="$(first_existing .github/pull_request_template.md .github/PULL_REQUEST_TEMPLATE.md \
-    docs/pull_request_template.md pull_request_template.md || true)"
+  local pr_tpl pr_tpls commitlint contributing issue_tpl
+  pr_tpl="$(dw_find_nocase "$repo_root" .github/pull_request_template.md docs/pull_request_template.md \
+    pull_request_template.md || true)"
+  # 複数の PR テンプレートを置くディレクトリ（?template= で選ぶ形式）
+  pr_tpls="$(dw_find_nocase "$repo_root" .github/pull_request_template/ docs/pull_request_template/ \
+    pull_request_template/ || true)"
   commitlint="$(first_existing commitlint.config.js commitlint.config.cjs commitlint.config.mjs \
     commitlint.config.ts .commitlintrc .commitlintrc.json .commitlintrc.yaml .commitlintrc.yml \
     .commitlintrc.js .commitlintrc.cjs || true)"
   contributing="$(first_existing CONTRIBUTING.md .github/CONTRIBUTING.md docs/CONTRIBUTING.md || true)"
-  if [ -d "$repo_root/.github/ISSUE_TEMPLATE" ]; then
-    issue_tpl=".github/ISSUE_TEMPLATE"
-  fi
-  jq -n --arg pr "$pr_tpl" --arg cl "$commitlint" --arg co "$contributing" --arg it "$issue_tpl" '
+  # Issue テンプレートのディレクトリか、古い形式の1ファイル
+  issue_tpl="$(dw_find_nocase "$repo_root" .github/issue_template/ .github/issue_template.md docs/issue_template.md \
+    issue_template.md || true)"
+  jq -n --arg pr "$pr_tpl" --arg prs "$pr_tpls" --arg cl "$commitlint" --arg co "$contributing" --arg it "$issue_tpl" '
     def opt: if . == "" then null else . end;
     (if $pr != "" then {pr: {template: $pr}} else {} end)
-    + {detected: {commitlint: ($cl | opt), contributing: ($co | opt), issue_templates: ($it | opt)}}'
+    + {detected: {commitlint: ($cl | opt), contributing: ($co | opt), pr_templates: ($prs | opt),
+        issue_templates: ($it | opt)}}'
 }
 
 add_layer "$DW_PLUGIN_ROOT/defaults/workflow.json"
