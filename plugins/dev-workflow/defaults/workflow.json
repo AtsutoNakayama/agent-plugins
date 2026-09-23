@@ -1,0 +1,40 @@
+{
+  "language": "ja",
+  "base_branch": "main",
+  "allow_ai_merge": false,
+  "project": {
+    "owner": null,
+    "number": null
+  },
+  "status": {
+    "todo": "Todo",
+    "start": "In Progress",
+    "pr_opened": null,
+    "done": "Done"
+  },
+  "story_point": {
+    "field": "Story Point",
+    "allowed": [1, 2, 3, 5, 8, 13]
+  },
+  "labels": {
+    "types": ["feat", "fix", "hotfix", "refactor", "perf", "test", "docs", "build", "ci", "chore"],
+    "commit_type_map": {
+      "hotfix": "fix"
+    }
+  },
+  "branch": {
+    "pattern": "{type}/{issue}-{slug}",
+    "worktree_dir": ".claude/worktrees"
+  },
+  "commit": {
+    "types": ["feat", "fix", "refactor", "perf", "test", "docs", "build", "ci", "chore", "style", "revert"],
+    "pattern": "^(feat|fix|refactor|perf|test|docs|build|ci|chore|style|revert)(\\([a-z0-9-]+\\))?!?: .+",
+    "scope_required": false
+  },
+  "pr": {
+    "title_pattern": "^(feat|fix|refactor|perf|test|docs|build|ci|chore|style|revert)(\\([a-z0-9-]+\\))?!?: .+",
+    "draft": false,
+    "close_keyword": "Closes",
+    "template": null
+  }
+}

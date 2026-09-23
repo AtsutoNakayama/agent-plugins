@@ -1,0 +1,48 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - name: shellcheck
+        run: |
+          find plugins scripts tests -type f \( -name '*.sh' -o -name '*.bash' \) 2>/dev/null \
+            | xargs -r shellcheck -x
+          shellcheck -s bash tests/*.bats
+      - name: plugin manifest
+        run: |
+          jq empty .claude-plugin/marketplace.json plugins/*/.claude-plugin/plugin.json plugins/*/defaults/*.json
+
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            bash: bash
+          # macOS 標準の bash 3.2 で動くことを確かめる
+          - os: macos-latest
+            bash: /bin/bash
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v5
+      - name: install bats
+        # macOS では bats 本体を新しい bash で動かし、対象のスクリプトだけ /bin/bash 3.2 で動かす
+        run: |
+          if [ "$RUNNER_OS" = macOS ]; then
+            brew install bash bats-core jq
+          else
+            sudo apt-get update && sudo apt-get install -y bats jq
+          fi
+      - name: bats
+        env:
+          TEST_BASH: ${{ matrix.bash }}
+        run: |
+          "$TEST_BASH" --version | head -n 1
+          bats tests/

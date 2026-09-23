@@ -1,0 +1,10 @@
+{
+  "name": "dev-workflow",
+  "version": "0.1.0",
+  "description": "Issue 起票から PR マージ後の後片付けまでを GitHub Projects と連携して進めるスキル群",
+  "author": {
+    "name": "AtsutoNakayama"
+  },
+  "repository": "https://github.com/AtsutoNakayama/agent-plugins",
+  "license": "MIT"
+}

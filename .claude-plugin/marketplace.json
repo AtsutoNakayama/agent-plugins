@@ -1,0 +1,16 @@
+{
+  "$schema": "https://anthropic.com/claude-code/marketplace.schema.json",
+  "name": "nakayama-plugins",
+  "description": "全リポジトリで共通に使う開発ワークフロー用の Claude Code プラグイン",
+  "owner": {
+    "name": "AtsutoNakayama"
+  },
+  "plugins": [
+    {
+      "name": "dev-workflow",
+      "description": "Issue 起票から PR マージ後の後片付けまでを GitHub Projects と連携して進めるスキル群",
+      "source": "./plugins/dev-workflow",
+      "category": "development"
+    }
+  ]
+}
