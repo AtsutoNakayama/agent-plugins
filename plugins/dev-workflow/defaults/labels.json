@@ -1,0 +1,12 @@
+[
+  { "name": "feat", "color": "0e8a16", "description": "新しい機能" },
+  { "name": "fix", "color": "d73a4a", "description": "バグの修正" },
+  { "name": "hotfix", "color": "b60205", "description": "本番の緊急修正" },
+  { "name": "refactor", "color": "7057ff", "description": "振る舞いを変えない改善" },
+  { "name": "perf", "color": "f9a03f", "description": "性能の改善" },
+  { "name": "test", "color": "fbca04", "description": "テストの追加・修正" },
+  { "name": "docs", "color": "0075ca", "description": "ドキュメント" },
+  { "name": "build", "color": "5319e7", "description": "ビルド設定・依存関係・Dockerfile" },
+  { "name": "ci", "color": "1d76db", "description": "CI/CD パイプラインの変更" },
+  { "name": "chore", "color": "bfbfbf", "description": "雑務（設定など）" }
+]

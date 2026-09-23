@@ -16,6 +16,21 @@ plugins/dev-workflow/scripts/doctor.sh
 
 ## リポジトリの初期設定
 
+### ラベル
+
+```bash
+# type ラベル（feat / fix など）を作成・更新し、GitHub の既定のラベルを削除する
+scripts/setup-labels.sh
+
+# 既定のラベルを残す・変更せずに予定だけを確認する
+scripts/setup-labels.sh --keep-defaults
+scripts/setup-labels.sh --dry-run
+```
+
+定義は `plugins/dev-workflow/defaults/labels.json`。リポジトリに `.claude/labels.json` を置くとそちらを使います（`--file` でも指定できます）。`--repo` で別のリポジトリを指定したときは、そのリポジトリの既定のブランチにある `.claude/labels.json` を読みます。
+
+### Project
+
 `gh` に `project` スコープが必要です（`gh auth refresh -h github.com -s project` を普通のターミナルで実行）。
 
 ```bash
