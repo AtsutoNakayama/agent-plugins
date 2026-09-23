@@ -98,25 +98,25 @@ called() { grep -c "^$1 " "$CALLS" || true; }
 @test "Project が無ければ作成し、Story Point を追加し、Issue を Todo にする" {
   setup_fake_gh
   run_setup
-  [ "$status" -eq 0 ]
-  [ "$(called CreateProject)" -eq 1 ]
-  [ "$(called CreateNumberField)" -eq 1 ]
-  [ "$(called AddItem)" -eq 2 ]
-  [ "$(called SetStatus)" -eq 2 ]
+  assert_success
+  assert_equal "$(called CreateProject)" 1
+  assert_equal "$(called CreateNumberField)" 1
+  assert_equal "$(called AddItem)" 2
+  assert_equal "$(called SetStatus)" 2
   grep '^SetStatus ' "$CALLS" | grep -q '"o":"O1"'
-  [ "$(called LinkRepo)" -eq 0 ]
-  [ "$(called UpdateStatus)" -eq 0 ]
-  [ "$(jq -r '[.project.number, .project.created, .items.added, .items.set_todo] | join(",")' <<<"$json")" = "7,true,2,2" ]
+  assert_equal "$(called LinkRepo)" 0
+  assert_equal "$(called UpdateStatus)" 0
+  assert_equal "$(jq -r '[.project.number, .project.created, .items.added, .items.set_todo] | join(",")' <<<"$json")" "7,true,2,2"
 }
 
 @test "dry-run では変更を伴う操作を呼ばず、紐付けを別の予定として出さない" {
   setup_fake_gh
   run_setup --dry-run
-  [ "$status" -eq 0 ]
-  [ "$(grep -cE '^(Create|Link|Update|Add|Set)' "$CALLS" || true)" -eq 0 ]
-  [ "$(jq -r '.actions[0]' <<<"$json")" = "Project「demo」を作成し、リポジトリ me/demo と紐付ける" ]
-  [ "$(jq '[.actions[] | select(startswith("リポジトリ"))] | length' <<<"$json")" -eq 0 ]
-  [ "$(jq -r '.actions[-1]' <<<"$json")" = "オープンな Issue 2 件を追加し、「Todo」にする" ]
+  assert_success
+  assert_equal "$(grep -cE '^(Create|Link|Update|Add|Set)' "$CALLS" || true)" 0
+  assert_equal "$(jq -r '.actions[0]' <<<"$json")" "Project「demo」を作成し、リポジトリ me/demo と紐付ける"
+  assert_equal "$(jq '[.actions[] | select(startswith("リポジトリ"))] | length' <<<"$json")" 0
+  assert_equal "$(jq -r '.actions[-1]' <<<"$json")" "オープンな Issue 2 件を追加し、「Todo」にする"
 }
 
 @test "同じ名前の Project があれば作らずに使う（名前は完全一致）" {
@@ -124,9 +124,9 @@ called() { grep -c "^$1 " "$CALLS" || true; }
   projects '[{"id": "P8", "number": 8, "title": "demo-old", "url": "u", "closed": false},
     {"id": "P9", "number": 9, "title": "demo", "url": "u", "closed": false}]'
   run_setup
-  [ "$status" -eq 0 ]
-  [ "$(called CreateProject)" -eq 0 ]
-  [ "$(jq -r '[.project.number, .project.created] | join(",")' <<<"$json")" = "9,false" ]
+  assert_success
+  assert_equal "$(called CreateProject)" 0
+  assert_equal "$(jq -r '[.project.number, .project.created] | join(",")' <<<"$json")" "9,false"
 }
 
 @test "名前での探索は次のページまで見る" {
@@ -136,20 +136,20 @@ called() { grep -c "^$1 " "$CALLS" || true; }
   jq -n '{data: {repositoryOwner: {projectsV2: {pageInfo: {hasNextPage: false, endCursor: null},
     nodes: [{id: "P9", number: 9, title: "demo", url: "u", closed: false}]}}}}' >"$FIX/Projects.2.json"
   run_setup
-  [ "$status" -eq 0 ]
-  [ "$(called Projects)" -eq 2 ]
+  assert_success
+  assert_equal "$(called Projects)" 2
   grep '^Projects ' "$CALLS" | sed -n 2p | grep -q '"after":"C1"'
-  [ "$(called CreateProject)" -eq 0 ]
-  [ "$(jq -r .project.number <<<"$json")" = 9 ]
+  assert_equal "$(called CreateProject)" 0
+  assert_equal "$(jq -r .project.number <<<"$json")" 9
 }
 
 @test "--number で既存の Project に接続する" {
   setup_fake_gh
   fix ProjectByNumber.json '{"data": {"repositoryOwner": {"projectV2": {"id": "P3", "number": 3, "title": "x", "url": "u"}}}}'
   run_setup --number 3
-  [ "$status" -eq 0 ]
-  [ "$(called Projects)" -eq 0 ]
-  [ "$(jq -r .project.number <<<"$json")" = 3 ]
+  assert_success
+  assert_equal "$(called Projects)" 0
+  assert_equal "$(jq -r .project.number <<<"$json")" 3
 }
 
 @test "設定に project.number があれば、名前で探さずにその Project を使う" {
@@ -157,9 +157,9 @@ called() { grep -c "^$1 " "$CALLS" || true; }
   echo '{"project": {"owner": "team", "number": 12}}' >.claude/workflow.json
   fix ProjectByNumber.json '{"data": {"repositoryOwner": {"projectV2": {"id": "P12", "number": 12, "title": "Team Board", "url": "u"}}}}'
   run_setup
-  [ "$status" -eq 0 ]
-  [ "$(called Projects)" -eq 0 ]
-  [ "$(called CreateProject)" -eq 0 ]
+  assert_success
+  assert_equal "$(called Projects)" 0
+  assert_equal "$(called CreateProject)" 0
   grep '^ProjectByNumber ' "$CALLS" | grep -q '"login":"team","number":12'
 }
 
@@ -167,10 +167,10 @@ called() { grep -c "^$1 " "$CALLS" || true; }
   setup_fake_gh
   detail '["R1"]' '[{"id": "O1", "name": "Todo"}, {"id": "O3", "name": "Done"}]' true
   run_setup
-  [ "$status" -eq 0 ]
-  [ "$(called UpdateStatus)" -eq 1 ]
+  assert_success
+  assert_equal "$(called UpdateStatus)" 1
   opts="$(grep '^UpdateStatus ' "$CALLS" | cut -d' ' -f2- | jq -c '[.opts[] | [.id, .name]]')"
-  [ "$opts" = '[["O1","Todo"],["O3","Done"],[null,"In Progress"]]' ]
+  assert_equal "$opts" '[["O1","Todo"],["O3","Done"],[null,"In Progress"]]'
 }
 
 @test "Project に入っている Issue は追加せず、Status が入っていれば変更もしない" {
@@ -180,12 +180,12 @@ called() { grep -c "^$1 " "$CALLS" || true; }
     {"id": "I2", "number": 2, "items": [{"id": "IT2", "project": "P1", "status": null}]},
     {"id": "I3", "number": 3, "items": [{"id": "ITX", "project": "OTHER", "status": "Todo"}]}]'
   run_setup
-  [ "$status" -eq 0 ]
-  [ "$(called AddItem)" -eq 1 ]
+  assert_success
+  assert_equal "$(called AddItem)" 1
   grep '^AddItem ' "$CALLS" | grep -q '"c":"I3"'
-  [ "$(called SetStatus)" -eq 2 ]
+  assert_equal "$(called SetStatus)" 2
   grep '^SetStatus ' "$CALLS" | grep -q '"i":"IT2"'
-  [ "$(jq -r '[.items.added, .items.set_todo] | join(",")' <<<"$json")" = "1,2" ]
+  assert_equal "$(jq -r '[.items.added, .items.set_todo] | join(",")' <<<"$json")" "1,2"
 }
 
 @test "todo の列が無ければ警告し、Status を設定しない" {
@@ -194,9 +194,9 @@ called() { grep -c "^$1 " "$CALLS" || true; }
   detail '["R1"]' '[{"id": "O2", "name": "In Progress"}, {"id": "O3", "name": "Done"}]' true
   fix UpdateStatus.json '{"data": {}}'
   run_setup
-  [ "$status" -eq 0 ]
-  [[ "$output" == *"todo の列「Backlog」が Status 列に無い"* ]]
-  [ "$(called SetStatus)" -eq 0 ]
+  assert_success
+  assert_output --partial "todo の列「Backlog」が Status 列に無い"
+  assert_equal "$(called SetStatus)" 0
 }
 
 @test "リポジトリと未紐付けなら紐付ける" {
@@ -204,14 +204,14 @@ called() { grep -c "^$1 " "$CALLS" || true; }
   projects '[{"id": "P1", "number": 7, "title": "demo", "url": "u", "closed": false}]'
   detail '[]' '[{"id": "O1", "name": "Todo"}, {"id": "O2", "name": "In Progress"}, {"id": "O3", "name": "Done"}]' true
   run_setup
-  [ "$(called LinkRepo)" -eq 1 ]
+  assert_equal "$(called LinkRepo)" 1
 }
 
 @test "自動追加はどれか1つが有効なら有効とみなす" {
   setup_fake_gh
   run_setup
-  [ "$(jq -r .workflows.auto_add <<<"$json")" = true ]
-  [[ "$output" != *"自動追加（Auto-add to project）が無効です"* ]]
+  assert_equal "$(jq -r .workflows.auto_add <<<"$json")" true
+  refute_output --partial "自動追加（Auto-add to project）が無効です"
 }
 
 @test "自動追加が無効なら警告し、設定画面の URL を返す（組織なら orgs）" {
@@ -219,18 +219,18 @@ called() { grep -c "^$1 " "$CALLS" || true; }
   fix Owner.json '{"data": {"repositoryOwner": {"__typename": "Organization", "id": "G1"}}}'
   detail '["R1"]' '[{"id": "O1", "name": "Todo"}, {"id": "O2", "name": "In Progress"}, {"id": "O3", "name": "Done"}]' false
   run_setup
-  [ "$status" -eq 0 ]
-  [[ "$output" == *"自動追加（Auto-add to project）が無効です"* ]]
-  [ "$(jq -r .workflows.auto_add <<<"$json")" = false ]
-  [ "$(jq -r .workflows.url <<<"$json")" = "https://github.com/orgs/me/projects/7/workflows" ]
+  assert_success
+  assert_output --partial "自動追加（Auto-add to project）が無効です"
+  assert_equal "$(jq -r .workflows.auto_add <<<"$json")" false
+  assert_equal "$(jq -r .workflows.url <<<"$json")" "https://github.com/orgs/me/projects/7/workflows"
 }
 
 @test "作成の応答に projectV2 が無ければエラーで止まる" {
   setup_fake_gh
   fix CreateProject.json '{"data": {"createProjectV2": null}}'
   run_setup --write-config
-  [ "$status" -eq 1 ]
-  [[ "$output" == *"Project を作成できませんでした"* ]]
+  assert_failure 1
+  assert_output --partial "Project を作成できませんでした"
   [ ! -f .claude/workflow.json ]
 }
 
@@ -238,27 +238,27 @@ called() { grep -c "^$1 " "$CALLS" || true; }
   setup_fake_gh
   echo '{"language": "en"}' >.claude/workflow.json
   run_setup --write-config
-  [ "$status" -eq 0 ]
-  [ "$(jq -c . .claude/workflow.json)" = '{"language":"en","project":{"owner":"me","number":7}}' ]
+  assert_success
+  assert_equal "$(jq -c . .claude/workflow.json)" '{"language":"en","project":{"owner":"me","number":7}}'
 }
 
 @test "--repo が今いるリポジトリと違うとき --write-config はエラーになる" {
   setup_fake_gh
   fix here.json '{"nameWithOwner": "me/here"}'
   run_setup --repo me/demo --write-config
-  [ "$status" -eq 64 ]
-  [[ "$output" == *"対象のリポジトリ（me/demo）の中で実行してください"* ]]
+  assert_failure 64
+  assert_output --partial "対象のリポジトリ（me/demo）の中で実行してください"
 }
 
 @test "--number に数字以外を渡すとエラーになる" {
   setup_fake_gh
   run_setup --number abc
-  [ "$status" -eq 64 ]
+  assert_failure 64
 }
 
 @test "オプションの値が無ければ終了コード 64" {
   setup_fake_gh
   run_setup --number
-  [ "$status" -eq 64 ]
-  [[ "$output" == *"--number に値がありません"* ]]
+  assert_failure 64
+  assert_output --partial "--number に値がありません"
 }
