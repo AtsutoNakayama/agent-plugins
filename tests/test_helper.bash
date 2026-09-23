@@ -4,6 +4,10 @@
 
 SCRIPTS="$BATS_TEST_DIRNAME/../plugins/dev-workflow/scripts"
 
+# assert_success・assert_equal などを使う（git submodule で同梱。git submodule update --init で取得する）
+load lib/bats-support/load
+load lib/bats-assert/load
+
 setup() {
   # macOS の /var は /private/var へのシンボリックリンクなので、git が返すパスと揃えるため実体にする
   TMP="$(cd "$(mktemp -d)" && pwd -P)"

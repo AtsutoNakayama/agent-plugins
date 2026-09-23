@@ -48,9 +48,12 @@ Project に組み込みの自動追加（Auto-add to project）は API で有効
 
 ## 開発
 
-必要なもの：`git`、`gh`、`jq`、`shellcheck`、`bats`
+必要なもの：`git`、`gh`、`jq`、`shellcheck`、`bats`（bats-core）
+
+テストの補助ライブラリ（bats-support・bats-assert）は git submodule で同梱しています。
 
 ```bash
+git submodule update --init   # 初回だけ
 shellcheck -x plugins/dev-workflow/scripts/*.sh plugins/dev-workflow/scripts/lib/*.sh
 bats tests/
 TEST_BASH=/bin/bash bats tests/   # macOS では標準の bash 3.2 で確認する

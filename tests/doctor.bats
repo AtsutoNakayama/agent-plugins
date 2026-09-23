@@ -23,32 +23,32 @@ SH
   fake_gh
   export FAKE_SCOPES="repo, project, workflow"
   run_script doctor.sh
-  [ "$status" -eq 0 ]
-  [ "$(jq -r .ok <<<"$output")" = true ]
+  assert_success
+  assert_equal "$(jq -r .ok <<<"$output")" true
 }
 
 @test "project スコープが無ければ ok=false で終了コード 1" {
   fake_gh
   export FAKE_SCOPES="repo, workflow"
   run_script doctor.sh
-  [ "$status" -eq 1 ]
-  [ "$(jq -r '.checks[] | select(.name == "gh-project-scope") | .ok' <<<"$output")" = false ]
+  assert_failure 1
+  assert_equal "$(jq -r '.checks[] | select(.name == "gh-project-scope") | .ok' <<<"$output")" false
 }
 
 @test "未ログインなら gh-auth が失敗する" {
   fake_gh
   export FAKE_AUTH_STATUS=1
   run_script doctor.sh
-  [ "$status" -eq 1 ]
-  [ "$(jq -r '.checks[] | select(.name == "gh-auth") | .ok' <<<"$output")" = false ]
+  assert_failure 1
+  assert_equal "$(jq -r '.checks[] | select(.name == "gh-auth") | .ok' <<<"$output")" false
 }
 
 @test "Project が未設定なのは警告にとどまる" {
   fake_gh
   export FAKE_SCOPES="project"
   run_script doctor.sh
-  [ "$status" -eq 0 ]
-  [ "$(jq -r '.checks[] | select(.name == "project") | .level' <<<"$output")" = warn ]
+  assert_success
+  assert_equal "$(jq -r '.checks[] | select(.name == "project") | .level' <<<"$output")" warn
 }
 
 @test "設定が壊れていれば config が失敗する" {
@@ -56,6 +56,6 @@ SH
   export FAKE_SCOPES="project"
   echo '{broken' >.claude/workflow.json
   run_script doctor.sh
-  [ "$status" -eq 1 ]
-  [ "$(jq -r '.checks[] | select(.name == "config") | .ok' <<<"$output")" = false ]
+  assert_failure 1
+  assert_equal "$(jq -r '.checks[] | select(.name == "config") | .ok' <<<"$output")" false
 }

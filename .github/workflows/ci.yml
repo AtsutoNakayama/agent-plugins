@@ -12,13 +12,14 @@ jobs:
       - uses: actions/checkout@v5
       - name: shellcheck
         run: |
-          find plugins scripts tests -type f \( -name '*.sh' -o -name '*.bash' \) 2>/dev/null \
+          # tests/lib は外部のライブラリ（git submodule）なので対象にしない
+          find plugins scripts tests -path tests/lib -prune -o -type f \( -name '*.sh' -o -name '*.bash' \) -print 2>/dev/null \
             | xargs -r shellcheck -x
           shellcheck -s bash tests/*.bats
       - name: non-ASCII right after $var
         # macOS の bash 3.2 は "$var」" のように日本語が続くと、その文字のバイトまで変数名とみなすので "${var}」" と書く
         run: |
-          if grep -rnP '\$[A-Za-z_][A-Za-z0-9_]*[^\x00-\x7F]' --include='*.sh' --include='*.bash' plugins scripts tests | grep -vP '^[^:]+:\d+:\s*#'; then
+          if grep -rnP '\$[A-Za-z_][A-Za-z0-9_]*[^\x00-\x7F]' --include='*.sh' --include='*.bash' --exclude-dir='bats-*' plugins scripts tests | grep -vP '^[^:]+:\d+:\s*#'; then
             echo '日本語などの直前の変数は ${var} と波括弧で囲んでください' >&2
             exit 1
           fi
@@ -39,6 +40,8 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v5
+        with:
+          submodules: true
       - name: install bats
         # macOS では bats 本体を新しい bash で動かし、対象のスクリプトだけ /bin/bash 3.2 で動かす
         run: |

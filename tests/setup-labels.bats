@@ -79,23 +79,23 @@ called() { grep -c "^$1 " "$CALLS" || true; }
   setup_fake_gh
   current "$(github_defaults)"
   run_setup
-  [ "$status" -eq 0 ]
-  [ "$(called create)" -eq 10 ]
-  [ "$(called delete)" -eq 9 ]
-  [ "$(called edit)" -eq 0 ]
+  assert_success
+  assert_equal "$(called create)" 10
+  assert_equal "$(called delete)" 9
+  assert_equal "$(called edit)" 0
   grep -qF 'create [feat] [-R] [me/demo] [--color] [0e8a16] [--description] [新しい機能]' "$CALLS"
   grep -qF 'delete [good first issue] [-R] [me/demo] [--yes]' "$CALLS"
-  [ "$(jq -c '.labels | [(.created | length), (.deleted | length), .unchanged]' <<<"$json")" = '[10,9,0]' ]
+  assert_equal "$(jq -c '.labels | [(.created | length), (.deleted | length), .unchanged]' <<<"$json")" '[10,9,0]'
 }
 
 @test "定義と同じラベルは変更しない（2回目の実行では何もしない）" {
   setup_fake_gh
   current "$(jq -c 'map(.color |= ascii_upcase)' "$BATS_TEST_DIRNAME/../plugins/dev-workflow/defaults/labels.json")"
   run_setup
-  [ "$status" -eq 0 ]
-  [ ! -s "$CALLS" ]
-  [ "$(jq -r .labels.unchanged <<<"$json")" -eq 10 ]
-  [ "$(jq -c .actions <<<"$json")" = '[]' ]
+  assert_success
+  assert_equal "$(cat "$CALLS")" ""
+  assert_equal "$(jq -r .labels.unchanged <<<"$json")" 10
+  assert_equal "$(jq -c .actions <<<"$json")" '[]'
 }
 
 @test "色・説明・大文字小文字が違うラベルだけ既存の名前を指定して更新する" {
@@ -105,9 +105,9 @@ called() { grep -c "^$1 " "$CALLS" || true; }
   current '[{"name": "Feat", "color": "0e8a16", "description": "新機能"},
     {"name": "fix", "color": "000000", "description": ""}]'
   run_setup --file labels.json
-  [ "$status" -eq 0 ]
-  [ "$(called create)" -eq 0 ]
-  [ "$(called edit)" -eq 2 ]
+  assert_success
+  assert_equal "$(called create)" 0
+  assert_equal "$(called edit)" 2
   grep -qF 'edit [PATCH] [repos/me/demo/labels/Feat] [-f] [new_name=feat] [-f] [color=0e8a16] [-f] [description=新機能]' "$CALLS"
   grep -qF 'edit [PATCH] [repos/me/demo/labels/fix] [-f] [new_name=fix] [-f] [color=d73a4a] [-f] [description=]' "$CALLS"
 }
@@ -116,8 +116,8 @@ called() { grep -c "^$1 " "$CALLS" || true; }
   setup_fake_gh
   current "$(github_defaults)"
   run_setup --keep-defaults
-  [ "$status" -eq 0 ]
-  [ "$(called delete)" -eq 0 ]
+  assert_success
+  assert_equal "$(called delete)" 0
 }
 
 @test "定義にあるラベルと、既定以外のラベルは削除しない" {
@@ -127,8 +127,8 @@ called() { grep -c "^$1 " "$CALLS" || true; }
     {"name": "wontfix", "color": "ffffff", "description": ""},
     {"name": "priority: high", "color": "ff0000", "description": ""}]'
   run_setup --file labels.json
-  [ "$status" -eq 0 ]
-  [ "$(called delete)" -eq 1 ]
+  assert_success
+  assert_equal "$(called delete)" 1
   grep -qF 'delete [wontfix]' "$CALLS"
 }
 
@@ -136,20 +136,20 @@ called() { grep -c "^$1 " "$CALLS" || true; }
   setup_fake_gh
   current "$(github_defaults)"
   run_setup --dry-run
-  [ "$status" -eq 0 ]
-  [ ! -s "$CALLS" ]
-  [ "$(jq -r .dry_run <<<"$json")" = true ]
-  [ "$(jq -r '.actions[0]' <<<"$json")" = "ラベル「feat」を作成する" ]
-  [ "$(jq -r '.actions[-1]' <<<"$json")" = "既定のラベル「wontfix」を削除する" ]
+  assert_success
+  assert_equal "$(cat "$CALLS")" ""
+  assert_equal "$(jq -r .dry_run <<<"$json")" true
+  assert_equal "$(jq -r '.actions[0]' <<<"$json")" "ラベル「feat」を作成する"
+  assert_equal "$(jq -r '.actions[-1]' <<<"$json")" "既定のラベル「wontfix」を削除する"
 }
 
 @test "リポジトリの .claude/labels.json があれば、既定の定義より優先する" {
   setup_fake_gh
   printf '%s\n' '[{"name": "feat", "color": "000000"}]' >.claude/labels.json
   run_setup
-  [ "$status" -eq 0 ]
-  [ "$(called create)" -eq 1 ]
-  [ "$(jq -r .file <<<"$json")" = "$REPO/.claude/labels.json" ]
+  assert_success
+  assert_equal "$(called create)" 1
+  assert_equal "$(jq -r .file <<<"$json")" "$REPO/.claude/labels.json"
 }
 
 @test "更新する既存のラベルの名前は URL エンコードする" {
@@ -157,7 +157,7 @@ called() { grep -c "^$1 " "$CALLS" || true; }
   printf '%s\n' '[{"name": "priority: high", "color": "ff0000"}]' >labels.json
   current '[{"name": "Priority: High", "color": "ff0000", "description": ""}]'
   run_setup --file labels.json
-  [ "$status" -eq 0 ]
+  assert_success
   grep -qF 'edit [PATCH] [repos/me/demo/labels/Priority%3A%20High]' "$CALLS"
 }
 
@@ -169,11 +169,11 @@ called() { grep -c "^$1 " "$CALLS" || true; }
   printf '%s\n' '[{"name": "story", "color": "111111"}]' >"$FIX/remote/.claude/labels.json"
   printf '%s\n' '{"labels": {"types": ["story", "spike"]}}' >"$FIX/remote/.claude/workflow.json"
   run_setup --repo me/demo
-  [ "$status" -eq 0 ]
-  [ "$(called create)" -eq 1 ]
+  assert_success
+  assert_equal "$(called create)" 1
   grep -qF 'create [story] [-R] [me/demo]' "$CALLS"
-  [ "$(jq -r .file <<<"$json")" = "me/demo:.claude/labels.json" ]
-  [[ "$output" == *"定義に無いラベルがあります: spike"* ]]
+  assert_equal "$(jq -r .file <<<"$json")" "me/demo:.claude/labels.json"
+  assert_output --partial "定義に無いラベルがあります: spike"
 }
 
 @test "別のリポジトリに定義が無ければ、プラグインの既定を使う" {
@@ -181,18 +181,18 @@ called() { grep -c "^$1 " "$CALLS" || true; }
   printf '%s\n' '{"nameWithOwner": "me/here"}' >"$FIX/here.json"
   printf '%s\n' '[{"name": "feat", "color": "000000"}]' >.claude/labels.json
   run_setup --repo me/demo
-  [ "$status" -eq 0 ]
-  [ "$(called create)" -eq 10 ]
-  [[ "$(jq -r .file <<<"$json")" == */defaults/labels.json ]]
+  assert_success
+  assert_equal "$(called create)" 10
+  assert_regex "$(jq -r .file <<<"$json")" '/defaults/labels\.json$'
 }
 
 @test "--repo が今いるリポジトリと同じなら、手元の定義を使う" {
   setup_fake_gh
   printf '%s\n' '[{"name": "feat", "color": "000000"}]' >.claude/labels.json
   run_setup --repo me/demo
-  [ "$status" -eq 0 ]
-  [ "$(called create)" -eq 1 ]
-  [ "$(jq -r .file <<<"$json")" = "$REPO/.claude/labels.json" ]
+  assert_success
+  assert_equal "$(called create)" 1
+  assert_equal "$(jq -r .file <<<"$json")" "$REPO/.claude/labels.json"
 }
 
 @test "別のリポジトリの定義を 404 以外の理由で読めなければ、変更せずに止まる" {
@@ -201,53 +201,53 @@ called() { grep -c "^$1 " "$CALLS" || true; }
   mkdir -p "$FIX/remote/.claude"
   echo 'gh: Server Error (HTTP 502)' >"$FIX/remote/.claude/labels.json.err"
   run_setup --repo me/demo
-  [ "$status" -ne 0 ]
-  [[ "$output" == *"me/demo の .claude/labels.json を読めません"* ]]
-  [ ! -s "$CALLS" ]
+  assert_failure
+  assert_output --partial "me/demo の .claude/labels.json を読めません"
+  assert_equal "$(cat "$CALLS")" ""
 }
 
 @test "設定の type ラベルが定義に無ければ警告する" {
   setup_fake_gh
   printf '%s\n' '[{"name": "feat", "color": "000000"}]' >labels.json
   run_setup --file labels.json
-  [ "$status" -eq 0 ]
-  [[ "$output" == *"定義に無いラベルがあります: fix, hotfix"* ]]
+  assert_success
+  assert_output --partial "定義に無いラベルがあります: fix, hotfix"
 }
 
 @test "定義の色が 6 桁でなければエラーになる" {
   setup_fake_gh
   printf '%s\n' '[{"name": "feat", "color": "red"}]' >labels.json
   run_setup --file labels.json
-  [ "$status" -eq 2 ]
-  [[ "$output" == *"ラベルの定義を読めません"* ]]
-  [ ! -s "$CALLS" ]
+  assert_failure 2
+  assert_output --partial "ラベルの定義を読めません"
+  assert_equal "$(cat "$CALLS")" ""
 }
 
 @test "名前が大文字小文字違いで重複していればエラーになる" {
   setup_fake_gh
   printf '%s\n' '[{"name": "feat", "color": "000000"}, {"name": "Feat", "color": "000000"}]' >labels.json
   run_setup --file labels.json
-  [ "$status" -eq 2 ]
-  [[ "$output" == *"ラベルの名前が重複しています: feat"* ]]
+  assert_failure 2
+  assert_output --partial "ラベルの名前が重複しています: feat"
 }
 
 @test "定義のファイルが無ければエラーになる" {
   setup_fake_gh
   run_setup --file nothing.json
-  [ "$status" -eq 2 ]
+  assert_failure 2
 }
 
 @test "オプションの値が無ければ終了コード 64" {
   setup_fake_gh
   run_setup --file
-  [ "$status" -eq 64 ]
-  [[ "$output" == *"--file に値がありません"* ]]
+  assert_failure 64
+  assert_output --partial "--file に値がありません"
 }
 
 @test "--help は使い方を表示する" {
   setup_fake_gh
   run_setup --help
-  [ "$status" -eq 0 ]
-  [[ "$output" == *"--keep-defaults"* ]]
-  [[ "$output" != *"set -euo"* ]]
+  assert_success
+  assert_output --partial "--keep-defaults"
+  refute_output --partial "set -euo"
 }
