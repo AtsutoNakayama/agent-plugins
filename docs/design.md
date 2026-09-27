@@ -116,7 +116,7 @@ agent-plugins/
 ## 9. ガードレール
 
 1. **GitHub のルールセット**（`setup-repo.sh`）：main への直接 push の禁止と PR の必須化、強制 push と main の削除の禁止。承認の必須化はオプション（既定は無効）。
-2. **Claude Code のフック**（`hooks/guard-git.sh`）：main 上での commit と、main への push をブロックする。強制 push（`--force` / `-f` / `+<refspec>`）をブロックする（`--force-with-lease` は許可）。ブランチ名が規約に合わないときは警告する。
+2. **Claude Code のフック**（`hooks/guard-git.sh`）：main 上での commit と、main への push をブロックする。強制 push（`--force` / `-f` / `+<refspec>` / `--mirror`）をブロックする（`--force-with-lease` は許可）。ブランチ名が規約に合わないときは警告する。
 3. **`workflow` スキル**：着手 → 実装 → ローカルレビュー → コミット → PR → PR レビュー → マージ（人間）→ 後片付け。
 
 ## 10. スクリプト

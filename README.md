@@ -29,7 +29,7 @@ plugins/dev-workflow/scripts/doctor.sh
 
 - base_branch の上での `git commit`
 - base_branch への `git push`（base_branch の上で push 先を書かずに push するときを含む）
-- 強制 push（`--force` / `-f` / `+<refspec>`）。`--force-with-lease` は許可する
+- 強制 push（`--force` / `-f` / `+<refspec>` / `--mirror`）。`--force-with-lease` は許可する
 
 `cd` や `git -C` で移った先のブランチで判断します。コマンドの文字列を簡易に解析するだけなので、`sh -c` や git の別名を通すと見逃します。最後の守りは GitHub のルールセット（下記）です。
 
