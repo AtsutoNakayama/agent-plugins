@@ -93,33 +93,4 @@ plugins/dev-workflow/scripts/setup/setup-repo.sh --require-approval 1
 
 ## 開発
 
-必要なもの：`git`、`gh`、`jq`、`shellcheck`、`bats`（bats-core）
-
-テストの補助ライブラリ（bats-support・bats-assert）は git submodule で同梱しています。
-
-```bash
-git submodule update --init   # 初回だけ
-shellcheck -x plugins/dev-workflow/scripts/*.sh plugins/dev-workflow/scripts/*/*.sh
-bats tests/
-TEST_BASH=/bin/bash bats tests/   # macOS では標準の bash 3.2 で確認する
-claude plugin validate .
-```
-
-### Docker の bash 3.2 でテストする
-
-macOS 以外でも、Docker の `bash:3.2` イメージで macOS 標準の bash 3.2 で動くことを確かめられます。リポジトリ・ワークツリーのどこで実行しても動きます。
-
-```bash
-root=$(cd "$(git rev-parse --git-common-dir)/.." && pwd)   # 元のリポジトリ
-top=$(git rev-parse --show-toplevel)                       # 今いるリポジトリまたはワークツリー
-docker run --rm -v "$root:$root" -v "$top:$top" -w "$top" bash:3.2 sh -c '
-  apk add --no-cache jq git bats bash >/dev/null &&
-  git config --global --add safe.directory "*" &&
-  export PATH=/bin:/usr/bin:$PATH &&
-  TEST_BASH=/usr/local/bin/bash bats tests/
-'
-```
-
-- bats 本体は新しい bash（apk で入れる `/bin/bash`）で動かし、対象のスクリプトだけ bash 3.2（イメージの `/usr/local/bin/bash`）で動かします。イメージでは `/usr/local/bin` が PATH の先にあるので、`PATH` を並べ替えないと bats 本体も bash 3.2 で動き、日本語のテスト名を扱えずに失敗します。
-- コンテナの中はファイルの持ち主が違うので、`safe.directory` を設定しないと git がリポジトリを使えません。
-- ワークツリーの `.git` はファイルで、元のリポジトリの `.git/worktrees/` を指しています。ワークツリーだけをマウントすると `fatal: not a git repository` になるので、上のように元のリポジトリ全体とワークツリーを、どちらも同じパスでマウントします（ワークツリーがリポジトリの外にあっても動きます）。ワークツリーでは、先に `git submodule update --init` も実行しておきます。
+開発に参加するときの環境の準備・開発の流れ・テストは [CONTRIBUTING.md](CONTRIBUTING.md) を参照してください。
