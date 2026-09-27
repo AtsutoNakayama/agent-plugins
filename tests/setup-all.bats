@@ -244,6 +244,37 @@ SH
   assert_equal "$(jq -r '.templates.skipped[0].existing' <<<"$json")" "docs/PULL_REQUEST_TEMPLATE.md"
 }
 
+@test "チームの設定の pr.template が実在するファイルを指定していれば、PR テンプレートを作らない" {
+  setup_fake_plugin
+  mkdir -p .github/templates
+  echo team >.github/templates/pr.md
+  echo '{"pr": {"template": ".github/templates/pr.md"}}' >.claude/workflow.json
+  run_all
+  assert_success
+  [ ! -e .github/pull_request_template.md ]
+  assert_equal "$(jq -r '.templates.skipped[0].existing' <<<"$json")" ".github/templates/pr.md"
+}
+
+@test "チームの設定の pr.template が無いファイルを指していれば、PR テンプレートを作る" {
+  setup_fake_plugin
+  echo '{"pr": {"template": ".github/templates/missing.md"}}' >.claude/workflow.json
+  run_all
+  assert_success
+  cmp .github/pull_request_template.md "$PLUGIN/templates/pull_request_template.md"
+}
+
+@test "チームの設定の pr.template がリポジトリの外を指していれば、PR テンプレートを作る" {
+  setup_fake_plugin
+  echo outside >"$TMP/outside.md"
+  for path in "$TMP/outside.md" ../outside.md; do
+    rm -rf .github
+    jq -n --arg p "$path" '{pr: {template: $p}}' >.claude/workflow.json
+    run_all
+    assert_success
+    cmp .github/pull_request_template.md "$PLUGIN/templates/pull_request_template.md"
+  done
+}
+
 @test "PR テンプレートのディレクトリや古い形式の Issue テンプレートがあれば作らない" {
   setup_fake_plugin
   mkdir -p .github/PULL_REQUEST_TEMPLATE

@@ -14,6 +14,7 @@
 #   3. setup-repo.sh：マージ方法の設定と、ルールセットの登録
 #   4. PR テンプレート（.github/pull_request_template.md）と Issue テンプレート
 #      （.github/ISSUE_TEMPLATE/task.md）を作る。既にテンプレートがあれば作らない
+#      （チームの設定の pr.template が実在するファイルを指していれば、PR テンプレートは作らない）
 # 作ったファイルはコミットしない。マージ先のブランチは守られているので、PR でマージする。
 set -euo pipefail
 
@@ -91,11 +92,22 @@ place() {
     cp "$DW_PLUGIN_ROOT/templates/$1" "$2"
   fi
 }
-# 既にあるかは、設定（個人の層で書き換えたり、チームの層で null にしたりできる）ではなく、
-# GitHub がテンプレートを探す場所にある実際のファイルで決める。候補は空白区切りの一覧なので、わざと分割して渡す
+# 既にあるかは、合わせた設定（個人の層で書き換えたり、チームの層で null にしたりできる）ではなく、
+# GitHub がテンプレートを探す場所にある実際のファイルで決める。候補は空白区切りの一覧なので、わざと分割して渡す。
+# ただし、チームの設定（.claude/workflow.json そのもの）が pr.template で実在するファイルを指定していれば、
+# チームが独自の場所にテンプレートを置いているので作らない
+team_pr_template=""
+if [ -f .claude/workflow.json ]; then
+  team_pr_template="$(jq -r '.pr.template // empty | strings' .claude/workflow.json 2>/dev/null || true)"
+  # リポジトリの外（絶対パスや ..）は、マシンによって有無が変わり、GitHub からも使えないので無視する
+  case "/$team_pr_template/" in
+    //* | */../*) team_pr_template="" ;;
+  esac
+  { [ -n "$team_pr_template" ] && [ -f "$team_pr_template" ]; } || team_pr_template=""
+fi
 # shellcheck disable=SC2086
 place pull_request_template.md .github/pull_request_template.md \
-  "$(dw_find_nocase . $DW_PR_TEMPLATE_FILES $DW_PR_TEMPLATE_DIRS || true)"
+  "${team_pr_template:-$(dw_find_nocase . $DW_PR_TEMPLATE_FILES $DW_PR_TEMPLATE_DIRS || true)}"
 # shellcheck disable=SC2086
 place ISSUE_TEMPLATE/task.md .github/ISSUE_TEMPLATE/task.md "$(dw_find_nocase . $DW_ISSUE_TEMPLATES || true)"
 
