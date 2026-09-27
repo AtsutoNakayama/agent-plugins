@@ -46,9 +46,13 @@ while [ $# -gt 0 ]; do
 done
 
 # 規約に合わない理由を出力する。合っていれば何も出力しない
+# 文字の判定は LC_ALL=C で行う（macOS の bash 3.2 は UTF-8 のロケールで [a-z] に大文字も含めてしまう）
 problem() {
+  if printf '%s' "$1" | LC_ALL=C grep -q '[^a-z0-9/-]'; then
+    echo "小文字の英数字と - / 以外の文字があります"
+    return
+  fi
   case "$1" in
-    *[!a-z0-9/-]*) echo "小文字の英数字と - / 以外の文字があります" ;;
     /* | */ | -* | *- | *//* | */-* | *-/*) echo "/ や - で始まる・終わる、または続いています" ;;
     *)
       git check-ref-format --branch "$1" >/dev/null 2>&1 || echo "git のブランチ名として使えません"
