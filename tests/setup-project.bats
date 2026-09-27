@@ -5,7 +5,8 @@
 load test_helper
 
 # 偽の gh。GraphQL は操作名（query Foo / mutation Foo）ごとに $FIX/<操作名>.json を返し、
-# 呼ばれた操作名と変数を $CALLS に1行ずつ記録する。
+# 呼ばれた操作名と変数を $CALLS に1行ずつ記録する。FAKE_FAIL に指定した操作名は、
+# FAKE_FAIL_MSG（既定: 見つからないときのメッセージ）を出して失敗する。
 # gh repo view は、リポジトリを指定すれば repo.json、指定しなければ（今いるリポジトリ）here.json を返す。
 setup_fake_gh() {
   FIX="$TMP/fix"
@@ -34,6 +35,7 @@ case "$1 $2" in
     body="$(cat)"
     op="$(jq -r .query <<<"$body" | grep -oE '(query|mutation) [A-Za-z]+' | head -n 1 | cut -d' ' -f2)"
     echo "$op $(jq -c .variables <<<"$body")" >>"$CALLS"
+    if [ "${FAKE_FAIL:-}" = "$op" ]; then echo "${FAKE_FAIL_MSG:-GraphQL: Could not resolve to a ProjectV2.}" >&2; exit 1; fi
     # 同じ操作の n 回目の呼び出しには <操作名>.<n>.json があればそれを返す（ページ送りのテスト用）
     n="$(grep -c "^$op " "$CALLS")"
     if [ -f "$FIX/$op.$n.json" ]; then cat "$FIX/$op.$n.json"
@@ -150,6 +152,22 @@ called() { grep -c "^$1 " "$CALLS" || true; }
   assert_success
   assert_equal "$(called Projects)" 0
   assert_equal "$(jq -r .project.number <<<"$json")" 3
+}
+
+@test "--number の Project が無ければ（API は NOT_FOUND のエラーを返す）、案内して止まる" {
+  setup_fake_gh
+  FAKE_FAIL=ProjectByNumber run_setup --number 99
+  assert_failure 1
+  assert_output --partial "Project が見つかりません: me/99"
+  assert_equal "$(called CreateProject)" 0
+}
+
+@test "--number の Project を読めない（スコープ不足など）ときは、GitHub の理由を伝える" {
+  setup_fake_gh
+  FAKE_FAIL=ProjectByNumber FAKE_FAIL_MSG="GraphQL: INSUFFICIENT_SCOPES" run_setup --number 3
+  assert_failure 1
+  assert_output --partial "GitHub の API に失敗しました: GraphQL: INSUFFICIENT_SCOPES"
+  refute_output --partial "見つかりません"
 }
 
 @test "設定に project.number があれば、名前で探さずにその Project を使う" {
