@@ -110,7 +110,8 @@ denied() {
     "git push -uf origin HEAD" \
     "git push origin +feat/21-x" \
     "git push origin +HEAD:feat/21-x" \
-    "git push --force-with-lease --force"
+    "git push --force-with-lease --force" \
+    "git push --mirror"
 }
 
 @test "引用符・ヒアドキュメント・コメントの中の文字は、コマンドとみなさない" {
@@ -122,6 +123,35 @@ denied() {
     "ls # git push -f" \
     "$(printf 'git commit -F - <<EOF\nfix: x\ngit push --force\nEOF\ngit push')" \
     "$(printf "git commit -m \"\$(cat <<'EOF'\nfix: don't (git push -f)\nEOF\n)\" && git push -u origin HEAD")"
+}
+
+@test "if・for・{ }・! の中のコマンドも調べる" {
+  denied "強制 push" "if true; then git push --force; fi" "{ git push --force; }" "! git push -f" \
+    "while false; do :; done && until true; do git push -f; done"
+  denied "main の上ではコミットしません" "for b in a; do git commit -m x; done" "if false; then :; else git commit -m x; fi"
+}
+
+@test "( ) の中の cd は、括弧の外に効かない" {
+  git worktree add -q -b feat/21-x "$TMP/wt"
+  denied "main の上ではコミットしません" "(cd $TMP/wt && git status); git commit -m x" "(cd $TMP/wt) && git commit -m x"
+  allowed "(cd $TMP/wt && git commit -m x)" "cd $TMP/wt && (git status) && git commit -m x"
+}
+
+@test "算術式の << はヒアドキュメントとみなさない" {
+  git checkout -q -b feat/21-x
+  # $((...)) はフックに渡す文字として書く
+  # shellcheck disable=SC2016
+  denied "強制 push" "$(printf 'x=$((1<<2))\ngit push --force')" "$(printf '(( x = 1 << 2 ))\ngit push --force')"
+}
+
+@test "長いコマンドでも速く終わる" {
+  git checkout -q -b feat/21-x
+  msg="$(head -c 50000 /dev/zero | tr '\0' a | fold -w 76)"
+  words="$(printf 'w%d ' $(seq 1 10000))"
+  SECONDS=0
+  denied "強制 push" "git commit -m \"$msg\"; git push -f" "echo $words; git push -f" \
+    "$(printf 'git commit -F - <<EOF\n%s\nEOF\ngit push -f' "$msg")"
+  [ "$SECONDS" -lt 10 ] || fail "${SECONDS} 秒かかった"
 }
 
 @test "ヒアドキュメントの後ろのコマンドは調べる" {

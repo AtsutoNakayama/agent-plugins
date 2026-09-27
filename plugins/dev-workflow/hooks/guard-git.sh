@@ -3,7 +3,7 @@
 # 次の git の操作を止める。
 #   - base_branch の上での git commit
 #   - base_branch への git push（base_branch の上で push 先を書かずに push するときを含む）
-#   - 強制 push（--force / -f / +<refspec>）。--force-with-lease は許可する
+#   - 強制 push（--force / -f / +<refspec> / --mirror）。--force-with-lease は許可する
 #
 # 標準入力でフックの入力（JSON）を受け取る。止めるときは理由を標準エラーに1行で出し、終了コード 2 で終わる
 # （Claude Code はコマンドを実行せず、理由を Claude に伝える）。
@@ -77,7 +77,8 @@ check_push() {
     if ! $after_dd; then
       case "$w" in
         --) after_dd=true; continue ;;
-        --force) force=true; continue ;;
+        # --mirror はすべての ref をリモートに合わせて上書き・削除する
+        --force | --mirror) force=true; continue ;;
         --repo | --push-option | --receive-pack | --exec) expect=true; continue ;;
         --*) continue ;;
         -?*)
@@ -109,7 +110,7 @@ check_push() {
   for w in ${refs[@]+"${refs[@]}"}; do
     case "$w" in +*) force=true ;; esac
   done
-  $force && deny "強制 push（--force / -f / +<refspec>）はしません。必要なら --force-with-lease を使ってください"
+  $force && deny "強制 push（--force / -f / +<refspec> / --mirror）はしません。必要なら --force-with-lease を使ってください"
 
   current="$(git_at symbolic-ref --short -q HEAD || true)"
   base="$(base_branch)"
@@ -137,11 +138,12 @@ check_push() {
 # 使い方: check_command <単語>...
 check_command() {
   local target sub base
-  # 先頭の環境変数の代入（FOO=1 git push）と、前に付くだけのコマンドを飛ばす
+  # 先頭の環境変数の代入（FOO=1 git push）、前に付くだけのコマンド、予約語（then git push）を飛ばす
   while [ $# -gt 0 ]; do
     case "$1" in
       [A-Za-z_]*=*) shift ;;
       command | exec | time | nohup | env) shift ;;
+      if | then | elif | else | while | until | do | '{' | '!') shift ;;
       *) break ;;
     esac
   done
@@ -208,15 +210,37 @@ check_command() {
 
 # --- コマンドの文字列を単語に分ける ------------------------------------------------
 # 引用符・エスケープ・$( )・ヒアドキュメント・リダイレクトを考え、; & | 改行 ( ) でコマンドを区切る。
+# bash では ${cmd:i} などが文字列の長さに比例して遅いので、1文字ずつではなく、特別な文字の手前までをまとめて読む。
+# また $cmd を展開するたびに全体が写されるので、先の wsize 文字を wbuf に写しておき、そこから win 文字ずつ見る。
 
 len=${#cmd}
 # bash 3.2 では "${...}" の中の $'\n' の扱いが新しい bash と違うので、変数にしておく
 nl=$'\n' tab=$'\t'
+# 特別な文字（ここで区切ってまとめて読む）。外側・"..." の中・$( ) の中。
+# パターンとして使うので、${rest%%$top_stop*} のように引用符で囲まずに展開する（SC2295 は意図どおり）
+top_stop='[\\ '"$tab$nl"';&|()<>#'"'"'"`$]'
+dq_stop='[\\"$`]'
+# shellcheck disable=SC1003
+sub_stop='[\\'"'"'"`()<'"$nl"']'
+win=512 wsize=4096 wbase=0 wbuf=""
 i=0
 word="" in_word=false skip_word=false
 words=() nwords=0
 hd_delims=() hd_strip=() hd_n=0
+# ( ) の中の cd は外に効かないので、( の時点のディレクトリを積んでおき、) で戻す
+dstack=() dn=0
 git_dir="" gopts=()
+
+# 残りの文字列の先頭（最大 win 文字）を rest に入れる。wbuf を使い切りそうなら写し直す
+window() {
+  local off=$((i - wbase))
+  if [ "$off" -lt 0 ] || { [ $((off + win)) -gt "${#wbuf}" ] && [ $((wbase + ${#wbuf})) -lt "$len" ]; }; then
+    wbase=$i
+    wbuf="${cmd:i:wsize}"
+    off=0
+  fi
+  rest="${wbuf:off:win}"
+}
 
 flush_word() {
   if $in_word; then
@@ -237,47 +261,72 @@ end_command() {
   words=() nwords=0
 }
 
+# i から <区切り> の手前までを cut に入れる（区切りが無ければ最後まで）。
+# 窓の中で見つからないときだけ、残り全体から探す
+# 使い方: cut_until <区切りの文字>
+cut_until() {
+  local rest
+  window
+  cut="${rest%%"$1"*}"
+  if [ "$cut" = "$rest" ] && [ $((i + ${#rest})) -lt "$len" ]; then
+    rest="${cmd:i}"
+    cut="${rest%%"$1"*}"
+  fi
+}
+
 # '...' の中身を加える
 scan_squote() {
-  local rest q
-  rest="${cmd:i+1}"
-  q="${rest%%\'*}"
+  local cut q
+  i=$((i + 1))
+  cut_until "'"
+  q="$cut"
+  i=$((i - 1))
   word+="$q" in_word=true
   i=$((i + ${#q} + 2))
 }
 
 # `...` をそのまま加える
 scan_backtick() {
-  local rest q
-  rest="${cmd:i+1}"
-  q="${rest%%\`*}"
+  local cut q
+  i=$((i + 1))
+  cut_until '`'
+  q="$cut"
+  i=$((i - 1))
   word+="\`$q\`" in_word=true
   i=$((i + ${#q} + 2))
 }
 
 # "..." の中身を加える
 scan_dquote() {
-  local c n
+  local rest chunk c n
   in_word=true
   i=$((i + 1))
   while [ "$i" -lt "$len" ]; do
-    c="${cmd:i:1}"
+    window
+    # shellcheck disable=SC2295
+    chunk="${rest%%$dq_stop*}"
+    if [ -n "$chunk" ]; then
+      word+="$chunk"
+      i=$((i + ${#chunk}))
+      continue
+    fi
+    c="${rest:0:1}"
     case "$c" in
       '"')
         i=$((i + 1))
         return 0
         ;;
       \\)
-        n="${cmd:i+1:1}"
+        n="${rest:1:1}"
         case "$n" in
           '$' | '`' | '"' | \\) word+="$n" ;;
-          $'\n') ;;
+          "$nl") ;;
           *) word+="$c$n" ;;
         esac
         i=$((i + 2))
         ;;
       '$')
-        if [ "${cmd:i+1:1}" = '(' ]; then
+        if [ "${rest:1:1}" = '(' ]; then
           scan_subst
         else
           word+="$c"
@@ -285,28 +334,36 @@ scan_dquote() {
         fi
         ;;
       '`') scan_backtick ;;
-      *)
-        word+="$c"
-        i=$((i + 1))
-        ;;
     esac
   done
 }
 
-# $( ... ) をそのまま加える（中のコマンドは調べない）
+# $( ... ) と $(( ... )) をそのまま加える（中のコマンドは調べない）
 scan_subst() {
-  local c depth=1
+  local rest chunk c depth=1 arith=false
+  window
+  # $(( ... )) の << はシフト演算で、ヒアドキュメントではない
+  # shellcheck disable=SC2016
+  [ "${rest:0:3}" != '$((' ] || arith=true
   # shellcheck disable=SC2016
   word+='$(' in_word=true
   i=$((i + 2))
   while [ "$i" -lt "$len" ]; do
-    c="${cmd:i:1}"
+    window
+    # shellcheck disable=SC2295
+    chunk="${rest%%$sub_stop*}"
+    if [ -n "$chunk" ]; then
+      word+="$chunk"
+      i=$((i + ${#chunk}))
+      continue
+    fi
+    c="${rest:0:1}"
     case "$c" in
       "'") scan_squote ;;
       '"') scan_dquote ;;
       '`') scan_backtick ;;
       \\)
-        word+="${cmd:i:2}"
+        word+="${rest:0:2}"
         i=$((i + 2))
         ;;
       '(')
@@ -321,7 +378,7 @@ scan_subst() {
         [ "$depth" -gt 0 ] || return 0
         ;;
       '<')
-        if [ "${cmd:i:2}" = '<<' ] && [ "${cmd:i:3}" != '<<<' ]; then
+        if ! $arith && [ "${rest:0:2}" = '<<' ] && [ "${rest:0:3}" != '<<<' ]; then
           i=$((i + 2))
           read_heredoc_delim
         else
@@ -329,13 +386,9 @@ scan_subst() {
           i=$((i + 1))
         fi
         ;;
-      $'\n')
+      "$nl")
         word+=' '
         if [ "$hd_n" -gt 0 ]; then skip_heredocs; else i=$((i + 1)); fi
-        ;;
-      *)
-        word+="$c"
-        i=$((i + 1))
         ;;
     esac
   done
@@ -343,21 +396,24 @@ scan_subst() {
 
 # << の後ろの区切りの語を読み、次の改行で本文を飛ばせるように覚える（i は << の直後）
 read_heredoc_delim() {
-  local c strip=0 d=""
-  if [ "${cmd:i:1}" = - ]; then
+  local rest c strip=0 d=""
+  window
+  if [ "${rest:0:1}" = - ]; then
     strip=1
     i=$((i + 1))
   fi
   while [ "$i" -lt "$len" ]; do
-    case "${cmd:i:1}" in
-      ' ' | $'\t') i=$((i + 1)) ;;
+    window
+    case "${rest:0:1}" in
+      ' ' | "$tab") i=$((i + 1)) ;;
       *) break ;;
     esac
   done
   while [ "$i" -lt "$len" ]; do
-    c="${cmd:i:1}"
+    window
+    c="${rest:0:1}"
     case "$c" in
-      ' ' | $'\t' | $'\n' | ';' | '&' | '|' | '(' | ')' | '<' | '>') break ;;
+      ' ' | "$tab" | "$nl" | ';' | '&' | '|' | '(' | ')' | '<' | '>') break ;;
       "'" | '"' | \\) ;;
       *) d+="$c" ;;
     esac
@@ -370,16 +426,33 @@ read_heredoc_delim() {
 
 # ヒアドキュメントの本文を飛ばす（i は本文の前の改行）
 skip_heredocs() {
-  local k=0 rest line
+  local k=0 d rest body line cut
   i=$((i + 1))
   while [ "$k" -lt "$hd_n" ]; do
-    while [ "$i" -lt "$len" ]; do
-      rest="${cmd:i}"
-      line="${rest%%"$nl"*}"
-      i=$((i + ${#line} + 1))
-      [ "${hd_strip[k]}" = 0 ] || line="${line#"${line%%[!"$tab"]*}"}"
-      [ "$line" != "${hd_delims[k]}" ] || break
-    done
+    d="${hd_delims[k]}"
+    rest="${cmd:i}"
+    if [ "${hd_strip[k]}" = 0 ]; then
+      # 区切りの行を探して、その次の行へ一度に進む
+      if [ "$rest" = "$d" ] || [ "${rest:0:${#d}+1}" = "$d$nl" ]; then
+        i=$((i + ${#d} + 1))
+      else
+        body="${rest%%"$nl$d$nl"*}"
+        if [ "$body" != "$rest" ]; then
+          i=$((i + ${#body} + ${#d} + 2))
+        else
+          i=$len
+        fi
+      fi
+    else
+      # <<- は行頭のタブを除いて比べるので、1行ずつ見る
+      while [ "$i" -lt "$len" ]; do
+        cut_until "$nl"
+        line="$cut"
+        i=$((i + ${#line} + 1))
+        line="${line#"${line%%[!"$tab"]*}"}"
+        [ "$line" != "$d" ] || break
+      done
+    fi
     k=$((k + 1))
   done
   hd_delims=() hd_strip=() hd_n=0
@@ -392,15 +465,17 @@ scan_redirect() {
     '' | *[!0-9]*) flush_word ;;
     *) word="" in_word=false ;;
   esac
-  if [ "${cmd:i:3}" = '<<<' ]; then
+  local rest
+  window
+  if [ "${rest:0:3}" = '<<<' ]; then
     i=$((i + 3))
     skip_word=true
-  elif [ "${cmd:i:2}" = '<<' ]; then
+  elif [ "${rest:0:2}" = '<<' ]; then
     i=$((i + 2))
     read_heredoc_delim
   else
     i=$((i + 1))
-    case "${cmd:i:1}" in
+    case "${rest:1:1}" in
       '>' | '&' | '|') i=$((i + 1)) ;;
     esac
     skip_word=true
@@ -408,18 +483,47 @@ scan_redirect() {
 }
 
 while [ "$i" -lt "$len" ]; do
-  c="${cmd:i:1}"
+  window
+  # shellcheck disable=SC2295
+  chunk="${rest%%$top_stop*}"
+  if [ -n "$chunk" ]; then
+    word+="$chunk" in_word=true
+    i=$((i + ${#chunk}))
+    continue
+  fi
+  c="${rest:0:1}"
   case "$c" in
-    ' ' | $'\t')
+    ' ' | "$tab")
       flush_word
       i=$((i + 1))
       ;;
-    $'\n')
+    "$nl")
       end_command
       if [ "$hd_n" -gt 0 ]; then skip_heredocs; else i=$((i + 1)); fi
       ;;
-    ';' | '&' | '|' | '(' | ')')
+    ';' | '&' | '|')
       end_command
+      i=$((i + 1))
+      ;;
+    '(')
+      end_command
+      if [ "${rest:1:1}" = '(' ]; then
+        # (( ... )) は算術式なので、コマンドとして調べない（中の << もシフト演算）
+        rest="${cmd:i}"
+        after="${rest#*))}"
+        if [ "$after" != "$rest" ]; then i=$((len - ${#after})); else i=$len; fi
+      else
+        dstack[dn]="$dir"
+        dn=$((dn + 1))
+        i=$((i + 1))
+      fi
+      ;;
+    ')')
+      end_command
+      if [ "$dn" -gt 0 ]; then
+        dn=$((dn - 1))
+        dir="${dstack[dn]}"
+      fi
       i=$((i + 1))
       ;;
     '<' | '>') scan_redirect ;;
@@ -429,31 +533,26 @@ while [ "$i" -lt "$len" ]; do
         i=$((i + 1))
       else
         # コメントは改行の手前まで飛ばす
-        rest="${cmd:i}"
-        line="${rest%%"$nl"*}"
-        i=$((i + ${#line}))
+        cut_until "$nl"
+        i=$((i + ${#cut}))
       fi
       ;;
     "'") scan_squote ;;
     '"') scan_dquote ;;
     '`') scan_backtick ;;
     \\)
-      if [ "${cmd:i+1:1}" != $'\n' ]; then
-        word+="${cmd:i+1:1}" in_word=true
+      if [ "${rest:1:1}" != "$nl" ]; then
+        word+="${rest:1:1}" in_word=true
       fi
       i=$((i + 2))
       ;;
     '$')
-      if [ "${cmd:i+1:1}" = '(' ]; then
+      if [ "${rest:1:1}" = '(' ]; then
         scan_subst
       else
         word+="$c" in_word=true
         i=$((i + 1))
       fi
-      ;;
-    *)
-      word+="$c" in_word=true
-      i=$((i + 1))
       ;;
   esac
 done
