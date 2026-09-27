@@ -22,6 +22,7 @@ plugins/dev-workflow/scripts/doctor.sh
 | `/dev-workflow:task-create` | 依頼の内容から Issue を起票し、type ラベルを付けて Project に追加する。Story Point は見積もりを提案し、確認してから設定する |
 | `/dev-workflow:task-start` | Issue の作業を始める。ブランチとワークツリー（`.claude/worktrees/<ブランチ名>`）を作り、自分に割り当てて In Progress に移す |
 | `/dev-workflow:commit` | 変更を Conventional Commits の規約に沿ってコミットする。メッセージを検証してからコミットし、main の上ではコミットしない |
+| `/dev-workflow:task-finish` | PR がマージされた後の後片付け。マージを確かめ、ワークツリーとローカルのブランチを削除し、main を最新にする（`git pull --ff-only`） |
 
 ## フック
 
@@ -102,3 +103,22 @@ bats tests/
 TEST_BASH=/bin/bash bats tests/   # macOS では標準の bash 3.2 で確認する
 claude plugin validate .
 ```
+
+### Docker の bash 3.2 でテストする
+
+macOS 以外でも、Docker の `bash:3.2` イメージで macOS 標準の bash 3.2 で動くことを確かめられます。リポジトリ・ワークツリーのどこで実行しても動きます。
+
+```bash
+root=$(cd "$(git rev-parse --git-common-dir)/.." && pwd)   # 元のリポジトリ
+top=$(git rev-parse --show-toplevel)                       # 今いるリポジトリまたはワークツリー
+docker run --rm -v "$root:$root" -v "$top:$top" -w "$top" bash:3.2 sh -c '
+  apk add --no-cache jq git bats bash >/dev/null &&
+  git config --global --add safe.directory "*" &&
+  export PATH=/bin:/usr/bin:$PATH &&
+  TEST_BASH=/usr/local/bin/bash bats tests/
+'
+```
+
+- bats 本体は新しい bash（apk で入れる `/bin/bash`）で動かし、対象のスクリプトだけ bash 3.2（イメージの `/usr/local/bin/bash`）で動かします。イメージでは `/usr/local/bin` が PATH の先にあるので、`PATH` を並べ替えないと bats 本体も bash 3.2 で動き、日本語のテスト名を扱えずに失敗します。
+- コンテナの中はファイルの持ち主が違うので、`safe.directory` を設定しないと git がリポジトリを使えません。
+- ワークツリーの `.git` はファイルで、元のリポジトリの `.git/worktrees/` を指しています。ワークツリーだけをマウントすると `fatal: not a git repository` になるので、上のように元のリポジトリ全体とワークツリーを、どちらも同じパスでマウントします（ワークツリーがリポジトリの外にあっても動きます）。ワークツリーでは、先に `git submodule update --init` も実行しておきます。

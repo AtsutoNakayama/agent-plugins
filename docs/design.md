@@ -32,9 +32,12 @@ agent-plugins/
 
 ## 3. 命名
 
-- ブランチ名：`<type>/<issue番号>-<短い説明>`（例：`feat/12-add-login`）
+- ブランチ名：`{type}/{issue_number}-{slug}`（例：`feat/12-add-login`）。形は設定の `branch.pattern` で変えられる。使えるプレースホルダは次の3つ。
+  - `{type}`：Issue の type ラベル（例：`feat`）
+  - `{issue_number}`：Issue の番号（例：`12`）
+  - `{slug}`：何をするかを表す英語の短い説明（例：`add-login`）
 - `type` は Issue の type ラベルから決める。起票時には type ラベルを必ず1つ付ける。
-- **ブランチ名とワークツリー名は `[a-z0-9-/]` のみ**。日本語は含めない。短い説明は AI が英語で考え、スクリプトが整形・検証する。作れないときは `issue-<番号>` にする。
+- **ブランチ名とワークツリー名は `[a-z0-9-/]` のみ**。日本語は含めない。短い説明は AI が英語で考え、スクリプトが整形・検証する。整形した結果が空になる（英数字が無い）ときは、エラーで止める。
 - ワークツリーの置き場所：`.claude/worktrees/<ブランチ名>`（設定で変更できる）。
 
 ## 4. GitHub Projects
@@ -104,7 +107,7 @@ agent-plugins/
 | `review` | ローカルのレビューと、反映するものの選択 | なし（反映するものはユーザーが選ぶ） |
 | `review-pr` | PR のレビューと、該当行へのコメント投稿 | コメントの投稿 |
 | `review-perspective-add` | 観点ファイルを作る | なし（手元のファイルだけ） |
-| `commit` | 規約に沿ったコミット | なし（手元のコミットだけ） |
+| `commit` | 規約に沿ったコミット。実装中に論理的な区切りごとに呼ぶ | なし（手元のコミットだけ） |
 | `pr-create` | push と PR 作成 | push と PR の作成 |
 | `task-finish` | ワークツリーとローカルブランチを削除し、main を最新にする（`git pull --ff-only`） | ワークツリーとブランチの削除 |
 | `workflow` | 今の段階を判断して次の段階へ進める | 各段階のスキルに従う |
@@ -117,7 +120,7 @@ agent-plugins/
 
 1. **GitHub のルールセット**（`setup-repo.sh`）：main への直接 push の禁止と PR の必須化、強制 push と main の削除の禁止。承認の必須化はオプション（既定は無効）。
 2. **Claude Code のフック**（`hooks/guard-git.sh`）：main 上での commit と、main への push をブロックする。強制 push（`--force` / `-f` / `+<refspec>` / `--mirror`）をブロックする（`--force-with-lease` は許可）。ブランチ名が規約に合わないときは警告する。
-3. **`workflow` スキル**：着手 → 実装 → ローカルレビュー → コミット → PR → PR レビュー → マージ（人間）→ 後片付け。
+3. **`workflow` スキル**：着手 → 実装（論理的な区切りごとにコミット）→ ローカルレビュー → PR → PR レビュー → マージ（人間）→ 後片付け。
 
 ## 10. スクリプト
 
@@ -132,7 +135,7 @@ agent-plugins/
 | `issue-create.sh` | 起票、ラベルの付与、Project への追加、列と Story Point の設定 |
 | `status-set.sh` | 列を移す |
 | `branch-name.sh` | ブランチ名を作り、検証する |
-| `task-start.sh` | ワークツリーの作成、割り当て、In Progress への移動 |
+| `task-start.sh` | ワークツリーの作成（サブモジュールの初期化を含む）、割り当て、In Progress への移動 |
 | `context.sh` | 今のブランチから Issue・PR・段階を割り出す |
 | `review-perspectives.sh` | 観点ファイルを集める |
 | `pr-create.sh` | PR を作る |

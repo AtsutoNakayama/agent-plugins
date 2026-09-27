@@ -9,7 +9,8 @@
 #   --slug TEXT    短い説明（英語）。小文字にし、英数字以外は - にして 40 文字までに整える
 #   --type TYPE    type（既定: Issue の type ラベル。labels.types のどれか1つが付いている必要がある）
 #
-# 形は設定の branch.pattern（既定: {type}/{issue}-{slug}）。短い説明が作れないときは issue-<番号> にする。
+# 形は設定の branch.pattern（既定: {type}/{issue_number}-{slug}）。
+# branch.pattern のプレースホルダ: {type} は type ラベル、{issue_number} は Issue の番号、{slug} は英語の短い説明。
 # --check は規約に合わなければ終了コード 1 で、理由を出力する。
 set -euo pipefail
 
@@ -71,6 +72,12 @@ fi
 case "$issue" in
   *[!0-9]*) dw_die "--issue には数字を指定してください: $issue" 64 ;;
 esac
+[ -n "$slug" ] || dw_die "--slug は必須です" 64
+
+# 小文字にし、英数字以外（日本語を含む）を - にまとめ、前後の - を除いて 40 文字までにする
+slug="$(printf '%s' "$slug" | LC_ALL=C tr '[:upper:]' '[:lower:]' \
+  | LC_ALL=C sed -e 's/[^a-z0-9]/-/g' -e 's/--*/-/g' -e 's/^-//' -e 's/-$//' | cut -c1-40 | sed 's/-$//')"
+[ -n "$slug" ] || dw_die "短い説明に英数字がありません。英語で指定してください" 64
 
 config="$("$BASH" "$DW_SCRIPTS_DIR/config.sh")"
 if [ -z "$type" ]; then
@@ -86,19 +93,11 @@ fi
 jq -e --arg t "$type" '.labels.types | index($t)' <<<"$config" >/dev/null \
   || dw_die "type は labels.types のどれかにしてください: $type" 64
 
-# 小文字にし、英数字以外（日本語を含む）を - にまとめ、前後の - を除いて 40 文字までにする
-slug="$(printf '%s' "$slug" | LC_ALL=C tr '[:upper:]' '[:lower:]' \
-  | LC_ALL=C sed -e 's/[^a-z0-9]/-/g' -e 's/--*/-/g' -e 's/^-//' -e 's/-$//' | cut -c1-40 | sed 's/-$//')"
-
-if [ -n "$slug" ]; then
-  pattern="$(jq -r '.branch.pattern' <<<"$config")"
-  branch="$(jq -rn --arg p "$pattern" --arg t "$type" --arg i "$issue" --arg s "$slug" \
-    '$p | gsub("\\{type\\}"; $t) | gsub("\\{issue\\}"; $i) | gsub("\\{slug\\}"; $s)')"
-else
-  branch="issue-$issue"
-fi
+pattern="$(jq -r '.branch.pattern' <<<"$config")"
+branch="$(jq -rn --arg p "$pattern" --arg t "$type" --arg i "$issue" --arg s "$slug" \
+  '$p | gsub("\\{type\\}"; $t) | gsub("\\{issue_number\\}"; $i) | gsub("\\{slug\\}"; $s)')"
 reason="$(problem "$branch")"
 [ -z "$reason" ] || dw_die "ブランチ名 ${branch} が規約に合いません（${reason}）。branch.pattern を確かめてください" 2
 
 jq -n --arg b "$branch" --arg t "$type" --argjson i "$issue" --arg s "$slug" \
-  '{branch: $b, type: $t, issue: $i, slug: (if $s == "" then null else $s end)}'
+  '{branch: $b, type: $t, issue: $i, slug: $s}'

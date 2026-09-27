@@ -19,7 +19,7 @@
     "types": ["feat", "fix", "refactor", "perf", "test", "docs", "build", "ci", "chore"]
   },
   "branch": {
-    "pattern": "{type}/{issue}-{slug}",
+    "pattern": "{type}/{issue_number}-{slug}",
     "worktree_dir": ".claude/worktrees"
   },
   "commit": {
