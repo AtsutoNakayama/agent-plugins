@@ -13,6 +13,7 @@ setup() {
   TMP="$(cd "$(mktemp -d)" && pwd -P)"
   REPO="$TMP/repo"
   export WORKFLOW_USER_DIR="$TMP/user"
+  export WORKFLOW_USER_REVIEW_DIR="$TMP/user-review"
   # CI やコンテナには git の名前とメールアドレスが無いので、テストでコミットできるよう決めておく
   export GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@example.com GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@example.com
   mkdir -p "$REPO/.claude" "$WORKFLOW_USER_DIR"
