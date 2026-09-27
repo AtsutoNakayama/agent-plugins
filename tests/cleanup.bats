@@ -226,6 +226,26 @@ run_cleanup() {
   [ -d "$WT" ]
 }
 
+@test "サブモジュールがタグからだけ届くコミットを指していても削除する" {
+  add_submodule
+  setup_branch
+  git -C "$WT" submodule update -q --init
+  # サブモジュールのリモートで、どのブランチにも無くタグだけが指すコミットを作る
+  git -C "$TMP/sub" commit -q --allow-empty -m tagged
+  git -C "$TMP/sub" tag v1
+  git -C "$TMP/sub" reset -q --hard HEAD~1
+  git -C "$WT/lib/sub" fetch -q --tags origin
+  git -C "$WT/lib/sub" switch -q --detach v1
+  git -C "$WT" add lib/sub
+  git -C "$WT" commit -q -m "feat: sub v1"
+  git -C "$WT" push -q origin feat/17-x
+  squash_merge
+  fake_pr MERGED
+  run_cleanup --branch feat/17-x
+  assert_success
+  [ ! -e "$WT" ]
+}
+
 @test "サブモジュールのローカルのブランチにだけリモートに無いコミットがあっても止まる" {
   add_submodule
   setup_branch

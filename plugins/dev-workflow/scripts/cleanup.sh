@@ -112,10 +112,11 @@ if [ -n "$path" ]; then
     $dry_run || git -C "$main_root" switch -q "$base" || dw_die "${base} に切り替えられませんでした"
   else
     # サブモジュールの git のデータはワークツリーと一緒に消えるので、リモートに無いコミット（HEAD とローカルのブランチ）や
-    # stash が残っていれば止まる
+    # stash が残っていれば止まる。リモートのブランチかタグ（タグは手元のものとリモートのものを区別できない）から届かない
+    # コミットは、SHA で取ってきた push 済みのものでも手元では見分けられないので、安全のために止まる
     # shellcheck disable=SC2016 # 各サブモジュールの中で展開させる
     unpushed="$(git -C "$path" submodule --quiet foreach --recursive '
-      if [ -n "$(git log -1 --format=%h HEAD --branches --not --remotes)" ] \
+      if [ -n "$(git log -1 --format=%h HEAD --branches --not --remotes --tags)" ] \
         || git rev-parse -q --verify refs/stash >/dev/null; then
         echo "$displaypath"
       fi')" || dw_die "$path のサブモジュールを確かめられませんでした"
