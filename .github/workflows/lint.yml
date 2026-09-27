@@ -1,4 +1,4 @@
-name: CI
+name: Lint
 
 on:
   pull_request:
@@ -36,33 +36,3 @@ jobs:
             echo "plugin.json の version（${plugin}）が .release-please-manifest.json（${manifest}）と違います。version は release-please が上げるので、手で変えないでください" >&2
             exit 1
           fi
-
-  test:
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - os: ubuntu-latest
-            bash: bash
-          # macOS 標準の bash 3.2 で動くことを確かめる
-          - os: macos-latest
-            bash: /bin/bash
-    runs-on: ${{ matrix.os }}
-    steps:
-      - uses: actions/checkout@v5
-        with:
-          submodules: true
-      - name: install bats
-        # macOS では bats 本体を新しい bash で動かし、対象のスクリプトだけ /bin/bash 3.2 で動かす
-        run: |
-          if [ "$RUNNER_OS" = macOS ]; then
-            brew install bash bats-core jq
-          else
-            sudo apt-get update && sudo apt-get install -y bats jq
-          fi
-      - name: bats
-        env:
-          TEST_BASH: ${{ matrix.bash }}
-        run: |
-          "$TEST_BASH" --version | head -n 1
-          bats tests/
