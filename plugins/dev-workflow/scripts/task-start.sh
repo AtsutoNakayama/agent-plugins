@@ -52,6 +52,7 @@ done
 case "$issue" in
   *[!0-9]*) dw_die "--issue には数字を指定してください: $issue" 64 ;;
 esac
+[ -n "$slug" ] || dw_die "--slug は必須です" 64
 
 repo_root="$(dw_repo_root)" || dw_die "リポジトリの中で実行してください" 64
 main_root="$(dw_main_root "$repo_root")" || dw_die "メインのワークツリーが分かりません"
@@ -68,7 +69,7 @@ issue_json="$(gh issue view "$issue" --json number,title,state,assignees)"
 title="$(jq -r .title <<<"$issue_json")"
 
 # --- 1. ブランチ名 --------------------------------------------------------------
-branch="$("$BASH" "$DW_SCRIPTS_DIR/branch-name.sh" --issue "$issue" ${slug:+--slug "$slug"} | jq -r .branch)"
+branch="$("$BASH" "$DW_SCRIPTS_DIR/branch-name.sh" --issue "$issue" --slug "$slug" | jq -r .branch)"
 # 置き場所が絶対パスならそのまま、相対パスならメインのワークツリーから
 case "$worktree_dir" in
   /*) path="${worktree_dir%/}/$branch" ;;
