@@ -25,7 +25,8 @@ jobs:
           fi
       - name: plugin manifest
         run: |
-          jq empty .claude-plugin/marketplace.json plugins/*/.claude-plugin/plugin.json plugins/*/defaults/*.json
+          jq empty .claude-plugin/marketplace.json plugins/*/.claude-plugin/plugin.json plugins/*/defaults/*.json \
+            release-please-config.json .release-please-manifest.json
 
   test:
     strategy:
