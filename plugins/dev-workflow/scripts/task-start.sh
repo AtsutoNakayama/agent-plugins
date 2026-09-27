@@ -151,7 +151,7 @@ if $submodules; then
   note "ワークツリーのサブモジュールを初期化する（git submodule update --init --recursive）"
   # 出力は JSON だけにするため、git の出力は標準エラーに回す
   if ! $dry_run && ! git -C "$path" submodule update -q --init --recursive >&2; then
-    dw_warn "サブモジュールを初期化できませんでした。ワークツリーで git submodule update --init --recursive を実行してください（cd $path）"
+    dw_warn "サブモジュールを初期化できませんでした。ワークツリーで git submodule update --init --recursive を実行してください（cd ${path}）"
   fi
 fi
 
