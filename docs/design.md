@@ -32,7 +32,10 @@ agent-plugins/
 
 ## 3. 命名
 
-- ブランチ名：`<type>/<issue番号>-<短い説明>`（例：`feat/12-add-login`）
+- ブランチ名：`{type}/{issue_number}-{slug}`（例：`feat/12-add-login`）。形は設定の `branch.pattern` で変えられる。使えるプレースホルダは次の3つ。
+  - `{type}`：Issue の type ラベル（例：`feat`）
+  - `{issue_number}`：Issue の番号（例：`12`）
+  - `{slug}`：何をするかを表す英語の短い説明（例：`add-login`）
 - `type` は Issue の type ラベルから決める。起票時には type ラベルを必ず1つ付ける。
 - **ブランチ名とワークツリー名は `[a-z0-9-/]` のみ**。日本語は含めない。短い説明は AI が英語で考え、スクリプトが整形・検証する。作れないときは `issue-<番号>` にする。
 - ワークツリーの置き場所：`.claude/worktrees/<ブランチ名>`（設定で変更できる）。
