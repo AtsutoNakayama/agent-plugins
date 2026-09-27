@@ -22,6 +22,7 @@ plugins/dev-workflow/scripts/doctor.sh
 | `/dev-workflow:task-create` | 依頼の内容から Issue を起票し、type ラベルを付けて Project に追加する。Story Point は見積もりを提案し、確認してから設定する |
 | `/dev-workflow:task-start` | Issue の作業を始める。ブランチとワークツリー（`.claude/worktrees/<ブランチ名>`）を作り、自分に割り当てて In Progress に移す |
 | `/dev-workflow:commit` | 変更を Conventional Commits の規約に沿ってコミットする。メッセージを検証してからコミットし、main の上ではコミットしない |
+| `/dev-workflow:task-finish` | PR がマージされた後の後片付け。マージを確かめ、ワークツリーとローカルのブランチを削除し、main を最新にする（`git pull --ff-only`） |
 
 ## リポジトリの初期設定
 
