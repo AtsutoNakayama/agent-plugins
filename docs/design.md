@@ -32,8 +32,7 @@ agent-plugins/
 
 ## 3. 命名
 
-- ブランチ名：`<type>/<issue番号>-<短い説明>`（例：`feat/12-add-login`）
-- ブランチ名の形は設定の `branch.pattern` で変えられる（既定：`{type}/{issue_number}-{slug}`）。使えるプレースホルダは次の3つ。
+- ブランチ名：`{type}/{issue_number}-{slug}`（例：`feat/12-add-login`）。形は設定の `branch.pattern` で変えられる。使えるプレースホルダは次の3つ。
   - `{type}`：Issue の type ラベル（例：`feat`）
   - `{issue_number}`：Issue の番号（例：`12`）
   - `{slug}`：何をするかを表す英語の短い説明（例：`add-login`）
