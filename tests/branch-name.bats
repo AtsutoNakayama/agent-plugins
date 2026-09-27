@@ -21,12 +21,17 @@ load fake_gh
   [ "${#slug}" -le 40 ]
 }
 
-@test "短い説明が作れない（日本語だけ・空）ときは issue-<番号> にする" {
+@test "--slug が無い、または英数字が無い（日本語や記号だけ）ときはエラーになり、Issue を読まない" {
   setup_fake_gh
-  run_script branch-name.sh --issue 17 --slug "ログイン画面"
-  assert_equal "$(jq -r .branch <<<"$output")" issue-17
-  run_script branch-name.sh --issue 17
-  assert_equal "$(jq -r .branch <<<"$output")" issue-17
+  run_script branch-name.sh --issue 99
+  assert_failure 64
+  assert_output --partial "--slug は必須です"
+  run_script branch-name.sh --issue 99 --slug "ログイン画面"
+  assert_failure 64
+  assert_output --partial "短い説明に英数字がありません"
+  run_script branch-name.sh --issue 99 --slug " - ! "
+  assert_failure 64
+  assert_output --partial "短い説明に英数字がありません"
 }
 
 @test "type 以外のラベルは無視する" {

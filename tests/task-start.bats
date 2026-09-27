@@ -168,6 +168,21 @@ run_start() {
   assert_equal "$(jq -c '[.created.worktree, .created.branch]' <<<"$json")" '[true,false]'
 }
 
+@test "--slug が無い、または英数字が無いときは、何も変えずにエラーになる" {
+  setup_fake_gh
+  setup_origin
+  run_start --issue 17
+  assert_failure 64
+  assert_output --partial "--slug は必須です"
+  run_start --issue 17 --slug "ログイン画面"
+  assert_failure 64
+  assert_output --partial "短い説明に英数字がありません"
+  [ ! -e .claude/worktrees ]
+  assert_equal "$(git branch --list 'feat/*')" ""
+  assert_equal "$(called edit)" 0
+  assert_equal "$(called SetField)" 0
+}
+
 @test "閉じた Issue ではエラーになる" {
   setup_fake_gh
   fake_issue 17 '["feat"]' CLOSED
