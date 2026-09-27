@@ -37,7 +37,7 @@ git submodule update --init   # 初回だけ
 - 日本語などの ASCII 以外の文字が変数の直後に続くときは、`"${var}」"` のように波括弧で囲みます（bash 3.2 は `"$var」"` の `」` のバイトまで変数名とみなします。CI で検査しています）。
 - **スキルから呼ぶファイルは `plugins/dev-workflow/` の中に置く**。プラグインとしてインストールされるのはこのディレクトリだけなので、外に置いたファイルは使う人の環境にありません。スキルからは `${CLAUDE_PLUGIN_ROOT}/scripts/...` のように参照します。
 - **shellcheck を通す**。警告を抑えるときは、理由をコメントに書きます。
-- スクリプトの出力は JSON、エラーは終了コードと1行のメッセージにします。GitHub を変えるスクリプトは `--dry-run` に対応します（設計書 §10）。
+- スクリプトの出力は JSON、エラーは終了コードと1行のメッセージにします。初期設定用のスクリプト（`scripts/setup/`）は `--dry-run` に対応します（設計書 §10）。
 
 ## テストのルール
 
@@ -46,13 +46,15 @@ git submodule update --init   # 初回だけ
 
 ## テストとチェック
 
-PR を出す前に、次がすべて通ることを確かめます（CI でも同じものを実行します）。
+PR を出す前に、次がすべて通ることを確かめます。`claude plugin validate` 以外は CI（`.github/workflows/ci.yml`）でも実行します。
 
 ```bash
-shellcheck -x plugins/dev-workflow/scripts/*.sh plugins/dev-workflow/scripts/*/*.sh
+# tests/lib は外部のライブラリ（git submodule）なので対象にしない
+find plugins tests -path tests/lib -prune -o -type f \( -name '*.sh' -o -name '*.bash' \) -print | xargs shellcheck -x
+shellcheck -s bash tests/*.bats
 bats tests/
 TEST_BASH=/bin/bash bats tests/   # macOS では標準の bash 3.2 で確認する
-claude plugin validate .
+claude plugin validate .           # CI では実行しないので、手元で必ず確かめる
 ```
 
 ### Docker の bash 3.2 でテストする
