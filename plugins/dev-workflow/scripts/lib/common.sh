@@ -52,6 +52,11 @@ dw_user_dir() {
   printf '%s\n' "${WORKFLOW_USER_DIR:-$HOME/.claude/workflow}"
 }
 
+# ユーザーごとのレビューの観点の置き場所。
+dw_user_review_dir() {
+  printf '%s\n' "${WORKFLOW_USER_REVIEW_DIR:-$HOME/.claude/review}"
+}
+
 # 設定ファイルが JSON のオブジェクト1つだけでできているか確かめる。違えば終了する。
 dw_check_json() {
   jq -se 'length == 1 and (.[0] | type) == "object"' "$1" >/dev/null 2>&1 \

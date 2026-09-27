@@ -22,8 +22,36 @@ plugins/dev-workflow/scripts/doctor.sh
 | `/dev-workflow:task-create` | 依頼の内容から Issue を起票し、type ラベルを付けて Project に追加する。Story Point は見積もりを提案し、確認してから設定する。先に終わらせる Issue があれば、本文の「依存」に `#N` を書き、GitHub の依存関係（blocked by）にも登録する |
 | `/dev-workflow:task-start` | Issue の作業を始める。ブランチとワークツリー（`.claude/worktrees/<ブランチ名>`）を作り、自分に割り当てて In Progress に移す |
 | `/dev-workflow:commit` | 変更を Conventional Commits の規約に沿ってコミットする。メッセージを検証してからコミットし、main の上ではコミットしない |
+| `/dev-workflow:review` | 作業中のブランチの変更を、組み込みの `/code-review` と独自のレビューの観点（下記）で並行してレビューし、指摘を1つの一覧にまとめる。反映する指摘を選ぶと、それだけを直してコミットする |
 | `/dev-workflow:pr-create` | 作業用のブランチを push し、Issue に紐付けた PR を作る。タイトルは `<type>: <Issueのタイトル>`、本文は PR テンプレートに沿って書き、`Closes #N` を付けてラベルを引き継ぐ。確認してから push する |
 | `/dev-workflow:task-finish` | PR がマージされた後の後片付け。マージを確かめ、ワークツリーとローカルのブランチを削除し、main を最新にする（`git pull --ff-only`） |
+
+## レビューの観点
+
+`/dev-workflow:review` は、次の3つの層に置いた観点ファイル（1ファイルに1観点の Markdown）を合わせて使います。同じ名前の観点があれば、上の層のファイルが使われます。
+
+1. `<repo>/.claude/review/*.md`：リポジトリの観点（チームで共有する）
+2. `~/.claude/review/*.md`：自分の観点（全リポジトリで使う）
+3. `plugins/dev-workflow/review/*.md`：プラグインに同梱する共通の観点
+
+```markdown
+---
+title: 一覧に出す1行の説明（必須）
+---
+
+サブエージェントへのレビューの指示。何を確かめ、どう指摘するかを書く。
+```
+
+- 観点の名前はファイル名（`.md` を除く）です。小文字の英数字と `-` だけを使います。
+- 同梱の観点を使わないときは、上の層に同じ名前のファイルを置き、frontmatter に `enabled: false` と書きます（本文と `title` は省けます）。
+- 使われる観点は `plugins/dev-workflow/scripts/review-perspectives.sh` で確かめられます。形式の誤ったファイルは警告を出して使いません。そのファイルと同じ名前の観点は、下の層にあっても使いません（`enabled: false` の書き間違いで、止めたつもりの観点が動かないようにするため）。
+
+同梱の観点：
+
+| 観点 | 内容 |
+|---|---|
+| `issue-requirements` | 変更が Issue の「やること」と「完了条件」を満たし、範囲外の変更が混ざっていないか |
+| `docs-sync` | 振る舞いの変更に合わせて、ドキュメントとコメントが直されているか |
 
 ## フック
 
