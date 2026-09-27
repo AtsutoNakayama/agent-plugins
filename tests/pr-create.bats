@@ -109,25 +109,57 @@ run_pr() {
   assert_output --partial --draft
 }
 
-@test "開いた PR が既にあれば、push だけして作り直さない" {
+# status.pr_opened を Done にする
+set_pr_opened() {
+  jq '. + {status: {pr_opened: "Done"}}' .claude/workflow.json >"$TMP/c.json" && mv "$TMP/c.json" .claude/workflow.json
+  git commit -q -am "chore: status"
+}
+
+@test "開いた PR が既にあれば、push だけして作り直さず、タイトル・本文・列も変えない" {
   setup_branch
-  echo '[{"number": 7, "url": "https://github.com/me/demo/pull/7"}]' >"$FIX/pr-list.json"
+  set_pr_opened
+  echo '[{"number": 7, "url": "https://github.com/me/demo/pull/7", "isCrossRepository": false}]' >"$FIX/pr-list.json"
   run_pr --issue 17 --body-file "$TMP/body.md"
   assert_success
-  assert_equal "$(jq -c '[.created, .pr.number]' <<<"$json")" '[false,7]'
+  assert_equal "$(jq -c '[.created, .pr.number, .title, .body, .labels, .status.skipped]' <<<"$json")" '[false,7,null,null,null,true]'
   assert_equal "$(called pr-create)" 0
+  assert_equal "$(called SetField)" 0
   assert_equal "$(git rev-parse origin/feat/17-x)" "$(git rev-parse HEAD)"
-  assert_equal "$(args pr-list)" "--head feat/17-x --state open --json number,url"
+  assert_equal "$(args pr-list)" "--head feat/17-x --state open --json number,url,isCrossRepository"
+}
+
+@test "fork の同じ名前のブランチからの PR は、既にある PR とみなさない" {
+  setup_branch
+  echo '[{"number": 7, "url": "https://github.com/me/demo/pull/7", "isCrossRepository": true}]' >"$FIX/pr-list.json"
+  run_pr --issue 17 --body-file "$TMP/body.md"
+  assert_success
+  assert_equal "$(jq -c '[.created, .pr.number]' <<<"$json")" '[true,42]'
 }
 
 @test "status.pr_opened が設定されていれば、その列に移す" {
   setup_branch
-  jq '. + {status: {pr_opened: "Done"}}' .claude/workflow.json >"$TMP/c.json" && mv "$TMP/c.json" .claude/workflow.json
-  git commit -q -am "chore: status"
+  set_pr_opened
   run_pr --issue 17 --body-file "$TMP/body.md"
   assert_success
   assert_equal "$(jq -c '[.status.from, .status.to]' <<<"$json")" '["Todo","Done"]'
   assert_equal "$(args SetField | jq -r .v.singleSelectOptionId)" O3
+}
+
+@test "PR を作った後に列を移せなければ、移し方を伝えて止まる" {
+  setup_branch
+  set_pr_opened
+  FAKE_FAIL=SetField run_pr --issue 17 --body-file "$TMP/body.md"
+  assert_failure 1
+  assert_output --partial "PR #42 は作りましたが、Issue #17 の列を移せませんでした（status-set.sh --issue 17 --to pr_opened で移せます）"
+}
+
+@test "dry-run で列の移動の予定を作れなければ、PR を作ったとは言わずに止まる" {
+  setup_branch
+  set_pr_opened
+  FAKE_FAIL=ProjectFields run_pr --issue 17 --body-file "$TMP/body.md" --dry-run
+  assert_failure 1
+  assert_output --partial "Issue #17 を列に移す予定を作れませんでした"
+  refute_output --partial "作りましたが"
 }
 
 @test "status.pr_opened が既定（null）なら、列を移さない" {

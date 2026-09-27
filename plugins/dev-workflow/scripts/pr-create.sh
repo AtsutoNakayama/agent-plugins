@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # 今のブランチを push し、Issue に紐付けた PR を作る。
-# 何度実行しても同じ結果になる（そのブランチの開いた PR が既にあれば、push だけして作り直さない）。
+# 何度実行しても同じ結果になる（そのブランチの開いた PR が既にあれば、push だけする。
+# その PR のタイトル・本文・ラベル・Project の列は変えない）。
 #
 # 使い方: pr-create.sh --issue N --body-file PATH [--title TEXT] [--dry-run]
 #   --issue N         紐付ける Issue の番号
@@ -14,7 +15,8 @@
 #      テンプレートの番号が空のままの行（Closes #）は消す
 #   3. origin に push する（-u で追跡させる）。未コミットの変更や、PR にするコミットが無ければ止まる
 #   4. base_branch に向けた PR を作り、Issue のラベルを引き継ぐ。pr.draft が true なら下書きにする
-#   5. status.pr_opened が設定されていれば、Issue をその列に移す（status-set.sh）
+#   5. PR を新しく作ったときだけ、status.pr_opened が設定されていれば Issue をその列に移す（status-set.sh）。
+#      既にある PR では移さない（手で先の列に移した Issue を戻さないため）
 set -euo pipefail
 
 # shellcheck source=lib/common.sh
@@ -123,14 +125,16 @@ if ! $dry_run; then
 fi
 
 # --- 4. PR ----------------------------------------------------------------------
-existing="$(gh pr list --head "$branch" --state open --json number,url)" \
+# --head はブランチ名だけで探すので、fork の同じ名前のブランチからの PR を除く
+existing="$(gh pr list --head "$branch" --state open --json number,url,isCrossRepository \
+  | jq -c 'map(select(.isCrossRepository | not))')" \
   || dw_die "${branch} の PR を取得できませんでした"
 pr_number="$(jq -r '.[0].number // empty' <<<"$existing")"
 pr_url="$(jq -r '.[0].url // empty' <<<"$existing")"
 draft="$(jq -r '.pr.draft // false' <<<"$config")"
 created=false
 if [ -n "$pr_number" ]; then
-  note "既にある PR #${pr_number} を使う（作り直さない）"
+  note "既にある PR #${pr_number} を使う（作り直さず、タイトル・本文・ラベル・列は変えない）"
 else
   created=true
   note "${base} に向けた PR「${title}」を作る$($draft && echo '（下書き）')"
@@ -150,7 +154,7 @@ else
 fi
 
 # --- 5. pr_opened の列に移す ----------------------------------------------------
-if [ -z "$(jq -r '.status.pr_opened // empty' <<<"$config")" ]; then
+if ! $created || [ -z "$(jq -r '.status.pr_opened // empty' <<<"$config")" ]; then
   status='{"skipped": true, "actions": []}'
 elif [ -z "$(jq -r '.project.number // empty' <<<"$config")" ]; then
   dw_warn "project.number が未設定なので、Project の列は移しません（setup-project.sh --write-config で設定できます）"
@@ -158,8 +162,11 @@ elif [ -z "$(jq -r '.project.number // empty' <<<"$config")" ]; then
 else
   status_args=(--issue "$issue" --to pr_opened)
   $dry_run && status_args+=(--dry-run)
-  status="$("$BASH" "$DW_SCRIPTS_DIR/status-set.sh" "${status_args[@]}")" \
-    || dw_die "PR #${pr_number:-?} は作りましたが、Issue #${issue} の列を移せませんでした"
+  if ! status="$("$BASH" "$DW_SCRIPTS_DIR/status-set.sh" "${status_args[@]}")"; then
+    $dry_run && dw_die "Issue #${issue} を列に移す予定を作れませんでした"
+    # 次に実行しても PR は既にあるので列は移さない。移し方を伝える
+    dw_die "PR #${pr_number} は作りましたが、Issue #${issue} の列を移せませんでした（status-set.sh --issue ${issue} --to pr_opened で移せます）"
+  fi
 fi
 while IFS= read -r a; do
   [ -n "$a" ] && note "$a"
@@ -173,9 +180,10 @@ jq -n --argjson i "$issue" --arg branch "$branch" --arg base "$base" --arg title
     dry_run: $dry,
     branch: $branch,
     base: $base,
-    title: $title,
-    body: $body,
-    labels: $labels,
+    # 既にある PR には反映しないので、作るときだけ出す
+    title: (if $created then $title else null end),
+    body: (if $created then $body else null end),
+    labels: (if $created then $labels else null end),
     draft: $draft,
     created: $created,
     pr: (if $number == "" then null else {number: ($number | tonumber), url: $url} end),
