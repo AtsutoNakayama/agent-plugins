@@ -80,21 +80,27 @@ dw_fetch_repo_file() {
   esac
 }
 
-# GitHub がテンプレートを探す場所（大文字小文字は区別しない。末尾が / はディレクトリ）。source した側で使う
+# GitHub がテンプレートを探す場所。source した側で使う。
+# 大文字小文字は区別せず、拡張子は .md・.txt・なしを認める。書き方は dw_find_nocase を参照
 # PR テンプレート（1ファイル）と、複数の PR テンプレートを置くディレクトリ（?template= で選ぶ形式）
 # shellcheck disable=SC2034
-DW_PR_TEMPLATE_FILES=".github/pull_request_template.md docs/pull_request_template.md pull_request_template.md"
+DW_PR_TEMPLATE_FILES=".github/pull_request_template docs/pull_request_template pull_request_template"
 # shellcheck disable=SC2034
 DW_PR_TEMPLATE_DIRS=".github/pull_request_template/ docs/pull_request_template/ pull_request_template/"
 # Issue テンプレートのディレクトリと、古い形式の1ファイル
 # shellcheck disable=SC2034
-DW_ISSUE_TEMPLATES=".github/issue_template/ .github/issue_template.md docs/issue_template.md issue_template.md"
+DW_ISSUE_TEMPLATES=".github/issue_template/ .github/issue_template docs/issue_template issue_template"
 
 # <ルート> からの相対パスの候補を、大文字小文字を区別せずに順に探し、見つかった実際のパスを出力する
-# （GitHub のテンプレートの探し方に合わせる）。末尾が / の候補はディレクトリだけに当てはまる。
+# （GitHub のテンプレートの探し方に合わせる）。候補の書き方:
+#   末尾が /         そのディレクトリだけに当てはまる（例: .github/issue_template/）
+#   拡張子が無い     同じ名前で、拡張子が .md・.txt・なしのファイルに当てはまる（例: docs/pull_request_template →
+#                    docs/PULL_REQUEST_TEMPLATE.md、docs/pull_request_template.txt）
+#   拡張子がある     その名前のファイルだけに当てはまる
+# 候補を空白区切りの一覧から分割して渡せるよう、* などのワイルドカードは使わない。
 # 使い方: dw_find_nocase <ルート> <候補>...
 dw_find_nocase() {
-  local root="$1" f dir base want entry name
+  local root="$1" f dir base want entry name lower
   shift
   for f in "$@"; do
     dir="$(dirname "$f")"
@@ -103,12 +109,26 @@ dw_find_nocase() {
     [ -d "$root/$dir" ] || continue
     for entry in "$root/$dir"/* "$root/$dir"/.[!.]*; do
       [ -e "$entry" ] || continue
-      case "$f" in */) [ -d "$entry" ] || continue ;; esac
+      # ディレクトリの候補はディレクトリだけ、ファイルの候補はファイルだけに当てはめる
+      case "$f" in
+        */) [ -d "$entry" ] || continue ;;
+        *) [ ! -d "$entry" ] || continue ;;
+      esac
       name="$(basename "$entry")"
-      if [ "$(printf '%s' "$name" | tr '[:upper:]' '[:lower:]')" = "$want" ]; then
-        if [ "$dir" = . ]; then printf '%s\n' "$name"; else printf '%s\n' "$dir/$name"; fi
-        return 0
-      fi
+      lower="$(printf '%s' "$name" | tr '[:upper:]' '[:lower:]')"
+      # 拡張子の有無は、ディレクトリ部分（.github など）ではなく候補の名前で見る
+      case "$f" in
+        */) [ "$lower" = "$want" ] || continue ;;
+        *)
+          case "$base" in
+            *.*) [ "$lower" = "$want" ] || continue ;;
+            # GitHub が例に挙げる .md・.txt と、拡張子なしだけを認める（.md~ などのバックアップは除く）
+            *) [ "$lower" = "$want" ] || [ "$lower" = "$want.md" ] || [ "$lower" = "$want.txt" ] || continue ;;
+          esac
+          ;;
+      esac
+      if [ "$dir" = . ]; then printf '%s\n' "$name"; else printf '%s\n' "$dir/$name"; fi
+      return 0
     done
   done
   return 1
