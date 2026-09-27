@@ -14,8 +14,6 @@
 #   2. Issue を作る（type ラベル付き）
 #   3. Project に追加し（既に入っていれば既存の項目を使う）、Status を todo の列に、Story Point を設定する
 # project.number が未設定なら、Issue だけ作って警告する。
-# GraphQL の変数（$login など）を bash に展開させないため、クエリはシングルクォートで書く
-# shellcheck disable=SC2016
 set -euo pipefail
 
 # shellcheck source=lib/common.sh
@@ -23,7 +21,7 @@ set -euo pipefail
 dw_require gh jq
 
 # macOS の BSD sed が日本語で失敗しないよう、バイト列として扱わせる
-usage() { LC_ALL=C sed -n '2,/^# GraphQL の変数/{/^# GraphQL の変数/d;s/^# \{0,1\}//;p;}' "$0"; }
+usage() { LC_ALL=C sed -n '2,/^[^#]/{/^[^#]/d;s/^# \{0,1\}//;p;}' "$0"; }
 
 # オプションの値を取り出す。無ければ使い方の誤り（64）で終了する
 need_value() {
@@ -88,16 +86,7 @@ sp_name="$(jq -r '.story_point.field' <<<"$config")"
 
 project=null
 if [ -n "$number" ]; then
-  project="$(dw_gql_find 'query ProjectFields($login: String!, $number: Int!) {
-    repositoryOwner(login: $login) { ... on ProjectV2Owner { projectV2(number: $number) {
-      id number url
-      fields(first: 50) { nodes {
-        ... on ProjectV2FieldCommon { id name dataType }
-        ... on ProjectV2SingleSelectField { options { id name } } } } } } }
-  }' "$(jq -nc --arg l "$owner" --argjson n "$number" '{login: $l, number: $n}')" \
-    | jq -c '.data.repositoryOwner.projectV2 // null')"
-  # 無い Project は API がエラー（NOT_FOUND）で返すので、dw_gql_find で null に揃えてから案内する
-  [ "$project" != null ] || dw_die "Project が見つかりません: $owner/${number}（setup-project.sh で設定してください）"
+  project="$(dw_project_fields "$owner" "$number")"
   status_field="$(jq -c '[.fields.nodes[] | select(.name == "Status")][0] // null' <<<"$project")"
   [ "$status_field" != null ] || dw_die "Project に Status 列がありません"
   todo_id="$(jq -r --arg n "$todo_name" '[.options[] | select(.name == $n)][0].id // empty' <<<"$status_field")"
@@ -131,18 +120,10 @@ item_id=""
 if [ "$project" != null ]; then
   project_id="$(jq -r .id <<<"$project")"
   # 自動追加が有効でも、既に入っていれば既存の項目が返るだけなので重複しない
-  item_id="$(dw_gql 'mutation AddItem($p: ID!, $c: ID!) {
-    addProjectV2ItemById(input: {projectId: $p, contentId: $c}) { item { id } }
-  }' "$(jq -nc --arg p "$project_id" --arg c "$(jq -r .node_id <<<"$issue")" '{p: $p, c: $c}')" \
-    | jq -r '.data.addProjectV2ItemById.item.id // empty')" || true
-  [ -n "$item_id" ] || fail_after_create "Project に追加できませんでした"
+  item_id="$(dw_project_add_item "$project_id" "$(jq -r .node_id <<<"$issue")")" \
+    || fail_after_create "Project に追加できませんでした"
 
-  set_field() {
-    dw_gql 'mutation SetField($p: ID!, $i: ID!, $f: ID!, $v: ProjectV2FieldValue!) {
-      updateProjectV2ItemFieldValue(input: {projectId: $p, itemId: $i, fieldId: $f, value: $v}) { projectV2Item { id } }
-    }' "$(jq -nc --arg p "$project_id" --arg i "$item_id" --arg f "$1" --argjson v "$2" '{p: $p, i: $i, f: $f, v: $v}')" \
-      | jq -e '.data.updateProjectV2ItemFieldValue.projectV2Item.id' >/dev/null
-  }
+  set_field() { dw_project_set_field "$project_id" "$item_id" "$@"; }
   set_field "$(jq -r .id <<<"$status_field")" "$(jq -nc --arg o "$todo_id" '{singleSelectOptionId: $o}')" \
     || fail_after_create "Status を「${todo_name}」にできませんでした"
   if [ -n "$sp" ]; then

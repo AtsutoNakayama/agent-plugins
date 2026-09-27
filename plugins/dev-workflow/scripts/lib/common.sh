@@ -159,3 +159,44 @@ dw_find_nocase() {
   done
   return 1
 }
+
+# --- GitHub Project（v2） -------------------------------------------------------
+# GraphQL の変数（$login など）を bash に展開させないため、クエリはシングルクォートで書く（SC2016 は意図どおり）
+
+# Project の id・番号・URL と項目（Status の選択肢を含む）を出力する。無ければ案内して止まる。
+# 使い方: dw_project_fields <所有者> <番号>
+# shellcheck disable=SC2016
+dw_project_fields() {
+  local project
+  project="$(dw_gql_find 'query ProjectFields($login: String!, $number: Int!) {
+    repositoryOwner(login: $login) { ... on ProjectV2Owner { projectV2(number: $number) {
+      id number url
+      fields(first: 50) { nodes {
+        ... on ProjectV2FieldCommon { id name dataType }
+        ... on ProjectV2SingleSelectField { options { id name } } } } } } }
+  }' "$(jq -nc --arg l "$1" --argjson n "$2" '{login: $l, number: $n}')" \
+    | jq -c '.data.repositoryOwner.projectV2 // null')" || return 1
+  # 無い Project は API がエラー（NOT_FOUND）で返すので、dw_gql_find で null に揃えてから案内する
+  [ "$project" != null ] || dw_die "Project が見つかりません: ${1}/${2}（setup-project.sh で設定してください）"
+  printf '%s\n' "$project"
+}
+
+# Issue などを Project に追加し、項目の id を出力する。既に入っていれば既存の項目が返る。
+# 使い方: dw_project_add_item <Project の id> <Issue などの node id>
+# shellcheck disable=SC2016
+dw_project_add_item() {
+  dw_gql 'mutation AddItem($p: ID!, $c: ID!) {
+    addProjectV2ItemById(input: {projectId: $p, contentId: $c}) { item { id } }
+  }' "$(jq -nc --arg p "$1" --arg c "$2" '{p: $p, c: $c}')" \
+    | jq -er '.data.addProjectV2ItemById.item.id'
+}
+
+# 項目の値を設定する。値は {"singleSelectOptionId": ...} や {"number": ...} の JSON。
+# 使い方: dw_project_set_field <Project の id> <項目の id> <フィールドの id> <値の JSON>
+# shellcheck disable=SC2016
+dw_project_set_field() {
+  dw_gql 'mutation SetField($p: ID!, $i: ID!, $f: ID!, $v: ProjectV2FieldValue!) {
+    updateProjectV2ItemFieldValue(input: {projectId: $p, itemId: $i, fieldId: $f, value: $v}) { projectV2Item { id } }
+  }' "$(jq -nc --arg p "$1" --arg i "$2" --arg f "$3" --argjson v "$4" '{p: $p, i: $i, f: $f, v: $v}')" \
+    | jq -e '.data.updateProjectV2ItemFieldValue.projectV2Item.id' >/dev/null
+}
