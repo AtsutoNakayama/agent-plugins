@@ -14,6 +14,13 @@ claude --plugin-dir plugins/dev-workflow
 plugins/dev-workflow/scripts/doctor.sh
 ```
 
+## スキル
+
+| スキル | 内容 |
+|---|---|
+| `/dev-workflow:repo-setup` | リポジトリの初期設定（下記） |
+| `/dev-workflow:task-create` | 依頼の内容から Issue を起票し、type ラベルを付けて Project に追加する。Story Point は見積もりを提案し、確認してから設定する |
+
 ## リポジトリの初期設定
 
 Claude Code で `/dev-workflow:repo-setup` を実行すると、選択肢を聞き、予定を見せてから、以下をまとめて行います。スクリプトを直接実行することもできます。

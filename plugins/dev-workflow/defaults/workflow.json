@@ -13,8 +13,7 @@
     "done": "Done"
   },
   "story_point": {
-    "field": "Story Point",
-    "allowed": [1, 2, 3, 5, 8, 13]
+    "field": "Story Point"
   },
   "labels": {
     "types": ["feat", "fix", "hotfix", "refactor", "perf", "test", "docs", "build", "ci", "chore"],

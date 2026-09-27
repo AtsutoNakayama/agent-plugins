@@ -137,10 +137,11 @@ find_by_title() {
 
 created=false
 if [ -n "$number" ]; then
-  project="$(dw_gql 'query ProjectByNumber($login: String!, $number: Int!) {
+  project="$(dw_gql_find 'query ProjectByNumber($login: String!, $number: Int!) {
     repositoryOwner(login: $login) { ... on ProjectV2Owner { projectV2(number: $number) { id number title url } } }
   }' "$(jq -nc --arg l "$owner" --argjson n "$number" '{login: $l, number: $n}')" \
-    | jq -c '.data.repositoryOwner.projectV2')"
+    | jq -c '.data.repositoryOwner.projectV2 // null')"
+  # 無い Project は API がエラー（NOT_FOUND）で返すので、dw_gql_find で null に揃えてから案内する
   [ "$project" != null ] || dw_die "Project が見つかりません: $owner/$number"
 else
   project="$(find_by_title)"

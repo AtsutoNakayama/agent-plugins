@@ -66,6 +66,25 @@ dw_gql() {
     | gh api graphql --input -
 }
 
+# dw_gql と同じだが、対象が無い（NOT_FOUND）ときは失敗にせず {"data": null} を出力する。
+# 呼ぶ側は「見つからない」を null で判断でき、スコープ不足・認証・通信など他の失敗は理由を伝えて止まる。
+# 使い方: dw_gql_find <クエリ> [変数の JSON]
+dw_gql_find() {
+  local out err
+  err="$(mktemp)"
+  if out="$(dw_gql "$@" 2>"$err")"; then
+    rm -f "$err"
+    printf '%s\n' "$out"
+    return 0
+  fi
+  out="$(cat "$err")"
+  rm -f "$err"
+  case "$out" in
+    *NOT_FOUND* | *"Could not resolve to"*) echo '{"data": null}' ;;
+    *) dw_die "GitHub の API に失敗しました: $out" ;;
+  esac
+}
+
 # リポジトリの既定のブランチにあるファイルを取り出して <出力先> に書く。
 # 無ければ（404）1 を返す。それ以外の失敗は、違う内容で進めないよう終了する。
 # 使い方: dw_fetch_repo_file <OWNER/NAME> <パス> <出力先>
@@ -79,6 +98,13 @@ dw_fetch_repo_file() {
     *) dw_die "${1} の ${2} を読めません: $err" ;;
   esac
 }
+
+# Story Point に使える値（フィボナッチ数）。設定では変えられない。
+# 21 と 34 は受け付けるが、見積もりの精度が低いので分割を勧める。34 より大きい作業は分割する。source した側で使う
+# shellcheck disable=SC2034
+DW_STORY_POINTS='[1, 2, 3, 5, 8, 13, 21, 34]'
+# shellcheck disable=SC2034
+DW_STORY_POINT_SPLIT=21
 
 # GitHub がテンプレートを探す場所。source した側で使う。
 # 大文字小文字は区別せず、拡張子は .md・.txt・なしを認める。書き方は dw_find_nocase を参照
