@@ -45,20 +45,24 @@ first_existing() {
 
 # 層3: リポジトリに既にある規約を見つける
 detect_existing() {
-  local pr_tpl commitlint contributing issue_tpl=""
-  pr_tpl="$(first_existing .github/pull_request_template.md .github/PULL_REQUEST_TEMPLATE.md \
-    docs/pull_request_template.md pull_request_template.md || true)"
+  local pr_tpl pr_tpls commitlint contributing issue_tpl
+  # 候補は空白区切りの一覧なので、わざと分割して渡す
+  # shellcheck disable=SC2086
+  pr_tpl="$(dw_find_nocase "$repo_root" $DW_PR_TEMPLATE_FILES || true)"
+  # shellcheck disable=SC2086
+  pr_tpls="$(dw_find_nocase "$repo_root" $DW_PR_TEMPLATE_DIRS || true)"
   commitlint="$(first_existing commitlint.config.js commitlint.config.cjs commitlint.config.mjs \
     commitlint.config.ts .commitlintrc .commitlintrc.json .commitlintrc.yaml .commitlintrc.yml \
     .commitlintrc.js .commitlintrc.cjs || true)"
   contributing="$(first_existing CONTRIBUTING.md .github/CONTRIBUTING.md docs/CONTRIBUTING.md || true)"
-  if [ -d "$repo_root/.github/ISSUE_TEMPLATE" ]; then
-    issue_tpl=".github/ISSUE_TEMPLATE"
-  fi
-  jq -n --arg pr "$pr_tpl" --arg cl "$commitlint" --arg co "$contributing" --arg it "$issue_tpl" '
+  # Issue テンプレートのディレクトリか、古い形式の1ファイル
+  # shellcheck disable=SC2086
+  issue_tpl="$(dw_find_nocase "$repo_root" $DW_ISSUE_TEMPLATES || true)"
+  jq -n --arg pr "$pr_tpl" --arg prs "$pr_tpls" --arg cl "$commitlint" --arg co "$contributing" --arg it "$issue_tpl" '
     def opt: if . == "" then null else . end;
     (if $pr != "" then {pr: {template: $pr}} else {} end)
-    + {detected: {commitlint: ($cl | opt), contributing: ($co | opt), issue_templates: ($it | opt)}}'
+    + {detected: {commitlint: ($cl | opt), contributing: ($co | opt), pr_templates: ($prs | opt),
+        issue_templates: ($it | opt)}}'
 }
 
 add_layer "$DW_PLUGIN_ROOT/defaults/workflow.json"
