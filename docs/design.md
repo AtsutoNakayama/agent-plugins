@@ -23,6 +23,20 @@ agent-plugins/
 └── tests/
 ```
 
+### 配布の対象とバージョン
+
+- 配布の対象は `plugins/dev-workflow/` の中だけ。外（`.github/`、`tests/`、`docs/`、`release-please-config.json` など）はこのリポジトリ専用で、利用者には届かない。
+- Claude Code は plugin.json の version → marketplace.json のエントリの version → コミット SHA の順に version を決め、version が変わらないと更新を検出しない（git のタグは読まない）。version は plugin.json だけに書き、marketplace.json のエントリには書かない。
+- version は [release-please](https://github.com/googleapis/release-please) が上げ、手で変えない（`.github/workflows/release-please.yml`）。
+  - main へのマージごとに、ボットがリリース PR に version の変更をためる。リリース PR をマージすると、plugin.json の version が上がり、`dev-workflow-v<version>` のタグと GitHub Release（リリースノート）が作られる。CHANGELOG.md は配布物に入れないため作らない。
+  - `plugins/dev-workflow/` の中を変えたコミットは、type を問わずリリースの対象にする（`changelog-sections` で全ての type を表示する）。SKILL.md の文章だけの変更も AI への指示を変えるので、利用者に届ける。外だけを変えたコミットでは version は上がらない。
+  - 上げ幅は type で決まる。1.0 より前は、`feat` と破壊的変更で minor、それ以外は patch を上げる（`bump-minor-pre-major`）。
+  - このリポジトリ専用の作業は `ci` / `test` / `docs` / `chore` の type を使う。
+- 破壊的変更を伴わない節目（1.0.0 など）は、`plugins/dev-workflow/` の中を変える PR の本文に `Release-As: 1.0.0` の行を書いて上げる。スカッシュマージのコミットの本文は PR の本文になる（§2、`squash_merge_commit_message: PR_BODY`）ので、release-please がその行を読む。
+  - 外だけを変える PR に書いても効かない（release-please はパッケージのパスの下を変えたコミットしか読まない）。
+  - マージの画面でコミットの本文を書き換えるときは、この行を消さない。
+  - 書き忘れてマージしたときは、マージした PR の本文に `BEGIN_COMMIT_OVERRIDE` 〜 `END_COMMIT_OVERRIDE` でタイトルと `Release-As: 1.0.0` を書き足す。次に release-please が動くと、そのコミットのメッセージとして読まれる。
+
 ## 2. ブランチ運用とマージ
 
 - GitHub Flow：main から短命のブランチを切り、PR を経て main にマージする。既定のマージ先は main（設定で変更できる）。
@@ -156,7 +170,9 @@ agent-plugins/
 | 0. 土台 | マーケットプレイスとプラグインの骨組み、`common.sh`、`config.sh`、`doctor.sh`、CI | 0.1.0 |
 | 1. 初期設定 | `setup-*.sh`、`repo-setup` | 0.2.0 |
 | 2. 最小のサイクル | `task-create`、`task-start`、`commit`、`pr-create`、`task-finish`、main を守るフック | 0.3.0 |
-| 3. レビュー | `review`、`review-pr`、`review-perspective-add` | 0.4.0 |
+| 3. レビュー | `review`、`review-pr`、`review-perspective-add` | 0.x（release-please が上げる） |
 | 4. まとめる | `workflow`、`task-status`、ブランチ名を警告するフック | 1.0.0 |
 
 最初の版は段階 0〜2。このリポジトリ自体を最初の利用者にする。
+
+段階 2 までは version を手で上げた。0.3.0 からは release-please がリリース PR をマージするたびに上げる（§1）ので、段階 3 の version は決めない。段階 4 の最後の PR の本文に `Release-As: 1.0.0` を書いて 1.0.0 にする。
