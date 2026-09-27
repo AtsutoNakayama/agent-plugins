@@ -275,6 +275,15 @@ SH
   done
 }
 
+@test ".md 以外の拡張子の PR テンプレートがあれば作らない" {
+  setup_fake_plugin
+  echo mine >pull_request_template.txt
+  run_all
+  assert_success
+  [ ! -e .github/pull_request_template.md ]
+  assert_equal "$(jq -r '.templates.skipped[0].existing' <<<"$json")" "pull_request_template.txt"
+}
+
 @test "PR テンプレートのディレクトリや古い形式の Issue テンプレートがあれば作らない" {
   setup_fake_plugin
   mkdir -p .github/PULL_REQUEST_TEMPLATE

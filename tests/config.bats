@@ -112,3 +112,24 @@ load test_helper
   run_script config.sh '[.detected.pr_templates, .detected.issue_templates] | tojson'
   assert_output '[null,".github/ISSUE_TEMPLATE.md"]'
 }
+
+@test "テンプレートは拡張子を問わずに検出する（.txt・拡張子なし）" {
+  mkdir -p .github docs
+  touch .github/Pull_Request_Template.txt docs/ISSUE_TEMPLATE
+  run_script config.sh '[.pr.template, .detected.issue_templates] | tojson'
+  assert_output '[".github/Pull_Request_Template.txt","docs/ISSUE_TEMPLATE"]'
+}
+
+@test "拡張子を問わない候補でも、名前が前方一致するだけのファイルやディレクトリには当てはめない" {
+  mkdir -p .github/PULL_REQUEST_TEMPLATE
+  touch .github/pull_request_template_old.md .github/PULL_REQUEST_TEMPLATE/a.md
+  run_script config.sh '[.pr.template, .detected.pr_templates] | tojson'
+  assert_output '[null,".github/PULL_REQUEST_TEMPLATE"]'
+}
+
+@test "拡張子が .md・.txt・なし以外のファイル（バックアップや .yml）はテンプレートとみなさない" {
+  mkdir -p .github
+  touch .github/pull_request_template.md~ .github/issue_template.yml
+  run_script config.sh '[.pr.template, .detected.issue_templates] | tojson'
+  assert_output '[null,null]'
+}
