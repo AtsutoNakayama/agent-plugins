@@ -9,7 +9,8 @@
 #   --slug TEXT    短い説明（英語）。小文字にし、英数字以外は - にして 40 文字までに整える
 #   --type TYPE    type（既定: Issue の type ラベル。labels.types のどれか1つが付いている必要がある）
 #
-# 形は設定の branch.pattern（既定: {type}/{issue}-{slug}）。短い説明が作れないときは issue-<番号> にする。
+# 形は設定の branch.pattern（既定: {type}/{issue_number}-{slug}）。短い説明が作れないときは issue-<番号> にする。
+# branch.pattern のプレースホルダ: {type} は type ラベル、{issue_number} は Issue の番号、{slug} は英語の短い説明。
 # --check は規約に合わなければ終了コード 1 で、理由を出力する。
 set -euo pipefail
 
@@ -93,7 +94,7 @@ slug="$(printf '%s' "$slug" | LC_ALL=C tr '[:upper:]' '[:lower:]' \
 if [ -n "$slug" ]; then
   pattern="$(jq -r '.branch.pattern' <<<"$config")"
   branch="$(jq -rn --arg p "$pattern" --arg t "$type" --arg i "$issue" --arg s "$slug" \
-    '$p | gsub("\\{type\\}"; $t) | gsub("\\{issue\\}"; $i) | gsub("\\{slug\\}"; $s)')"
+    '$p | gsub("\\{type\\}"; $t) | gsub("\\{issue_number\\}"; $i) | gsub("\\{slug\\}"; $s)')"
 else
   branch="issue-$issue"
 fi
