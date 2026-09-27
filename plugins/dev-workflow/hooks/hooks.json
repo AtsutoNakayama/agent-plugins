@@ -1,0 +1,16 @@
+{
+  "description": "base_branch（既定は main）を守る。main の上での commit、main への push、強制 push を止める",
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"${CLAUDE_PLUGIN_ROOT}/hooks/guard-git.sh\""
+          }
+        ]
+      }
+    ]
+  }
+}
