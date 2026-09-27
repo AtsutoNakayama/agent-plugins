@@ -229,6 +229,9 @@ words=() nwords=0
 hd_delims=() hd_strip=() hd_n=0
 # ( ) の中の cd は外に効かないので、( の時点のディレクトリを積んでおき、) で戻す
 dstack=() dn=0
+# case の中の深さ（case の時点の dn を積む）
+case_dn=() cn=0
+arith_i=0
 git_dir="" gopts=()
 
 # 残りの文字列の先頭（最大 win 文字）を rest に入れる。wbuf を使い切りそうなら写し直す
@@ -254,9 +257,54 @@ flush_word() {
   word="" in_word=false
 }
 
+# (( が算術式なら、閉じる )) の次の位置を arith_i に入れて 0 を返す。
+# (( の後ろで最初に閉じる括弧の次が ) でなければ、((cmd) ...) のような入れ子のサブシェル
+arith_end() {
+  local seg k=2 depth=2 c
+  # 算術式は短いので、先の wsize 文字の中だけを見る（見つからなければサブシェルとして調べる）
+  seg="${cmd:i:wsize}"
+  while [ "$k" -lt "${#seg}" ]; do
+    c="${seg:k:1}"
+    case "$c" in
+      '(') depth=$((depth + 1)) ;;
+      ')')
+        depth=$((depth - 1))
+        if [ "$depth" -eq 1 ]; then
+          [ "${seg:k+1:1}" = ')' ] || return 1
+          arith_i=$((i + k + 2))
+          return 0
+        fi
+        ;;
+    esac
+    k=$((k + 1))
+  done
+  return 1
+}
+
+# case と esac を数える。case の時点の括弧の深さを積み、パターンの ) で括弧を閉じないようにする
+track_case() {
+  local w
+  for w in "$@"; do
+    case "$w" in
+      if | then | elif | else | while | until | do | '{' | '!') ;;
+      'case')
+        case_dn[cn]=$dn
+        cn=$((cn + 1))
+        return 0
+        ;;
+      'esac')
+        [ "$cn" -eq 0 ] || cn=$((cn - 1))
+        return 0
+        ;;
+      *) return 0 ;;
+    esac
+  done
+}
+
 end_command() {
   flush_word
   skip_word=false
+  [ "$nwords" -eq 0 ] || track_case "${words[@]}"
   [ "$nwords" -eq 0 ] || check_command "${words[@]}"
   words=() nwords=0
 }
@@ -507,11 +555,9 @@ while [ "$i" -lt "$len" ]; do
       ;;
     '(')
       end_command
-      if [ "${rest:1:1}" = '(' ]; then
+      if [ "${rest:1:1}" = '(' ] && arith_end; then
         # (( ... )) は算術式なので、コマンドとして調べない（中の << もシフト演算）
-        rest="${cmd:i}"
-        after="${rest#*))}"
-        if [ "$after" != "$rest" ]; then i=$((len - ${#after})); else i=$len; fi
+        i=$arith_i
       else
         dstack[dn]="$dir"
         dn=$((dn + 1))
@@ -520,7 +566,10 @@ while [ "$i" -lt "$len" ]; do
       ;;
     ')')
       end_command
-      if [ "$dn" -gt 0 ]; then
+      # case のパターンの ) （a) など）は括弧を閉じない
+      if [ "$cn" -gt 0 ] && [ "$dn" -eq "${case_dn[cn - 1]}" ]; then
+        :
+      elif [ "$dn" -gt 0 ]; then
         dn=$((dn - 1))
         dir="${dstack[dn]}"
       fi

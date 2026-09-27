@@ -137,11 +137,24 @@ denied() {
   allowed "(cd $TMP/wt && git commit -m x)" "cd $TMP/wt && (git status) && git commit -m x"
 }
 
+@test "case のパターンの ) は括弧を閉じない" {
+  git worktree add -q -b feat/21-x "$TMP/wt"
+  denied "main の上ではコミットしません" "(case x in a) :;; esac; cd $TMP/wt); git commit -m x" \
+    "(case x in (a) :;; b) (cd /tmp);; esac; cd $TMP/wt); git commit -m x"
+  allowed "(case x in a) :;; esac; cd $TMP/wt && git commit -m x)"
+}
+
 @test "算術式の << はヒアドキュメントとみなさない" {
   git checkout -q -b feat/21-x
   # $((...)) はフックに渡す文字として書く
   # shellcheck disable=SC2016
-  denied "強制 push" "$(printf 'x=$((1<<2))\ngit push --force')" "$(printf '(( x = 1 << 2 ))\ngit push --force')"
+  denied "強制 push" "$(printf 'x=$((1<<2))\ngit push --force')" "$(printf '(( x = 1 << 2 ))\ngit push --force')" \
+    "$(printf '((x = (1 + 2) << 3))\ngit push --force')"
+}
+
+@test "(( で始まる入れ子のサブシェルは、算術式とみなさずに調べる" {
+  git checkout -q -b feat/21-x
+  denied "強制 push" "((git push -f) || true)" "((cd /tmp && ls) && git push -f)"
 }
 
 @test "長いコマンドでも速く終わる" {
