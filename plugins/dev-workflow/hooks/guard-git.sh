@@ -26,7 +26,7 @@ case "$cmd" in
   *) exit 0 ;;
 esac
 cwd="$(jq -r '.cwd // empty' <<<"$input")"
-dir="$(cd "${cwd:-.}" 2>/dev/null && pwd -P || true)"
+dir="$( (cd "${cwd:-.}" && pwd -P) 2>/dev/null || true)"
 
 # --- 判断 -------------------------------------------------------------------------
 
