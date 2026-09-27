@@ -1,13 +1,15 @@
 # shellcheck shell=bash
-# branch-name・status-set・task-start・cleanup のテストで使う偽の gh。load fake_gh で読み込み、setup_fake_gh を呼ぶ。
+# branch-name・status-set・task-start・cleanup・pr-create のテストで使う偽の gh。load fake_gh で読み込み、setup_fake_gh を呼ぶ。
 #
 # - gh repo view                    me/demo を返す
 # - gh issue view N --json ...      $FIX/issue-N.json を返す（-q があれば適用する）
 # - gh issue edit N ...             引数を「edit N ...」として $CALLS に記録する
 # - gh pr list ...                  $FIX/pr-list.json（無ければ []）を返し、引数を「pr-list ...」として $CALLS に記録する
+# - gh pr create ...                引数を「pr-create ...」として $CALLS に記録し、--body-file の中身を $TMP/pr-body に写して、
+#                                   https://github.com/me/demo/pull/42 を返す
 # - gh api user                     login: me を返す
 # - gh api graphql                  操作名ごとに $FIX/<操作名>.json を返し、「<操作名> <変数>」を $CALLS に記録する
-# FAKE_FAIL に指定した操作名（edit・pr-list を含む）は、FAKE_FAIL_MSG（既定: gh: failed）を出して失敗する。
+# FAKE_FAIL に指定した操作名（edit・pr-list・pr-create を含む）は、FAKE_FAIL_MSG（既定: gh: failed）を出して失敗する。
 
 setup_fake_gh() {
   FIX="$TMP/fix"
@@ -39,6 +41,16 @@ case "$1 $2" in
     echo "pr-list $*" >>"$CALLS"
     fail pr-list
     if [ -f "$FIX/pr-list.json" ]; then jq -r "$q" "$FIX/pr-list.json"; else echo '[]'; fi
+    ;;
+  "pr create")
+    shift 2
+    echo "pr-create $*" >>"$CALLS"
+    fail pr-create
+    while [ $# -gt 0 ]; do
+      if [ "$1" = --body-file ]; then cp "$2" "$(dirname "$FIX")/pr-body"; fi
+      shift
+    done
+    echo https://github.com/me/demo/pull/42
     ;;
   "api user") echo '{"login": "me"}' | jq -r "$q" ;;
   "api graphql")
