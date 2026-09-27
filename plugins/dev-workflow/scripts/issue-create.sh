@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Issue を起票し、type ラベルを付け、Project に追加して todo の列にする。Story Point も設定できる。
+# Issue を起票し、type ラベルを付け、Project に追加して todo の列にする。Story Point と依存する Issue も設定できる。
 #
 # 使い方: issue-create.sh --title TITLE --type TYPE [オプション]
 #   --title TITLE        Issue のタイトル（必須）
@@ -7,12 +7,14 @@
 #   --body-file PATH     本文のファイル。- なら標準入力（既定: 本文なし）
 #   --story-point N      Story Point。1, 2, 3, 5, 8, 13, 21, 34 のどれか（既定: 空欄）。
 #                        21 と 34 は設定できるが、分割を勧める警告を出す
+#   --blocked-by N       依存する（先に終わらせる）同じリポジトリの Issue の番号。複数回指定できる
 #
 # 行うこと:
-#   1. 設定と Project（project.owner / project.number）、Status 列・todo の列・Story Point の項目を確かめる
-#      （問題があれば Issue を作る前に止める）
+#   1. 設定と Project（project.owner / project.number）、Status 列・todo の列・Story Point の項目、
+#      依存する Issue があるかを確かめる（問題があれば Issue を作る前に止める）
 #   2. Issue を作る（type ラベル付き）
 #   3. Project に追加し（既に入っていれば既存の項目を使う）、Status を todo の列に、Story Point を設定する
+#   4. 依存する Issue を、GitHub の依存関係（blocked by）に登録する
 # project.number が未設定なら、Issue だけ作って警告する。
 set -euo pipefail
 
@@ -31,6 +33,8 @@ need_value() {
 }
 
 title="" type="" body_file="" sp=""
+# 依存する Issue の番号（空白区切り。重複は除く）
+blocked_by=""
 while [ $# -gt 0 ]; do
   case "$1" in
     --title | --type | --body-file | --story-point)
@@ -40,6 +44,21 @@ while [ $# -gt 0 ]; do
         --type) type="$2" ;;
         --body-file) body_file="$2" ;;
         --story-point) sp="$2" ;;
+      esac
+      shift 2
+      ;;
+    --blocked-by)
+      need_value "$@"
+      # 本文に書くときと同じ #12 の形も受け付ける
+      n="${2#\#}"
+      case "$n" in
+        '' | *[!0-9]*) dw_die "--blocked-by には Issue の番号を指定してください: $2" 64 ;;
+      esac
+      n="$((10#$n))"
+      [ "$n" -gt 0 ] || dw_die "--blocked-by には Issue の番号を指定してください: $2" 64
+      case " $blocked_by " in
+        *" $n "*) ;;
+        *) blocked_by="${blocked_by:+$blocked_by }$n" ;;
       esac
       shift 2
       ;;
@@ -102,6 +121,18 @@ else
   dw_warn "project.number が未設定なので、Project には追加しません（setup-project.sh --write-config で設定できます）"
 fi
 
+# 依存する Issue の「番号:node id」（空白区切り）
+blocking=""
+for n in $blocked_by; do
+  # shellcheck disable=SC2016
+  id="$(dw_gql_find 'query BlockingIssue($owner: String!, $name: String!, $number: Int!) {
+    repository(owner: $owner, name: $name) { issue(number: $number) { id number } }
+  }' "$(jq -nc --arg o "${repo_nwo%%/*}" --arg r "${repo_nwo#*/}" --argjson n "$n" '{owner: $o, name: $r, number: $n}')" \
+    | jq -r '.data.repository.issue.id // empty')"
+  [ -n "$id" ] || dw_die "依存する Issue #${n} がありません（${repo_nwo}）"
+  blocking="${blocking:+$blocking }$n:$id"
+done
+
 # --- 2. Issue を作る ------------------------------------------------------------
 issue="$(jq -n --arg t "$title" --arg b "$body" --arg l "$type" '{title: $t, body: $b, labels: [$l]}' \
   | gh api -X POST "repos/$repo_nwo/issues" --input -)" || dw_die "Issue を作れませんでした"
@@ -132,11 +163,23 @@ if [ "$project" != null ]; then
   fi
 fi
 
+# --- 4. 依存関係（blocked by）を登録する -----------------------------------------
+issue_id="$(jq -r .node_id <<<"$issue")"
+for pair in $blocking; do
+  # shellcheck disable=SC2016
+  dw_gql 'mutation AddBlockedBy($i: ID!, $b: ID!) {
+    addBlockedBy(input: {issueId: $i, blockingIssueId: $b}) { issue { id } }
+  }' "$(jq -nc --arg i "$issue_id" --arg b "${pair#*:}" '{i: $i, b: $b}')" >/dev/null \
+    || fail_after_create "#${pair%%:*} への依存（blocked by）を登録できませんでした"
+done
+
 jq -n --argjson n "$issue_number" --arg url "$issue_url" --arg type "$type" --arg item "$item_id" \
-  --argjson project "$project" --arg status "$todo_name" --arg sp "$sp" '{
+  --argjson project "$project" --arg status "$todo_name" --arg sp "$sp" \
+  --arg blocked "$blocked_by" '{
     number: $n,
     url: $url,
     type: $type,
+    blocked_by: ($blocked | split(" ") | map(select(. != "") | tonumber)),
     project: (if $project then {number: $project.number, item_id: $item, status: $status,
       story_point: (if $sp == "" then null else ($sp | tonumber) end)} else null end)
   }'
