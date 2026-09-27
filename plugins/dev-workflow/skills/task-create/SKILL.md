@@ -1,12 +1,13 @@
 ---
 name: task-create
 description: 依頼の内容から Issue を起票し、type ラベルを付けて GitHub Project に追加する。Story Point は見積もりを提案し、ユーザーが確定する。作業を Issue として登録したいときに使う。
-disable-model-invocation: true
 ---
 
 # Issue の起票
 
 依頼の内容から Issue の下書きを作り、ユーザーの確認を取ってから `issue-create.sh` で起票する。判断と文章は AI が担当し、起票・ラベル・Project への追加はスクリプトが行う。
+
+起票は GitHub に残るので、必ず手順3でユーザーの承認を得てから行う。承認なしに `issue-create.sh` を実行しない。
 
 スクリプト（どれも JSON を出力する）:
 
@@ -41,7 +42,7 @@ Story Point が 21 か 34 になるとき（見積もりでも、ユーザーの
 
 ### 4. 起票する
 
-本文を一時ファイルに書き、`issue-create.sh --title ... --type ... --body-file <ファイル> [--story-point N]` を実行する。Story Point が空欄なら `--story-point` を付けない。
+手順3で承認されたら、本文を一時ファイルに書き、`issue-create.sh --title ... --type ... --body-file <ファイル> [--story-point N]` を実行する。Story Point が空欄なら `--story-point` を付けない。
 
 失敗したら、標準エラーの1行のメッセージをそのまま伝える。「Issue #N は作りましたが…」のときは Issue は作られているので、もう一度起票しない。
 
