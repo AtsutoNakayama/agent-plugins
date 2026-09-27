@@ -29,11 +29,11 @@ load fake_gh
   assert_equal "$(jq -r .branch <<<"$output")" issue-17
 }
 
-@test "hotfix はブランチでは hotfix のまま使う" {
+@test "type 以外のラベルは無視する" {
   setup_fake_gh
-  fake_issue 17 '["hotfix", "priority: high"]'
+  fake_issue 17 '["fix", "priority: high"]'
   run_script branch-name.sh --issue 17 --slug x
-  assert_equal "$(jq -r .branch <<<"$output")" hotfix/17-x
+  assert_equal "$(jq -r .branch <<<"$output")" fix/17-x
 }
 
 @test "設定の branch.pattern に従う" {
