@@ -5,7 +5,8 @@
 load test_helper
 
 # 偽の gh。GraphQL は操作名（query Foo / mutation Foo）ごとに $FIX/<操作名>.json を返し、
-# gh api -X POST .../issues は $FIX/issue.json を返す。どちらも「<操作名> <変数または本文>」を $CALLS に記録する。
+# gh api -X POST .../issues は $FIX/issue.json を返す。BlockingIssue は変数の number に応じて $FIX/issue-<番号>.json を返し、
+# 無ければ NOT_FOUND のエラーにする。どちらも「<操作名> <変数または本文>」を $CALLS に記録する。
 # FAKE_FAIL に指定した操作名は、FAKE_FAIL_MSG（既定: gh: failed）を出して失敗する。
 setup_fake_gh() {
   FIX="$TMP/fix"
@@ -32,7 +33,12 @@ case "$1 $2" in
     op="$(jq -r .query <<<"$body" | grep -oE '(query|mutation) [A-Za-z]+' | head -n 1 | cut -d' ' -f2)"
     echo "$op $(jq -c .variables <<<"$body")" >>"$CALLS"
     if [ "${FAKE_FAIL:-}" = "$op" ]; then echo "${FAKE_FAIL_MSG:-gh: failed}" >&2; exit 1; fi
-    if [ -f "$FIX/$op.json" ]; then cat "$FIX/$op.json"; else echo '{"data": {}}'; fi
+    if [ "$op" = BlockingIssue ]; then
+      n="$(jq -r .variables.number <<<"$body")"
+      [ -f "$FIX/issue-$n.json" ] \
+        || { echo "GraphQL: Could not resolve to an Issue with the number of $n. (repository.issue)" >&2; exit 1; }
+      jq '{data: {repository: {issue: .}}}' "$FIX/issue-$n.json"
+    elif [ -f "$FIX/$op.json" ]; then cat "$FIX/$op.json"; else echo '{"data": {}}'; fi
     ;;
 esac
 SH
@@ -44,12 +50,21 @@ SH
   created_issue feat
   echo '{"data": {"addProjectV2ItemById": {"item": {"id": "IT30"}}}}' >"$FIX/AddItem.json"
   echo '{"data": {"updateProjectV2ItemFieldValue": {"projectV2Item": {"id": "IT30"}}}}' >"$FIX/SetField.json"
+  echo '{"data": {"addBlockedBy": {"issue": {"id": "I30"}}}}' >"$FIX/AddBlockedBy.json"
 }
 
 # 作った Issue として返す応答。使い方: created_issue <付いたラベル>...
 created_issue() {
   jq -n --args '{number: 30, html_url: "https://github.com/me/demo/issues/30", node_id: "I30",
     labels: ($ARGS.positional | map({name: .}))}' "$@" >"$FIX/issue.json"
+}
+
+# 依存先として既にある Issue。使い方: existing_issue <番号>...
+existing_issue() {
+  local n
+  for n in "$@"; do
+    jq -n --argjson n "$n" '{id: "I\($n)", number: $n}' >"$FIX/issue-$n.json"
+  done
 }
 
 # 使い方: project_fields <Status の選択肢> <Story Point の項目があるか>
@@ -76,7 +91,7 @@ args() { grep "^$1 " "$CALLS" | sed -n "${2:-1}p" | cut -d' ' -f2-; }
 
 # 変更を伴う呼び出しが1つも無いことを確かめる。あれば記録を表示して失敗する
 assert_no_changes() {
-  if grep -qE '^(CreateIssue|AddItem|SetField) ' "$CALLS"; then
+  if grep -qE '^(CreateIssue|AddItem|SetField|AddBlockedBy) ' "$CALLS"; then
     fail "$(printf '呼ばれないはずの操作が呼ばれました:\n%s' "$(cat "$CALLS")")"
   fi
 }
@@ -215,6 +230,63 @@ assert_no_changes() {
   assert_equal "$(jq -c .project <<<"$json")" null
 }
 
+@test "--blocked-by を指定すると、起票の後に依存関係（blocked by）を登録する" {
+  setup_fake_gh
+  existing_issue 12 15
+  run_create --title t --type feat --blocked-by 12 --blocked-by 15
+  assert_success
+  assert_equal "$(called AddBlockedBy)" 2
+  assert_equal "$(args AddBlockedBy 1)" '{"i":"I30","b":"I12"}'
+  assert_equal "$(args AddBlockedBy 2)" '{"i":"I30","b":"I15"}'
+  assert_equal "$(jq -c .blocked_by <<<"$json")" '[12,15]'
+}
+
+@test "--blocked-by が無ければ、依存関係を登録せず blocked_by は空" {
+  setup_fake_gh
+  run_create --title t --type feat
+  assert_success
+  assert_equal "$(called BlockingIssue)" 0
+  assert_equal "$(called AddBlockedBy)" 0
+  assert_equal "$(jq -c .blocked_by <<<"$json")" '[]'
+}
+
+@test "--blocked-by の番号は # を付けても、重複しても、先頭が 0 でもよい" {
+  setup_fake_gh
+  existing_issue 12
+  run_create --title t --type feat --blocked-by '#12' --blocked-by 012 --blocked-by 12
+  assert_success
+  assert_equal "$(called AddBlockedBy)" 1
+  assert_equal "$(jq -c .blocked_by <<<"$json")" '[12]'
+}
+
+@test "--blocked-by の Issue が無ければ、何も作らずに止まる" {
+  setup_fake_gh
+  existing_issue 12
+  run_create --title t --type feat --blocked-by 12 --blocked-by 99
+  assert_failure 1
+  assert_output --partial "依存する Issue #99 がありません"
+  assert_no_changes
+}
+
+@test "--blocked-by が正の整数でなければ、何も作らずに止まる" {
+  setup_fake_gh
+  for v in abc 0 1.5 '#'; do
+    run_create --title t --type feat --blocked-by "$v"
+    assert_failure 64
+    assert_output --partial "--blocked-by には Issue の番号を指定してください: $v"
+  done
+  assert_equal "$(called BlockingIssue)" 0
+  assert_no_changes
+}
+
+@test "依存関係を登録できなければ、作った Issue の番号を伝える" {
+  setup_fake_gh
+  existing_issue 12
+  FAKE_FAIL=AddBlockedBy run_create --title t --type feat --blocked-by 12
+  assert_failure 1
+  assert_output --partial "Issue #30（https://github.com/me/demo/issues/30）は作りましたが、#12 への依存（blocked by）を登録できませんでした"
+}
+
 @test "Issue を作った後に失敗したら、作った Issue の番号を伝える" {
   setup_fake_gh
   FAKE_FAIL=SetField run_create --title t --type feat
@@ -245,5 +317,6 @@ assert_no_changes() {
   run_create --help
   assert_success
   assert_output --partial "--story-point"
+  assert_output --partial "--blocked-by"
   refute_output --partial "set -euo"
 }
