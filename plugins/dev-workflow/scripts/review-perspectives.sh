@@ -41,9 +41,10 @@ done
 repo_root="$(dw_repo_root || true)"
 
 # 先頭の --- で囲まれた部分を出力する。閉じる --- が無ければ失敗する
+# 行末の CR と、先頭の BOM（Windows のエディタが付ける）は取り除く
 frontmatter() {
   awk '{ sub(/\r$/, "") }
-    NR == 1 { if ($0 != "---") exit 1; on = 1; next }
+    NR == 1 { sub(/^\357\273\277/, ""); if ($0 != "---") exit 1; on = 1; next }
     $0 == "---" { closed = 1; exit }
     { print }
     END { if (!closed) exit 1 }' "$1"
@@ -51,7 +52,7 @@ frontmatter() {
 
 # 閉じる --- より後ろ（本文）のうち、空白でない行の数
 body_lines() {
-  awk '{ sub(/\r$/, "") } n >= 2 && NF { c++ } $0 == "---" && n < 2 { n++ } END { print c + 0 }' "$1"
+  awk '{ sub(/\r$/, "") } NR == 1 { sub(/^\357\273\277/, "") } n >= 2 && NF { c++ } $0 == "---" && n < 2 { n++ } END { print c + 0 }' "$1"
 }
 
 # frontmatter から <キー> の値を取り出す。前後の空白と、囲む引用符を外す

@@ -97,6 +97,14 @@ EOF
   assert_equal "$(jq -r '.perspectives[] | select(.name == "crlf") | .title' <<<"$output")" "CRLF の観点"
 }
 
+@test "先頭に BOM がある観点ファイルを読める" {
+  mkdir -p "$REPO/.claude/review"
+  printf '\357\273\277---\ntitle: BOM の観点\n---\n本文\n' >"$REPO/.claude/review/bom.md"
+  run_script review-perspectives.sh
+  assert_success
+  assert_equal "$(jq -r '.perspectives[] | select(.name == "bom") | .title' <<<"$output")" "BOM の観点"
+}
+
 @test "リポジトリの外でも、プラグインとユーザーの観点を出力する" {
   perspective "$WORKFLOW_USER_REVIEW_DIR" mine "ユーザーの観点"
   cd "$TMP"
