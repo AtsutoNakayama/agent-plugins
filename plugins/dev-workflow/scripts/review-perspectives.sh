@@ -21,7 +21,8 @@
 # 出力:
 #   perspectives  使う観点（名前の順）。name・title・layer・path・overrides（上書きした下位の層のパス）
 #   disabled      enabled: false で止めた観点。name・layer・path・overrides
-#   invalid       形式の誤りで使わないファイル。path・reason（標準エラーにも warn を出す）
+#   invalid       形式の誤りで使わないファイル。path・reason・overrides（標準エラーにも warn を出す）
+#                 ファイル名が正しければ、下位の層にある同じ名前の観点も使わない（止めるつもりの書き間違いで動かさない）
 set -euo pipefail
 
 # shellcheck source=lib/common.sh
@@ -64,9 +65,14 @@ fm_value() {
 records='[]'
 invalid='[]'
 
+# 使い方: add_invalid <パス> <理由> [<層の名前> <観点の名前>]
+# 観点の名前を渡すと、その名前の観点として並べ、下位の層にある同じ名前の観点を使わないようにする
 add_invalid() {
   dw_warn "観点ファイルを使いません（$2）: $1"
   invalid="$(jq -c --arg p "$1" --arg r "$2" '. + [{path: $p, reason: $r}]' <<<"$invalid")"
+  [ $# -ge 4 ] || return 0
+  records="$(jq -c --arg n "$4" --arg l "$3" --arg p "$1" \
+    '. + [{name: $n, title: "", enabled: false, invalid: true, layer: $l, path: $p}]' <<<"$records")"
 }
 
 # 使い方: collect <層の名前> <ディレクトリ>
@@ -81,23 +87,23 @@ collect() {
       continue
     fi
     if ! fm="$(frontmatter "$f")"; then
-      add_invalid "$f" "先頭に --- で囲んだ frontmatter がありません"
+      add_invalid "$f" "先頭に --- で囲んだ frontmatter がありません" "$layer" "$name"
       continue
     fi
     enabled="$(fm_value "$fm" enabled)"
     case "$enabled" in
       "" | true) enabled=true ;;
       false) ;;
-      *) add_invalid "$f" "enabled は true か false にしてください"; continue ;;
+      *) add_invalid "$f" "enabled は true か false にしてください" "$layer" "$name"; continue ;;
     esac
     title="$(fm_value "$fm" title)"
     if [ "$enabled" = true ]; then
       if [ -z "$title" ]; then
-        add_invalid "$f" "title がありません"
+        add_invalid "$f" "title がありません" "$layer" "$name"
         continue
       fi
       if [ "$(body_lines "$f")" -eq 0 ]; then
-        add_invalid "$f" "本文（レビューの指示）がありません"
+        add_invalid "$f" "本文（レビューの指示）がありません" "$layer" "$name"
         continue
       fi
     fi
@@ -111,13 +117,21 @@ collect user "$(dw_user_review_dir)"
 [ -z "$repo_root" ] || collect repo "$repo_root/.claude/review"
 
 # 優先度の低い層から順に入れ、同じ名前は後の層で置き換える
-jq -n --argjson r "$records" --argjson inv "$invalid" '
+result="$(jq -n --argjson r "$records" --argjson inv "$invalid" '
   (reduce $r[] as $x ({};
     .[$x.name] as $prev
     | .[$x.name] = ($x + {overrides: (if $prev then $prev.overrides + [$prev.path] else [] end)})))
   | [.[]] | sort_by(.name) as $all
+  | ([$all[] | select(.invalid) | {key: .path, value: .overrides}] | from_entries) as $shadow
   | {
       perspectives: [$all[] | select(.enabled) | {name, title, layer, path, overrides}],
-      disabled: [$all[] | select(.enabled | not) | {name, layer, path, overrides}],
-      invalid: $inv
-    }'
+      disabled: [$all[] | select((.enabled | not) and (.invalid | not)) | {name, layer, path, overrides}],
+      invalid: [$inv[] | . + {overrides: ($shadow[.path] // [])}]
+    }')"
+
+# 形式の誤ったファイルに隠れて使わなくなった下位の層の観点を知らせる
+jq -r '.invalid[] | select(.overrides != []) | .path | split("/") | last | rtrimstr(".md")' <<<"$result" \
+  | while IFS= read -r name; do
+    dw_warn "形式の誤ったファイルがあるので、同じ名前の下位の層の観点も使いません: $name"
+  done
+printf '%s\n' "$result"

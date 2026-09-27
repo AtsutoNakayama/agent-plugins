@@ -97,6 +97,17 @@ EOF
   assert_equal "$(jq -r '.perspectives[] | select(.name == "crlf") | .title' <<<"$output")" "CRLF の観点"
 }
 
+@test "上位の層のファイルが形式の誤りで使えないときは、下位の層の同じ名前の観点も使わない" {
+  mkdir -p "$REPO/.claude/review"
+  printf -- '---\nenabled: no\n---\n' >"$REPO/.claude/review/docs-sync.md"
+  run bash -c "${TEST_BASH:-bash} '$SCRIPTS/review-perspectives.sh' 2>'$TMP/err'"
+  assert_success
+  jq -e '.perspectives | all(.name != "docs-sync")' <<<"$output" >/dev/null || fail "下位の層の docs-sync が使われています"
+  assert_equal "$(jq -c '.invalid[] | select(.path | endswith("/docs-sync.md")) | .overrides' <<<"$output")" \
+    "[\"$PLUGIN_REVIEW/docs-sync.md\"]"
+  grep -q "同じ名前の下位の層の観点も使いません: docs-sync" "$TMP/err" || fail "$(cat "$TMP/err")"
+}
+
 @test "先頭に BOM がある観点ファイルを読める" {
   mkdir -p "$REPO/.claude/review"
   printf '\357\273\277---\ntitle: BOM の観点\n---\n本文\n' >"$REPO/.claude/review/bom.md"
