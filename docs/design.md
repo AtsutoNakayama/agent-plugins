@@ -59,10 +59,11 @@ agent-plugins/
 
 ## 5. ラベル
 
-`feat / fix / hotfix / refactor / perf / test / docs / build / ci / chore` の10個。
+`feat / fix / refactor / perf / test / docs / build / ci / chore` の9個。
 
 - `ci` は CI/CD パイプラインの変更、`build` はビルドの設定・依存関係・Dockerfile の変更に使う。
-- `hotfix` はコミットの type としては `fix` として扱う。
+- type ラベル・ブランチ名・PR のタイトル・コミットの type は、同じ type で1対1に対応させる（読み替えはしない）。
+- 緊急の修正も `fix` にする（緊急の修正のための type は設けない）。GitHub Flow には緊急の修正のための別の手順が無く、違いは緊急度だけなので、type では区別しない。緊急度が必要なら type とは別のラベル（`priority: high` など）で表す。
 - GitHub の既定のラベルは削除する（オプションで残せる）。
 - 定義は `labels.json` に置き、利用者が編集できる。
 

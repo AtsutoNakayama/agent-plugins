@@ -16,10 +16,7 @@
     "field": "Story Point"
   },
   "labels": {
-    "types": ["feat", "fix", "hotfix", "refactor", "perf", "test", "docs", "build", "ci", "chore"],
-    "commit_type_map": {
-      "hotfix": "fix"
-    }
+    "types": ["feat", "fix", "refactor", "perf", "test", "docs", "build", "ci", "chore"]
   },
   "branch": {
     "pattern": "{type}/{issue}-{slug}",

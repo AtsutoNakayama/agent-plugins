@@ -20,7 +20,6 @@ description: 変更を Conventional Commits（<type>(<scope>): <要約>）の規
 
 - `language`：要約と本文を書く言語
 - `commit.types`・`commit.scope_required`：使える type と、スコープが必須か
-- `labels.commit_type_map`：Issue の type ラベルとコミットの type の対応（例：`hotfix` は `fix`）
 - `detected.commitlint`：commitlint の設定があれば、その規約にも従う
 - `guides.commit`：コミットの書き方のガイド（あれば読んで従う。複数あれば後ろのものを優先する）
 
@@ -40,7 +39,7 @@ description: 変更を Conventional Commits（<type>(<scope>): <要約>）の規
 <本文（任意）>
 ```
 
-- **type**：変更の性質で選ぶ（`commit.types` のどれか）。Issue の type ラベルと同じとは限らない（例：機能の Issue でもテストだけのコミットは `test`）。`commit_type_map` にある type は置き換える（`hotfix` → `fix`）
+- **type**：変更の性質で選ぶ（`commit.types` のどれか）。Issue の type ラベルと同じとは限らない（例：機能の Issue でもテストだけのコミットは `test`）
 - **scope**：変更した範囲が1つにまとまるなら付ける（小文字の英数字と `-`）。`scope_required` が true なら必ず付ける
 - **要約**：何をしたかを1行で。末尾に句点は付けない
 - **本文**：なぜそうしたかが要約から分からないときだけ書く。1行目の次は空行にする
