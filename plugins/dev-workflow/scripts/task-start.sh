@@ -8,7 +8,7 @@
 #   --dry-run      変更せず、行う予定の操作だけを出力する
 #
 # 行うこと:
-#   1. ブランチ名を決める（<type>/<番号>-<短い説明>。type は Issue の type ラベル）
+#   1. ブランチ名を決める（branch.pattern に従う。既定は {type}/{issue_number}-{slug}）
 #   2. <branch.worktree_dir>/<ブランチ名> にワークツリーを作る（相対パスはメインのワークツリーから）。
 #      ブランチが無ければ、origin に push 済みならそこから、無ければ origin/<base_branch> から作る。
 #      ワークツリーの置き場所が git に無視されていなければ、.git/info/exclude に足す（コミットしない手元だけの設定）
