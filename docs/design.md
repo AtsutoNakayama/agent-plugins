@@ -132,7 +132,7 @@ agent-plugins/
 | `issue-create.sh` | 起票、ラベルの付与、Project への追加、列と Story Point の設定 |
 | `status-set.sh` | 列を移す |
 | `branch-name.sh` | ブランチ名を作り、検証する |
-| `task-start.sh` | ワークツリーの作成、割り当て、In Progress への移動 |
+| `task-start.sh` | ワークツリーの作成（サブモジュールの初期化を含む）、割り当て、In Progress への移動 |
 | `context.sh` | 今のブランチから Issue・PR・段階を割り出す |
 | `review-perspectives.sh` | 観点ファイルを集める |
 | `pr-create.sh` | PR を作る |

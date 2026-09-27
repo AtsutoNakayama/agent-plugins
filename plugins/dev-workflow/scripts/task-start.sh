@@ -11,7 +11,9 @@
 #   1. ブランチ名を決める（<type>/<番号>-<短い説明>。type は Issue の type ラベル）
 #   2. <branch.worktree_dir>/<ブランチ名> にワークツリーを作る（相対パスはメインのワークツリーから）。
 #      ブランチが無ければ、origin に push 済みならそこから、無ければ origin/<base_branch> から作る。
-#      ワークツリーの置き場所が git に無視されていなければ、.git/info/exclude に足す（コミットしない手元だけの設定）
+#      ワークツリーの置き場所が git に無視されていなければ、.git/info/exclude に足す（コミットしない手元だけの設定）。
+#      .gitmodules があれば、サブモジュールを初期化する（git submodule update --init --recursive）。
+#      失敗しても（通信できないなど）止めずに警告する。既にあるワークツリーでも、未初期化なら初期化し直す
 #   3. Issue を自分に割り当てる
 #   4. Project の Status を start の列に移す（status-set.sh）。project.number が未設定なら警告して飛ばす
 set -euo pipefail
@@ -78,6 +80,7 @@ esac
 existing="$(git -C "$main_root" worktree list --porcelain \
   | awk -v b="refs/heads/$branch" '/^worktree /{p=substr($0, 10)} $0 == "branch " b {print p}')"
 worktree_created=false branch_created=false
+src_ref=""  # 新しく作るワークツリーの中身の元（.gitmodules の有無を見る）
 # ディレクトリを手で消すと、git の記録だけが残る。記録を片付けてから作り直す
 if [ -n "$existing" ] && [ ! -d "$existing" ]; then
   note "消えたワークツリー $existing の記録を片付ける（git worktree prune）"
@@ -89,11 +92,13 @@ if [ -n "$existing" ]; then
 else
   worktree_created=true
   if git -C "$main_root" show-ref --verify --quiet "refs/heads/$branch"; then
+    src_ref="$branch"
     note "既にあるブランチ ${branch} のワークツリーを $path に作る"
     $dry_run || git -C "$main_root" worktree add -q "$path" "$branch"
   elif [ -n "$(git -C "$main_root" ls-remote --heads origin "refs/heads/$branch" 2>/dev/null)" ]; then
     # 別のマシンで push 済み（またはローカルだけ消した）ブランチは、push 済みのコミットから続ける
     branch_created=true
+    src_ref="origin/$branch"
     note "push 済みの origin/${branch} からブランチ ${branch} を作り、ワークツリーを $path に作る"
     if ! $dry_run; then
       git -C "$main_root" fetch -q origin "+refs/heads/$branch:refs/remotes/origin/$branch" \
@@ -102,6 +107,7 @@ else
     fi
   else
     branch_created=true
+    src_ref="origin/$base"
     note "origin/${base} からブランチ ${branch} を作り、ワークツリーを $path に作る"
     if ! $dry_run; then
       git -C "$main_root" fetch -q origin "$base" || dw_die "origin/${base} を取得できませんでした"
@@ -126,6 +132,21 @@ case "$worktree_dir" in
     fi
     ;;
 esac
+
+# サブモジュール（テスト用のライブラリなど）は、ワークツリーを作っただけでは空のまま
+submodules=false
+if $worktree_created; then
+  git -C "$main_root" cat-file -e "${src_ref}:.gitmodules" 2>/dev/null && submodules=true
+elif [ -f "$path/.gitmodules" ] && git -C "$path" submodule status 2>/dev/null | grep -q '^-'; then
+  submodules=true
+fi
+if $submodules; then
+  note "ワークツリーのサブモジュールを初期化する（git submodule update --init --recursive）"
+  # 出力は JSON だけにするため、git の出力は標準エラーに回す
+  if ! $dry_run && ! git -C "$path" submodule update -q --init --recursive >&2; then
+    dw_warn "サブモジュールを初期化できませんでした。ワークツリーで git submodule update --init --recursive を実行してください（cd $path）"
+  fi
+fi
 
 # --- 3. 自分に割り当てる --------------------------------------------------------
 me="$(gh api user -q .login)"
