@@ -10,7 +10,8 @@
 # 行うこと:
 #   1. そのブランチの PR がマージされたかを確かめる。PR に入っていないコミットがあれば止まる
 #      （スカッシュマージでは git branch -d が使えないので、PR の最後のコミットと比べる）
-#   2. ワークツリーを削除する。未コミットの変更があれば止まる。
+#   2. ワークツリーを削除する。未コミットの変更（サブモジュールの中も含む）や、
+#      サブモジュールにリモートに無いコミット・stash があれば止まる。
 #      メインのワークツリーでそのブランチを使っていたら、削除せずに base_branch に切り替える
 #   3. ローカルのブランチを削除する（git branch -D）
 #   4. base_branch を最新にする（git pull --ff-only に当たる。fetch --prune の後、早送りだけで取り込む）
@@ -102,16 +103,29 @@ if [ -n "$path" ] && [ ! -d "$path" ]; then
   path=""
 fi
 if [ -n "$path" ]; then
-  [ -z "$(git -C "$path" status --porcelain)" ] \
+  # サブモジュールの中の変更も見る（submodule.<name>.ignore などの設定で隠されないよう none を指定する）
+  [ -z "$(git -C "$path" status --porcelain --ignore-submodules=none)" ] \
     || dw_die "$path に未コミットの変更があります。コミットするか片付けてから実行してください" 2
   if [ "$path" = "$main_root" ]; then
     switched=true
     note "メインのワークツリーを ${branch} から ${base} に切り替える"
     $dry_run || git -C "$main_root" switch -q "$base" || dw_die "${base} に切り替えられませんでした"
   else
+    # サブモジュールの git のデータはワークツリーと一緒に消えるので、リモートに無いコミット（HEAD とローカルのブランチ）や
+    # stash が残っていれば止まる。リモートのブランチかタグ（タグは手元のものとリモートのものを区別できない）から届かない
+    # コミットは、SHA で取ってきた push 済みのものでも手元では見分けられないので、安全のために止まる
+    # shellcheck disable=SC2016 # 各サブモジュールの中で展開させる
+    unpushed="$(git -C "$path" submodule --quiet foreach --recursive '
+      if [ -n "$(git log -1 --format=%h HEAD --branches --not --remotes --tags)" ] \
+        || git rev-parse -q --verify refs/stash >/dev/null; then
+        echo "$displaypath"
+      fi')" || dw_die "$path のサブモジュールを確かめられませんでした"
+    [ -z "$unpushed" ] \
+      || dw_die "$path のサブモジュール（${unpushed//$'\n'/, }）に、リモートに無いコミットか stash があります。push するか片付けてから実行してください" 2
     worktree_removed=true
     note "ワークツリー $path を削除する"
-    $dry_run || git -C "$main_root" worktree remove "$path" || dw_die "ワークツリー $path を削除できませんでした"
+    # サブモジュールを初期化したワークツリーは --force が無いと削除できない。変更が無いことは上で確かめた
+    $dry_run || git -C "$main_root" worktree remove --force "$path" || dw_die "ワークツリー $path を削除できませんでした"
   fi
 fi
 

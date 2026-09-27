@@ -25,6 +25,18 @@ setup_branch() {
   git -C "$WT" push -q origin feat/17-x
 }
 
+# サブモジュール lib/sub（$TMP/sub）を main にコミットしておく。setup_branch より前に呼ぶ
+add_submodule() {
+  # 手元のパスのサブモジュールは、git の既定では取得を禁止されている（CVE-2022-39253）ので、テストの中だけ許す
+  export GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=protocol.file.allow GIT_CONFIG_VALUE_0=always
+  git init -q -b main "$TMP/sub"
+  echo sub >"$TMP/sub/README"
+  git -C "$TMP/sub" add README
+  git -C "$TMP/sub" commit -q -m sub
+  git submodule add -q "$TMP/sub" lib/sub
+  git commit -q -m submodule
+}
+
 # origin の main にスカッシュマージしたことにする（手元の main は1つ遅れたまま）
 squash_merge() {
   git merge -q --squash feat/17-x
@@ -154,6 +166,111 @@ run_cleanup() {
   assert_output --partial "$WT に未コミットの変更があります"
   [ -f "$WT/dirty.txt" ]
   git show-ref --verify --quiet refs/heads/feat/17-x
+}
+
+@test "サブモジュールを初期化したワークツリーも削除する" {
+  add_submodule
+  setup_branch
+  git -C "$WT" submodule update -q --init
+  squash_merge
+  fake_pr MERGED
+  run_cleanup --branch feat/17-x
+  assert_success
+  [ ! -e "$WT" ]
+  run git show-ref --verify --quiet refs/heads/feat/17-x
+  assert_failure
+}
+
+@test "サブモジュールの中に未コミットの変更があれば止まる" {
+  add_submodule
+  setup_branch
+  git -C "$WT" submodule update -q --init
+  squash_merge
+  fake_pr MERGED
+  echo dirty >>"$WT/lib/sub/README"
+  # 設定でサブモジュールの変更を隠していても見つける
+  git config submodule.lib/sub.ignore all
+  run_cleanup --branch feat/17-x
+  assert_failure 2
+  assert_output --partial "$WT に未コミットの変更があります"
+  assert_equal "$(cat "$WT/lib/sub/README")" "$(printf 'sub\ndirty')"
+}
+
+@test "サブモジュールの中に追跡していないファイルがあれば止まる" {
+  add_submodule
+  setup_branch
+  git -C "$WT" submodule update -q --init
+  squash_merge
+  fake_pr MERGED
+  echo new >"$WT/lib/sub/new.txt"
+  run_cleanup --branch feat/17-x
+  assert_failure 2
+  assert_output --partial "$WT に未コミットの変更があります"
+  [ -f "$WT/lib/sub/new.txt" ]
+}
+
+@test "サブモジュールにリモートに無いコミットがあれば止まる" {
+  add_submodule
+  setup_branch
+  git -C "$WT" submodule update -q --init
+  # サブモジュールのコミットを親に記録して親だけ push し、サブモジュールのリモートには push していない
+  git -C "$WT/lib/sub" commit -q --allow-empty -m "local only"
+  git -C "$WT" add lib/sub
+  git -C "$WT" commit -q -m "feat: bump sub"
+  git -C "$WT" push -q origin feat/17-x
+  squash_merge
+  fake_pr MERGED
+  run_cleanup --branch feat/17-x
+  assert_failure 2
+  assert_output --partial "$WT のサブモジュール（lib/sub）に、リモートに無いコミットか stash があります"
+  [ -d "$WT" ]
+}
+
+@test "サブモジュールがタグからだけ届くコミットを指していても削除する" {
+  add_submodule
+  setup_branch
+  git -C "$WT" submodule update -q --init
+  # サブモジュールのリモートで、どのブランチにも無くタグだけが指すコミットを作る
+  git -C "$TMP/sub" commit -q --allow-empty -m tagged
+  git -C "$TMP/sub" tag v1
+  git -C "$TMP/sub" reset -q --hard HEAD~1
+  git -C "$WT/lib/sub" fetch -q --tags origin
+  git -C "$WT/lib/sub" switch -q --detach v1
+  git -C "$WT" add lib/sub
+  git -C "$WT" commit -q -m "feat: sub v1"
+  git -C "$WT" push -q origin feat/17-x
+  squash_merge
+  fake_pr MERGED
+  run_cleanup --branch feat/17-x
+  assert_success
+  [ ! -e "$WT" ]
+}
+
+@test "サブモジュールのローカルのブランチにだけリモートに無いコミットがあっても止まる" {
+  add_submodule
+  setup_branch
+  git -C "$WT" submodule update -q --init
+  squash_merge
+  fake_pr MERGED
+  git -C "$WT/lib/sub" switch -q -c wip
+  git -C "$WT/lib/sub" commit -q --allow-empty -m "local only"
+  git -C "$WT/lib/sub" switch -q --detach HEAD~1
+  run_cleanup --branch feat/17-x
+  assert_failure 2
+  assert_output --partial "$WT のサブモジュール（lib/sub）に、リモートに無いコミットか stash があります"
+}
+
+@test "サブモジュールに stash があれば止まる" {
+  add_submodule
+  setup_branch
+  git -C "$WT" submodule update -q --init
+  squash_merge
+  fake_pr MERGED
+  echo dirty >>"$WT/lib/sub/README"
+  git -C "$WT/lib/sub" stash -q
+  run_cleanup --branch feat/17-x
+  assert_failure 2
+  assert_output --partial "$WT のサブモジュール（lib/sub）に、リモートに無いコミットか stash があります"
 }
 
 @test "メインのワークツリーでブランチを使っていたら、main に切り替えてから削除する" {
