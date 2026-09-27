@@ -80,7 +80,7 @@ esac
 existing="$(git -C "$main_root" worktree list --porcelain \
   | awk -v b="refs/heads/$branch" '/^worktree /{p=substr($0, 10)} $0 == "branch " b {print p}')"
 worktree_created=false branch_created=false
-src_ref=""  # 新しく作るワークツリーの中身の元（.gitmodules の有無を見る）
+src_ref=""  # 新しく作るワークツリーの中身の元（dry-run で .gitmodules の有無を見る）
 # ディレクトリを手で消すと、git の記録だけが残る。記録を片付けてから作り直す
 if [ -n "$existing" ] && [ ! -d "$existing" ]; then
   note "消えたワークツリー $existing の記録を片付ける（git worktree prune）"
@@ -135,10 +135,17 @@ esac
 
 # サブモジュール（テスト用のライブラリなど）は、ワークツリーを作っただけでは空のまま
 submodules=false
-if $worktree_created; then
-  git -C "$main_root" cat-file -e "${src_ref}:.gitmodules" 2>/dev/null && submodules=true
-elif [ -f "$path/.gitmodules" ] && git -C "$path" submodule status 2>/dev/null | grep -q '^-'; then
-  submodules=true
+if $worktree_created && $dry_run; then
+  # まだワークツリーが無いので、中身の元で見る。dry-run では fetch しないので、元が手元に無い・古いこともある。
+  # そのときに予定から漏れないよう、メインのワークツリーに .gitmodules があれば予定に出す
+  if git -C "$main_root" cat-file -e "${src_ref}:.gitmodules" 2>/dev/null || [ -f "$main_root/.gitmodules" ]; then
+    submodules=true
+  fi
+elif [ -f "$path/.gitmodules" ]; then
+  # 新しく作ったワークツリーなら必ず、既にあるワークツリーなら未初期化のもの（入れ子も含む）があれば初期化する
+  if $worktree_created || git -C "$path" submodule status --recursive 2>/dev/null | grep -q '^-'; then
+    submodules=true
+  fi
 fi
 if $submodules; then
   note "ワークツリーのサブモジュールを初期化する（git submodule update --init --recursive）"

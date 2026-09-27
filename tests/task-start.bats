@@ -221,3 +221,35 @@ run_start() {
   refute_output --partial "サブモジュールを初期化できませんでした"
   assert_equal "$(cat .claude/worktrees/feat/17-x/lib/sub/README)" sub
 }
+
+@test "入れ子のサブモジュールだけ初期化に失敗しても、次に実行したとき初期化し直す" {
+  setup_fake_gh
+  export GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=protocol.file.allow GIT_CONFIG_VALUE_0=always
+  git init -q -b main "$TMP/nested"
+  git -C "$TMP/nested" commit -q --allow-empty -m nested
+  git init -q -b main "$TMP/sub"
+  git -C "$TMP/sub" submodule add -q "$TMP/nested" n
+  git -C "$TMP/sub" commit -q -m sub
+  git submodule add -q "$TMP/sub" lib/sub
+  git commit -q -m submodule
+  setup_origin
+  mv "$TMP/nested" "$TMP/nested.away"
+  run_start --issue 17 --slug x
+  assert_success
+  assert_output --partial "サブモジュールを初期化できませんでした"
+  mv "$TMP/nested.away" "$TMP/nested"
+  run_start --issue 17 --slug x
+  assert_success
+  refute_output --partial "サブモジュールを初期化できませんでした"
+  run git -C .claude/worktrees/feat/17-x submodule status --recursive
+  refute_line --regexp '^-'
+}
+
+@test "dry-run で、手元の origin/main が .gitmodules を追加する前のものでも、初期化を予定に出す" {
+  setup_fake_gh
+  setup_origin
+  add_submodule
+  run_start --issue 17 --slug x --dry-run
+  assert_success
+  jq -e 'any(.actions[]; . == "ワークツリーのサブモジュールを初期化する（git submodule update --init --recursive）")' <<<"$json"
+}
