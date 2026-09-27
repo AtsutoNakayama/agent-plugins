@@ -1,0 +1,22 @@
+name: release-please
+
+# main への push ごとに、plugins/dev-workflow の変更からリリース PR を作るか更新する。
+# リリース PR をマージすると、plugin.json の version を上げ、タグと GitHub Release を作る。
+# GITHUB_TOKEN で作る PR では CI が動かないので、リリース PR の中身は main へのマージ後の CI で確かめる。
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+  issues: write
+  pull-requests: write
+
+jobs:
+  release-please:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: googleapis/release-please-action@v5
+        with:
+          config-file: release-please-config.json
+          manifest-file: .release-please-manifest.json

@@ -25,7 +25,17 @@ jobs:
           fi
       - name: plugin manifest
         run: |
-          jq empty .claude-plugin/marketplace.json plugins/*/.claude-plugin/plugin.json plugins/*/defaults/*.json
+          jq empty .claude-plugin/marketplace.json plugins/*/.claude-plugin/plugin.json plugins/*/defaults/*.json \
+            release-please-config.json .release-please-manifest.json
+      - name: plugin version
+        # version は release-please がリリース PR で manifest と plugin.json を同時に上げる。手で plugin.json だけを変えると食い違う
+        run: |
+          manifest="$(jq -r '."plugins/dev-workflow"' .release-please-manifest.json)"
+          plugin="$(jq -r .version plugins/dev-workflow/.claude-plugin/plugin.json)"
+          if [ "$manifest" != "$plugin" ]; then
+            echo "plugin.json の version（${plugin}）が .release-please-manifest.json（${manifest}）と違います。version は release-please が上げるので、手で変えないでください" >&2
+            exit 1
+          fi
 
   test:
     strategy:
