@@ -21,10 +21,18 @@ jobs:
       # Project の自動化「Pull request linked to issue」が閉じた Issue を In Progress に戻すので、
       # `refs #N` と書く 17.10.4 以降の CLI を版を固定して直接実行する（docs/design.md §1）
       RELEASE_PLEASE: release-please@17.11.2
-      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
     steps:
-      # Action と同じく、先にマージ済みのリリース PR からリリースを作り、次にリリース PR を作るか更新する
+      # release-please 17.11.2 は Node 22 以上が必要
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+      # Action と同じく、先にマージ済みのリリース PR からリリースを作り、次にリリース PR を作るか更新する。
+      # npx は依存を毎回 npm から入れるので、書き込みのできるトークンは release-please を実行するステップにだけ渡す
       - name: GitHub Release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: npx -y "$RELEASE_PLEASE" github-release --token "$GITHUB_TOKEN" --repo-url "$GITHUB_REPOSITORY"
       - name: Release PR
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: npx -y "$RELEASE_PLEASE" release-pr --token "$GITHUB_TOKEN" --repo-url "$GITHUB_REPOSITORY"
