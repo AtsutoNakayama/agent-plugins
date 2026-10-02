@@ -83,7 +83,7 @@ plugins/dev-workflow/scripts/setup/setup-all.sh
 ### ラベル
 
 ```bash
-# type ラベル（feat / fix など）を作成・更新し、GitHub の既定のラベルを削除する
+# type ラベル（feat / fix など）と breaking ラベルを作成・更新し、GitHub の既定のラベルを削除する
 plugins/dev-workflow/scripts/setup/setup-labels.sh
 
 # 既定のラベルを残す・変更せずに予定だけを確認する

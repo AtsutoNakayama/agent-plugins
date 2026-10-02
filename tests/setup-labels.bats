@@ -82,17 +82,18 @@ assert_no_calls() {
   fi
 }
 
-@test "新しいリポジトリでは type ラベル 9 個を作り、既定のラベルを削除する" {
+@test "新しいリポジトリでは type ラベル 9 個と breaking を作り、既定のラベルを削除する" {
   setup_fake_gh
   current "$(github_defaults)"
   run_setup
   assert_success
-  assert_equal "$(called create)" 9
+  assert_equal "$(called create)" 10
   assert_equal "$(called delete)" 9
   assert_equal "$(called edit)" 0
   grep -qF 'create [feat] [-R] [me/demo] [--color] [0e8a16] [--description] [新しい機能]' "$CALLS"
+  grep -qF 'create [breaking] [-R] [me/demo] [--color] [b60205] [--description] [破壊的変更（type とは別に付ける）]' "$CALLS"
   grep -qF 'delete [good first issue] [-R] [me/demo] [--yes]' "$CALLS"
-  assert_equal "$(jq -c '.labels | [(.created | length), (.deleted | length), .unchanged]' <<<"$json")" '[9,9,0]'
+  assert_equal "$(jq -c '.labels | [(.created | length), (.deleted | length), .unchanged]' <<<"$json")" '[10,9,0]'
 }
 
 @test "定義と同じラベルは変更しない（2回目の実行では何もしない）" {
@@ -101,7 +102,7 @@ assert_no_calls() {
   run_setup
   assert_success
   assert_no_calls
-  assert_equal "$(jq -r .labels.unchanged <<<"$json")" 9
+  assert_equal "$(jq -r .labels.unchanged <<<"$json")" 10
   assert_equal "$(jq -c .actions <<<"$json")" '[]'
 }
 
@@ -189,7 +190,7 @@ assert_no_calls() {
   printf '%s\n' '[{"name": "feat", "color": "000000"}]' >.claude/labels.json
   run_setup --repo me/demo
   assert_success
-  assert_equal "$(called create)" 9
+  assert_equal "$(called create)" 10
   assert_regex "$(jq -r .file <<<"$json")" '/defaults/labels\.json$'
 }
 
