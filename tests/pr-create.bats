@@ -90,6 +90,60 @@ run_pr() {
   assert_output --partial "タイトルの type（fix）が Issue #17 の type ラベル（feat）と違います"
 }
 
+@test "Issue に breaking ラベルがあれば、タイトルを <type>!: にする" {
+  setup_branch
+  fake_issue 17 '["feat", "breaking"]'
+  printf '概要\n\nBREAKING CHANGE: 設定の foo を bar に直してください\n' >"$TMP/b.md"
+  run_pr --issue 17 --body-file "$TMP/b.md"
+  assert_success
+  assert_equal "$(jq -c '[.title, .breaking]' <<<"$json")" '["feat!: 作業 17",true]'
+  assert_equal "$(cat "$TMP/pr-body")" "$(printf '概要\n\nBREAKING CHANGE: 設定の foo を bar に直してください\n\nCloses #17')"
+  run args pr-create
+  assert_output --partial "--title feat!: 作業 17 --body-file "
+  assert_output --partial "--label feat --label breaking"
+}
+
+@test "breaking ラベルが無ければ、タイトルに ! を付けない" {
+  setup_branch
+  run_pr --issue 17 --body-file "$TMP/body.md" --dry-run
+  assert_success
+  assert_equal "$(jq -c '[.title, .breaking]' <<<"$json")" '["feat: 作業 17",false]'
+}
+
+@test "breaking ラベルの名前は大文字と小文字を区別しない" {
+  setup_branch
+  fake_issue 17 '["feat", "Breaking"]'
+  printf '概要\n\nBREAKING CHANGE: 直す\n' >"$TMP/b.md"
+  run_pr --issue 17 --body-file "$TMP/b.md" --dry-run
+  assert_success
+  assert_equal "$(jq -r .title <<<"$json")" "feat!: 作業 17"
+}
+
+@test "breaking ラベルがあるのに --title に ! が無ければ、push せずに止まる" {
+  setup_branch
+  fake_issue 17 '["feat", "breaking"]'
+  printf '概要\n\nBREAKING CHANGE: 直す\n' >"$TMP/b.md"
+  run_pr --issue 17 --body-file "$TMP/b.md" --title "feat(pr): 別のタイトル"
+  assert_failure 2
+  assert_output --partial "Issue #17 は破壊的変更（breaking ラベル）なので、タイトルの type の後に ! を付けてください（feat!: …）"
+  run git rev-parse -q --verify origin/feat/17-x
+  assert_failure
+  run_pr --issue 17 --body-file "$TMP/b.md" --title "feat(pr)!: 別のタイトル" --dry-run
+  assert_success
+  assert_equal "$(jq -r .title <<<"$json")" "feat(pr)!: 別のタイトル"
+}
+
+@test "breaking ラベルがあるのに本文に BREAKING CHANGE: が無ければ、push せずに止まる" {
+  setup_branch
+  fake_issue 17 '["feat", "breaking"]'
+  printf '概要に BREAKING CHANGE: と書いただけ\n\nBREAKING CHANGE:\n' >"$TMP/b.md"
+  run_pr --issue 17 --body-file "$TMP/b.md"
+  assert_failure 64
+  assert_output --partial "Issue #17 は破壊的変更（breaking ラベル）なので、本文の最後に「BREAKING CHANGE: <移行のしかた>」を書いてください"
+  run git rev-parse -q --verify origin/feat/17-x
+  assert_failure
+}
+
 @test "Issue に type ラベルが無ければ止まる" {
   setup_branch
   fake_issue 17 '[]'
