@@ -3,15 +3,17 @@
 # マージ先のブランチ（base_branch）を最新にする。
 # 何度実行しても同じ結果になる（既に無いワークツリー・ブランチは飛ばす）。
 #
-# 使い方: cleanup.sh [--branch NAME] [--dry-run]
-#   --branch NAME   片付けるブランチ。省略すると今のブランチ
-#   --dry-run       変更せず、行う予定の操作だけを出力する
+# 使い方: cleanup.sh [--branch NAME] [--remove-ignored] [--dry-run]
+#   --branch NAME     片付けるブランチ。省略すると今のブランチ
+#   --remove-ignored  git が無視するファイル（.env など）があっても、ワークツリーごと削除する
+#   --dry-run         変更せず、行う予定の操作だけを出力する
 #
 # 行うこと:
 #   1. そのブランチの PR がマージされたかを確かめる。PR に入っていないコミットがあれば止まる
 #      （スカッシュマージでは git branch -d が使えないので、PR の最後のコミットと比べる）
 #   2. ワークツリーを削除する。未コミットの変更（サブモジュールの中も含む）や、
 #      サブモジュールにリモートに無いコミット・stash があれば止まる。
+#      git が無視するファイル（サブモジュールの中も含む）があれば、--remove-ignored が無い限り止まる。
 #      メインのワークツリーでそのブランチを使っていたら、削除せずに base_branch に切り替える
 #   3. ローカルのブランチを削除する（git branch -D）
 #   4. base_branch を最新にする（git pull --ff-only に当たる。fetch --prune の後、早送りだけで取り込む）
@@ -33,7 +35,7 @@ need_value() {
   fi
 }
 
-branch="" dry_run=false
+branch="" dry_run=false remove_ignored=false
 while [ $# -gt 0 ]; do
   case "$1" in
     --branch)
@@ -41,6 +43,7 @@ while [ $# -gt 0 ]; do
       branch="$2"
       shift 2
       ;;
+    --remove-ignored) remove_ignored=true; shift ;;
     --dry-run) dry_run=true; shift ;;
     -h | --help) usage; exit 0 ;;
     *) dw_die "不明な引数です: $1" 64 ;;
@@ -122,6 +125,22 @@ if [ -n "$path" ]; then
       fi')" || dw_die "$path のサブモジュールを確かめられませんでした"
     [ -z "$unpushed" ] \
       || dw_die "$path のサブモジュール（${unpushed//$'\n'/, }）に、リモートに無いコミットか stash があります。push するか片付けてから実行してください" 2
+    # git が無視するファイル（.env やローカルの設定など）は status に出ないが、ワークツリーと一緒に消える。
+    # 消してよいと言われたとき（--remove-ignored）だけ続ける
+    if ! $remove_ignored; then
+      # shellcheck disable=SC2016 # 各サブモジュールの中で展開させる
+      ignored="$( {
+        git -C "$path" status --porcelain --ignored --ignore-submodules=all
+        git -C "$path" submodule --quiet foreach --recursive \
+          'git status --porcelain --ignored --ignore-submodules=all | sed "s|^!! |!! $displaypath/|"'
+      } | sed -n 's/^!! //p')" || dw_die "$path の git が無視するファイルを確かめられませんでした"
+      if [ -n "$ignored" ]; then
+        list="$(awk 'NR <= 5 { printf "%s%s", (NR > 1 ? ", " : ""), $0 }' <<<"$ignored")"
+        count="$(grep -c '' <<<"$ignored")"
+        [ "$count" -le 5 ] || list="${list} ほか $((count - 5)) 件"
+        dw_die "$path に git が無視するファイル（${list}）があります。消してよければ --remove-ignored を付けて実行してください" 2
+      fi
+    fi
     worktree_removed=true
     note "ワークツリー $path を削除する"
     # サブモジュールを初期化したワークツリーは --force が無いと削除できない。変更が無いことは上で確かめた

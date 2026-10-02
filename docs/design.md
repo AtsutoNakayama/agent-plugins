@@ -137,7 +137,7 @@ agent-plugins/
 | `review-perspective-add` | 観点ファイルを作る | なし（手元のファイルだけ） |
 | `commit` | 規約に沿ったコミット。実装中に論理的な区切りごとに呼ぶ | なし（手元のコミットだけ） |
 | `pr-create` | push と PR 作成 | push と PR の作成 |
-| `task-finish` | ワークツリーとローカルブランチを削除し、main を最新にする（`git pull --ff-only`） | なし（作業が失われるときは `cleanup.sh` が何も消さずに止まる） |
+| `task-finish` | ワークツリーとローカルブランチを削除し、main を最新にする（`git pull --ff-only`） | なし（作業が失われるときは `cleanup.sh` が何も消さずに止まる。git が無視するファイルを消すときだけ確認を取る） |
 | `workflow` | 今の段階を判断して次の段階へ進める | 各段階のスキルに従う |
 | `repo-setup` | 初期設定を対話的に実行し、設定ファイルを作る | ラベル・Project・リポジトリの設定の変更 |
 
@@ -172,7 +172,7 @@ agent-plugins/
 | `review-perspectives.sh` | 観点ファイルを集める |
 | `pr-create.sh` | PR を作る |
 | `pr-comment.sh` | 該当行へのコメントをまとめて投稿する |
-| `cleanup.sh` | マージを確認し、ワークツリーとブランチを削除し、main を最新にする |
+| `cleanup.sh` | マージを確認し、ワークツリーとブランチを削除し、main を最新にする。未コミットの変更や git が無視するファイルがあれば、何も消さずに止まる（無視するファイルは `--remove-ignored` で消せる） |
 
 | 初期設定用（`plugins/dev-workflow/scripts/setup/`） | 役割 |
 |---|---|

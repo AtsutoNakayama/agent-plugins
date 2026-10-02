@@ -168,6 +168,46 @@ run_cleanup() {
   git show-ref --verify --quiet refs/heads/feat/17-x
 }
 
+@test "ワークツリーに git が無視するファイルがあれば、何も消さずに止まる" {
+  setup_branch
+  squash_merge
+  fake_pr MERGED
+  printf '%s\n' .env 'build/' >>.git/info/exclude
+  echo SECRET=1 >"$WT/.env"
+  mkdir "$WT/build"
+  echo out >"$WT/build/out.txt"
+  run_cleanup --branch feat/17-x
+  assert_failure 2
+  assert_output --partial "$WT に git が無視するファイル（.env, build/）があります"
+  assert_output --partial "--remove-ignored"
+  [ -f "$WT/.env" ]
+  git show-ref --verify --quiet refs/heads/feat/17-x
+}
+
+@test "git が無視するファイルが6つ以上あれば、5つまで出して残りの数を添える" {
+  setup_branch
+  squash_merge
+  fake_pr MERGED
+  echo '*.log' >>.git/info/exclude
+  for i in 1 2 3 4 5 6 7; do echo x >"$WT/$i.log"; done
+  run_cleanup --branch feat/17-x
+  assert_failure 2
+  assert_output --partial "（1.log, 2.log, 3.log, 4.log, 5.log ほか 2 件）"
+}
+
+@test "--remove-ignored を付ければ、git が無視するファイルごと削除する" {
+  setup_branch
+  squash_merge
+  fake_pr MERGED
+  echo .env >>.git/info/exclude
+  echo SECRET=1 >"$WT/.env"
+  run_cleanup --branch feat/17-x --remove-ignored
+  assert_success
+  [ ! -e "$WT" ]
+  run git show-ref --verify --quiet refs/heads/feat/17-x
+  assert_failure
+}
+
 @test "サブモジュールを初期化したワークツリーも削除する" {
   add_submodule
   setup_branch
@@ -207,6 +247,20 @@ run_cleanup() {
   assert_failure 2
   assert_output --partial "$WT に未コミットの変更があります"
   [ -f "$WT/lib/sub/new.txt" ]
+}
+
+@test "サブモジュールの中に git が無視するファイルがあれば止まる" {
+  add_submodule
+  setup_branch
+  git -C "$WT" submodule update -q --init
+  squash_merge
+  fake_pr MERGED
+  echo .env >>"$(git -C "$WT/lib/sub" rev-parse --git-path info/exclude)"
+  echo SECRET=1 >"$WT/lib/sub/.env"
+  run_cleanup --branch feat/17-x
+  assert_failure 2
+  assert_output --partial "$WT に git が無視するファイル（lib/sub/.env）があります"
+  [ -f "$WT/lib/sub/.env" ]
 }
 
 @test "サブモジュールにリモートに無いコミットがあれば止まる" {
