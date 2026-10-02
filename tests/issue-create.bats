@@ -7,6 +7,7 @@ load test_helper
 # 偽の gh。GraphQL は操作名（query Foo / mutation Foo）ごとに $FIX/<操作名>.json を返し、
 # gh api -X POST .../issues は $FIX/issue.json を返す。BlockingIssue は変数の number に応じて $FIX/issue-<番号>.json を返し、
 # 無ければ NOT_FOUND のエラーにする。どちらも「<操作名> <変数または本文>」を $CALLS に記録する。
+# gh api repos/me/demo/labels/<名前> は、$FIX/labels に名前の行があればそのラベルを返し、無ければ 404 にする。
 # FAKE_FAIL に指定した操作名は、FAKE_FAIL_MSG（既定: gh: failed）を出して失敗する。
 setup_fake_gh() {
   FIX="$TMP/fix"
@@ -23,6 +24,12 @@ for a in "$@"; do
 done
 case "$1 $2" in
   "repo view") echo '{"nameWithOwner": "me/demo"}' | jq -r "$q" ;;
+  "api repos/"*)
+    name="${2##*/labels/}"
+    if [ "${FAKE_FAIL:-}" = Label ]; then echo 'gh: Server Error (HTTP 500)' >&2; exit 1; fi
+    grep -qxF "$name" "$FIX/labels" 2>/dev/null || { echo 'gh: Not Found (HTTP 404)' >&2; exit 1; }
+    jq -n --arg n "$name" '{name: $n}'
+    ;;
   "api -X")
     echo "CreateIssue $(jq -c .)" >>"$CALLS"
     if [ "${FAKE_FAIL:-}" = CreateIssue ]; then echo 'gh: Validation Failed (HTTP 422)' >&2; exit 1; fi
@@ -107,6 +114,48 @@ assert_no_changes() {
   assert_equal "$(args SetField | jq -c '[.i, .f, .v]')" '["IT30","F1",{"singleSelectOptionId":"O1"}]'
   assert_equal "$(jq -c '[.number, .url, .project.status, .project.story_point]' <<<"$json")" \
     '[30,"https://github.com/me/demo/issues/30","Todo",null]'
+}
+
+@test "--breaking なら、type ラベルとは別に breaking ラベルも付ける" {
+  setup_fake_gh
+  echo breaking >"$FIX/labels"
+  created_issue feat breaking
+  run_create --title t --type feat --breaking
+  assert_success
+  assert_equal "$(args CreateIssue | jq -c .labels)" '["feat","breaking"]'
+  assert_equal "$(jq -c '[.type, .breaking]' <<<"$json")" '["feat",true]'
+}
+
+@test "--breaking を付けなければ、breaking ラベルを付けない" {
+  setup_fake_gh
+  run_create --title t --type feat
+  assert_success
+  assert_equal "$(args CreateIssue | jq -c .labels)" '["feat"]'
+  assert_equal "$(jq -r .breaking <<<"$json")" false
+}
+
+@test "--breaking でリポジトリに breaking ラベルが無ければ、何も作らずに setup-labels.sh を案内する" {
+  setup_fake_gh
+  run_create --title t --type feat --breaking
+  assert_failure 2
+  assert_output --partial "me/demo に breaking ラベルがありません（setup-labels.sh を実行して作ってください）"
+  assert_no_changes
+}
+
+@test "--breaking で breaking ラベルを 404 以外の理由で確かめられなければ、何も作らずに止まる" {
+  setup_fake_gh
+  FAKE_FAIL=Label run_create --title t --type feat --breaking
+  assert_failure
+  assert_output --partial "breaking ラベルを確かめられませんでした: gh: Server Error (HTTP 500)"
+  assert_no_changes
+}
+
+@test "--breaking で breaking ラベルが付かなければ、作った Issue の番号を伝えて止まる" {
+  setup_fake_gh
+  echo breaking >"$FIX/labels"
+  run_create --title t --type feat --breaking
+  assert_failure
+  assert_output --partial "Issue #30（https://github.com/me/demo/issues/30）は作りましたが、breaking ラベルを付けられませんでした"
 }
 
 @test "本文は標準入力からも渡せる" {

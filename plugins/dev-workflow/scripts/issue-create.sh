@@ -8,11 +8,13 @@
 #   --story-point N      Story Point。1, 2, 3, 5, 8, 13, 21, 34 のどれか（既定: 空欄）。
 #                        21 と 34 は設定できるが、分割を勧める警告を出す
 #   --blocked-by N       依存する（先に終わらせる）同じリポジトリの Issue の番号。複数回指定できる
+#   --breaking           破壊的変更なので、type ラベルとは別に breaking ラベルも付ける
+#                        （リポジトリにラベルが無ければ、Issue を作る前に止める）
 #
 # 行うこと:
 #   1. 設定と Project（project.owner / project.number）、Status 列・todo の列・Story Point の項目、
-#      依存する Issue があるかを確かめる（問題があれば Issue を作る前に止める）
-#   2. Issue を作る（type ラベル付き）
+#      依存する Issue と breaking ラベルがあるかを確かめる（問題があれば Issue を作る前に止める）
+#   2. Issue を作る（type ラベル付き。--breaking なら breaking ラベルも）
 #   3. Project に追加し（既に入っていれば既存の項目を使う）、Status を todo の列に、Story Point を設定する
 #   4. 依存する Issue を、GitHub の依存関係（blocked by）に登録する
 # project.number が未設定なら、Issue だけ作って警告する。
@@ -32,7 +34,7 @@ need_value() {
   fi
 }
 
-title="" type="" body_file="" sp=""
+title="" type="" body_file="" sp="" breaking=false
 # 依存する Issue の番号（空白区切り。重複は除く）
 blocked_by=""
 while [ $# -gt 0 ]; do
@@ -62,6 +64,7 @@ while [ $# -gt 0 ]; do
       esac
       shift 2
       ;;
+    --breaking) breaking=true; shift ;;
     -h | --help) usage; exit 0 ;;
     *) dw_die "不明な引数です: $1" 64 ;;
   esac
@@ -133,8 +136,20 @@ for n in $blocked_by; do
   blocking="${blocking:+$blocking }$n:$id"
 done
 
+# GitHub は無いラベルを付けようとすると新しく作るので、色と説明の揃ったラベルがあるかを先に確かめる
+labels="$(jq -nc --arg t "$type" '[$t]')"
+if $breaking; then
+  if ! err="$(gh api "repos/$repo_nwo/labels/$DW_BREAKING_LABEL" 2>&1 >/dev/null)"; then
+    case "$err" in
+      *"HTTP 404"*) dw_die "${repo_nwo} に ${DW_BREAKING_LABEL} ラベルがありません（setup-labels.sh を実行して作ってください）" 2 ;;
+      *) dw_die "${DW_BREAKING_LABEL} ラベルを確かめられませんでした: $err" ;;
+    esac
+  fi
+  labels="$(jq -c --arg b "$DW_BREAKING_LABEL" '. + [$b]' <<<"$labels")"
+fi
+
 # --- 2. Issue を作る ------------------------------------------------------------
-issue="$(jq -n --arg t "$title" --arg b "$body" --arg l "$type" '{title: $t, body: $b, labels: [$l]}' \
+issue="$(jq -n --arg t "$title" --arg b "$body" --argjson l "$labels" '{title: $t, body: $b, labels: $l}' \
   | gh api -X POST "repos/$repo_nwo/issues" --input -)" || dw_die "Issue を作れませんでした"
 issue_number="$(jq -r .number <<<"$issue")"
 issue_url="$(jq -r .html_url <<<"$issue")"
@@ -145,6 +160,10 @@ fail_after_create() { dw_die "Issue #${issue_number}（${issue_url}）は作り�
 # 書き込み権限が無いと、GitHub はラベルを黙って無視するので、付いたかを応答で確かめる
 jq -e --arg t "$type" 'any(.labels[]?; .name == $t)' <<<"$issue" >/dev/null \
   || fail_after_create "type ラベル「${type}」を付けられませんでした（リポジトリへの書き込み権限が必要です）"
+if $breaking; then
+  jq -e --arg b "$DW_BREAKING_LABEL" 'any(.labels[]?; .name == $b)' <<<"$issue" >/dev/null \
+    || fail_after_create "${DW_BREAKING_LABEL} ラベルを付けられませんでした"
+fi
 
 # --- 3. Project に追加し、Status と Story Point を設定する ------------------------
 item_id=""
@@ -175,10 +194,11 @@ done
 
 jq -n --argjson n "$issue_number" --arg url "$issue_url" --arg type "$type" --arg item "$item_id" \
   --argjson project "$project" --arg status "$todo_name" --arg sp "$sp" \
-  --arg blocked "$blocked_by" '{
+  --arg blocked "$blocked_by" --argjson breaking "$breaking" '{
     number: $n,
     url: $url,
     type: $type,
+    breaking: $breaking,
     blocked_by: ($blocked | split(" ") | map(select(. != "") | tonumber)),
     project: (if $project then {number: $project.number, item_id: $item, status: $status,
       story_point: (if $sp == "" then null else ($sp | tonumber) end)} else null end)

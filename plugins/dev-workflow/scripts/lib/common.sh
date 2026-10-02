@@ -111,6 +111,10 @@ DW_STORY_POINTS='[1, 2, 3, 5, 8, 13, 21, 34]'
 # shellcheck disable=SC2034
 DW_STORY_POINT_SPLIT=21
 
+# 破壊的変更を表すラベル。type ラベルとは別に付け、PR のタイトルの type の後に ! を付ける（設計書 §5）。source した側で使う
+# shellcheck disable=SC2034
+DW_BREAKING_LABEL=breaking
+
 # GitHub がテンプレートを探す場所。source した側で使う。
 # 大文字小文字は区別せず、拡張子は .md・.txt・なしを認める。書き方は dw_find_nocase を参照
 # PR テンプレート（1ファイル）と、複数の PR テンプレートを置くディレクトリ（?template= で選ぶ形式）
