@@ -208,6 +208,39 @@ run_cleanup() {
   assert_failure
 }
 
+@test "status.showUntrackedFiles=no でも、追跡していないファイルや git が無視するファイルがあれば止まる" {
+  setup_branch
+  squash_merge
+  fake_pr MERGED
+  git config status.showUntrackedFiles no
+  echo new >"$WT/new.txt"
+  run_cleanup --branch feat/17-x
+  assert_failure 2
+  assert_output --partial "$WT に未コミットの変更があります"
+  rm "$WT/new.txt"
+  echo .env >>.git/info/exclude
+  echo SECRET=1 >"$WT/.env"
+  run_cleanup --branch feat/17-x
+  assert_failure 2
+  assert_output --partial "$WT に git が無視するファイル（.env）があります"
+  [ -f "$WT/.env" ]
+}
+
+@test "status.showUntrackedFiles=no でも、サブモジュールの中の git が無視するファイルがあれば止まる" {
+  add_submodule
+  setup_branch
+  git -C "$WT" submodule update -q --init
+  squash_merge
+  fake_pr MERGED
+  # サブモジュールの中にも効くよう、環境変数で設定する（add_submodule が GIT_CONFIG_KEY_0 を使っている）
+  export GIT_CONFIG_COUNT=2 GIT_CONFIG_KEY_1=status.showUntrackedFiles GIT_CONFIG_VALUE_1=no
+  echo .env >>"$(git -C "$WT/lib/sub" rev-parse --git-path info/exclude)"
+  echo SECRET=1 >"$WT/lib/sub/.env"
+  run_cleanup --branch feat/17-x
+  assert_failure 2
+  assert_output --partial "$WT に git が無視するファイル（lib/sub/.env）があります"
+}
+
 @test "サブモジュールを初期化したワークツリーも削除する" {
   add_submodule
   setup_branch

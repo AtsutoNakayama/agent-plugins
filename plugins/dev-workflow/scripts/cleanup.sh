@@ -106,8 +106,9 @@ if [ -n "$path" ] && [ ! -d "$path" ]; then
   path=""
 fi
 if [ -n "$path" ]; then
-  # サブモジュールの中の変更も見る（submodule.<name>.ignore などの設定で隠されないよう none を指定する）
-  [ -z "$(git -C "$path" status --porcelain --ignore-submodules=none)" ] \
+  # サブモジュールの中の変更も見る（submodule.<name>.ignore などの設定で隠されないよう none を指定する）。
+  # status.showUntrackedFiles=no の設定で追跡していないファイルが隠されないよう -unormal も指定する
+  [ -z "$(git -C "$path" status --porcelain -unormal --ignore-submodules=none)" ] \
     || dw_die "$path に未コミットの変更があります。コミットするか片付けてから実行してください" 2
   if [ "$path" = "$main_root" ]; then
     switched=true
@@ -130,9 +131,9 @@ if [ -n "$path" ]; then
     if ! $remove_ignored; then
       # shellcheck disable=SC2016 # 各サブモジュールの中で展開させる
       ignored="$( {
-        git -C "$path" status --porcelain --ignored --ignore-submodules=all
+        git -C "$path" status --porcelain -unormal --ignored --ignore-submodules=all
         git -C "$path" submodule --quiet foreach --recursive \
-          'git status --porcelain --ignored --ignore-submodules=all | sed "s|^!! |!! $displaypath/|"'
+          'git status --porcelain -unormal --ignored --ignore-submodules=all | sed "s|^!! |!! $displaypath/|"'
       } | sed -n 's/^!! //p')" || dw_die "$path の git が無視するファイルを確かめられませんでした"
       if [ -n "$ignored" ]; then
         list="$(awk 'NR <= 5 { printf "%s%s", (NR > 1 ? ", " : ""), $0 }' <<<"$ignored")"
