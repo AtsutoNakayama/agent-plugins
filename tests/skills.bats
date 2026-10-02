@@ -33,3 +33,13 @@ frontmatter() { awk 'NR == 1 && $0 == "---" { on = 1; next } on && $0 == "---" {
     grep -q '確認を取らない' "$f" || fail "${name} に「確認を取らない」と書かれていません"
   done
 }
+
+@test "確認を残すスキルに、選択肢の説明の書き方がある（設計書 §8）" {
+  for name in task-create pr-create repo-setup; do
+    f="$SKILLS/$name/SKILL.md"
+    grep -q '選択肢の説明には、選ぶと実際に何が起きるか' "$f" \
+      || fail "${name} に選択肢の説明の書き方（選ぶと何が起きるかを書く）がありません"
+    grep -q '内部の手順は書かない' "$f" \
+      || fail "${name} に「内部の手順は書かない」と書かれていません"
+  done
+}
