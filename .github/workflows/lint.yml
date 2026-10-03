@@ -58,7 +58,8 @@ jobs:
             release-please-config.json .release-please-manifest.json
       - name: claude plugin validate
         # Claude Code がマニフェストとスキルを受け付けるかを検査する。マーケットプレイス（.）だけを指定すると
-        # プラグイン本体は検査されないので、両方を指定する。--strict で知らないキーなどの警告もエラーにする。
+        # plugin.json までしか検査されず、スキル（SKILL.md）などは検査されないので、プラグイン本体も指定する。
+        # --strict で知らないキーなどの警告もエラーにする。
         # 更新で検査が厳しくなって急に落ちないように、バージョンを固定する。上げるときは手元で両方が通ることを確かめる。
         # validate はログインしなくても動く
         env:

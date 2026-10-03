@@ -56,7 +56,7 @@ actionlint                         # 入っていなければ docker run --rm -v
 bats tests/
 TEST_BASH=/bin/bash bats tests/   # macOS では標準の bash 3.2 で確認する
 claude plugin validate --strict .                     # マーケットプレイス
-claude plugin validate --strict plugins/dev-workflow  # プラグイン本体（. だけでは検査されない）
+claude plugin validate --strict plugins/dev-workflow  # プラグイン本体（. だけではスキルなどは検査されない）
 ```
 
 ### Docker の bash 3.2 でテストする
