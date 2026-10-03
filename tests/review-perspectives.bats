@@ -24,41 +24,41 @@ names() { jq -r "$1[].name" <<<"$output"; }
 }
 
 @test "3つの層の観点を合わせ、名前の順に出力する" {
-  perspective "$WORKFLOW_USER_REVIEW_DIR" zz-user "ユーザーの観点"
-  perspective "$REPO/.claude/review" aa-repo "リポジトリの観点"
+  perspective "$WORKFLOW_USER_DIR/review" zz-user "ユーザーの観点"
+  perspective "$REPO/.claude/dev-workflow/review" aa-repo "リポジトリの観点"
   run_script review-perspectives.sh
   assert_success
   assert_equal "$(jq -c '.perspectives[] | select(.name == "zz-user") | [.title, .layer, .path, .overrides]' <<<"$output")" \
-    "[\"ユーザーの観点\",\"user\",\"$WORKFLOW_USER_REVIEW_DIR/zz-user.md\",[]]"
+    "[\"ユーザーの観点\",\"user\",\"$WORKFLOW_USER_DIR/review/zz-user.md\",[]]"
   assert_equal "$(jq -r '.perspectives[] | select(.name == "aa-repo") | .layer' <<<"$output")" repo
   assert_equal "$(names .perspectives)" "$(names .perspectives | LC_ALL=C sort)"
 }
 
 @test "同じ名前の観点は上位の層のファイルを使い、上書きしたパスを残す" {
-  perspective "$WORKFLOW_USER_REVIEW_DIR" docs-sync "ユーザーの版"
-  perspective "$REPO/.claude/review" docs-sync "リポジトリの版"
+  perspective "$WORKFLOW_USER_DIR/review" docs-sync "ユーザーの版"
+  perspective "$REPO/.claude/dev-workflow/review" docs-sync "リポジトリの版"
   run_script review-perspectives.sh
   assert_success
   assert_equal "$(jq -c '[.perspectives[] | select(.name == "docs-sync")] | length' <<<"$output")" 1
   assert_equal "$(jq -c '.perspectives[] | select(.name == "docs-sync") | [.title, .layer, .overrides]' <<<"$output")" \
-    "[\"リポジトリの版\",\"repo\",[\"$PLUGIN_REVIEW/docs-sync.md\",\"$WORKFLOW_USER_REVIEW_DIR/docs-sync.md\"]]"
+    "[\"リポジトリの版\",\"repo\",[\"$PLUGIN_REVIEW/docs-sync.md\",\"$WORKFLOW_USER_DIR/review/docs-sync.md\"]]"
 }
 
 @test "enabled: false で下位の層の観点を止める（本文と title は省ける）" {
-  mkdir -p "$REPO/.claude/review"
-  printf -- '---\nenabled: false\n---\n' >"$REPO/.claude/review/docs-sync.md"
+  mkdir -p "$REPO/.claude/dev-workflow/review"
+  printf -- '---\nenabled: false\n---\n' >"$REPO/.claude/dev-workflow/review/docs-sync.md"
   run_script review-perspectives.sh
   assert_success
   jq -e '.perspectives | all(.name != "docs-sync")' <<<"$output" >/dev/null || fail "docs-sync が止まっていません"
   assert_equal "$(jq -c '.disabled' <<<"$output")" \
-    "[{\"name\":\"docs-sync\",\"layer\":\"repo\",\"path\":\"$REPO/.claude/review/docs-sync.md\",\"overrides\":[\"$PLUGIN_REVIEW/docs-sync.md\"]}]"
+    "[{\"name\":\"docs-sync\",\"layer\":\"repo\",\"path\":\"$REPO/.claude/dev-workflow/review/docs-sync.md\",\"overrides\":[\"$PLUGIN_REVIEW/docs-sync.md\"]}]"
 }
 
 @test "上位の層で enabled: true にすると、止めた観点を戻せる" {
-  mkdir -p "$WORKFLOW_USER_REVIEW_DIR"
-  printf -- '---\nenabled: false\n---\n' >"$WORKFLOW_USER_REVIEW_DIR/docs-sync.md"
-  mkdir -p "$REPO/.claude/review"
-  printf -- '---\ntitle: "戻す"\nenabled: true\n---\n本文\n' >"$REPO/.claude/review/docs-sync.md"
+  mkdir -p "$WORKFLOW_USER_DIR/review"
+  printf -- '---\nenabled: false\n---\n' >"$WORKFLOW_USER_DIR/review/docs-sync.md"
+  mkdir -p "$REPO/.claude/dev-workflow/review"
+  printf -- '---\ntitle: "戻す"\nenabled: true\n---\n本文\n' >"$REPO/.claude/dev-workflow/review/docs-sync.md"
   run_script review-perspectives.sh
   assert_success
   assert_equal "$(jq -r '.perspectives[] | select(.name == "docs-sync") | .title' <<<"$output")" "戻す"
@@ -66,7 +66,7 @@ names() { jq -r "$1[].name" <<<"$output"; }
 }
 
 @test "形式の誤ったファイルは警告して invalid に入れ、ほかの観点は使う" {
-  d="$REPO/.claude/review"
+  d="$REPO/.claude/dev-workflow/review"
   perspective "$d" ok "使う"
   perspective "$d" Bad_Name "名前の誤り"
   printf 'frontmatter が無い\n' >"$d/no-fm.md"
@@ -90,16 +90,16 @@ EOF
 }
 
 @test "CRLF の改行と引用符で囲んだ title を読める" {
-  mkdir -p "$REPO/.claude/review"
-  printf -- "---\r\ntitle: 'CRLF の観点'\r\n---\r\n本文\r\n" >"$REPO/.claude/review/crlf.md"
+  mkdir -p "$REPO/.claude/dev-workflow/review"
+  printf -- "---\r\ntitle: 'CRLF の観点'\r\n---\r\n本文\r\n" >"$REPO/.claude/dev-workflow/review/crlf.md"
   run_script review-perspectives.sh
   assert_success
   assert_equal "$(jq -r '.perspectives[] | select(.name == "crlf") | .title' <<<"$output")" "CRLF の観点"
 }
 
 @test "上位の層のファイルが形式の誤りで使えないときは、下位の層の同じ名前の観点も使わない" {
-  mkdir -p "$REPO/.claude/review"
-  printf -- '---\nenabled: no\n---\n' >"$REPO/.claude/review/docs-sync.md"
+  mkdir -p "$REPO/.claude/dev-workflow/review"
+  printf -- '---\nenabled: no\n---\n' >"$REPO/.claude/dev-workflow/review/docs-sync.md"
   run bash -c "${TEST_BASH:-bash} '$SCRIPTS/review-perspectives.sh' 2>'$TMP/err'"
   assert_success
   jq -e '.perspectives | all(.name != "docs-sync")' <<<"$output" >/dev/null || fail "下位の層の docs-sync が使われています"
@@ -109,15 +109,15 @@ EOF
 }
 
 @test "先頭に BOM がある観点ファイルを読める" {
-  mkdir -p "$REPO/.claude/review"
-  printf '\357\273\277---\ntitle: BOM の観点\n---\n本文\n' >"$REPO/.claude/review/bom.md"
+  mkdir -p "$REPO/.claude/dev-workflow/review"
+  printf '\357\273\277---\ntitle: BOM の観点\n---\n本文\n' >"$REPO/.claude/dev-workflow/review/bom.md"
   run_script review-perspectives.sh
   assert_success
   assert_equal "$(jq -r '.perspectives[] | select(.name == "bom") | .title' <<<"$output")" "BOM の観点"
 }
 
 @test "リポジトリの外でも、プラグインとユーザーの観点を出力する" {
-  perspective "$WORKFLOW_USER_REVIEW_DIR" mine "ユーザーの観点"
+  perspective "$WORKFLOW_USER_DIR/review" mine "ユーザーの観点"
   cd "$TMP"
   run_script review-perspectives.sh
   assert_success

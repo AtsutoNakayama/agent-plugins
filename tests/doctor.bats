@@ -54,10 +54,54 @@ SH
 @test "設定が壊れていれば config が失敗する" {
   fake_gh
   export FAKE_SCOPES="project"
-  echo '{broken' >.claude/workflow.json
+  echo '{broken' >.claude/dev-workflow/config.json
   run_script doctor.sh
   assert_failure 1
   assert_equal "$(jq -r '.checks[] | select(.name == "config") | .ok' <<<"$output")" false
+}
+
+@test "古い置き場所のファイルがあれば、止めずに移すよう促す" {
+  fake_gh
+  export FAKE_SCOPES="project"
+  echo '{}' >.claude/workflow.json
+  mkdir -p .claude/review "$TMP/workflow" "$TMP/review" "$TMP/wt-parent"
+  touch .claude/review/mine.md "$TMP/workflow/commit.md" "$TMP/review/mine.md"
+  echo '{}' >.claude/workflow.local.json
+  git worktree add -q -b feat/1-x "$TMP/wt-parent/wt"
+  cd "$TMP/wt-parent/wt"
+  run_script doctor.sh
+  assert_success
+  assert_equal "$(jq -c '.checks[] | select(.name == "old-locations") | [.ok, .level]' <<<"$output")" '[false,"warn"]'
+  detail="$(jq -r '.checks[] | select(.name == "old-locations") | .detail' <<<"$output")"
+  assert_equal "$detail" "古い置き場所のファイルは使われません。移してください: $REPO/.claude/workflow.local.json → $REPO/.claude/dev-workflow/config.local.json、$TMP/workflow → $WORKFLOW_USER_DIR/、$TMP/review → $WORKFLOW_USER_DIR/review/"
+  cd "$REPO"
+  run_script doctor.sh
+  assert_output --partial "$REPO/.claude/workflow.json → $REPO/.claude/dev-workflow/config.json、$REPO/.claude/review → $REPO/.claude/dev-workflow/review/、"
+}
+
+@test "個人の設定が git に無視されていなければ、.gitignore に足すよう促す" {
+  fake_gh
+  export FAKE_SCOPES="project"
+  echo '.claude/workflow.local.json' >.gitignore
+  echo '{}' >.claude/workflow.local.json
+  run_script doctor.sh
+  assert_success
+  assert_equal "$(jq -c '.checks[] | select(.name == "local-ignored") | [.ok, .level]' <<<"$output")" '[false,"warn"]'
+  assert_output --partial "個人の設定が git に無視されていません。.gitignore に .claude/dev-workflow/config.local.json を足してください"
+  # 移して .gitignore も直せば促さない
+  mv .claude/workflow.local.json .claude/dev-workflow/config.local.json
+  echo '.claude/dev-workflow/config.local.json' >.gitignore
+  run_script doctor.sh
+  assert_equal "$(jq '[.checks[] | select(.name == "local-ignored")] | length' <<<"$output")" 0
+}
+
+@test "古い置き場所に Markdown の無いディレクトリがあるだけなら、促さない" {
+  fake_gh
+  export FAKE_SCOPES="project"
+  mkdir -p .claude/review "$TMP/workflow"
+  touch "$TMP/workflow/other.txt"
+  run_script doctor.sh
+  assert_equal "$(jq -r '.checks[] | select(.name == "old-locations") | .ok' <<<"$output")" true
 }
 
 @test "gh が古ければ、止めずに更新を促す" {

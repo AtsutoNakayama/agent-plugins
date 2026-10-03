@@ -65,7 +65,7 @@ load fake_gh
 
 @test "project.number が未設定ならエラーになる" {
   setup_fake_gh
-  echo '{}' >.claude/workflow.json
+  echo '{}' >.claude/dev-workflow/config.json
   run_script status-set.sh --issue 17 --to start
   assert_failure 2
   assert_output --partial "project.number が未設定です"

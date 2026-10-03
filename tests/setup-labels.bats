@@ -167,13 +167,13 @@ assert_no_calls() {
   assert_equal "$(jq -r '.actions[-1]' <<<"$json")" "既定のラベル「wontfix」を削除する"
 }
 
-@test "リポジトリの .claude/labels.json があれば、既定の定義より優先する" {
+@test "リポジトリの .claude/dev-workflow/labels.json があれば、既定の定義より優先する" {
   setup_fake_gh
-  printf '%s\n' '[{"name": "feat", "color": "000000"}]' >.claude/labels.json
+  printf '%s\n' '[{"name": "feat", "color": "000000"}]' >.claude/dev-workflow/labels.json
   run_setup
   assert_success
   assert_equal "$(called create)" 1
-  assert_equal "$(jq -r .file <<<"$json")" "$REPO/.claude/labels.json"
+  assert_equal "$(jq -r .file <<<"$json")" "$REPO/.claude/dev-workflow/labels.json"
 }
 
 @test "更新する既存のラベルの名前は URL エンコードする" {
@@ -188,22 +188,22 @@ assert_no_calls() {
 @test "--repo で別のリポジトリを指定したら、そのリポジトリの定義と設定を使う" {
   setup_fake_gh
   printf '%s\n' '{"nameWithOwner": "me/here"}' >"$FIX/here.json"
-  printf '%s\n' '[{"name": "feat", "color": "000000"}]' >.claude/labels.json
-  mkdir -p "$FIX/remote/.claude"
-  printf '%s\n' '[{"name": "story", "color": "111111"}]' >"$FIX/remote/.claude/labels.json"
-  printf '%s\n' '{"labels": {"types": ["story", "spike"]}}' >"$FIX/remote/.claude/workflow.json"
+  printf '%s\n' '[{"name": "feat", "color": "000000"}]' >.claude/dev-workflow/labels.json
+  mkdir -p "$FIX/remote/.claude/dev-workflow"
+  printf '%s\n' '[{"name": "story", "color": "111111"}]' >"$FIX/remote/.claude/dev-workflow/labels.json"
+  printf '%s\n' '{"labels": {"types": ["story", "spike"]}}' >"$FIX/remote/.claude/dev-workflow/config.json"
   run_setup --repo me/demo
   assert_success
   assert_equal "$(called create)" 1
   grep -qF 'create [story] [-R] [me/demo]' "$CALLS"
-  assert_equal "$(jq -r .file <<<"$json")" "me/demo:.claude/labels.json"
+  assert_equal "$(jq -r .file <<<"$json")" "me/demo:.claude/dev-workflow/labels.json"
   assert_output --partial "定義に無いラベルがあります: spike"
 }
 
 @test "別のリポジトリに定義が無ければ、プラグインの既定を使う" {
   setup_fake_gh
   printf '%s\n' '{"nameWithOwner": "me/here"}' >"$FIX/here.json"
-  printf '%s\n' '[{"name": "feat", "color": "000000"}]' >.claude/labels.json
+  printf '%s\n' '[{"name": "feat", "color": "000000"}]' >.claude/dev-workflow/labels.json
   run_setup --repo me/demo
   assert_success
   assert_equal "$(called create)" 10
@@ -212,21 +212,21 @@ assert_no_calls() {
 
 @test "--repo が今いるリポジトリと同じなら、手元の定義を使う" {
   setup_fake_gh
-  printf '%s\n' '[{"name": "feat", "color": "000000"}]' >.claude/labels.json
+  printf '%s\n' '[{"name": "feat", "color": "000000"}]' >.claude/dev-workflow/labels.json
   run_setup --repo me/demo
   assert_success
   assert_equal "$(called create)" 1
-  assert_equal "$(jq -r .file <<<"$json")" "$REPO/.claude/labels.json"
+  assert_equal "$(jq -r .file <<<"$json")" "$REPO/.claude/dev-workflow/labels.json"
 }
 
 @test "別のリポジトリの定義を 404 以外の理由で読めなければ、変更せずに止まる" {
   setup_fake_gh
   printf '%s\n' '{"nameWithOwner": "me/here"}' >"$FIX/here.json"
-  mkdir -p "$FIX/remote/.claude"
-  echo 'gh: Server Error (HTTP 502)' >"$FIX/remote/.claude/labels.json.err"
+  mkdir -p "$FIX/remote/.claude/dev-workflow"
+  echo 'gh: Server Error (HTTP 502)' >"$FIX/remote/.claude/dev-workflow/labels.json.err"
   run_setup --repo me/demo
   assert_failure
-  assert_output --partial "me/demo の .claude/labels.json を読めません"
+  assert_output --partial "me/demo の .claude/dev-workflow/labels.json を読めません"
   assert_no_calls
 }
 

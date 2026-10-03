@@ -4,14 +4,14 @@
 #
 # 使い方: setup-labels.sh [オプション]
 #   --repo OWNER/NAME  対象のリポジトリ（既定: 今いるリポジトリ）
-#   --file PATH        ラベルの定義（既定: 対象のリポジトリの .claude/labels.json、無ければプラグインの既定）
+#   --file PATH        ラベルの定義（既定: 対象のリポジトリの .claude/dev-workflow/labels.json、無ければプラグインの既定）
 #   --keep-defaults    GitHub の既定のラベルを削除しない
 #   --dry-run          変更せず、行う予定の操作だけを出力する
 #
 # labels.json の形式: [{"name": "feat", "color": "0e8a16", "description": "新しい機能"}, ...]
 # 名前は大文字と小文字を区別せずに照合する（GitHub と同じ）。色と説明が違うときだけ更新する。
 # --repo が今いるリポジトリと違うときは、対象のリポジトリの既定のブランチにある
-# .claude/labels.json と .claude/workflow.json を API で読む。
+# .claude/dev-workflow/labels.json と .claude/dev-workflow/config.json を API で読む。
 set -euo pipefail
 
 # shellcheck source=../lib/common.sh
@@ -74,12 +74,12 @@ fetch_remote() {
 file_label="$file"
 if [ -z "$file" ]; then
   if $remote; then
-    file="$(fetch_remote .claude/labels.json)"
-    file_label="$repo_nwo:.claude/labels.json"
+    file="$(fetch_remote .claude/dev-workflow/labels.json)"
+    file_label="$repo_nwo:.claude/dev-workflow/labels.json"
   else
     repo_root="$(dw_repo_root || true)"
-    if [ -n "$repo_root" ] && [ -f "$repo_root/.claude/labels.json" ]; then
-      file="$repo_root/.claude/labels.json"
+    if [ -n "$repo_root" ] && [ -f "$repo_root/.claude/dev-workflow/labels.json" ]; then
+      file="$repo_root/.claude/dev-workflow/labels.json"
       file_label="$file"
     fi
   fi
@@ -104,10 +104,10 @@ dup="$(jq -r 'group_by(.name | ascii_downcase) | map(select(length > 1)[0].name)
 # 別のリポジトリでは、個人の層は効かないので、チームの設定とプラグインの既定だけを見る
 if $remote; then
   types="$(jq -c '.labels.types' "$DW_PLUGIN_ROOT/defaults/workflow.json")"
-  team="$(fetch_remote .claude/workflow.json)"
+  team="$(fetch_remote .claude/dev-workflow/config.json)"
   if [ -n "$team" ]; then
     types="$(jq -c --argjson d "$types" '.labels.types // $d' "$team" 2>/dev/null)" \
-      || dw_die "${repo_nwo} の .claude/workflow.json を JSON として読めません" 2
+      || dw_die "${repo_nwo} の .claude/dev-workflow/config.json を JSON として読めません" 2
   fi
 else
   types="$("$BASH" "$DW_SCRIPTS_DIR/config.sh" | jq -c '.labels.types // []')"

@@ -72,7 +72,7 @@ denied() {
 }
 
 @test "base_branch の設定に従う" {
-  echo '{"base_branch": "develop"}' >.claude/workflow.json
+  echo '{"base_branch": "develop"}' >.claude/dev-workflow/config.json
   allowed "git commit -m x" "git push origin HEAD:main"
   git checkout -q -b develop
   denied "develop の上ではコミットしません" "git commit -m x"

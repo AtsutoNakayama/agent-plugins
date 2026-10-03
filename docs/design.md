@@ -109,7 +109,7 @@ agent-plugins/
   - 破壊的変更とは、既存の利用者が設定やコマンドを直さないと動かなくなる変更（設定キーやプレースホルダの名前の変更、スクリプトの引数の変更・削除、スキル名の変更など）。
   - version を上げたいから付けるものではない。破壊的変更を伴わない節目（1.0.0 など）は release-please の `release-as` で上げる。
 - GitHub の既定のラベルは削除する（オプションで残せる）。
-- 定義は `labels.json` に置き、利用者が編集できる。
+- 定義はプラグインの既定（`defaults/labels.json`）を使い、`<repo>/.claude/dev-workflow/labels.json` があればそちらを優先する。利用者が編集できる。
 
 ## 6. コミットと PR の書き方
 
@@ -122,21 +122,22 @@ agent-plugins/
 
 | 層 | 場所 |
 |---|---|
-| 1. 個人がそのリポジトリで上書き | `<repo>/.claude/workflow.local.json`（コミットしない） |
-| 2. チームの規約 | `<repo>/.claude/workflow.json` と `<repo>/.claude/workflow/*.md` |
+| 1. 個人がそのリポジトリで上書き | `<repo>/.claude/dev-workflow/config.local.json`（コミットしない） |
+| 2. チームの規約 | `<repo>/.claude/dev-workflow/config.json` と `<repo>/.claude/dev-workflow/*.md` |
 | 3. 既にある規約 | PR/Issue テンプレート、commitlint の設定、CONTRIBUTING.md |
-| 4. 自分の好み | `~/.claude/workflow/` |
+| 4. 自分の好み | `~/.claude/dev-workflow/config.json` と `~/.claude/dev-workflow/*.md` |
 | 5. フォールバック | プラグインの既定 |
 
+- dev-workflow のファイル（設定・ガイド・レビューの観点・ラベルの定義）は、リポジトリでは `<repo>/.claude/dev-workflow/`、ホームでは `~/.claude/dev-workflow/` の1か所にまとめ、どちらも同じ形にする。Claude Code 本体が使う `.claude/` の下の名前（`.claude/workflows/` など）と取り違えないため。
 - 層は**項目ごとに合わせる**。上位の層が決めていない項目には、下位の層の値が効く。
 - 構造化された設定（正規表現・type の一覧など）はスクリプトが検証に使い、文章のガイド（`*.md`）は AI が読む。ガイドどうしが矛盾したら、上位の層を優先する。
 
 ## 7. レビュー
 
-- 観点は1ファイルに1観点の Markdown で書き、3つの層を足し合わせる：プラグインに同梱する共通の観点 / `~/.claude/review/` / `<repo>/.claude/review/`。
+- 観点は1ファイルに1観点の Markdown で書き、3つの層を足し合わせる：プラグインに同梱する共通の観点 / `~/.claude/dev-workflow/review/` / `<repo>/.claude/dev-workflow/review/`。
 - 観点ファイルは frontmatter に `title`（一覧に出す1行）を書き、本文にサブエージェントへの指示を書く。観点の名前はファイル名で、同じ名前なら上位の層（リポジトリ → ユーザー → プラグイン）のファイルを使う。上位の層で `enabled: false` と書くと、下位の層の観点を止められる。
 - `review-perspectives.sh` は観点の本文を出力せず、使う観点（名前・title・層・パス）と、止めた観点・形式の誤ったファイルの一覧を出力する。本文はサブエージェントが読む（トークン削減のため）。形式の誤ったファイルは警告して使わず（下位の層の同じ名前の観点も使わない）、レビューは止めない。
-- 観点ファイルは `review-perspective-add` スキルで作れる。置く層（`~/.claude/review/` か `<repo>/.claude/review/`）はユーザーが選ぶ。同じ層の同じ名前のファイルは上書きせず、ほかの層の同じ名前の観点を置き換えるときは確認を取る。
+- 観点ファイルは `review-perspective-add` スキルで作れる。置く層（`~/.claude/dev-workflow/review/` か `<repo>/.claude/dev-workflow/review/`）はユーザーが選ぶ。同じ層の同じ名前のファイルは上書きせず、ほかの層の同じ名前の観点を置き換えるときは確認を取る。
 - 独自のレビュースキルは独自の観点だけを担当する（観点ごとにサブエージェントで並行してレビューする）。一般的なバグの検出は組み込みの `/code-review` に任せる。
 - 指摘は1つの一覧にまとめ、反映するものをユーザーが選ぶ。
 - PR のレビューは、GitHub Actions の上で動く Claude のワークフロー（#69）に任せる。独自の観点のレビューは手元の `review` スキルで完結させ、PR へのコメントの投稿はしない。
@@ -191,7 +192,7 @@ agent-plugins/
 
 | プラグイン側（`plugins/dev-workflow/scripts/`） | 役割 |
 |---|---|
-| `doctor.sh` | 認証とスコープ、gh・`jq`・bash のバージョン、設定ファイルを確認する（gh が古ければ更新を促す） |
+| `doctor.sh` | 認証とスコープ、gh・`jq`・bash のバージョン、設定ファイルを確認する（gh が古ければ更新を促し、古い置き場所の設定・ガイド・観点・ラベルの定義があれば移すよう促し、個人の設定が git に無視されていなければ .gitignore に足すよう促す） |
 | `config.sh` | 5つの層を合わせた設定を出力する |
 | `issue-create.sh` | 起票、ラベルの付与、Project への追加、列と Story Point の設定、依存関係（blocked by）の登録 |
 | `status-set.sh` | 列を移す |
@@ -209,7 +210,7 @@ agent-plugins/
 | `setup-labels.sh` | ラベルを登録する（何度実行しても同じ結果になる） |
 | `setup-project.sh` | Project を作るか既存のものに接続し、リポジトリと紐付け、Story Point の項目を追加し、列を揃え、自動追加の設定を案内する |
 | `setup-repo.sh` | マージ方法の設定と、ルールセットの登録 |
-| `setup-all.sh` | 上の3つを実行し、`.claude/workflow.json` と各テンプレートを作る |
+| `setup-all.sh` | 上の3つを実行し、`.claude/dev-workflow/config.json` と各テンプレートを作る |
 
 ## 11. 実装の順番
 

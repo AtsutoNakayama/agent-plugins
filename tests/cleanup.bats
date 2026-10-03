@@ -10,7 +10,7 @@ WT_REL=.claude/worktrees/feat/17-x
 # origin 役の bare リポジトリに main を push し、feat/17-x のワークツリーで1つコミットして push しておく
 setup_branch() {
   setup_fake_gh
-  git add .claude/workflow.json
+  git add .claude/dev-workflow/config.json
   git commit -q -m config
   git init -q --bare -b main "$TMP/origin.git"
   git remote add origin "$TMP/origin.git"
