@@ -161,7 +161,8 @@ fail_after_create() { dw_die "Issue #${issue_number}（${issue_url}）は作り�
 jq -e --arg t "$type" 'any(.labels[]?; .name == $t)' <<<"$issue" >/dev/null \
   || fail_after_create "type ラベル「${type}」を付けられませんでした（リポジトリへの書き込み権限が必要です）"
 if $breaking; then
-  jq -e --arg b "$DW_BREAKING_LABEL" 'any(.labels[]?; .name == $b)' <<<"$issue" >/dev/null \
+  # 既にある Breaking のようなラベルが付くこともあるので、大文字と小文字を区別せずに照合する（GitHub と同じ）
+  jq -e --arg b "$DW_BREAKING_LABEL" 'any(.labels[]?; (.name | ascii_downcase) == $b)' <<<"$issue" >/dev/null \
     || fail_after_create "${DW_BREAKING_LABEL} ラベルを付けられませんでした"
 fi
 

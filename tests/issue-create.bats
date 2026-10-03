@@ -126,6 +126,15 @@ assert_no_changes() {
   assert_equal "$(jq -c '[.type, .breaking]' <<<"$json")" '["feat",true]'
 }
 
+@test "--breaking で、リポジトリの Breaking のような大文字のラベルが付いても成功する" {
+  setup_fake_gh
+  echo breaking >"$FIX/labels"
+  created_issue feat Breaking
+  run_create --title t --type feat --breaking
+  assert_success
+  assert_equal "$(jq -r .breaking <<<"$json")" true
+}
+
 @test "--breaking を付けなければ、breaking ラベルを付けない" {
   setup_fake_gh
   run_create --title t --type feat
