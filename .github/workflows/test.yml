@@ -1,9 +1,29 @@
 name: Test
 
+# プラグインの外にあるドキュメントだけの変更では動かさない。**.md でまとめて除外しないのは、
+# plugins/ の SKILL.md やテンプレートの .md をテストで使っているため。
+# 将来ルールセットで CI の成功を必須にするときは、paths-ignore で動かなかった PR のチェックが
+# 「待ち」のまま残ってマージできなくなるので、paths-ignore をやめるなどの対応が要る。
 on:
   pull_request:
+    paths-ignore:
+      - README.md
+      - docs/**
+      - .github/ISSUE_TEMPLATE/**
+      - .github/pull_request_template.md
   push:
     branches: [main]
+    paths-ignore:
+      - README.md
+      - docs/**
+      - .github/ISSUE_TEMPLATE/**
+      - .github/pull_request_template.md
+
+# 同じ PR に続けて push したら、古い実行を取り消す。main への push は PR のときとの差を
+# 確かめるために残すので、コミットごとに別のグループにして取り消さない
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.sha }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   test:
