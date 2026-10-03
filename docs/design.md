@@ -176,6 +176,11 @@ agent-plugins/
 - **bash 3.2 でも動く書き方**（macOS の標準の bash に合わせる）＋ `gh` ＋ `jq`。`set -euo pipefail` を書き、`shellcheck` と `bats` を CI で実行する。
 - 判断と文章の生成だけを AI が担当し、決まった手順で済む処理はスクリプトに切り出す（トークン削減のため）。
 - 出力は JSON、エラーは終了コードと1行のメッセージ。初期設定用のスクリプトは `--dry-run` に対応する。
+- **GitHub の操作は gh のサブコマンドと REST で行う**（`gh issue`・`gh project` など、無ければ `gh api` で REST）。GraphQL（`gh api graphql`）は重く、クエリも読みにくいので、他に手段が無いときだけ使い、使う箇所には理由をコメントに書く。今 GraphQL を残しているのは次の箇所。
+  - Issue から、ある Project での項目と今の列を引く（`status-set.sh`・`setup-project.sh` のオープンな Issue の一覧）。REST の Issue には Project の項目が無く、`gh issue view --json projectItems` は Project の名前と列しか返さない（項目の ID も Project の ID も無い）。
+  - Project の詳細（`setup-project.sh`）。紐付け済みのリポジトリと組み込みの自動化（workflows）は、gh にも REST にも無い。Status の選択肢を足す操作（下）に要る項目の一覧も、同じクエリでまとめて取る。
+  - 単一選択の項目の選択肢を足す（`setup-project.sh` の Status 列）。gh にも REST にも、既存の項目を変える操作が無い。
+- **gh は新しいものを前提にする**。古い gh のための回り道は書かず、要る機能が無い gh では止まって更新を促す（`common.sh` の `DW_GH_MIN_VERSION`。`doctor.sh` も更新を促す）。
 
 | プラグイン側（`plugins/dev-workflow/scripts/`） | 役割 |
 |---|---|
