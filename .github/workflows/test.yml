@@ -43,16 +43,20 @@ jobs:
         with:
           submodules: true
       - name: install bats
-        # macOS では bats 本体を新しい bash で動かし、対象のスクリプトだけ /bin/bash 3.2 で動かす
+        # macOS では bats 本体を新しい bash で動かし、対象のスクリプトだけ /bin/bash 3.2 で動かす。
+        # bats --jobs には GNU parallel が要る
         run: |
           if [ "$RUNNER_OS" = macOS ]; then
-            brew install bash bats-core jq
+            brew install bash bats-core jq parallel
           else
-            sudo apt-get update && sudo apt-get install -y bats jq
+            sudo apt-get update && sudo apt-get install -y bats jq parallel
           fi
       - name: bats
         env:
           TEST_BASH: ${{ matrix.bash }}
         run: |
           "$TEST_BASH" --version | head -n 1
-          bats tests/
+          # テストは git や jq の起動を待つ時間が長いので、コア数の2倍で並列に実行する
+          jobs=$(( $(getconf _NPROCESSORS_ONLN) * 2 ))
+          echo "jobs: $jobs"
+          bats --jobs "$jobs" tests/
