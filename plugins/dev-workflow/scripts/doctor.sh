@@ -12,6 +12,7 @@ if ! command -v jq >/dev/null 2>&1; then
 fi
 
 checks=""
+gh_auth=false
 
 # 使い方: check <名前> <true|false> <error|warn> <詳細>
 check() {
@@ -43,6 +44,7 @@ if has gh; then
     check gh-version false warn "gh ${DW_GH_MIN_VERSION} 以上を使ってください（今は ${gh_version:-不明}）。gh を更新してください（https://cli.github.com/）"
   fi
   if gh auth status -h github.com >/dev/null 2>&1; then
+    gh_auth=true
     check gh-auth true error "github.com にログイン済み"
     scopes="$(gh api -i user 2>/dev/null | tr -d '\r' | LC_ALL=C sed -n 's/^[Xx]-[Oo][Aa]uth-[Ss]copes: *//p')"
     if [ -z "$scopes" ]; then
@@ -105,6 +107,25 @@ if [ -n "$moves" ]; then
   check old-locations false warn "古い置き場所のファイルは使われません。移してください: ${moves}"
 else
   check old-locations true warn "古い置き場所のファイルはありません"
+fi
+
+# ラベルの定義にあってリポジトリに無いラベルがあると、起票などで止まる。定義に足したラベルは、
+# 初期設定を済ませたリポジトリには入らないので知らせる。GitHub に問い合わせられないときは飛ばす
+if $gh_auth && [ -n "$repo_root" ]; then
+  labels_err="$(mktemp)"
+  labels="$("$BASH" "$DW_SCRIPTS_DIR/setup/setup-labels.sh" --dry-run --keep-defaults 2>"$labels_err")"
+  labels_status=$?
+  if [ "$labels_status" -eq 0 ] && missing="$(jq -er '.labels.created | join(", ")' <<<"$labels" 2>/dev/null)"; then
+    if [ -n "$missing" ]; then
+      check labels false warn "ラベルの定義にあってリポジトリに無いラベルがあります: ${missing}。/dev-workflow:repo-setup でラベルを登録してください"
+    else
+      check labels true warn "ラベルの定義にあるラベルはすべてリポジトリにあります"
+    fi
+  elif [ "$labels_status" -eq 2 ]; then
+    # 終了コード 2 は定義を読めないとき。GitHub に問い合わせられないときと違い、直さないと起票などで止まる
+    check labels false warn "$(tail -n 1 "$labels_err" | LC_ALL=C sed 's/^error: //')"
+  fi
+  rm -f "$labels_err"
 fi
 
 result="$(printf '%s' "$checks" | jq -s '{ok: (map(select(.level == "error" and (.ok | not))) | length == 0), checks: .}')"

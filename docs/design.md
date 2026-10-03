@@ -193,7 +193,7 @@ agent-plugins/
 
 | プラグイン側（`plugins/dev-workflow/scripts/`） | 役割 |
 |---|---|
-| `doctor.sh` | 認証とスコープ、gh・`jq`・bash のバージョン、設定ファイルを確認する（gh が古ければ更新を促し、古い置き場所の設定・ガイド・観点・ラベルの定義があれば移すよう促し、個人の設定が git に無視されていなければ .gitignore に足すよう促す） |
+| `doctor.sh` | 認証とスコープ、gh・`jq`・bash のバージョン、設定ファイルを確認する（gh が古ければ更新を促し、古い置き場所の設定・ガイド・観点・ラベルの定義があれば移すよう促し、個人の設定が git に無視されていなければ .gitignore に足すよう促し、ラベルの定義にあってリポジトリに無いラベルがあれば repo-setup を案内する） |
 | `config.sh` | 5つの層を合わせた設定を出力する |
 | `issue-create.sh` | 起票、ラベルの付与、Project への追加、列と Story Point の設定、依存関係（blocked by）の登録 |
 | `status-set.sh` | 列を移す |

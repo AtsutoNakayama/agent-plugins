@@ -33,6 +33,7 @@ Issue をやめることにしたときは、`/dev-workflow:task-cancel` を使�
 - コミットメッセージは [Conventional Commits](https://www.conventionalcommits.org/ja/v1.0.0/)（`<type>(<scope>): <要約>`）で書きます。type は `plugins/dev-workflow/defaults/workflow.json` の `commit.types` のどれかです。
 - PR のタイトルは `<type>: <Issueのタイトル>` とし、本文に `Closes #<Issue番号>` を付けます。
 - マージはスカッシュのみです。main への直接 push・強制 push はルールセットとフックで禁止されています。
+- プラグインのラベルの定義（`plugins/dev-workflow/defaults/labels.json`）を変えた PR では、このリポジトリでも `plugins/dev-workflow/scripts/setup/setup-labels.sh` を実行して、ラベルを定義に揃えます。定義を変えても、既にあるリポジトリのラベルは変わらず、足したラベルが無いと起票などで止まります（`doctor.sh` が足りないラベルを知らせます）。
 - プラグインのバージョンは release-please がリリース PR で上げます。`plugin.json` の `version` や `.release-please-manifest.json` を手で変えないでください。
 
 ## 書き方のルール
