@@ -202,10 +202,11 @@ check_create() {
   done
 }
 
-# git branch の引数を調べる。ブランチを作るとき（一覧・削除・名前の変更などのオプションが無く、名前がある）だけ確かめる
+# git branch の引数を調べる。ブランチを作るとき（一覧・削除・名前の変更などのオプションが無く、名前がある）だけ確かめる。
+# オプションは名前の後ろにも書けるので（git branch bar -d）、すべての引数を見てから判断する
 # 使い方: check_branch <引数>...
 check_branch() {
-  local w after_dd=false
+  local w after_dd=false name=""
   for w in "$@"; do
     if ! $after_dd; then
       case "$w" in
@@ -217,9 +218,9 @@ check_branch() {
         -*) return 0 ;;
       esac
     fi
-    check_branch_name "$w"
-    return 0
+    [ -n "$name" ] || name="$w"
   done
+  [ -z "$name" ] || check_branch_name "$name"
 }
 
 # 1つのコマンド（単語の並び）を調べる。cd ならディレクトリを移す。

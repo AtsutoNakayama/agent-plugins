@@ -302,3 +302,8 @@ silent() {
   warned bad "git branch -ft bad origin/main" "git branch -qf bad" "git branch --no-color bad" "git branch --color=always bad"
   silent "git branch -fd bad" "git branch -tm bad"
 }
+
+@test "git branch の名前の後ろに、作らないオプションがあれば確かめない" {
+  silent "git branch bar -d" "git branch bar -D" "git branch 'f*' --list" "git branch bar -m baz" "git branch bar --contains main"
+  warned bar "git branch bar main -f" "git branch bar -- main"
+}
