@@ -265,17 +265,17 @@ silent() {
 
 @test "ブランチ名は、操作する先のリポジトリの設定で確かめる" {
   git init -q -b main "$TMP/other"
-  mkdir -p "$TMP/other/.claude"
-  echo '{"branch": {"pattern": "{type}-{issue_number}/{slug}"}}' >"$TMP/other/.claude/workflow.json"
+  mkdir -p "$TMP/other/.claude/dev-workflow"
+  echo '{"branch": {"pattern": "{type}-{issue_number}/{slug}"}}' >"$TMP/other/.claude/dev-workflow/config.json"
   silent "git -C $TMP/other switch -c feat-1/x" "cd $TMP/other && git branch feat-1/x"
   warned feat/1-x "git -C $TMP/other switch -c feat/1-x"
   warned feat-1/x "git switch -c feat-1/x"
 }
 
 @test "設定を読めないときや、リポジトリの外では何も出さない" {
-  echo '{' >.claude/workflow.json
+  echo '{' >.claude/dev-workflow/config.json
   silent "git switch -c foo"
-  rm .claude/workflow.json
+  rm .claude/dev-workflow/config.json
   silent "cd $TMP && git switch -c foo"
 }
 
