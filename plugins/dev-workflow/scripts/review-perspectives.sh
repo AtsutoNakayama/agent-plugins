@@ -270,7 +270,8 @@ skip_reason() {
 skipped='[]'
 if [ "$filter" = true ]; then
   # 名前を変えたファイルは、元の名前と新しい名前の両方を差分のファイルとみなす
-  changed="$(git diff --name-only --no-renames "$base")" || dw_die "差分のファイルを読めません: git diff ${base}"
+  # 日本語などのファイル名を "docs/\350..." のように引用符で囲まずに出させる（囲むとパターンに当たらない）
+  changed="$(git -c core.quotePath=false diff --name-only --no-renames "$base")" || dw_die "差分のファイルを読めません: git diff ${base}"
   ahead="$(git rev-list --count "$base..$target")" || dw_die "マージ先の進み具合を読めません: ${base}..${target}"
   kept='[]'
   while IFS= read -r p; do

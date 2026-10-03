@@ -316,3 +316,11 @@ EOF2
   assert_success
   assert_equal "$(jq -r '.disabled[].name' <<<"$output")" code-review
 }
+
+@test "日本語のファイル名も paths のパターンに当てる" {
+  branch_changing docs/設計.md
+  perspective_when docs 'paths: ["docs/*"]'
+  run_script review-perspectives.sh --base "$BASE" --target main
+  assert_success
+  used docs || fail "$output"
+}
