@@ -202,7 +202,7 @@ agent-plugins/
 | 0. 土台 | マーケットプレイスとプラグインの骨組み、`common.sh`、`config.sh`、`doctor.sh`、CI | 0.1.0 |
 | 1. 初期設定 | `setup-*.sh`、`repo-setup` | 0.2.0 |
 | 2. 最小のサイクル | `task-create`、`task-start`、`commit`、`pr-create`、`task-finish`、main を守るフック | 0.3.0 |
-| 3. レビュー | `review`、`review-perspective-add` | 0.x（release-please が上げる） |
+| 3. レビューと Issue の整理 | `review`、`review-perspective-add`、`task-close`（やらない Issue を閉じる） | 0.x（release-please が上げる） |
 | 4. まとめる | `workflow`、`task-status`、ブランチ名を警告するフック | 1.0.0 |
 
 最初の版は段階 0〜2。このリポジトリ自体を最初の利用者にする。
