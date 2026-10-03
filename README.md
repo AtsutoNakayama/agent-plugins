@@ -23,7 +23,7 @@ plugins/dev-workflow/scripts/doctor.sh
 | `/dev-workflow:task-start` | Issue の作業を始める。ブランチとワークツリー（`.claude/worktrees/<ブランチ名>`）を作り、自分に割り当てて In Progress に移す。確認を取らずに進め、結果を伝える |
 | `/dev-workflow:commit` | 変更を Conventional Commits の規約に沿ってコミットする。メッセージを検証してからコミットし、main の上ではコミットしない |
 | `/dev-workflow:review` | 作業中のブランチの変更を、組み込みの `/code-review` と独自のレビューの観点（下記）で並行してレビューし、指摘を1つの一覧にまとめる。反映する指摘を選ぶと、それだけを直してコミットする |
-| `/dev-workflow:review-perspective-add` | レビューの観点を聞き取り、形式に沿った観点ファイル（下記）を自分の層（`~/.claude/review/`）かリポジトリの層（`<repo>/.claude/review/`）に作る。同じ層に同じ名前の観点があれば上書きせずに知らせ、ほかの層の観点を置き換えるときは確認する |
+| `/dev-workflow:review-perspective-add` | レビューの観点を聞き取り、形式に沿った観点ファイル（下記）を自分の層（`~/.claude/dev-workflow/review/`）かリポジトリの層（`<repo>/.claude/dev-workflow/review/`）に作る。同じ層に同じ名前の観点があれば上書きせずに知らせ、ほかの層の観点を置き換えるときは確認する |
 | `/dev-workflow:pr-create` | 作業用のブランチを push し、Issue に紐付けた PR を作る。タイトルは `<type>: <Issueのタイトル>`、本文は PR テンプレートに沿って書き、`Closes #N` を付けてラベルを引き継ぐ。Issue に `breaking` ラベルがあれば、タイトルを `<type>!:` にし、本文に `BREAKING CHANGE:`（移行のしかた）を書く。確認してから push する |
 | `/dev-workflow:task-finish` | PR がマージされた後の後片付け。マージを確かめ、ワークツリーとローカルのブランチを削除し、main を最新にする（`git pull --ff-only`）。確認を取らずに進め、作業が失われるとき（マージされていない、PR に入っていないコミット・未コミットの変更・サブモジュールの push していないコミットがある）は、何も消さずに止まる。`.env` など git が無視するファイルが残っているときは、一覧を見せて消してよいか確認する |
 | `/dev-workflow:task-cancel` | やらないことにした Issue や誤って起票した Issue を取りやめる。理由と参照先（代わりに作業する Issue など）をコメントに書き、not planned（重複なら元の Issue に紐付けて duplicate）で閉じる。着手していれば、PR を閉じ、リモートと手元のブランチ・ワークツリーも削除する。失う作業（マージしていないコミット・未コミットの変更・`.env` など）を見せて確認してから行う。Project からは外さず、Story Point も残す（後からボードで経緯を参照できるように）。マージした後の片付けは `task-finish` を使う |
@@ -32,8 +32,8 @@ plugins/dev-workflow/scripts/doctor.sh
 
 `/dev-workflow:review` は、次の3つの層に置いた観点ファイル（1ファイルに1観点の Markdown）を合わせて使います。同じ名前の観点があれば、上の層のファイルが使われます。
 
-1. `<repo>/.claude/review/*.md`：リポジトリの観点（チームで共有する）
-2. `~/.claude/review/*.md`：自分の観点（全リポジトリで使う）
+1. `<repo>/.claude/dev-workflow/review/*.md`：リポジトリの観点（チームで共有する）
+2. `~/.claude/dev-workflow/review/*.md`：自分の観点（全リポジトリで使う）
 3. `plugins/dev-workflow/review/*.md`：プラグインに同梱する共通の観点
 
 ```markdown
@@ -81,7 +81,7 @@ plugins/dev-workflow/scripts/setup/setup-all.sh --dry-run
 plugins/dev-workflow/scripts/setup/setup-all.sh
 ```
 
-作ったファイル（テンプレート、`.claude/workflow.json`）はコミットされません。main は守られるので、PR でマージしてください。
+作ったファイル（テンプレート、`.claude/dev-workflow/config.json`）はコミットされません。main は守られるので、PR でマージしてください。
 
 ### ラベル
 
@@ -94,7 +94,7 @@ plugins/dev-workflow/scripts/setup/setup-labels.sh --keep-defaults
 plugins/dev-workflow/scripts/setup/setup-labels.sh --dry-run
 ```
 
-定義は `plugins/dev-workflow/defaults/labels.json`。リポジトリに `.claude/labels.json` を置くとそちらを使います（`--file` でも指定できます）。`--repo` で別のリポジトリを指定したときは、そのリポジトリの既定のブランチにある `.claude/labels.json` を読みます。独自の `.claude/labels.json` には `breaking` ラベルも定義してください（無いと破壊的変更の Issue を起票できないので、警告を出します）。
+定義は `plugins/dev-workflow/defaults/labels.json`。リポジトリに `.claude/dev-workflow/labels.json` を置くとそちらを使います（`--file` でも指定できます）。`--repo` で別のリポジトリを指定したときは、そのリポジトリの既定のブランチにある `.claude/dev-workflow/labels.json` を読みます。独自の `.claude/dev-workflow/labels.json` には `breaking` ラベルも定義してください（無いと破壊的変更の Issue を起票できないので、警告を出します）。
 
 削除するのは、GitHub が新しいリポジトリに作る既定のラベル（`accessibility`・`bug`・`enhancement` など）のうち、定義に無いものだけです。既定のラベルを残したいときは、そのラベルを定義に書くか、`--keep-defaults` ですべて残してください。
 

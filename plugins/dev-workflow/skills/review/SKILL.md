@@ -1,6 +1,6 @@
 ---
 name: review
-description: 作業中のブランチの変更を、組み込みの /code-review と独自のレビューの観点（プラグイン・~/.claude/review/・<repo>/.claude/review/）で並行してレビューし、指摘を1つの一覧にまとめて、反映するものをユーザーに選んでもらう。PR を出す前のローカルのレビューに使う。
+description: 作業中のブランチの変更を、組み込みの /code-review と独自のレビューの観点（プラグイン・~/.claude/dev-workflow/review/・<repo>/.claude/dev-workflow/review/）で並行してレビューし、指摘を1つの一覧にまとめて、反映するものをユーザーに選んでもらう。PR を出す前のローカルのレビューに使う。
 ---
 
 # ローカルのレビュー

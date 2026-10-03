@@ -51,5 +51,5 @@ AskUserQuestion で、実行してよいか確認を取る（会話の中のあ�
 
 出力の `next_steps` を伝える。
 
-- **作ったファイル**（テンプレート、`.claude/workflow.json`）はコミットされていない。直接 push できないので、Issue を起票し、ブランチを切って PR にする
+- **作ったファイル**（テンプレート、`.claude/dev-workflow/config.json`）はコミットされていない。直接 push できないので、Issue を起票し、ブランチを切って PR にする
 - **自動追加（Auto-add to project）** が無効なら、URL の画面で有効にしてもらう。有効にした後に `setup-all.sh --dry-run` をもう一度実行すると、`project.workflows.auto_add` が `true` になったか確かめられる
