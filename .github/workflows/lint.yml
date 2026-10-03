@@ -34,8 +34,10 @@ jobs:
       - uses: actions/checkout@v5
       - name: shellcheck
         run: |
+          # find が失敗したら（ディレクトリが無いなど）、検査したことにせず止める
+          set -o pipefail
           # tests/lib は外部のライブラリ（git submodule）なので対象にしない
-          find plugins tests -path tests/lib -prune -o -type f \( -name '*.sh' -o -name '*.bash' \) -print0 2>/dev/null \
+          find plugins tests -path tests/lib -prune -o -type f \( -name '*.sh' -o -name '*.bash' \) -print0 \
             | xargs -0 -r shellcheck -x
           shellcheck -s bash tests/*.bats
       - name: actionlint
@@ -45,13 +47,24 @@ jobs:
           args: -color
       - name: non-ASCII right after $var
         # macOS の bash 3.2 は "$var」" のように日本語が続くと、その文字のバイトまで変数名とみなすので "${var}」" と書く
+        # コメントの行は除く。grep の終了コードは 0 が見つかった、1 が見つからない、2 以上が失敗（正規表現の誤り・-P が使えないなど）。
+        # 失敗を「見つからない」と取り違えて通らないように、パイプでつながず grep 1つで調べて終了コードを見分ける
         run: |
-          if grep -rnP '\$[A-Za-z_][A-Za-z0-9_]*[^\x00-\x7F]' --include='*.sh' --include='*.bash' --exclude-dir='bats-*' plugins tests | grep -vP '^[^:]+:\d+:\s*#'; then
-            # ${var} は展開せず、書き方の例としてそのまま出す
-            # shellcheck disable=SC2016
-            echo '日本語などの直前の変数は ${var} と波括弧で囲んでください' >&2
-            exit 1
-          fi
+          rc=0
+          grep -rnP '^(?!\s*#).*\$[A-Za-z_][A-Za-z0-9_]*[^\x00-\x7F]' --include='*.sh' --include='*.bash' --exclude-dir='bats-*' plugins tests || rc=$?
+          case "$rc" in
+            0)
+              # ${var} は展開せず、書き方の例としてそのまま出す
+              # shellcheck disable=SC2016
+              echo '日本語などの直前の変数は ${var} と波括弧で囲んでください' >&2
+              exit 1
+              ;;
+            1) ;;
+            *)
+              echo "grep が失敗しました（終了コード ${rc}）。検査できていません" >&2
+              exit 1
+              ;;
+          esac
       - name: plugin manifest
         run: |
           jq empty .claude-plugin/marketplace.json plugins/*/.claude-plugin/plugin.json plugins/*/defaults/*.json \
@@ -71,8 +84,9 @@ jobs:
       - name: plugin version
         # version は release-please がリリース PR で manifest と plugin.json を同時に上げる。手で plugin.json だけを変えると食い違う
         run: |
-          manifest="$(jq -r '."plugins/dev-workflow"' .release-please-manifest.json)"
-          plugin="$(jq -r .version plugins/dev-workflow/.claude-plugin/plugin.json)"
+          # -e で、キーが無い（null）ときも失敗させる。両方 null で「同じ」と取り違えて通らないようにする
+          manifest="$(jq -er '."plugins/dev-workflow"' .release-please-manifest.json)"
+          plugin="$(jq -er .version plugins/dev-workflow/.claude-plugin/plugin.json)"
           if [ "$manifest" != "$plugin" ]; then
             echo "plugin.json の version（${plugin}）が .release-please-manifest.json（${manifest}）と違います。version は release-please が上げるので、手で変えないでください" >&2
             exit 1
