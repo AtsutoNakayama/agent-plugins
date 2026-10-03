@@ -23,6 +23,7 @@ plugins/dev-workflow/scripts/doctor.sh
 | `/dev-workflow:task-start` | Issue の作業を始める。ブランチとワークツリー（`.claude/worktrees/<ブランチ名>`）を作り、自分に割り当てて In Progress に移す。確認を取らずに進め、結果を伝える |
 | `/dev-workflow:commit` | 変更を Conventional Commits の規約に沿ってコミットする。メッセージを検証してからコミットし、main の上ではコミットしない |
 | `/dev-workflow:review` | 作業中のブランチの変更を、組み込みの `/code-review` と独自のレビューの観点（下記）で並行してレビューし、指摘を1つの一覧にまとめる。反映する指摘を選ぶと、それだけを直してコミットする |
+| `/dev-workflow:review-perspective-add` | レビューの観点を聞き取り、形式に沿った観点ファイル（下記）を自分の層（`~/.claude/review/`）かリポジトリの層（`<repo>/.claude/review/`）に作る。同じ層に同じ名前の観点があれば上書きせずに知らせ、ほかの層の観点を置き換えるときは確認する |
 | `/dev-workflow:pr-create` | 作業用のブランチを push し、Issue に紐付けた PR を作る。タイトルは `<type>: <Issueのタイトル>`、本文は PR テンプレートに沿って書き、`Closes #N` を付けてラベルを引き継ぐ。Issue に `breaking` ラベルがあれば、タイトルを `<type>!:` にし、本文に `BREAKING CHANGE:`（移行のしかた）を書く。確認してから push する |
 | `/dev-workflow:task-finish` | PR がマージされた後の後片付け。マージを確かめ、ワークツリーとローカルのブランチを削除し、main を最新にする（`git pull --ff-only`）。確認を取らずに進め、作業が失われるとき（マージされていない、PR に入っていないコミット・未コミットの変更・サブモジュールの push していないコミットがある）は、何も消さずに止まる。`.env` など git が無視するファイルが残っているときは、一覧を見せて消してよいか確認する |
 
@@ -42,6 +43,7 @@ title: 一覧に出す1行の説明（必須）
 サブエージェントへのレビューの指示。何を確かめ、どう指摘するかを書く。
 ```
 
+- 観点ファイルは `/dev-workflow:review-perspective-add` で作れます（手で書いても構いません）。
 - 観点の名前はファイル名（`.md` を除く）です。小文字の英数字と `-` だけを使います。
 - 同梱の観点を使わないときは、上の層に同じ名前のファイルを置き、frontmatter に `enabled: false` と書きます（本文と `title` は省けます）。
 - 使われる観点は `plugins/dev-workflow/scripts/review-perspectives.sh` で確かめられます。形式の誤ったファイルは警告を出して使いません。そのファイルと同じ名前の観点は、下の層にあっても使いません（`enabled: false` の書き間違いで、止めたつもりの観点が動かないようにするため）。
