@@ -56,6 +56,15 @@ add() {
   assert_equal "$(jq -c '[.branch, .work_branch]' <<<"$output")" '["develop",false]'
 }
 
+@test "設定ファイルが壊れていても repo の層に観点を作り、work_branch は null にして警告する" {
+  printf '{ broken\n' >"$REPO/.claude/dev-workflow/config.json"
+  add "指示" --name broken-config --layer repo --title "観点"
+  assert_success
+  [ -f "$REPO/.claude/dev-workflow/review/broken-config.md" ] || fail "ファイルがありません"
+  assert_equal "$(jq -c '[.branch, .work_branch]' <<<"$(printf '%s\n' "$output" | sed -n '/^{/,$p')")" '["main",null]'
+  assert_output --partial "warn: "
+}
+
 @test "repo の層に detached HEAD で作ると、branch が null で work_branch が false になる" {
   git -C "$REPO" switch -q --detach
   add "指示" --name detached --layer repo --title "観点"
