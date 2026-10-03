@@ -90,7 +90,7 @@ load fake_gh
 }
 
 @test "--check は設定の branch.pattern と labels.types に従う" {
-  echo '{"branch": {"pattern": "{type}-{issue_number}/{slug}"}, "labels": {"types": ["feat", "wip"]}}' >.claude/workflow.json
+  echo '{"branch": {"pattern": "{type}-{issue_number}/{slug}"}, "labels": {"types": ["feat", "wip"]}}' >.claude/dev-workflow/config.json
   run_script branch-name.sh --check wip-17/add-login
   assert_success
   for name in feat/17-add-login fix-17/add-login wip-x/add-login; do
@@ -100,7 +100,7 @@ load fake_gh
 }
 
 @test "--check は設定を読めなければ終了コード 2" {
-  echo '{' >.claude/workflow.json
+  echo '{' >.claude/dev-workflow/config.json
   run_script branch-name.sh --check feat/17-add-login
   assert_failure 2
 }
