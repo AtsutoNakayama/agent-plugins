@@ -1,5 +1,7 @@
 #!/usr/bin/env bats
 # タスクの進め方を渡すフック（hooks/task-flow.sh）。
+# bats はテストごとにサブシェルで動くので、変数の変更がテスト内に閉じるのは意図どおり
+# shellcheck disable=SC2030,SC2031
 
 load test_helper
 
@@ -117,4 +119,13 @@ pos() {
   run_hook
   assert_success
   assert_output --partial "続きは次のファイルを読んでください: $WORKFLOW_USER_DIR/task-flow.md、$REPO/.claude/dev-workflow/task-flow.md）"
+}
+
+@test "追記が大きくても（引数の上限の 128 KiB を超えても）、切って流れを出す" {
+  awk 'BEGIN { for (i = 0; i < 50000; i++) printf "あ"; print "" }' >"$WORKFLOW_USER_DIR/task-flow.md"
+  run_hook
+  assert_success
+  assert_equal "$(jq -rn --arg s "$output" '$s | length')" 10000
+  assert_output --partial "$(cat "$DEFAULT")"
+  assert_output --partial "続きは次のファイルを読んでください: $WORKFLOW_USER_DIR/task-flow.md）"
 }

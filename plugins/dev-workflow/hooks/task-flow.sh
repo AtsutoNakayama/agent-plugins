@@ -52,8 +52,13 @@ done
 
 # 上限を超えたら、知らせの分を空けて切る。Claude Code は JavaScript の文字列の長さ（UTF-16）で数えるので、
 # BMP の外の文字（絵文字など）は2文字と数える。jq は文字単位で切るので、日本語の途中で切れない。
-# ファイルは空白を含むパスでも切れ目が分かるよう「、」で区切る
-jq -rn --arg out "$out" --argjson limit "$limit" '
+# ファイルは空白を含むパスでも切れ目が分かるよう「、」で区切る。
+# 本文は一時ファイルで渡す。引数（--arg）では 128 KiB を超えると jq を起動できず、標準入力（-R）では
+# 大きな入力の BMP の外の文字が読み込みの区切りで割れることがあるので
+tmp="$(mktemp)"
+trap 'rm -f "$tmp"' EXIT
+printf '%s' "$out" >"$tmp"
+jq -rn --rawfile out "$tmp" --argjson limit "$limit" '
   def width: if . > 65535 then 2 else 1 end;
   def len16: explode | map(width) | add // 0;
   # UTF-16 で $n 文字に収まる先頭の部分
