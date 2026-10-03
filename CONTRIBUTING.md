@@ -4,7 +4,7 @@
 
 ## 環境の準備
 
-必要なもの：`git`、`gh`、`jq`、`shellcheck`、`bats`（bats-core）、`actionlint`（無ければ Docker で実行できます。下の「テストとチェック」）
+必要なもの：`git`、`gh`、`jq`、`shellcheck`、`bats`（bats-core）、`actionlint`（無ければ Docker で実行できます。下の「テストとチェック」）。bats を並列に実行するなら GNU `parallel` も使います
 
 テストの補助ライブラリ（bats-support・bats-assert）は git submodule で同梱しています。
 
@@ -64,6 +64,12 @@ claude plugin validate --strict .                     # マーケットプレイ
 claude plugin validate --strict plugins/dev-workflow  # プラグイン本体（. だけではスキルなどは検査されない）
 ```
 
+bats は `--jobs` で並列に実行できます（GNU parallel が要ります）。テストは git や jq の起動を待つ時間が長いので、コア数の2倍くらいにすると速くなります。各テストは自分の一時ディレクトリで動くので、並列にしても結果は変わりません。
+
+```bash
+bats --jobs "$(( $(getconf _NPROCESSORS_ONLN) * 2 ))" tests/
+```
+
 ### Docker の bash 3.2 でテストする
 
 macOS 以外でも、Docker の `bash:3.2` イメージで macOS 標準の bash 3.2 で動くことを確かめられます。リポジトリ・ワークツリーのどこで実行しても動きます。
@@ -72,10 +78,10 @@ macOS 以外でも、Docker の `bash:3.2` イメージで macOS 標準の bash 
 root=$(cd "$(git rev-parse --git-common-dir)/.." && pwd)   # 元のリポジトリ
 top=$(git rev-parse --show-toplevel)                       # 今いるリポジトリまたはワークツリー
 docker run --rm -v "$root:$root" -v "$top:$top" -w "$top" bash:3.2 sh -c '
-  apk add --no-cache jq git bats bash >/dev/null &&
+  apk add --no-cache jq git bats bash parallel >/dev/null &&
   git config --global --add safe.directory "*" &&
   export PATH=/bin:/usr/bin:$PATH &&
-  TEST_BASH=/usr/local/bin/bash bats tests/
+  TEST_BASH=/usr/local/bin/bash bats --jobs "$(( $(getconf _NPROCESSORS_ONLN) * 2 ))" tests/
 '
 ```
 
