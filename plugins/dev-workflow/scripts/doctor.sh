@@ -35,6 +35,13 @@ if has git; then check git true error "$(git --version)"; else check git false e
 
 if has gh; then
   check gh true error "$(gh --version | head -n 1)"
+  # 古いと使えない機能があるだけなので、止めずに更新を促す
+  gh_version="$(dw_gh_version)"
+  if [ -n "$gh_version" ] && dw_version_ge "$gh_version" "$DW_GH_MIN_VERSION"; then
+    check gh-version true warn "$gh_version"
+  else
+    check gh-version false warn "gh ${DW_GH_MIN_VERSION} 以上を使ってください（今は ${gh_version:-不明}）。gh を更新してください（https://cli.github.com/）"
+  fi
   if gh auth status -h github.com >/dev/null 2>&1; then
     check gh-auth true error "github.com にログイン済み"
     scopes="$(gh api -i user 2>/dev/null | tr -d '\r' | LC_ALL=C sed -n 's/^[Xx]-[Oo][Aa]uth-[Ss]copes: *//p')"
