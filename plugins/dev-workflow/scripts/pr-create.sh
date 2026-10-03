@@ -14,6 +14,7 @@
 #   1. タイトルを設定の pr.title_pattern で検証する。type は Issue の type ラベルと同じにする。
 #      Issue に breaking ラベルがあれば、type の後に ! が無いタイトルは止める
 #   2. Issue に breaking ラベルがあれば、本文に BREAKING CHANGE: <移行のしかた> の行が無いと止める。
+#      PR が既にあるときは、その PR のタイトルに ! が無い、または本文に BREAKING CHANGE が無いと、push の前に止める。
 #      本文に <pr.close_keyword> #N（既定: Closes #N）が無ければ末尾に足す。
 #      テンプレートの番号が空のままの行（Closes #）は消す
 #   3. origin に push する（-u で追跡させる）。未コミットの変更や、PR にするコミットが無ければ止まる
@@ -89,6 +90,27 @@ type="$(jq -r '.[0]' <<<"$types")"
 # GitHub と同じく、ラベルの名前は大文字と小文字を区別せずに照合する
 breaking="$(jq --arg b "$DW_BREAKING_LABEL" 'any(.[]; ascii_downcase == $b)' <<<"$labels")"
 
+# スカッシュのコミットの type に ! が無いと、release-please などが破壊的変更とみなさない
+has_bang() { jq -e --arg s "$1" '$s | test("^[^:]*!:")' <<<null >/dev/null; }
+# スカッシュマージでは PR の本文がコミットの本文になるので、移行のしかたを本文に残す
+has_breaking_note() { jq -e --arg b "$1" '$b | test("(^|\n)BREAKING[ -]CHANGE: *\\S")' <<<null >/dev/null; }
+
+# --- 既にある PR ----------------------------------------------------------------
+# --head はブランチ名だけで探すので、fork の同じ名前のブランチからの PR を除く
+existing="$(gh pr list --head "$branch" --state open --json number,url,title,body,isCrossRepository \
+  | jq -c 'map(select(.isCrossRepository | not))')" \
+  || dw_die "${branch} の PR を取得できませんでした"
+pr_number="$(jq -r '.[0].number // empty' <<<"$existing")"
+pr_url="$(jq -r '.[0].url // empty' <<<"$existing")"
+# 既にある PR のタイトルと本文は変えないので、PR を出した後に breaking ラベルを付けたときは、
+# ! と BREAKING CHANGE の無いままマージされないよう、push の前に止める
+if [ -n "$pr_number" ] && $breaking; then
+  has_bang "$(jq -r '.[0].title' <<<"$existing")" \
+    || dw_die "Issue #${issue} は破壊的変更（${DW_BREAKING_LABEL} ラベル）なのに、既にある PR #${pr_number} のタイトルの type の後に ! がありません（gh pr edit ${pr_number} --title で直してから実行してください）" 2
+  has_breaking_note "$(jq -r '.[0].body' <<<"$existing")" \
+    || dw_die "Issue #${issue} は破壊的変更（${DW_BREAKING_LABEL} ラベル）なのに、既にある PR #${pr_number} の本文に「BREAKING CHANGE: <移行のしかた>」がありません（gh pr edit ${pr_number} --body-file で直してから実行してください）" 2
+fi
+
 # --- 1. タイトル ----------------------------------------------------------------
 [ -n "$title" ] || title="${type}$($breaking && echo '!'): $(jq -r .title <<<"$issue_json")"
 case "$title" in
@@ -101,16 +123,14 @@ jq -e --arg s "$title" --arg p "$pattern" '$s | test($p)' <<<null >/dev/null \
 title_type="$(jq -rn --arg s "$title" '$s | capture("^(?<t>[a-z]+)").t // ""')"
 [ "$title_type" = "$type" ] \
   || dw_die "タイトルの type（${title_type}）が Issue #${issue} の type ラベル（${type}）と違います" 2
-# スカッシュのコミットの type に ! が無いと、release-please などが破壊的変更とみなさない
-if $breaking; then
-  jq -e --arg s "$title" '$s | test("^[^:]*!:")' <<<null >/dev/null \
+if [ -z "$pr_number" ] && $breaking; then
+  has_bang "$title" \
     || dw_die "Issue #${issue} は破壊的変更（${DW_BREAKING_LABEL} ラベル）なので、タイトルの type の後に ! を付けてください（${type}!: …）: $title" 2
 fi
 
 # --- 2. 本文 --------------------------------------------------------------------
-# スカッシュマージでは PR の本文がコミットの本文になるので、移行のしかたを本文に残す
-if $breaking; then
-  jq -e --arg b "$body" '$b | test("(^|\n)BREAKING[ -]CHANGE: *\\S")' <<<null >/dev/null \
+if [ -z "$pr_number" ] && $breaking; then
+  has_breaking_note "$body" \
     || dw_die "Issue #${issue} は破壊的変更（${DW_BREAKING_LABEL} ラベル）なので、本文の最後に「BREAKING CHANGE: <移行のしかた>」を書いてください" 64
 fi
 keyword="$(jq -r '.pr.close_keyword' <<<"$config")"
@@ -140,12 +160,6 @@ if ! $dry_run; then
 fi
 
 # --- 4. PR ----------------------------------------------------------------------
-# --head はブランチ名だけで探すので、fork の同じ名前のブランチからの PR を除く
-existing="$(gh pr list --head "$branch" --state open --json number,url,isCrossRepository \
-  | jq -c 'map(select(.isCrossRepository | not))')" \
-  || dw_die "${branch} の PR を取得できませんでした"
-pr_number="$(jq -r '.[0].number // empty' <<<"$existing")"
-pr_url="$(jq -r '.[0].url // empty' <<<"$existing")"
 draft="$(jq -r '.pr.draft // false' <<<"$config")"
 created=false
 if [ -n "$pr_number" ]; then
