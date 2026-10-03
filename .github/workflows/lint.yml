@@ -33,8 +33,8 @@ jobs:
       - name: shellcheck
         run: |
           # tests/lib は外部のライブラリ（git submodule）なので対象にしない
-          find plugins tests -path tests/lib -prune -o -type f \( -name '*.sh' -o -name '*.bash' \) -print 2>/dev/null \
-            | xargs -r shellcheck -x
+          find plugins tests -path tests/lib -prune -o -type f \( -name '*.sh' -o -name '*.bash' \) -print0 2>/dev/null \
+            | xargs -0 -r shellcheck -x
           shellcheck -s bash tests/*.bats
       - name: non-ASCII right after $var
         # macOS の bash 3.2 は "$var」" のように日本語が続くと、その文字のバイトまで変数名とみなすので "${var}」" と書く

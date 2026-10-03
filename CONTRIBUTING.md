@@ -50,7 +50,7 @@ PR を出す前に、次がすべて通ることを確かめます。`claude plu
 
 ```bash
 # tests/lib は外部のライブラリ（git submodule）なので対象にしない
-find plugins tests -path tests/lib -prune -o -type f \( -name '*.sh' -o -name '*.bash' \) -print | xargs shellcheck -x
+find plugins tests -path tests/lib -prune -o -type f \( -name '*.sh' -o -name '*.bash' \) -print0 | xargs -0 shellcheck -x
 shellcheck -s bash tests/*.bats
 bats tests/
 TEST_BASH=/bin/bash bats tests/   # macOS では標準の bash 3.2 で確認する
