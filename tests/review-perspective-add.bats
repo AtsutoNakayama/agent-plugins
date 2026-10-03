@@ -107,6 +107,8 @@ add() {
   printf -- '---\ntitle: リポジトリの版\n---\n\n指示\n' >"$REPO/.claude/review/docs-sync.md"
   add "指示" --name docs-sync --layer user --title "自分の版"
   assert_failure 5
+  # --override で作り直すと下位の層の観点も置き換わるので、そのファイルも知らせる
+  assert_output --partial "$PLUGIN_REVIEW/docs-sync.md"
 }
 
 @test "置く場所に壊れたシンボリックリンクがあれば、既にあるものとして止まる" {

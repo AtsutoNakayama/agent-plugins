@@ -111,7 +111,10 @@ done
 # 作った観点が使われないことのほうが大事なので、上位の層を先に知らせる
 if [ "$override" = false ]; then
   if [ "$shadowed" != '[]' ]; then
-    dw_die "上位の層に同じ名前の観点があるので、このリポジトリでは作った観点が使われません（それでも作るなら --override）: $(jq -r '.[0]' <<<"$shadowed")" 5
+    # --override で作り直すと下位の層の観点も置き換わるので、それも一緒に知らせる
+    also=""
+    [ "$overrides" = '[]' ] || also="。下位の層の $(jq -r 'join("、")' <<<"$overrides") も置き換わります"
+    dw_die "上位の層に同じ名前の観点があるので、このリポジトリでは作った観点が使われません（それでも作るなら --override${also}）: $(jq -r '.[0]' <<<"$shadowed")" 5
   fi
   if [ "$overrides" != '[]' ]; then
     dw_die "下位の層に同じ名前の観点があります（置き換えるなら --override）: $(jq -r '.[0]' <<<"$overrides")" 4
