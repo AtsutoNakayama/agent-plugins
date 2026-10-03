@@ -37,6 +37,7 @@ Issue をやめることにしたときは、`/dev-workflow:task-cancel` を使�
 
 - **macOS 標準の bash 3.2 で動くように書きます**。連想配列（`declare -A`）、`mapfile` / `readarray`、`${var,,}` などの bash 4 以降の機能は使いません。スクリプトの先頭には `set -euo pipefail` を書きます。
 - 日本語などの ASCII 以外の文字が変数の直後に続くときは、`"${var}」"` のように波括弧で囲みます（bash 3.2 は `"$var」"` の `」` のバイトまで変数名とみなします。CI で検査しています）。
+- 設定・ガイド・レビューの観点・ラベルの定義は、`.claude/dev-workflow/` の下（`config.json`・`config.local.json`・`review/`・`labels.json`）を参照します。テストやスクリプトで古い置き場所（`.claude/workflow.json`・`.claude/review/` など）を参照すると、CI で失敗します（古い置き場所を知らせる `doctor.sh` とそのテストは除きます）。
 - **スキルから呼ぶファイルは `plugins/dev-workflow/` の中に置きます**。プラグインとしてインストールされるのはこのディレクトリだけなので、外に置いたファイルは使う人の環境にありません。スキルからは `${CLAUDE_PLUGIN_ROOT}/scripts/...` のように参照します。
 - **shellcheck を通します**。警告を抑えるときは、理由をコメントに書きます。
 - スクリプトの出力は JSON、エラーは終了コードと1行のメッセージにします。初期設定用のスクリプト（`scripts/setup/`）は `--dry-run` に対応します（設計書 §10）。
