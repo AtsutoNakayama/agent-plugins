@@ -131,9 +131,11 @@ if [ -n "$branch" ]; then
       *) dw_die "リモートのブランチ ${branch} を確かめられませんでした: $err" ;;
     esac
   fi
-  prs="$(gh pr list --head "$branch" --state open --json number,title,url,comments)" \
+  prs="$(gh pr list --head "$branch" --state open --json number,title,url,isCrossRepository,comments)" \
     || dw_die "${branch} の PR を取得できませんでした"
-  prs="$(jq -c --arg r "$reason" 'map({number, title, url, commented: (.comments[-1].body != $r)})' <<<"$prs")"
+  # --head はブランチ名でしか絞れないので、ほかの人の fork の同じ名前のブランチから出た PR を除く
+  prs="$(jq -c --arg r "$reason" 'map(select(.isCrossRepository | not)
+    | {number, title, url, commented: (.comments[-1].body != $r)})' <<<"$prs")"
 fi
 
 actions='[]'

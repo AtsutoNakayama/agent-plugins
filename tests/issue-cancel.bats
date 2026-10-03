@@ -14,7 +14,7 @@ cancel_issue() {
 
 # やめた作業のブランチ feat/17-x の開いている PR。使い方: cancel_prs <PR ごとの最後のコメントの配列（"" ならコメント無し）>
 cancel_prs() {
-  jq -n --argjson c "$1" '$c | to_entries | map({number: (.key + 42), title: "PR \(.key + 42)",
+  jq -n --argjson c "$1" '$c | to_entries | map({number: (.key + 42), title: "PR \(.key + 42)", isCrossRepository: false,
     url: "https://github.com/me/demo/pull/\(.key + 42)", comments: (if .value == "" then [] else [{body: .value}] end)})' \
     >"$FIX/pr-list.json"
 }
@@ -235,11 +235,23 @@ writes() { grep -oE '^(issue-comment|issue-close|pr-comment|pr-close|api-delete)
   run_script issue-cancel.sh --issue 17 --reason "やらないことにしました" --branch feat/17-x
   assert_success
   assert_equal "$(grep '^api-get ' "$CALLS")" "api-get repos/me/demo/git/ref/heads/feat/17-x"
-  assert_equal "$(grep '^pr-list ' "$CALLS")" "pr-list --head feat/17-x --state open --json number,title,url,comments"
+  assert_equal "$(grep '^pr-list ' "$CALLS")" "pr-list --head feat/17-x --state open --json number,title,url,isCrossRepository,comments"
   assert_equal "$(cat "$TMP/pr-comment-body")" "やらないことにしました"
   assert_equal "$(writes)" "issue-comment 17,issue-close 17,pr-comment 42,pr-close 42,api-delete repos/me/demo/git/refs/heads/feat/17-x,"
   assert_equal "$(jq -c '[.branch, .pull_requests, .remote_branch_deleted]' <<<"$output")" \
     '["feat/17-x",[{"number":42,"title":"PR 42","url":"https://github.com/me/demo/pull/42","commented":true}],true]'
+}
+
+@test "ほかの人の fork から出た同じ名前のブランチの PR は閉じない" {
+  setup_cancel
+  # 42 はこのリポジトリのブランチ、43 は fork の同じ名前のブランチから出た PR
+  jq -n '[{number: 42, title: "PR 42", url: "u42", isCrossRepository: false, comments: []},
+    {number: 43, title: "PR 43", url: "u43", isCrossRepository: true, comments: []}]' >"$FIX/pr-list.json"
+  touch "$FIX/remote-ref"
+  run_script issue-cancel.sh --issue 17 --reason "やらないことにしました" --branch feat/17-x
+  assert_success
+  assert_equal "$(writes)" "issue-comment 17,issue-close 17,pr-comment 42,pr-close 42,api-delete repos/me/demo/git/refs/heads/feat/17-x,"
+  assert_equal "$(jq -c '[.pull_requests[].number]' <<<"$output")" '[42]'
 }
 
 @test "PR が無ければ、リモートのブランチだけを削除する" {
