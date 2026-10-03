@@ -24,8 +24,8 @@ frontmatter() { awk 'NR == 1 && $0 == "---" { on = 1; next } on && $0 == "---" {
   done
 }
 
-@test "task-start と task-finish は実行の確認を取らずに進める（設計書 §8）" {
-  for name in task-start task-finish; do
+@test "task-start・task-status・task-finish は実行の確認を取らずに進める（設計書 §8）" {
+  for name in task-start task-status task-finish; do
     f="$SKILLS/$name/SKILL.md"
     if grep -n -e '承認' -e '--dry-run' "$f"; then
       fail "${name} に実行の承認や dry-run の手順があります（依頼で結果が決まるので確認を取らない）"

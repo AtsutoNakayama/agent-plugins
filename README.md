@@ -21,6 +21,7 @@ plugins/dev-workflow/scripts/doctor.sh
 | `/dev-workflow:repo-setup` | リポジトリの初期設定（下記） |
 | `/dev-workflow:task-create` | 依頼の内容から Issue を起票し、type ラベル（破壊的変更なら `breaking` ラベルも）を付けて Project に追加する。Story Point は見積もりを提案し、確認してから設定する。先に終わらせる Issue があれば、本文の「依存」に `#N` を書き、GitHub の依存関係（blocked by）にも登録する |
 | `/dev-workflow:task-start` | Issue の作業を始める。ブランチとワークツリー（`.claude/worktrees/<ブランチ名>`）を作り、自分に割り当てて In Progress に移す。確認を取らずに進め、結果を伝える |
+| `/dev-workflow:task-status` | Issue を Project の指定した列へ移す。`Blocked` など自分で足した列へも移せる。Project に入っていなければ追加してから移す。確認を取らずに進め、結果を伝える。Project に無い列を指定したときは、移さずに列の一覧を見せる |
 | `/dev-workflow:commit` | 変更を Conventional Commits の規約に沿ってコミットする。メッセージを検証してからコミットし、main の上ではコミットしない |
 | `/dev-workflow:review` | 作業中のブランチの変更を、組み込みの `/code-review` と独自のレビューの観点（下記）で並行してレビューし、指摘を1つの一覧にまとめる。反映する指摘を選ぶと、それだけを直してコミットする |
 | `/dev-workflow:review-perspective-add` | レビューの観点を聞き取り、形式に沿った観点ファイル（下記）を自分の層（`~/.claude/review/`）かリポジトリの層（`<repo>/.claude/review/`）に作る。同じ層に同じ名前の観点があれば上書きせずに知らせ、ほかの層の観点を置き換えるときは確認する |
