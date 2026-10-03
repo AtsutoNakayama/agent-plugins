@@ -4,7 +4,7 @@
 # 使い方: issue-cancel.sh --issue N --reason TEXT [--duplicate-of M] [--branch NAME] [--dry-run]
 #   --issue N           Issue の番号
 #   --reason TEXT       閉じる理由（コメントとして残す。代わりに作業する Issue などの参照先も書く）。空白だけなら止まる
-#   --duplicate-of M    重複の元の Issue の番号。付けると duplicate で閉じ、元の Issue に紐付ける
+#   --duplicate-of M    重複の元の Issue の番号。付けると duplicate で閉じ、元の Issue に紐付ける（gh 2.88.0 以上）
 #   --branch NAME       やめた作業のブランチ。そのブランチの開いている PR を同じ理由のコメントを付けて閉じ、
 #                       リモート（origin）のブランチを削除する。手元のワークツリーとブランチは消さない（cleanup.sh --abandon）
 #   --dry-run           変更せず、行う予定の操作だけを出力する
@@ -13,8 +13,6 @@
 # Issue → PR → リモートのブランチの順に行う。何度実行しても同じ結果になるので、途中で失敗しても再実行で続きから進む。
 # 最後のコメントが同じ理由ならコメントを付け直さず、同じ閉じ方で既に閉じていれば閉じる操作を飛ばす。
 # 違う閉じ方や違う理由で既に閉じている Issue では、何もせずに止まる。
-# GraphQL の変数（$owner など）を bash に展開させないため、クエリはシングルクォートで書く
-# shellcheck disable=SC2016
 set -euo pipefail
 
 # shellcheck source=lib/common.sh
@@ -22,7 +20,7 @@ set -euo pipefail
 dw_require gh jq
 
 # macOS の BSD sed が日本語で失敗しないよう、バイト列として扱わせる
-usage() { LC_ALL=C sed -n '2,/^# GraphQL の変数/{/^# GraphQL の変数/d;s/^# \{0,1\}//;p;}' "$0"; }
+usage() { LC_ALL=C sed -n '2,/^[^#]/{/^[^#]/d;s/^# \{0,1\}//;p;}' "$0"; }
 
 # オプションの値を取り出す。無ければ使い方の誤り（64）で終了する
 need_value() {
@@ -66,7 +64,12 @@ fullwidth_space="$(printf '\343\200\200')"
 stripped="${reason//"$fullwidth_space"/}"
 [ -n "$(printf '%s' "$stripped" | tr -d '[:space:]')" ] || dw_die "--reason に閉じる理由を書いてください" 64
 
-if [ -n "$duplicate_of" ]; then state_reason=DUPLICATE; else state_reason=NOT_PLANNED; fi
+if [ -n "$duplicate_of" ]; then
+  state_reason=DUPLICATE
+  dw_require_gh_version "$DW_GH_MIN_VERSION" "重複として閉じる（gh issue close --duplicate-of）"
+else
+  state_reason=NOT_PLANNED
+fi
 
 if [ -n "$branch" ]; then
   base="$("$BASH" "$DW_SCRIPTS_DIR/config.sh" | jq -r '.base_branch // "main"')"
@@ -74,28 +77,33 @@ if [ -n "$branch" ]; then
 fi
 
 repo_nwo="$(gh repo view --json nameWithOwner -q .nameWithOwner)"
-vars() { jq -nc --arg r "$repo_nwo" --argjson n "$1" '{owner: ($r | split("/")[0]), name: ($r | split("/")[1]), number: $n}'; }
 
-# PR の番号では repository.issue が見つからないので、PR を閉じることはない
-found="$(dw_gql_find 'query CancelIssue($owner: String!, $name: String!, $number: Int!) {
-  repository(owner: $owner, name: $name) { issue(number: $number) {
-    id number title state stateReason comments(last: 1) { nodes { body } } } }
-}' "$(vars "$issue")" | jq -c '.data.repository.issue // null')"
-[ "$found" != null ] || dw_die "Issue #${issue} が ${repo_nwo} にありません" 2
+# Issue を読む。gh issue view は PR の番号でも成功するので、URL で PR を見分ける
+# 使い方: read_issue <番号> <JSON の項目> <見つからないときの名前>
+read_issue() {
+  local json err
+  err="$(mktemp)"
+  if ! json="$(gh issue view "$1" --json "url,$2" 2>"$err")"; then
+    json="$(cat "$err")"
+    rm -f "$err"
+    case "$json" in
+      *"Could not resolve to"* | *NOT_FOUND*) dw_die "${3} #${1} が ${repo_nwo} にありません" 2 ;;
+      *) dw_die "${3} #${1} を読めません: $json" ;;
+    esac
+  fi
+  rm -f "$err"
+  case "$(jq -r .url <<<"$json")" in
+    */pull/*) dw_die "#${1} は PR です。Issue の番号を指定してください" 2 ;;
+  esac
+  printf '%s\n' "$json"
+}
 
-dup_id=""
-if [ -n "$duplicate_of" ]; then
-  dup="$(dw_gql_find 'query CancelDuplicate($owner: String!, $name: String!, $number: Int!) {
-    repository(owner: $owner, name: $name) { issue(number: $number) { id number } }
-  }' "$(vars "$duplicate_of")" | jq -c '.data.repository.issue // null')"
-  [ "$dup" != null ] || dw_die "重複の元の Issue #${duplicate_of} が ${repo_nwo} にありません" 2
-  dup_id="$(jq -r .id <<<"$dup")"
-fi
+found="$(read_issue "$issue" number,title,state,stateReason,comments Issue)"
+[ -z "$duplicate_of" ] || read_issue "$duplicate_of" number "重複の元の Issue" >/dev/null
 
-issue_id="$(jq -r .id <<<"$found")"
 # コメントした後に閉じるのに失敗して再実行したときは、同じ理由を二重にコメントしない
 commented=true
-if jq -e --arg r "$reason" '.comments.nodes[-1].body == $r' <<<"$found" >/dev/null; then
+if jq -e --arg r "$reason" '.comments[-1].body == $r' <<<"$found" >/dev/null; then
   commented=false
 fi
 closed=true
@@ -108,30 +116,31 @@ if [ "$(jq -r .state <<<"$found")" != OPEN ]; then
   fi
 fi
 
-# やめた作業のリモートのブランチと、それを head とする開いている PR
-remote=null
+# やめた作業のリモートのブランチ（無ければ空）と、それを head とする開いている PR
+remote="" prs='[]'
 if [ -n "$branch" ]; then
-  remote="$(dw_gql 'query CancelBranch($owner: String!, $name: String!, $ref: String!) {
-    repository(owner: $owner, name: $name) { ref(qualifiedName: $ref) { id
-      associatedPullRequests(states: OPEN, first: 20) { nodes { id number title url comments(last: 1) { nodes { body } } } } } }
-  }' "$(jq -nc --arg r "$repo_nwo" --arg b "refs/heads/$branch" '{owner: ($r | split("/")[0]), name: ($r | split("/")[1]), ref: $b}')" \
-    | jq -c '.data.repository.ref // null')" || dw_die "リモートのブランチ ${branch} を確かめられませんでした"
+  if err="$(gh api "repos/$repo_nwo/git/ref/heads/$branch" 2>&1 >/dev/null)"; then
+    remote="$branch"
+  else
+    case "$err" in
+      *"HTTP 404"*) ;;
+      *) dw_die "リモートのブランチ ${branch} を確かめられませんでした: $err" ;;
+    esac
+  fi
+  prs="$(gh pr list --head "$branch" --state open --json number,title,url,comments)" \
+    || dw_die "${branch} の PR を取得できませんでした"
+  prs="$(jq -c --arg r "$reason" 'map({number, title, url, commented: (.comments[-1].body != $r)})' <<<"$prs")"
 fi
 
 actions='[]'
 note() { actions="$(jq -c --arg a "$1" '. + [$a]' <<<"$actions")"; }
 
-# 使い方: add_comment <node id> <本文> <失敗したときのメッセージ>
-# shellcheck disable=SC2016
-add_comment() {
-  dw_gql 'mutation AddComment($id: ID!, $body: String!) {
-    addComment(input: {subjectId: $id, body: $body}) { commentEdge { node { id } } }
-  }' "$(jq -nc --arg id "$1" --arg b "$2" '{id: $id, body: $b}')" >/dev/null || dw_die "$3"
-}
-
 if $commented; then
   note "Issue #${issue} に閉じる理由をコメントする"
-  $dry_run || add_comment "$issue_id" "$reason" "Issue #${issue} にコメントできませんでした"
+  if ! $dry_run; then
+    printf '%s' "$reason" | gh issue comment "$issue" --body-file - >/dev/null \
+      || dw_die "Issue #${issue} にコメントできませんでした"
+  fi
 fi
 if $closed; then
   if [ -n "$duplicate_of" ]; then
@@ -140,46 +149,36 @@ if $closed; then
     note "Issue #${issue} を not planned で閉じる（Project と Story Point はそのまま残す）"
   fi
   if ! $dry_run; then
-    dw_gql 'mutation CloseIssue($id: ID!, $reason: IssueClosedStateReason!, $dup: ID) {
-      closeIssue(input: {issueId: $id, stateReason: $reason, duplicateIssueId: $dup}) { issue { state } }
-    }' "$(jq -nc --arg id "$issue_id" --arg r "$state_reason" --arg d "$dup_id" \
-      '{id: $id, reason: $r, dup: (if $d == "" then null else $d end)}')" >/dev/null \
-      || dw_die "Issue #${issue} にコメントしましたが、閉じられませんでした（もう一度実行すると、コメントを付け直さずに閉じます）"
+    if [ -n "$duplicate_of" ]; then
+      gh issue close "$issue" --duplicate-of "$duplicate_of" >/dev/null 2>&1
+    else
+      gh issue close "$issue" --reason "not planned" >/dev/null 2>&1
+    fi || dw_die "Issue #${issue} にコメントしましたが、閉じられませんでした（もう一度実行すると、コメントを付け直さずに閉じます）"
   fi
 fi
 
-prs='[]'
-if [ "$remote" != null ]; then
-  prs="$(jq -c --arg r "$reason" '[.associatedPullRequests.nodes[]
-    | {id, number, title, url, commented: (.comments.nodes[-1].body != $r)}]' <<<"$remote")"
-  for i in $(jq -r 'keys[]' <<<"$prs"); do
-    pr="$(jq -c --argjson i "$i" '.[$i]' <<<"$prs")"
-    pr_number="$(jq -r .number <<<"$pr")"
-    pr_id="$(jq -r .id <<<"$pr")"
-    if [ "$(jq -r .commented <<<"$pr")" = true ]; then
-      note "PR #${pr_number} に閉じる理由をコメントする"
-      $dry_run || add_comment "$pr_id" "$reason" \
-        "Issue #${issue} は閉じましたが、PR #${pr_number} にコメントできませんでした（もう一度実行すると続きから進みます）"
-    fi
-    note "PR #${pr_number} をマージせずに閉じる"
+for pr_number in $(jq -r '.[].number' <<<"$prs"); do
+  if [ "$(jq -r --argjson n "$pr_number" '.[] | select(.number == $n) | .commented' <<<"$prs")" = true ]; then
+    note "PR #${pr_number} に閉じる理由をコメントする"
     if ! $dry_run; then
-      dw_gql 'mutation ClosePullRequest($id: ID!) {
-        closePullRequest(input: {pullRequestId: $id}) { pullRequest { state } }
-      }' "$(jq -nc --arg id "$pr_id" '{id: $id}')" >/dev/null \
-        || dw_die "Issue #${issue} は閉じましたが、PR #${pr_number} を閉じられませんでした（もう一度実行すると続きから進みます）"
+      printf '%s' "$reason" | gh pr comment "$pr_number" --body-file - >/dev/null \
+        || dw_die "Issue #${issue} は閉じましたが、PR #${pr_number} にコメントできませんでした（もう一度実行すると続きから進みます）"
     fi
-  done
-  note "リモートのブランチ ${branch} を削除する"
-  if ! $dry_run; then
-    dw_gql 'mutation DeleteRef($id: ID!) { deleteRef(input: {refId: $id}) { clientMutationId } }' \
-      "$(jq -nc --arg id "$(jq -r .id <<<"$remote")" '{id: $id}')" >/dev/null \
-      || dw_die "Issue #${issue} は閉じましたが、リモートのブランチ ${branch} を削除できませんでした（もう一度実行すると続きから進みます）"
   fi
+  note "PR #${pr_number} をマージせずに閉じる"
+  # --delete-branch は手元のブランチも消し、ワークツリーで使っていると失敗するので、リモートのブランチは下で消す
+  $dry_run || gh pr close "$pr_number" >/dev/null 2>&1 \
+    || dw_die "Issue #${issue} は閉じましたが、PR #${pr_number} を閉じられませんでした（もう一度実行すると続きから進みます）"
+done
+if [ -n "$remote" ]; then
+  note "リモートのブランチ ${branch} を削除する"
+  $dry_run || gh api -X DELETE "repos/$repo_nwo/git/refs/heads/$branch" >/dev/null 2>&1 \
+    || dw_die "Issue #${issue} は閉じましたが、リモートのブランチ ${branch} を削除できませんでした（もう一度実行すると続きから進みます）"
 fi
 
 jq -n --argjson found "$found" --argjson dry "$dry_run" --arg reason "$reason" --arg sr "$state_reason" \
   --arg dup "$duplicate_of" --argjson commented "$commented" --argjson closed "$closed" --argjson actions "$actions" \
-  --arg branch "$branch" --argjson remote "$remote" --argjson prs "$prs" '{
+  --arg branch "$branch" --arg remote "$remote" --argjson prs "$prs" '{
     issue: $found.number,
     title: $found.title,
     dry_run: $dry,
@@ -189,7 +188,7 @@ jq -n --argjson found "$found" --argjson dry "$dry_run" --arg reason "$reason" -
     commented: $commented,
     closed: $closed,
     branch: (if $branch == "" then null else $branch end),
-    pull_requests: ($prs | map({number, title, url, commented})),
-    remote_branch_deleted: ($remote != null),
+    pull_requests: $prs,
+    remote_branch_deleted: ($remote != ""),
     actions: $actions
   }'

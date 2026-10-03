@@ -4,12 +4,19 @@
 # - gh repo view                    me/demo を返す
 # - gh issue view N --json ...      $FIX/issue-N.json を返す（-q があれば適用する）
 # - gh issue edit N ...             引数を「edit N ...」として $CALLS に記録する
+# - gh issue comment N --body-file -  「issue-comment N」を $CALLS に記録し、標準入力を $TMP/issue-comment-body に写す
+# - gh issue close N ...            引数を「issue-close N ...」として $CALLS に記録する
 # - gh pr list ...                  $FIX/pr-list.json（無ければ []）を返し、引数を「pr-list ...」として $CALLS に記録する
 # - gh pr create ...                引数を「pr-create ...」として $CALLS に記録し、--body-file の中身を $TMP/pr-body に写して、
 #                                   https://github.com/me/demo/pull/42 を返す
+# - gh pr comment N --body-file -   「pr-comment N」を $CALLS に記録し、標準入力を $TMP/pr-comment-body に写す
+# - gh pr close N                   「pr-close N」を $CALLS に記録する
+# - gh --version                    gh version $FAKE_GH_VERSION（既定: 2.96.0）を返す
 # - gh api user                     login: me を返す
+# - gh api repos/...                「api-get <パス>」を $CALLS に記録する。$FIX/remote-ref があれば {} を、無ければ HTTP 404 で失敗する
+# - gh api -X DELETE <パス>          「api-delete <パス>」を $CALLS に記録する
 # - gh api graphql                  操作名ごとに $FIX/<操作名>.json を返し、「<操作名> <変数>」を $CALLS に記録する
-# FAKE_FAIL に指定した操作名（edit・pr-list・pr-create を含む）は、FAKE_FAIL_MSG（既定: gh: failed）を出して失敗する。
+# FAKE_FAIL に指定した操作名（issue-view・edit・issue-comment・issue-close・pr-list・pr-create・pr-comment・pr-close・api-get・api-delete を含む）は、FAKE_FAIL_MSG（既定: gh: failed）を出して失敗する。
 
 setup_fake_gh() {
   FIX="$TMP/fix"
@@ -27,7 +34,9 @@ done
 fail() { if [ "${FAKE_FAIL:-}" = "$1" ]; then echo "${FAKE_FAIL_MSG:-gh: failed}" >&2; exit 1; fi; }
 case "$1 $2" in
   "repo view") echo '{"nameWithOwner": "me/demo"}' | jq -r "$q" ;;
+  "--version "*) echo "gh version ${FAKE_GH_VERSION:-2.96.0} (2026-07-02)" ;;
   "issue view")
+    fail issue-view
     [ -f "$FIX/issue-$3.json" ] || { echo "GraphQL: Could not resolve to an issue (NOT_FOUND)" >&2; exit 1; }
     jq -r "$q" "$FIX/issue-$3.json"
     ;;
@@ -35,6 +44,35 @@ case "$1 $2" in
     shift 2
     echo "edit $*" >>"$CALLS"
     fail edit
+    ;;
+  "issue comment")
+    echo "issue-comment $3" >>"$CALLS"
+    fail issue-comment
+    cat >"$(dirname "$FIX")/issue-comment-body"
+    ;;
+  "issue close")
+    shift 2
+    echo "issue-close $*" >>"$CALLS"
+    fail issue-close
+    ;;
+  "pr comment")
+    echo "pr-comment $3" >>"$CALLS"
+    fail pr-comment
+    cat >"$(dirname "$FIX")/pr-comment-body"
+    ;;
+  "pr close")
+    echo "pr-close $3" >>"$CALLS"
+    fail pr-close
+    ;;
+  "api -X")
+    echo "api-delete $4" >>"$CALLS"
+    fail api-delete
+    ;;
+  "api repos/"*)
+    echo "api-get $2" >>"$CALLS"
+    fail api-get
+    [ -f "$FIX/remote-ref" ] || { echo "gh: Not Found (HTTP 404)" >&2; exit 1; }
+    echo '{}'
     ;;
   "pr list")
     shift 2
