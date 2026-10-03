@@ -61,6 +61,19 @@ title: 一覧に出す1行の説明（必須）
 
 ## フック
 
+### タスクの進め方
+
+プラグインを入れると、セッションの始まり（起動・`/resume`・`/clear`・コンパクトの後）のたびに、タスクの進め方（Issue から始める → 着手 → 区切りごとのコミット → PR の前のローカルレビュー → PR → 後片付け、と取りやめ）と、それぞれで使うスキルを Claude に読み込ませます（`hooks/task-flow.sh`）。スキルは呼ばれたときにしか読み込まれないので、流れはいつも渡しておきます。会話が要約されても抜けません。
+
+既定の流れは `plugins/dev-workflow/defaults/task-flow.md` です。次のファイルを置くと、既定の流れのあとに、この順で追記として渡します（後ろほど優先します）。
+
+1. `~/.claude/dev-workflow/task-flow.md`：自分の追記（全リポジトリで使う）
+2. `<repo>/.claude/dev-workflow/task-flow.md`：リポジトリの追記（チームで共有する）
+
+渡すのは合わせて 1 万文字までです。超えた分は切り、読み直すファイルを Claude に知らせます。
+
+### git の操作を守る
+
 プラグインを入れると、Claude Code が Bash で次の git の操作をしようとしたときに止めます（`hooks/guard-git.sh`）。守るブランチは設定の `base_branch`（既定は main）です。
 
 - base_branch の上での `git commit`
