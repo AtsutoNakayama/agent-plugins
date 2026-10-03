@@ -24,6 +24,8 @@ git submodule update --init   # 初回だけ
 4. **PR を出します**（`/dev-workflow:pr-create`）。出す前に、下の「テストとチェック」がすべて通ることを確かめます。
 5. **後片付けをします**（`/dev-workflow:task-finish`）。PR がマージされたら、ワークツリーとローカルのブランチを削除し、main を最新にします。
 
+レビューの観点（`.claude/dev-workflow/review/`）の追加・修正は、そのきっかけになったタスクの PR に含め、別の Issue にはしません。`/dev-workflow:review-perspective-add` は、今のタスクのワークツリーで実行します。
+
 Issue をやめることにしたときは、`/dev-workflow:task-cancel` を使います。理由と参照先をコメントして not planned（重複なら duplicate）で閉じ、着手していれば PR を閉じて、ブランチとワークツリーも削除します。
 
 ### コミットと PR の規約
