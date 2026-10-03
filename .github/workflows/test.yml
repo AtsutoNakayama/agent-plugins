@@ -4,6 +4,7 @@ name: Test
 # plugins/ の SKILL.md やテンプレートの .md をテストで使っているため。
 # 将来ルールセットで CI の成功を必須にするときは、paths-ignore で動かなかった PR のチェックが
 # 「待ち」のまま残ってマージできなくなるので、paths-ignore をやめるなどの対応が要る。
+# paths-ignore は lint.yml と同じリストにそろえず、test が何を検査するかで決める。
 on:
   pull_request:
     paths-ignore:
