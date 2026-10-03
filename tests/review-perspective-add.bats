@@ -80,3 +80,15 @@ add() {
   assert_failure 64
   [ ! -e "$WORKFLOW_USER_REVIEW_DIR" ] || fail "何か作っています: $(ls -R "$WORKFLOW_USER_REVIEW_DIR")"
 }
+
+@test "引用符で囲んだ title は、読むときに引用符が外れるので受け付けない" {
+  add "指示" --name quoted --layer user --title '""'
+  assert_failure 64
+  add "指示" --name quoted --layer user --title "'観点'"
+  assert_failure 64
+  add "指示" --name quoted --layer user --title '"A" と "B"'
+  assert_failure 64
+  [ ! -e "$WORKFLOW_USER_REVIEW_DIR/quoted.md" ] || fail "ファイルを作っています"
+  add "指示" --name quoted --layer user --title '"A" を確かめるか'
+  assert_success
+}

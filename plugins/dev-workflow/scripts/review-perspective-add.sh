@@ -8,6 +8,8 @@
 #   --title     一覧に出す1行の説明
 #   --override  ほかの層にある同じ名前の観点を、作る観点で置き換えてよい
 #
+# --title は全体を引用符で囲まない（読むときに外れる）。
+#
 # 同じ層に同じ名前のファイルがあれば、上書きせずに終了コード 3 で止まる。
 # ほかの層に同じ名前のファイルがあれば、--override が無いかぎり何も作らずに終了コード 4 で止まる。
 # 観点ファイルの形式は review-perspectives.sh --help を参照。
@@ -59,6 +61,10 @@ case "$title" in
 esac
 title="$(printf '%s' "$title" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')"
 [ -n "$title" ] || dw_die "--title がありません" 64
+# review-perspectives.sh は値を囲む引用符を外して読むので、書いたとおりに読めない title は弾く
+case "$title" in
+  \"*\" | \'*\') dw_die "title の全体を引用符で囲まないでください（読むときに外れます）: ${title}" 64 ;;
+esac
 
 repo_root="$(dw_repo_root || true)"
 user_dir="$(dw_user_review_dir)"
