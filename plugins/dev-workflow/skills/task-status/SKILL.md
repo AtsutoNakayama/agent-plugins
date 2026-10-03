@@ -19,7 +19,7 @@ Issue を Project の Status の指定された列へ移す。スキルが自動
 
 依頼から Issue の番号と移す先の列名を読み取る。
 
-- Issue の番号が無ければ、今いるブランチ名（`git branch --show-current`）に Issue の番号があればそれを使う（既定の形 `feat/12-add-login-page` なら 12）。それでも分からなければユーザーに聞く
+- Issue の番号が無ければ、今いるブランチ名（`git branch --show-current`）の、`branch.pattern`（`${CLAUDE_PLUGIN_ROOT}/scripts/config.sh` で読める）の `{issue_number}` の位置から読む。ブランチ名が `branch.pattern` に合わない、または `branch.pattern` に `{issue_number}` が無ければ、ブランチ名の数字を推測で使わずにユーザーに聞く（確認を取らずに移すので、読み違えると別の Issue が移る）
 - 列名は、依頼に書かれたとおりに使う（「Blocked に」なら `Blocked`）。列名が無ければユーザーに聞く。日本語の言い換え（「保留に」など）から列名を推測しない
 
 ### 2. 実行する
