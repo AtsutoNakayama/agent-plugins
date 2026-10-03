@@ -11,7 +11,10 @@
 # --title は全体を引用符で囲まない（読むときに外れる）。
 #
 # 同じ層に同じ名前のファイルがあれば、上書きせずに終了コード 3 で止まる。
-# ほかの層に同じ名前のファイルがあれば、--override が無いかぎり何も作らずに終了コード 4 で止まる。
+# ほかの層に同じ名前のファイルがあれば、--override が無いかぎり何も作らずに止まる。
+#   終了コード 5  上位の層にある（作っても、このリポジトリでは上位の層の観点が使われる）
+#   終了コード 4  下位の層にだけある（作った観点で置き換わる）
+# 書き込めないときは終了コード 1 で止まる。
 # 観点ファイルの形式は review-perspectives.sh --help を参照。
 #
 # 出力:
@@ -83,7 +86,10 @@ path="$dir/$name.md"
 body="$(cat)"
 printf '%s' "$body" | grep -q '[^[:space:]]' || dw_die "本文（レビューの指示）が標準入力にありません" 64
 
-[ ! -e "$path" ] || dw_die "同じ名前の観点が既にあるので上書きしません: ${path}" 3
+# 壊れたシンボリックリンクも、既にあるものとして扱う
+exists() { [ -e "$1" ] || [ -L "$1" ]; }
+
+exists "$path" && dw_die "同じ名前の観点が既にあるので上書きしません: ${path}" 3
 
 # 優先度の低い層から順に、同じ名前のファイルを探す
 overrides='[]'
@@ -93,23 +99,30 @@ for d in "$DW_PLUGIN_ROOT/review" "$user_dir" "$repo_dir"; do
   [ -n "$d" ] || continue
   if [ "$d" = "$dir" ]; then
     below=false
-    continue
-  fi
-  [ -e "$d/$name.md" ] || continue
-  if [ "$override" = false ]; then
-    dw_die "ほかの層に同じ名前の観点があります（置き換えるなら --override）: $d/$name.md" 4
-  fi
-  if [ "$below" = true ]; then
-    overrides="$(jq -c --arg p "$d/$name.md" '. + [$p]' <<<"$overrides")"
-  else
-    shadowed="$(jq -c --arg p "$d/$name.md" '. + [$p]' <<<"$shadowed")"
+  elif exists "$d/$name.md"; then
+    if [ "$below" = true ]; then
+      overrides="$(jq -c --arg p "$d/$name.md" '. + [$p]' <<<"$overrides")"
+    else
+      shadowed="$(jq -c --arg p "$d/$name.md" '. + [$p]' <<<"$shadowed")"
+    fi
   fi
 done
 
-mkdir -p "$dir"
+# 作った観点が使われないことのほうが大事なので、上位の層を先に知らせる
+if [ "$override" = false ]; then
+  if [ "$shadowed" != '[]' ]; then
+    dw_die "上位の層に同じ名前の観点があるので、このリポジトリでは作った観点が使われません（それでも作るなら --override）: $(jq -r '.[0]' <<<"$shadowed")" 5
+  fi
+  if [ "$overrides" != '[]' ]; then
+    dw_die "下位の層に同じ名前の観点があります（置き換えるなら --override）: $(jq -r '.[0]' <<<"$overrides")" 4
+  fi
+fi
+
+mkdir -p "$dir" 2>/dev/null || dw_die "観点ファイルを置くディレクトリを作れません: ${dir}" 1
 # 確かめた後に別の処理が作ったファイルも上書きしないよう、noclobber で書く
 if ! (set -C; printf -- '---\ntitle: %s\n---\n\n%s\n' "$title" "$body" >"$path") 2>/dev/null; then
-  dw_die "観点ファイルを作れません（既にあるか、書き込めません）: ${path}" 3
+  exists "$path" && dw_die "同じ名前の観点が既にあるので上書きしません: ${path}" 3
+  dw_die "観点ファイルを書き込めません: ${path}" 1
 fi
 
 jq -n --arg n "$name" --arg l "$layer" --arg p "$path" --argjson o "$overrides" --argjson s "$shadowed" \

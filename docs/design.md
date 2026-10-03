@@ -177,7 +177,7 @@ agent-plugins/
 | `task-start.sh` | ワークツリーの作成（サブモジュールの初期化を含む）、割り当て、In Progress への移動 |
 | `context.sh` | 今のブランチから Issue・PR・段階を割り出す |
 | `review-perspectives.sh` | 観点ファイルを集める |
-| `review-perspective-add.sh` | 観点ファイルを作る。同じ層に同じ名前のファイルがあれば上書きせずに止まり、ほかの層にあれば `--override` が無いかぎり止まる |
+| `review-perspective-add.sh` | 観点ファイルを作る。同じ層に同じ名前のファイルがあれば上書きせずに止まり、ほかの層にあれば `--override` が無いかぎり止まる（上位の層にあり、作っても使われないときは、下位の層にあるときと別の終了コードで知らせる） |
 | `pr-create.sh` | PR を作る |
 | `cleanup.sh` | マージを確認し、ワークツリーとブランチを削除し、main を最新にする。未コミットの変更や git が無視するファイルがあれば、何も消さずに止まる（無視するファイルは `--remove-ignored` で消せる） |
 

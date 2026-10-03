@@ -92,3 +92,42 @@ add() {
   add "指示" --name quoted --layer user --title '"A" を確かめるか'
   assert_success
 }
+
+@test "上位の層に同じ名前の観点があれば、下位の層とは別の終了コードで止まる" {
+  mkdir -p "$REPO/.claude/review"
+  printf -- '---\ntitle: リポジトリの版\n---\n\n指示\n' >"$REPO/.claude/review/mine.md"
+  add "指示" --name mine --layer user --title "自分の版"
+  assert_failure 5
+  assert_output --partial "$REPO/.claude/review/mine.md"
+  [ ! -e "$WORKFLOW_USER_REVIEW_DIR/mine.md" ] || fail "ファイルを作っています"
+}
+
+@test "上位と下位の両方の層にあれば、使われないことを優先して知らせる" {
+  mkdir -p "$REPO/.claude/review"
+  printf -- '---\ntitle: リポジトリの版\n---\n\n指示\n' >"$REPO/.claude/review/docs-sync.md"
+  add "指示" --name docs-sync --layer user --title "自分の版"
+  assert_failure 5
+}
+
+@test "置く場所に壊れたシンボリックリンクがあれば、既にあるものとして止まる" {
+  mkdir -p "$WORKFLOW_USER_REVIEW_DIR"
+  ln -s "$TMP/nowhere/x.md" "$WORKFLOW_USER_REVIEW_DIR/link.md"
+  add "指示" --name link --layer user --title "観点"
+  assert_failure 3
+}
+
+@test "書き込めないときは、既にあるときと別の終了コードで止まる" {
+  printf 'ファイル\n' >"$WORKFLOW_USER_REVIEW_DIR"
+  add "指示" --name cannot --layer user --title "観点"
+  assert_failure 1
+  assert_output --partial "$WORKFLOW_USER_REVIEW_DIR"
+}
+
+@test "ディレクトリに書き込む権限が無いときも、既にあるときと別の終了コードで止まる" {
+  [ "$(id -u)" != 0 ] || skip "root は権限に関係なく書き込める"
+  mkdir -p "$WORKFLOW_USER_REVIEW_DIR"
+  chmod 555 "$WORKFLOW_USER_REVIEW_DIR"
+  add "指示" --name cannot --layer user --title "観点"
+  chmod 755 "$WORKFLOW_USER_REVIEW_DIR"
+  assert_failure 1
+}
