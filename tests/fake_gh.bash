@@ -1,15 +1,16 @@
 # shellcheck shell=bash
-# branch-name・status-set・task-start・cleanup・pr-create のテストで使う偽の gh。load fake_gh で読み込み、setup_fake_gh を呼ぶ。
+# branch-name・status-set・task-start・cleanup・pr-create・issue-close のテストで使う偽の gh。load fake_gh で読み込み、setup_fake_gh を呼ぶ。
 #
 # - gh repo view                    me/demo を返す
 # - gh issue view N --json ...      $FIX/issue-N.json を返す（-q があれば適用する）
 # - gh issue edit N ...             引数を「edit N ...」として $CALLS に記録する
+# - gh issue close N ...            --comment 以外の引数を「close N ...」として $CALLS に記録し、--comment の中身を $TMP/close-comment に写す
 # - gh pr list ...                  $FIX/pr-list.json（無ければ []）を返し、引数を「pr-list ...」として $CALLS に記録する
 # - gh pr create ...                引数を「pr-create ...」として $CALLS に記録し、--body-file の中身を $TMP/pr-body に写して、
 #                                   https://github.com/me/demo/pull/42 を返す
 # - gh api user                     login: me を返す
 # - gh api graphql                  操作名ごとに $FIX/<操作名>.json を返し、「<操作名> <変数>」を $CALLS に記録する
-# FAKE_FAIL に指定した操作名（edit・pr-list・pr-create を含む）は、FAKE_FAIL_MSG（既定: gh: failed）を出して失敗する。
+# FAKE_FAIL に指定した操作名（edit・close・pr-list・pr-create を含む）は、FAKE_FAIL_MSG（既定: gh: failed）を出して失敗する。
 
 setup_fake_gh() {
   FIX="$TMP/fix"
@@ -35,6 +36,17 @@ case "$1 $2" in
     shift 2
     echo "edit $*" >>"$CALLS"
     fail edit
+    ;;
+  "issue close")
+    shift 2
+    rec="close"
+    while [ $# -gt 0 ]; do
+      if [ "$1" = --comment ]; then printf '%s' "$2" >"$(dirname "$FIX")/close-comment"; shift 2; continue; fi
+      rec="$rec $1"
+      shift
+    done
+    echo "$rec" >>"$CALLS"
+    fail close
     ;;
   "pr list")
     shift 2
