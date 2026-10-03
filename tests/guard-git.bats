@@ -33,6 +33,33 @@ denied() {
   done
 }
 
+# ブランチ名を警告するコマンド。コマンドは止めず、使用者と Claude の両方に警告を伝える
+# 使い方: warned <名前> <コマンド>...
+warned() {
+  local name="$1" c
+  shift
+  for c in "$@"; do
+    run_hook "$c"
+    [ "$status" -eq 0 ] || fail "止めてしまった（$status）: $c / $output"
+    jq -e . <<<"$output" >/dev/null || fail "JSON を出していない: $c / $output"
+    assert_equal "$(jq -r .hookSpecificOutput.hookEventName <<<"$output")" PreToolUse
+    assert_equal "$(jq -r .hookSpecificOutput.permissionDecision <<<"$output")" null
+    assert_equal "$(jq -r .systemMessage <<<"$output")" "$(jq -r .hookSpecificOutput.additionalContext <<<"$output")"
+    [[ "$(jq -r .systemMessage <<<"$output")" == *"ブランチ名 ${name} は規約に合いません"* ]] \
+      || fail "警告に名前が無い: $c / $output"
+  done
+}
+
+# 何も出さずに通すコマンド
+silent() {
+  local c
+  for c in "$@"; do
+    run_hook "$c"
+    [ "$status" -eq 0 ] || fail "止めてしまった（$status）: $c / $output"
+    [ -z "$output" ] || fail "何か出した: $c / $output"
+  done
+}
+
 @test "hooks.json は Bash の前にフックを呼び、呼ぶスクリプトがある" {
   jq -e '.hooks.PreToolUse[0].matcher == "Bash"' "$HOOKS/hooks.json"
   run jq -r '.hooks.PreToolUse[0].hooks[0].command' "$HOOKS/hooks.json"
@@ -174,4 +201,85 @@ denied() {
 
 @test "リポジトリの外や、行き先の分からない cd の後は、ブランチでは止めない" {
   allowed "cd $TMP && git commit -m x" "cd \$SOMEWHERE && git commit -m x"
+}
+
+@test "規約に合わない名前でブランチを作るコマンドは、止めずに警告する" {
+  warned foo \
+    "git switch -c foo" \
+    "git switch -C foo main" \
+    "git switch --create foo" \
+    "git switch --create=foo" \
+    "git switch -qcfoo" \
+    "git switch --orphan foo" \
+    "git checkout -b foo" \
+    "git checkout -qB foo origin/main" \
+    "git checkout --orphan=foo" \
+    "git branch foo" \
+    "git branch -f foo main" \
+    "git branch --track foo origin/main" \
+    "git worktree add -b foo ../wt" \
+    "git worktree add -f -B foo ../wt main" \
+    "git -C $REPO switch -c foo" \
+    "git fetch && git switch -c foo"
+  run_hook "git switch -c foo"
+  assert_output --partial "branch.pattern（{type}/{issue_number}-{slug}）の形になっていません"
+  assert_output --partial "task-start"
+  warned Feat/1-x "git switch -c Feat/1-x"
+}
+
+@test "1つのコマンドで複数のブランチを作れば、まとめて警告する" {
+  run_hook "git branch foo && git branch feat/1-ok && git branch bar"
+  assert_success
+  assert_output --partial "ブランチ名 foo は規約に合いません"
+  assert_output --partial "ブランチ名 bar は規約に合いません"
+  refute_output --partial "feat/1-ok"
+}
+
+@test "規約に合う名前や、ブランチを作らない git のコマンドでは何も出さない" {
+  silent \
+    "git switch -c feat/21-add-login" \
+    "git checkout -b fix/3-typo" \
+    "git branch docs/4-readme main" \
+    "git worktree add -b feat/5-x ../wt" \
+    "git status" \
+    "git branch" \
+    "git branch -a" \
+    "git branch -vv" \
+    "git branch -d foo" \
+    "git branch -D foo" \
+    "git branch -m foo" \
+    "git branch --list 'f*'" \
+    "git branch -u origin/foo foo" \
+    "git switch foo" \
+    "git switch -" \
+    "git checkout foo" \
+    "git checkout -- foo" \
+    "git checkout -p foo" \
+    "git worktree add ../wt foo" \
+    "git worktree list" \
+    "echo git branch foo"
+  # 展開前の変数の名前は確かめない
+  # shellcheck disable=SC2016
+  silent 'git switch -c "$name"' 'git branch $(echo foo)'
+}
+
+@test "ブランチ名は、操作する先のリポジトリの設定で確かめる" {
+  git init -q -b main "$TMP/other"
+  mkdir -p "$TMP/other/.claude"
+  echo '{"branch": {"pattern": "{type}-{issue_number}/{slug}"}}' >"$TMP/other/.claude/workflow.json"
+  silent "git -C $TMP/other switch -c feat-1/x" "cd $TMP/other && git branch feat-1/x"
+  warned feat/1-x "git -C $TMP/other switch -c feat/1-x"
+  warned feat-1/x "git switch -c feat-1/x"
+}
+
+@test "設定を読めないときや、リポジトリの外では何も出さない" {
+  echo '{' >.claude/workflow.json
+  silent "git switch -c foo"
+  rm .claude/workflow.json
+  silent "cd $TMP && git switch -c foo"
+}
+
+@test "ブランチ名を警告しても、main を守る判断は変わらない" {
+  denied "main の上ではコミットしません" "git branch foo && git commit -m x"
+  denied "強制 push" "git switch -c foo && git push -f"
 }

@@ -5,8 +5,12 @@
 #   - base_branch への git push（base_branch の上で push 先を書かずに push するときを含む）
 #   - 強制 push（--force / -f / +<refspec> / --mirror）。--force-with-lease は許可する
 #
+# また、ブランチを作るコマンド（git switch -c / git checkout -b / git branch <名前> / git worktree add -b）で、
+# 名前が規約（branch-name.sh --check）に合わなければ、コマンドは止めずに警告する。
+#
 # 標準入力でフックの入力（JSON）を受け取る。止めるときは理由を標準エラーに1行で出し、終了コード 2 で終わる
-# （Claude Code はコマンドを実行せず、理由を Claude に伝える）。
+# （Claude Code はコマンドを実行せず、理由を Claude に伝える）。警告するときは、フックの出力の JSON を
+# 標準出力に出し、終了コード 0 で終わる。
 # コマンドの文字列を簡易に解析するだけなので、sh -c や git の別名（alias）を通すと見逃す。
 # 最後の守りは GitHub のルールセット（setup-repo.sh）。
 set -euo pipefail
@@ -134,6 +138,82 @@ check_push() {
   done
 }
 
+# 作るブランチの名前を branch-name.sh --check で確かめ、規約に合わなければ警告を覚えておく。
+# 名前に展開前の $ や ` があるとき、設定を読めないときなどは何もしない
+# 使い方: check_branch_name <名前>
+check_branch_name() {
+  local name="$1" root out
+  case "$name" in
+    '' | *'$'* | *'`'*) return 0 ;;
+  esac
+  root="$(git_at rev-parse --show-toplevel || true)"
+  [ -n "$root" ] || return 0
+  # 規約に合わないときだけ終了コード 1（設定を読めないなどは 2）
+  out="$( (cd "$git_dir" && WORKFLOW_REPO_ROOT="$root" "$BASH" "$DW_SCRIPTS_DIR/branch-name.sh" --check "$name") 2>/dev/null)" \
+    && return 0
+  [ $? -eq 1 ] || return 0
+  warnings+=("ブランチ名 ${name} は規約に合いません（$(jq -r '.reason // empty' <<<"$out" 2>/dev/null || true)）。")
+  nwarn=$((nwarn + 1))
+}
+
+# git switch・git checkout・git worktree add の引数から、作るブランチの名前を探して確かめる。
+# 使い方: check_create <値を取る短いオプションの文字> <値を取る長いオプション（空白区切り）> <引数>...
+check_create() {
+  local shorts="$1" longs=" $2 " expect=false w k c
+  shift 2
+  for w in "$@"; do
+    if $expect; then
+      expect=false
+      check_branch_name "$w"
+      continue
+    fi
+    case "$w" in
+      --) return 0 ;;
+      --*=*)
+        case "$longs" in *" ${w%%=*} "*) check_branch_name "${w#*=}" ;; esac
+        ;;
+      --*)
+        case "$longs" in *" $w "*) expect=true ;; esac
+        ;;
+      -?*)
+        # 短いオプションはまとめて書ける（-qc name）。値を取る文字の後ろが残っていれば、それが値（-cname）
+        k=1
+        while [ "$k" -lt "${#w}" ]; do
+          c="${w:k:1}"
+          case "$shorts" in
+            *"$c"*)
+              if [ "$((k + 1))" -lt "${#w}" ]; then
+                check_branch_name "${w:k+1}"
+              else
+                expect=true
+              fi
+              break
+              ;;
+          esac
+          k=$((k + 1))
+        done
+        ;;
+    esac
+  done
+}
+
+# git branch の引数を調べる。ブランチを作るとき（一覧・削除・名前の変更などのオプションが無く、名前がある）だけ確かめる
+# 使い方: check_branch <引数>...
+check_branch() {
+  local w after_dd=false
+  for w in "$@"; do
+    if ! $after_dd; then
+      case "$w" in
+        --) after_dd=true; continue ;;
+        -f | --force | -t | --track | --track=* | --no-track | -q | --quiet | --create-reflog | --recurse-submodules) continue ;;
+        -*) return 0 ;;
+      esac
+    fi
+    check_branch_name "$w"
+    return 0
+  done
+}
+
 # 1つのコマンド（単語の並び）を調べる。cd ならディレクトリを移す。
 # 使い方: check_command <単語>...
 check_command() {
@@ -205,6 +285,15 @@ check_command() {
         || deny "${base} の上ではコミットしません。作業用のブランチを作ってください（task-start）"
       ;;
     push) check_push "$@" ;;
+    switch) check_create cC "--create --force-create --orphan" "$@" ;;
+    checkout) check_create bB "--orphan" "$@" ;;
+    branch) check_branch "$@" ;;
+    worktree)
+      if [ "${1:-}" = add ]; then
+        shift
+        check_create bB "" "$@"
+      fi
+      ;;
   esac
 }
 
@@ -233,6 +322,8 @@ dstack=() dn=0
 case_dn=() cn=0
 arith_i=0
 git_dir="" gopts=()
+# ブランチ名の警告（最後にまとめて出す）
+warnings=() nwarn=0
 
 # 残りの文字列の先頭（最大 win 文字）を rest に入れる。wbuf を使い切りそうなら写し直す
 window() {
@@ -606,4 +697,10 @@ while [ "$i" -lt "$len" ]; do
   esac
 done
 end_command
+
+# 警告は、使用者には systemMessage、Claude には additionalContext で伝える。コマンドはいつもどおり実行させる
+if [ "$nwarn" -gt 0 ]; then
+  msg="${warnings[*]} 規約（branch.pattern）に合うブランチは task-start で作れます。作った後なら git branch -m <新しい名前> で名前を変えられます"
+  jq -n --arg m "$msg" '{systemMessage: $m, hookSpecificOutput: {hookEventName: "PreToolUse", additionalContext: $m}}'
+fi
 exit 0

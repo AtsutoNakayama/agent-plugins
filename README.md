@@ -65,7 +65,9 @@ title: 一覧に出す1行の説明（必須）
 - base_branch への `git push`（base_branch の上で push 先を書かずに push するときを含む）
 - 強制 push（`--force` / `-f` / `+<refspec>` / `--mirror`）。`--force-with-lease` は許可する
 
-`cd` や `git -C` で移った先のブランチで判断します。コマンドの文字列を簡易に解析するだけなので、`sh -c` や git の別名を通すと見逃します。最後の守りは GitHub のルールセット（下記）です。
+また、規約（`branch.pattern`）に合わない名前でブランチを作ろうとしたとき（`git switch -c` / `git checkout -b` / `git branch <名前>` / `git worktree add -b`）は、コマンドは止めずに、使用者と Claude に警告します。
+
+`cd` や `git -C` で移った先のリポジトリ・ブランチで判断します。コマンドの文字列を簡易に解析するだけなので、`sh -c` や git の別名を通すと見逃します。最後の守りは GitHub のルールセット（下記）です。
 
 ## リポジトリの初期設定
 
