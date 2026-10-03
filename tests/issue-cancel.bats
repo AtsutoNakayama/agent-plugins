@@ -90,6 +90,14 @@ writes() { grep -oE '^(issue-comment|issue-close|pr-comment|pr-close|api-delete)
   assert_equal "$(writes)" ""
 }
 
+@test "--duplicate-of が # だけなら、not planned で閉じずに止まる" {
+  setup_cancel
+  run_script issue-cancel.sh --issue 17 --reason "重複です" --duplicate-of '#'
+  assert_failure 64
+  assert_output --partial "--duplicate-of に値がありません"
+  assert_equal "$(writes)" ""
+}
+
 @test "--duplicate-of に自分自身は指定できない" {
   setup_cancel
   run_script issue-cancel.sh --issue 17 --reason "重複です" --duplicate-of 017

@@ -37,7 +37,11 @@ while [ $# -gt 0 ]; do
       case "$1" in
         --issue) issue="$2" ;;
         --reason) reason="$2" ;;
-        --duplicate-of) duplicate_of="${2#\#}" ;;
+        --duplicate-of)
+          # # だけを渡されて空になったまま not planned で閉じないよう、# を取った後も値があるか確かめる
+          duplicate_of="${2#\#}"
+          [ -n "$duplicate_of" ] || dw_die "--duplicate-of に値がありません" 64
+          ;;
         --branch) branch="$2" ;;
       esac
       shift 2
