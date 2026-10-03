@@ -155,7 +155,6 @@ agent-plugins/
 | `pr-create` | push と PR 作成 | push と PR の作成 |
 | `task-cancel` | やらない Issue を、理由と参照先をコメントして not planned か duplicate で閉じる。着手していれば、PR を閉じ、リモートと手元のブランチ・ワークツリーを削除する | 閉じる・削除する（理由のコメントと、失う作業を含めて1回で確認する） |
 | `task-finish` | ワークツリーとローカルブランチを削除し、main を最新にする（`git pull --ff-only`） | なし（作業が失われるときは `cleanup.sh` が何も消さずに止まる。git が無視するファイルを消すときだけ確認を取る） |
-| `workflow` | 今の段階を判断して次の段階へ進める | 各段階のスキルに従う |
 | `repo-setup` | 初期設定を対話的に実行し、設定ファイルを作る | ラベル・Project・リポジトリの設定の変更 |
 
 - どのスキルも、依頼の内容から自動で呼ばれてよい（`disable-model-invocation` は付けない）。
@@ -170,7 +169,11 @@ agent-plugins/
 
 1. **GitHub のルールセット**（`setup-repo.sh`）：main への直接 push の禁止と PR の必須化、強制 push と main の削除の禁止。承認の必須化はオプション（既定は無効）。
 2. **Claude Code のフック**（`hooks/guard-git.sh`）：main 上での commit と、main への push をブロックする。強制 push（`--force` / `-f` / `+<refspec>` / `--mirror`）をブロックする（`--force-with-lease` は許可）。ブランチを作るコマンド（`git switch -c` / `git checkout -b` / `git branch <名前>` / `git worktree add -b`）で、名前が規約（`branch-name.sh --check`。文字と `branch.pattern` の形）に合わないときは、コマンドは止めずに警告する。警告はフックの JSON の出力で、使用者には `systemMessage`、Claude には `additionalContext` で伝える。解析できないときや設定を読めないときは何もせずに通す。
-3. **`workflow` スキル**：着手 → 実装（論理的な区切りごとにコミット）→ ローカルレビュー → PR → PR レビュー → マージ（人間）→ 後片付け。
+3. **SessionStart のフック**（`hooks/task-flow.sh`）：タスクの進め方（Issue から始める → 着手 → 実装（論理的な区切りごとにコミット）→ ローカルレビュー → PR → マージ（人間）→ 後片付け、と取りやめ）と、それぞれで使うスキルを、セッションの始まりに Claude に読み込ませる。
+   - スキルは呼ばれたときにしか読み込まれないので、流れをスキルに書いても普段の作業中は効かない。プラグインはいつも読み込まれるルール（CLAUDE.md・`.claude/rules/`）を配れない（プラグインの直下の CLAUDE.md は読み込まれない）ので、フックの出力で渡す。SessionStart は起動・`/resume`・`/clear`・コンパクトのたびに動くので、会話が要約されても流れが抜けない。
+   - 既定の流れ（`defaults/task-flow.md`）のあとに、個人の追記（`~/.claude/dev-workflow/task-flow.md`）、チームの追記（`<repo>/.claude/dev-workflow/task-flow.md`）の順に出力する（後ろほど優先。`guides.task-flow` と同じ順）。
+   - 毎セッション動くので、`config.sh` を呼ばずにファイルを直接読んで速く終える。出力は Claude Code がそのまま渡す上限（1 万文字）に収め、超えたら切って、読み直すファイルを知らせる。
+   - 「今どの段階か」を判断して次へ進めるスキルは作らない。各段階のスキルを流れに沿って呼べば足りるので。必要になったら考える。
 
 ## 10. スクリプト
 
@@ -198,7 +201,6 @@ agent-plugins/
 | `status-set.sh` | 列を移す |
 | `branch-name.sh` | ブランチ名を作り、検証する |
 | `task-start.sh` | ワークツリーの作成（サブモジュールの初期化を含む）、割り当て、In Progress への移動 |
-| `context.sh` | 今のブランチから Issue・PR・段階を割り出す |
 | `review-perspectives.sh` | 観点ファイルを集める |
 | `review-perspective-add.sh` | 観点ファイルを作る。同じ層に同じ名前のファイルがあれば上書きせずに止まり、ほかの層にあれば `--override` が無いかぎり止まる（上位の層にあり、作っても使われないときは、下位の層にあるときと別の終了コードで知らせる） |
 | `pr-create.sh` | PR を作る |
@@ -220,7 +222,7 @@ agent-plugins/
 | 1. 初期設定 | `setup-*.sh`、`repo-setup` | 0.2.0 |
 | 2. 最小のサイクル | `task-create`、`task-start`、`commit`、`pr-create`、`task-finish`、main を守るフック | 0.3.0 |
 | 3. レビューと Issue の整理 | `review`、`review-perspective-add`、`task-cancel`（やらない Issue を閉じ、作業を片付ける） | 0.x（release-please が上げる） |
-| 4. まとめる | `workflow`、`task-status`、ブランチ名を警告するフック | 1.0.0 |
+| 4. まとめる | タスクの進め方を渡すフック、`task-status`、ブランチ名を警告するフック | 1.0.0 |
 
 最初の版は段階 0〜2。このリポジトリ自体を最初の利用者にする。
 
