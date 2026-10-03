@@ -166,6 +166,15 @@ labels_check() { jq -c '.checks[] | select(.name == "labels") | [.ok, .level, .d
   assert_output --partial "リポジトリに無いラベルがあります: spike。"
 }
 
+@test "リポジトリ独自のラベルの定義を読めなければ、止めずに知らせる" {
+  fake_gh
+  export FAKE_SCOPES="project"
+  echo '[{"name": "feat", "color": "0e8a16"}, {"name": "FEAT", "color": "0e8a16"}]' >.claude/dev-workflow/labels.json
+  run_script doctor.sh
+  assert_success
+  assert_equal "$(labels_check)" '[false,"warn","ラベルの名前が重複しています: feat"]'
+}
+
 @test "GitHub に問い合わせられないときは、ラベルの確認を飛ばす" {
   fake_gh
   export FAKE_SCOPES="project" FAKE_LABELS='[]'
