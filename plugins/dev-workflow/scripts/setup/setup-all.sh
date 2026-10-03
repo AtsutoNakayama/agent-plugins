@@ -9,7 +9,7 @@
 #   --dry-run               変更せず、行う予定の操作だけを出力する
 #
 # 行うこと:
-#   1. setup-labels.sh：type ラベルの登録
+#   1. setup-labels.sh：type ラベルと breaking ラベルの登録
 #   2. setup-project.sh --write-config：Project の作成・接続と、.claude/workflow.json への書き込み
 #   3. setup-repo.sh：マージ方法の設定と、ルールセットの登録
 #   4. PR テンプレート（.github/pull_request_template.md）と Issue テンプレート
