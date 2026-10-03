@@ -17,6 +17,8 @@
 #   4. Story Point（数値の項目）の追加
 #   5. Project に入っていないオープンな Issue を追加し、Status が空なら todo の列にする
 #   6. 組み込みの自動追加（Auto-add to project）が有効か確認する（API では有効にできない）
+# GitHub の操作は gh project と REST で行う。GraphQL は、gh にも REST にも手段が無い操作（Issue から Project の項目を引く・
+# Project の詳細・Status の選択肢を足す）だけに使う（設計書 §10）。
 # GraphQL の変数（$login など）を bash に展開させないため、クエリはシングルクォートで書く
 # shellcheck disable=SC2016
 set -euo pipefail
@@ -26,7 +28,7 @@ set -euo pipefail
 dw_require gh jq
 
 # macOS の BSD sed が日本語で失敗しないよう、バイト列として扱わせる
-usage() { LC_ALL=C sed -n '2,/^# GraphQL の変数/{/^# GraphQL の変数/d;s/^# \{0,1\}//;p;}' "$0"; }
+usage() { LC_ALL=C sed -n '2,/^# GitHub の操作は/{/^# GitHub の操作は/d;s/^# \{0,1\}//;p;}' "$0"; }
 
 # オプションの値を取り出す。無ければ使い方の誤り（64）で終了する
 need_value() {
@@ -68,12 +70,12 @@ actions='[]'
 # 行った（または dry-run で行う予定の）操作を記録する
 note() { actions="$(jq -c --arg a "$1" '. + [$a]' <<<"$actions")"; }
 
-# 変更を伴う GraphQL。dry-run では呼ばずに null を返す
+# 変更を伴う操作（gh のコマンドか関数）。dry-run では呼ばずに null を返す
 mutate() {
   if $dry_run; then
     echo null
   else
-    dw_gql "$1" "$2"
+    "$@"
   fi
 }
 
@@ -102,58 +104,45 @@ fi
 [ -n "$owner" ] || owner="$(jq -r .owner.login <<<"$repo_json")"
 [ -n "$title" ] || title="$(jq -r .name <<<"$repo_json")"
 
-owner_json="$(dw_gql 'query Owner($login: String!) {
-  repositoryOwner(login: $login) { __typename id }
-}' "$(jq -nc --arg l "$owner" '{login: $l}')" | jq -c '.data.repositoryOwner')"
-[ "$owner_json" != null ] || dw_die "所有者が見つかりません: $owner"
-owner_id="$(jq -r .id <<<"$owner_json")"
-case "$(jq -r .__typename <<<"$owner_json")" in
+# 所有者の種類（User / Organization）。REST の users/<login> は組織にも答える
+owner_type="$(dw_gh_find gh api "users/$owner" | jq -r '.type // empty')"
+[ -n "$owner_type" ] || dw_die "所有者が見つかりません: $owner"
+case "$owner_type" in
   Organization) owner_path="orgs/$owner" ;;
   *) owner_path="users/$owner" ;;
 esac
 
 # --- 1. Project を見つける・作る ------------------------------------------------
-# 名前の完全一致で探す。検索は曖昧一致なので使わず、全件を順に見る
+# 名前の完全一致で探す。検索は曖昧一致なので使わず、全件を見る。
+# gh project list は閉じた Project を含めず、--limit の件数までページを送って読む（上限は実際には届かない大きさにする）
 find_by_title() {
-  local cursor="" page found
-  while :; do
-    page="$(dw_gql 'query Projects($login: String!, $after: String) {
-      repositoryOwner(login: $login) { ... on ProjectV2Owner {
-        projectsV2(first: 100, after: $after) {
-          pageInfo { hasNextPage endCursor }
-          nodes { id number title url closed } } } }
-    }' "$(jq -nc --arg l "$owner" --arg a "$cursor" '{login: $l, after: (if $a == "" then null else $a end)}')" \
-      | jq -c '.data.repositoryOwner.projectsV2')"
-    found="$(jq -c --arg t "$title" '[.nodes[] | select(.title == $t and (.closed | not))][0] // null | if . then del(.closed) else . end' <<<"$page")"
-    if [ "$found" != null ]; then
-      printf '%s\n' "$found"
-      return
-    fi
-    [ "$(jq -r .pageInfo.hasNextPage <<<"$page")" = true ] || break
-    cursor="$(jq -r .pageInfo.endCursor <<<"$page")"
-  done
-  echo null
+  gh project list --owner "$owner" --limit 10000 --format json \
+    | jq -c --arg t "$title" '[.projects[] | select(.title == $t and (.closed | not))][0] // null
+      | if . then {id, number, title, url} else . end'
+}
+
+# Project を作成し、リポジトリと紐付ける。作成した Project を出力する
+create_project() {
+  local p
+  p="$(gh project create --owner "$owner" --title "$title" --format json | jq -c '{id, number, title, url}')" || return 1
+  [ "$(jq -r '.id // empty' <<<"$p")" != "" ] || { echo null; return 0; }
+  gh project link "$(jq -r .number <<<"$p")" --owner "$owner" --repo "$repo_nwo" >/dev/null || return 1
+  printf '%s\n' "$p"
 }
 
 created=false
 if [ -n "$number" ]; then
-  project="$(dw_gql_find 'query ProjectByNumber($login: String!, $number: Int!) {
-    repositoryOwner(login: $login) { ... on ProjectV2Owner { projectV2(number: $number) { id number title url } } }
-  }' "$(jq -nc --arg l "$owner" --argjson n "$number" '{login: $l, number: $n}')" \
-    | jq -c '.data.repositoryOwner.projectV2 // null')"
-  # 無い Project は API がエラー（NOT_FOUND）で返すので、dw_gql_find で null に揃えてから案内する
+  project="$(dw_gh_find gh project view "$number" --owner "$owner" --format json | jq -c 'if . then {id, number, title, url} else . end')"
+  # 無い Project は gh がエラー（Could not resolve to a ProjectV2）を返すので、dw_gh_find で null に揃えてから案内する
   [ "$project" != null ] || dw_die "Project が見つかりません: $owner/$number"
 else
   project="$(find_by_title)"
   if [ "$project" = null ]; then
     note "Project「${title}」を作成し、リポジトリ $repo_nwo と紐付ける"
     created=true
-    project="$(mutate 'mutation CreateProject($owner: ID!, $title: String!, $repo: ID!) {
-      createProjectV2(input: {ownerId: $owner, title: $title, repositoryId: $repo}) { projectV2 { id number title url } }
-    }' "$(jq -nc --arg o "$owner_id" --arg t "$title" --arg r "$repo_id" '{owner: $o, title: $t, repo: $r}')" \
-      | jq -c '.data.createProjectV2.projectV2 // null')"
+    project="$(mutate create_project)"
     if ! $dry_run && [ "$project" = null ]; then
-      dw_die "Project を作成できませんでした（API の応答に projectV2 がありません）"
+      dw_die "Project を作成できませんでした（gh project create の応答に id がありません）"
     fi
   fi
 fi
@@ -161,7 +150,8 @@ fi
 project_id="$(jq -r '.id // empty' <<<"$project")"
 project_number="$(jq -r '.number // empty' <<<"$project")"
 
-# オープンな Issue と、それぞれがこの Project に入っているか（Issue 側から調べる）
+# オープンな Issue と、それぞれがこの Project に入っているか（Issue 側から調べる）。
+# gh にも REST にも、Issue から Project の項目を引く手段が無いので GraphQL で読む（設計書 §10）
 open_issues() {
   local cursor="" page
   while :; do
@@ -169,12 +159,12 @@ open_issues() {
       repository(owner: $owner, name: $name) {
         issues(states: OPEN, first: 100, after: $after) {
           pageInfo { hasNextPage endCursor }
-          nodes { id number projectItems(first: 50) { nodes { id project { id }
+          nodes { url number projectItems(first: 50) { nodes { id project { id }
             fieldValueByName(name: "Status") { ... on ProjectV2ItemFieldSingleSelectValue { name } } } } } } }
     }' "$(jq -nc --arg r "$repo_nwo" --arg a "$cursor" \
       '{owner: ($r | split("/")[0]), name: ($r | split("/")[1]), after: (if $a == "" then null else $a end)}')" \
       | jq -c '.data.repository.issues')"
-    jq -c --arg p "$project_id" '.nodes[] | {id, number,
+    jq -c --arg p "$project_id" '.nodes[] | {url, number,
       item: ([.projectItems.nodes[] | select(.project.id == $p)][0] // null
         | if . then {id, status: (.fieldValueByName.name // null)} else null end)}' <<<"$page"
     [ "$(jq -r .pageInfo.hasNextPage <<<"$page")" = true ] || break
@@ -195,6 +185,8 @@ if [ -z "$project_id" ]; then
 else
   workflows_url="https://github.com/$owner_path/projects/$project_number/workflows"
 
+  # 紐付け済みのリポジトリと組み込みの自動化（workflows）は gh にも REST にも無いので GraphQL で読む。
+  # Status の選択肢を足す操作（GraphQL）に要る項目の一覧も、同じクエリでまとめて取る（設計書 §10）
   detail() {
     dw_gql 'query ProjectDetail($id: ID!) {
       node(id: $id) { ... on ProjectV2 {
@@ -210,9 +202,7 @@ else
   # --- 2. リポジトリとの紐付け --------------------------------------------------
   if ! jq -e --arg r "$repo_id" 'any(.repositories.nodes[]; .id == $r)' <<<"$project_detail" >/dev/null; then
     note "リポジトリ $repo_nwo と紐付ける"
-    mutate 'mutation LinkRepo($p: ID!, $r: ID!) {
-      linkProjectV2ToRepository(input: {projectId: $p, repositoryId: $r}) { repository { id } }
-    }' "$(jq -nc --arg p "$project_id" --arg r "$repo_id" '{p: $p, r: $r}')" >/dev/null
+    mutate gh project link "$project_number" --owner "$owner" --repo "$repo_nwo" >/dev/null
   fi
 
   # --- 3. Status 列 -------------------------------------------------------------
@@ -221,8 +211,9 @@ else
   missing="$(jq -c --argjson want "$status_names" '[.options[].name] as $have | $want - $have' <<<"$status_field")"
   if [ "$missing" != "[]" ]; then
     note "$(msg_status "$missing")"
-    # 既存の選択肢は id を付けて渡し、Issue に付いている値を残す
-    mutate 'mutation UpdateStatus($f: ID!, $opts: [ProjectV2SingleSelectFieldOptionInput!]!) {
+    # 既存の選択肢は id を付けて渡し、Issue に付いている値を残す。
+    # gh にも REST にも既存の項目を変える操作が無いので GraphQL を使う（設計書 §10）
+    mutate dw_gql 'mutation UpdateStatus($f: ID!, $opts: [ProjectV2SingleSelectFieldOptionInput!]!) {
       updateProjectV2Field(input: {fieldId: $f, singleSelectOptions: $opts}) { projectV2Field { ... on ProjectV2FieldCommon { id } } }
     }' "$(jq -c --argjson m "$missing" '{f: .id, opts: (.options + ($m | map({name: ., color: "GRAY", description: ""})))}' <<<"$status_field")" >/dev/null
     if ! $dry_run; then
@@ -235,9 +226,7 @@ else
   sp_type="$(jq -r --arg n "$sp_name" '[.fields.nodes[] | select(.name == $n)][0].dataType // empty' <<<"$project_detail")"
   if [ -z "$sp_type" ]; then
     note "$msg_sp"
-    mutate 'mutation CreateNumberField($p: ID!, $n: String!) {
-      createProjectV2Field(input: {projectId: $p, dataType: NUMBER, name: $n}) { projectV2Field { ... on ProjectV2FieldCommon { id } } }
-    }' "$(jq -nc --arg p "$project_id" --arg n "$sp_name" '{p: $p, n: $n}')" >/dev/null
+    mutate gh project field-create "$project_number" --owner "$owner" --name "$sp_name" --data-type NUMBER >/dev/null
   elif [ "$sp_type" != NUMBER ]; then
     dw_warn "項目「${sp_name}」が数値ではありません（${sp_type}）。合計を表示できないので数値の項目にしてください"
   fi
@@ -257,19 +246,13 @@ else
     if [ -z "$item_id" ]; then
       items_added=$((items_added + 1))
       if ! $dry_run; then
-        item_id="$(dw_gql 'mutation AddItem($p: ID!, $c: ID!) {
-          addProjectV2ItemById(input: {projectId: $p, contentId: $c}) { item { id } }
-        }' "$(jq -nc --arg p "$project_id" --argjson i "$issue" '{p: $p, c: $i.id}')" \
-          | jq -r '.data.addProjectV2ItemById.item.id')"
+        item_id="$(dw_project_add_item "$owner" "$project_number" "$(jq -r .url <<<"$issue")")"
       fi
     fi
     if [ "$(jq -r '.item.status // empty' <<<"$issue")" = "" ] && [ -n "$todo_id" ]; then
       items_todo=$((items_todo + 1))
       if ! $dry_run; then
-        dw_gql 'mutation SetStatus($p: ID!, $i: ID!, $f: ID!, $o: String!) {
-          updateProjectV2ItemFieldValue(input: {projectId: $p, itemId: $i, fieldId: $f, value: {singleSelectOptionId: $o}}) { projectV2Item { id } }
-        }' "$(jq -nc --arg p "$project_id" --arg i "$item_id" --arg f "$status_field_id" --arg o "$todo_id" \
-          '{p: $p, i: $i, f: $f, o: $o}')" >/dev/null
+        dw_project_set_field "$project_id" "$item_id" "$status_field_id" --single-select-option-id "$todo_id"
       fi
     fi
   done <<<"$issues"

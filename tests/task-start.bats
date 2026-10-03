@@ -46,7 +46,7 @@ run_start() {
   run git -C "$wt" rev-parse --abbrev-ref '@{upstream}'
   assert_failure
   assert_equal "$(args edit)" "17 --add-assignee @me"
-  assert_equal "$(args SetField | jq -r .v.singleSelectOptionId)" O2
+  assert_equal "$(args SetField | jq -r '."single-select-option-id"')" O2
 }
 
 @test "ワークツリーの置き場所が無視されていなければ、.git/info/exclude に足す" {
@@ -140,7 +140,7 @@ run_start() {
     assert_output --partial "project.number が未設定なので、Project の列は移しません"
     assert_equal "$(jq -c '.status.skipped' <<<"$json")" true
   done
-  assert_equal "$(called ProjectFields)" 0
+  assert_equal "$(called ProjectView)" 0
   assert_equal "$(called edit)" 1
 }
 

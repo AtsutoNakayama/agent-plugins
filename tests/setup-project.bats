@@ -5,8 +5,9 @@
 load test_helper
 
 # 偽の gh。GraphQL は操作名（query Foo / mutation Foo）ごとに $FIX/<操作名>.json を返し、
-# 呼ばれた操作名と変数を $CALLS に1行ずつ記録する。FAKE_FAIL に指定した操作名は、
-# FAKE_FAIL_MSG（既定: 見つからないときのメッセージ）を出して失敗する。
+# 呼ばれた操作名と変数を $CALLS に1行ずつ記録する。gh project と Project の REST・所有者（users/<login>）は
+# fake_gh_project.bash が同じように受け持つ（Owner・Projects・ProjectView・CreateProject・LinkRepo・CreateNumberField・
+# AddItem・SetField）。FAKE_FAIL に指定した操作名は、FAKE_FAIL_MSG（既定: gh: failed）を出して失敗する。
 # gh repo view は、リポジトリを指定すれば repo.json、指定しなければ（今いるリポジトリ）here.json を返す。
 setup_fake_gh() {
   FIX="$TMP/fix"
@@ -16,6 +17,9 @@ setup_fake_gh() {
   : >"$CALLS"
   cat >"$TMP/bin/gh" <<'SH'
 #!/usr/bin/env bash
+# shellcheck source=/dev/null
+. "$FAKE_GH_PROJECT"
+fake_gh_project "$@"
 q=.
 for a in "$@"; do
   if [ "${prev:-}" = -q ]; then q="$a"; fi
@@ -35,7 +39,7 @@ case "$1 $2" in
     body="$(cat)"
     op="$(jq -r .query <<<"$body" | grep -oE '(query|mutation) [A-Za-z]+' | head -n 1 | cut -d' ' -f2)"
     echo "$op $(jq -c .variables <<<"$body")" >>"$CALLS"
-    if [ "${FAKE_FAIL:-}" = "$op" ]; then echo "${FAKE_FAIL_MSG:-GraphQL: Could not resolve to a ProjectV2.}" >&2; exit 1; fi
+    if [ "${FAKE_FAIL:-}" = "$op" ]; then echo "${FAKE_FAIL_MSG:-gh: failed}" >&2; exit 1; fi
     # 同じ操作の n 回目の呼び出しには <操作名>.<n>.json があればそれを返す（ページ送りのテスト用）
     n="$(grep -c "^$op " "$CALLS")"
     if [ -f "$FIX/$op.$n.json" ]; then cat "$FIX/$op.$n.json"
@@ -49,20 +53,19 @@ SH
 
   fix repo.json '{"id": "R1", "name": "demo", "nameWithOwner": "me/demo", "owner": {"login": "me"}}'
   fix issues.json '[{"number": 1}, {"number": 2}]'
-  fix Owner.json '{"data": {"repositoryOwner": {"__typename": "User", "id": "U1"}}}'
+  fix Owner.json '{"login": "me", "type": "User"}'
   projects '[]'
-  fix CreateProject.json '{"data": {"createProjectV2": {"projectV2": {"id": "P1", "number": 7, "title": "demo", "url": "https://example.com/p/7"}}}}'
+  fix CreateProject.json '{"id": "P1", "number": 7, "title": "demo", "url": "https://example.com/p/7", "closed": false}'
   detail '["R1"]' '[{"id": "O1", "name": "Todo"}, {"id": "O2", "name": "In Progress"}, {"id": "O3", "name": "Done"}]' true
-  issues '[{"id": "I1", "number": 1, "items": []}, {"id": "I2", "number": 2, "items": []}]'
-  fix AddItem.json '{"data": {"addProjectV2ItemById": {"item": {"id": "IT1"}}}}'
+  issues '[{"number": 1, "items": []}, {"number": 2, "items": []}]'
+  fix AddItem.json '{"id": "IT1"}'
 }
 
 fix() { printf '%s\n' "$2" >"$FIX/$1"; }
 
-# 使い方: projects <Project の配列>（1ページ）
+# gh project list の応答。使い方: projects <Project の配列>
 projects() {
-  jq -n --argjson n "$1" '{data: {repositoryOwner: {projectsV2: {pageInfo: {hasNextPage: false, endCursor: null}, nodes: $n}}}}' \
-    >"$FIX/Projects.json"
+  jq -n --argjson n "$1" '{projects: $n, totalCount: ($n | length)}' >"$FIX/Projects.json"
 }
 
 # 使い方: detail <紐付け済みリポジトリの id の配列> <Status の選択肢> <自動追加が有効か>
@@ -78,10 +81,10 @@ detail() {
     >"$FIX/ProjectDetail.json"
 }
 
-# 使い方: issues <[{id, number, items: [{id, project, status}]}]>（1ページ）
+# 使い方: issues <[{number, items: [{id, project, status}]}]>（1ページ）
 issues() {
   jq -n --argjson is "$1" '{data: {repository: {issues: {pageInfo: {hasNextPage: false, endCursor: null},
-    nodes: ($is | map({id, number, projectItems: {nodes: (.items | map({id, project: {id: .project},
+    nodes: ($is | map({url: "https://github.com/me/demo/issues/\(.number)", number, projectItems: {nodes: (.items | map({id, project: {id: .project},
       fieldValueByName: (if .status then {name: .status} else null end)}))}}))}}}}' \
     >"$FIX/OpenIssues.json"
 }
@@ -104,9 +107,11 @@ called() { grep -c "^$1 " "$CALLS" || true; }
   assert_equal "$(called CreateProject)" 1
   assert_equal "$(called CreateNumberField)" 1
   assert_equal "$(called AddItem)" 2
-  assert_equal "$(called SetStatus)" 2
-  grep '^SetStatus ' "$CALLS" | grep -q '"o":"O1"'
-  assert_equal "$(called LinkRepo)" 0
+  assert_equal "$(called SetField)" 2
+  grep '^SetField ' "$CALLS" | grep -q '"single-select-option-id":"O1"'
+  # 作成の直後に1回だけ紐付ける（作成後の詳細では紐付け済みなので、もう一度は紐付けない）
+  assert_equal "$(called LinkRepo)" 1
+  assert_equal "$(grep '^LinkRepo ' "$CALLS" | cut -d' ' -f2- | jq -c '[._[0], .owner, .repo]')" '["7","me","me/demo"]'
   assert_equal "$(called UpdateStatus)" 0
   assert_equal "$(jq -r '[.project.number, .project.created, .items.added, .items.set_todo] | join(",")' <<<"$json")" "7,true,2,2"
 }
@@ -131,32 +136,30 @@ called() { grep -c "^$1 " "$CALLS" || true; }
   assert_equal "$(jq -r '[.project.number, .project.created] | join(",")' <<<"$json")" "9,false"
 }
 
-@test "名前での探索は次のページまで見る" {
+@test "名前での探索は、件数の上限を大きくして全件を読み、閉じた Project は使わない" {
   setup_fake_gh
-  jq -n '{data: {repositoryOwner: {projectsV2: {pageInfo: {hasNextPage: true, endCursor: "C1"},
-    nodes: [{id: "P8", number: 8, title: "other", url: "u", closed: false}]}}}}' >"$FIX/Projects.1.json"
-  jq -n '{data: {repositoryOwner: {projectsV2: {pageInfo: {hasNextPage: false, endCursor: null},
-    nodes: [{id: "P9", number: 9, title: "demo", url: "u", closed: false}]}}}}' >"$FIX/Projects.2.json"
+  projects '[{"id": "P8", "number": 8, "title": "demo", "url": "u", "closed": true},
+    {"id": "P9", "number": 9, "title": "demo", "url": "u", "closed": false}]'
   run_setup
   assert_success
-  assert_equal "$(called Projects)" 2
-  grep '^Projects ' "$CALLS" | sed -n 2p | grep -q '"after":"C1"'
+  assert_equal "$(grep '^Projects ' "$CALLS" | cut -d' ' -f2- | jq -r '[.owner, .limit] | join(",")')" "me,10000"
   assert_equal "$(called CreateProject)" 0
   assert_equal "$(jq -r .project.number <<<"$json")" 9
 }
 
 @test "--number で既存の Project に接続する" {
   setup_fake_gh
-  fix ProjectByNumber.json '{"data": {"repositoryOwner": {"projectV2": {"id": "P3", "number": 3, "title": "x", "url": "u"}}}}'
+  fix ProjectView.json '{"id": "P3", "number": 3, "title": "x", "url": "u", "owner": {"login": "me", "type": "User"}}'
   run_setup --number 3
   assert_success
   assert_equal "$(called Projects)" 0
   assert_equal "$(jq -r .project.number <<<"$json")" 3
 }
 
-@test "--number の Project が無ければ（API は NOT_FOUND のエラーを返す）、案内して止まる" {
+@test "--number の Project が無ければ（gh は Could not resolve のエラーを返す）、案内して止まる" {
   setup_fake_gh
-  FAKE_FAIL=ProjectByNumber run_setup --number 99
+  FAKE_FAIL=ProjectView FAKE_FAIL_MSG="GraphQL: Could not resolve to a ProjectV2 with the number 99. (user.projectV2)" \
+    run_setup --number 99
   assert_failure 1
   assert_output --partial "Project が見つかりません: me/99"
   assert_equal "$(called CreateProject)" 0
@@ -164,7 +167,7 @@ called() { grep -c "^$1 " "$CALLS" || true; }
 
 @test "--number の Project を読めない（スコープ不足など）ときは、GitHub の理由を伝える" {
   setup_fake_gh
-  FAKE_FAIL=ProjectByNumber FAKE_FAIL_MSG="GraphQL: INSUFFICIENT_SCOPES" run_setup --number 3
+  FAKE_FAIL=ProjectView FAKE_FAIL_MSG="GraphQL: INSUFFICIENT_SCOPES" run_setup --number 3
   assert_failure 1
   assert_output --partial "GitHub の API に失敗しました: GraphQL: INSUFFICIENT_SCOPES"
   refute_output --partial "見つかりません"
@@ -173,12 +176,12 @@ called() { grep -c "^$1 " "$CALLS" || true; }
 @test "設定に project.number があれば、名前で探さずにその Project を使う" {
   setup_fake_gh
   echo '{"project": {"owner": "team", "number": 12}}' >.claude/workflow.json
-  fix ProjectByNumber.json '{"data": {"repositoryOwner": {"projectV2": {"id": "P12", "number": 12, "title": "Team Board", "url": "u"}}}}'
+  fix ProjectView.json '{"id": "P12", "number": 12, "title": "Team Board", "url": "u", "owner": {"login": "team", "type": "Organization"}}'
   run_setup
   assert_success
   assert_equal "$(called Projects)" 0
   assert_equal "$(called CreateProject)" 0
-  grep '^ProjectByNumber ' "$CALLS" | grep -q '"login":"team","number":12'
+  assert_equal "$(grep '^ProjectView ' "$CALLS" | cut -d' ' -f2- | jq -c '[._[0], .owner]')" '["12","team"]'
 }
 
 @test "足りない Status の列は、既存の選択肢の id を残したまま追加する" {
@@ -194,15 +197,15 @@ called() { grep -c "^$1 " "$CALLS" || true; }
 @test "Project に入っている Issue は追加せず、Status が入っていれば変更もしない" {
   setup_fake_gh
   projects '[{"id": "P1", "number": 7, "title": "demo", "url": "u", "closed": false}]'
-  issues '[{"id": "I1", "number": 1, "items": [{"id": "IT1", "project": "P1", "status": "In Progress"}]},
-    {"id": "I2", "number": 2, "items": [{"id": "IT2", "project": "P1", "status": null}]},
-    {"id": "I3", "number": 3, "items": [{"id": "ITX", "project": "OTHER", "status": "Todo"}]}]'
+  issues '[{"number": 1, "items": [{"id": "IT1", "project": "P1", "status": "In Progress"}]},
+    {"number": 2, "items": [{"id": "IT2", "project": "P1", "status": null}]},
+    {"number": 3, "items": [{"id": "ITX", "project": "OTHER", "status": "Todo"}]}]'
   run_setup
   assert_success
   assert_equal "$(called AddItem)" 1
-  grep '^AddItem ' "$CALLS" | grep -q '"c":"I3"'
-  assert_equal "$(called SetStatus)" 2
-  grep '^SetStatus ' "$CALLS" | grep -q '"i":"IT2"'
+  grep '^AddItem ' "$CALLS" | grep -q '"url":"https://github.com/me/demo/issues/3"'
+  assert_equal "$(called SetField)" 2
+  grep '^SetField ' "$CALLS" | grep -q '"id":"IT2"'
   assert_equal "$(jq -r '[.items.added, .items.set_todo] | join(",")' <<<"$json")" "1,2"
 }
 
@@ -214,7 +217,7 @@ called() { grep -c "^$1 " "$CALLS" || true; }
   run_setup
   assert_success
   assert_output --partial "todo の列「Backlog」が Status 列に無い"
-  assert_equal "$(called SetStatus)" 0
+  assert_equal "$(called SetField)" 0
 }
 
 @test "リポジトリと未紐付けなら紐付ける" {
@@ -223,6 +226,15 @@ called() { grep -c "^$1 " "$CALLS" || true; }
   detail '[]' '[{"id": "O1", "name": "Todo"}, {"id": "O2", "name": "In Progress"}, {"id": "O3", "name": "Done"}]' true
   run_setup
   assert_equal "$(called LinkRepo)" 1
+  assert_equal "$(grep '^LinkRepo ' "$CALLS" | cut -d' ' -f2- | jq -c '[._[0], .owner, .repo]')" '["7","me","me/demo"]'
+}
+
+@test "所有者が見つからなければ止まる" {
+  setup_fake_gh
+  FAKE_FAIL=Owner FAKE_FAIL_MSG="gh: Not Found (HTTP 404)" run_setup
+  assert_failure 1
+  assert_output --partial "所有者が見つかりません: me"
+  assert_equal "$(called CreateProject)" 0
 }
 
 @test "自動追加はどれか1つが有効なら有効とみなす" {
@@ -234,7 +246,7 @@ called() { grep -c "^$1 " "$CALLS" || true; }
 
 @test "自動追加が無効なら警告し、設定画面の URL を返す（組織なら orgs）" {
   setup_fake_gh
-  fix Owner.json '{"data": {"repositoryOwner": {"__typename": "Organization", "id": "G1"}}}'
+  fix Owner.json '{"login": "me", "type": "Organization"}'
   detail '["R1"]' '[{"id": "O1", "name": "Todo"}, {"id": "O2", "name": "In Progress"}, {"id": "O3", "name": "Done"}]' false
   run_setup
   assert_success
@@ -243,9 +255,9 @@ called() { grep -c "^$1 " "$CALLS" || true; }
   assert_equal "$(jq -r .workflows.url <<<"$json")" "https://github.com/orgs/me/projects/7/workflows"
 }
 
-@test "作成の応答に projectV2 が無ければエラーで止まる" {
+@test "作成の応答に id が無ければエラーで止まる" {
   setup_fake_gh
-  fix CreateProject.json '{"data": {"createProjectV2": null}}'
+  fix CreateProject.json '{}'
   run_setup --write-config
   assert_failure 1
   assert_output --partial "Project を作成できませんでした"
@@ -263,7 +275,7 @@ called() { grep -c "^$1 " "$CALLS" || true; }
 @test "--write-config は、project が同じならファイルを書き直さず、予定にも出さない" {
   setup_fake_gh
   printf '%s\n' '{"project":{"owner":"me","number":9},"language":"ja"}' >.claude/workflow.json
-  fix ProjectByNumber.json '{"data": {"repositoryOwner": {"projectV2": {"id": "P9", "number": 9, "title": "demo", "url": "u"}}}}'
+  fix ProjectView.json '{"id": "P9", "number": 9, "title": "demo", "url": "u", "owner": {"login": "me", "type": "User"}}'
   run_setup --write-config
   assert_success
   assert_equal "$(cat .claude/workflow.json)" '{"project":{"owner":"me","number":9},"language":"ja"}'
