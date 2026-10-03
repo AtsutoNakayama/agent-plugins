@@ -90,7 +90,7 @@ agent-plugins/
 - **やらない Issue を閉じる**：誤って起票した Issue や、やらないことにした Issue は、`task-cancel` で not planned（重複なら duplicate）で閉じる。
   - Issue の終わり方は、完了（completed。PR のマージで閉じる）とやめた（not planned・duplicate）の2つに分ける。完了は PR が閉じ、やめたときは `task-cancel` が閉じる。`task-finish` は Issue には触れず、マージした後の手元を片付けるだけ。名前を `task-close` にしなかったのは、close は完了で閉じるときにも使う言葉で、`task-finish` と混同しやすいため。
   - 閉じる前に、理由と参照先（代わりに作業する Issue など）を `#N` でコメントする。理由が空（空白だけを含む）なら閉じない。
-  - duplicate は、重複の元の Issue の番号が分かるときだけ使い、元の Issue に紐付ける（GraphQL の `closeIssue` の `duplicateIssueId`）。誤って紐付けると影響が大きいので、迷うときは not planned にする。gh の `--duplicate-of` は 2.88.0 からなので使わず、GraphQL で閉じる。
+  - duplicate は、重複の元の Issue の番号が分かるときだけ使い、元の Issue に紐付ける（`gh issue close --duplicate-of`。gh 2.88.0 以上）。誤って紐付けると影響が大きいので、迷うときは not planned にする。
   - Project からは外さない。後からボードで経緯を参照できるように。
   - Story Point は残す。見積もりも記録の一部で、集計する仕組みも無いので、消す理由が無い。
   - Project の自動化（Item closed）が有効なら、閉じた Issue は完了した Issue と同じく Done に移る。
@@ -176,10 +176,12 @@ agent-plugins/
 - **bash 3.2 でも動く書き方**（macOS の標準の bash に合わせる）＋ `gh` ＋ `jq`。`set -euo pipefail` を書き、`shellcheck` と `bats` を CI で実行する。
 - 判断と文章の生成だけを AI が担当し、決まった手順で済む処理はスクリプトに切り出す（トークン削減のため）。
 - 出力は JSON、エラーは終了コードと1行のメッセージ。初期設定用のスクリプトは `--dry-run` に対応する。
+- GitHub の操作は、gh のサブコマンド（`gh issue`・`gh pr` など）と REST（`gh api repos/...`）で行う。GraphQL は重いので、Project v2 のように他に手段が無いときだけ使う。
+- gh は新しいものを前提にし、古い gh のための回り道はしない。必要なバージョン（`common.sh` の `DW_GH_MIN_VERSION`）より古ければ、`doctor.sh` が更新を促し（warn。ほかの確認は止めない）、その機能を使うスクリプトは何もせずに止まって更新を促す。
 
 | プラグイン側（`plugins/dev-workflow/scripts/`） | 役割 |
 |---|---|
-| `doctor.sh` | 認証とスコープ、`jq` と bash のバージョン、設定ファイルを確認する |
+| `doctor.sh` | 認証とスコープ、gh・`jq`・bash のバージョン、設定ファイルを確認する（gh が古ければ更新を促す） |
 | `config.sh` | 5つの層を合わせた設定を出力する |
 | `issue-create.sh` | 起票、ラベルの付与、Project への追加、列と Story Point の設定、依存関係（blocked by）の登録 |
 | `status-set.sh` | 列を移す |
