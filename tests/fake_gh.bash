@@ -16,6 +16,7 @@
 # - gh api repos/...                「api-get <パス>」を $CALLS に記録する。$FIX/remote-ref があれば {} を、無ければ HTTP 404 で失敗する
 # - gh api -X DELETE <パス>          「api-delete <パス>」を $CALLS に記録する
 # - gh api graphql                  操作名ごとに $FIX/<操作名>.json を返し、「<操作名> <変数>」を $CALLS に記録する
+# - gh project ・Project の REST     fake_gh_project.bash が受け持つ（ProjectView・ProjectFields・AddItem・SetField など）
 # FAKE_FAIL に指定した操作名（issue-view・edit・issue-comment・issue-close・pr-list・pr-create・pr-comment・pr-close・api-get・api-delete を含む）は、FAKE_FAIL_MSG（既定: gh: failed）を出して失敗する。
 
 setup_fake_gh() {
@@ -26,6 +27,9 @@ setup_fake_gh() {
   : >"$CALLS"
   cat >"$TMP/bin/gh" <<'SH'
 #!/usr/bin/env bash
+# shellcheck source=/dev/null
+. "$FAKE_GH_PROJECT"
+fake_gh_project "$@"
 q=.
 for a in "$@"; do
   if [ "${prev:-}" = -q ]; then q="$a"; fi
@@ -105,13 +109,13 @@ SH
 
   echo '{"project": {"owner": "me", "number": 4}}' >"$REPO/.claude/workflow.json"
   fake_issue 17 '["feat"]'
-  jq -n '{data: {repositoryOwner: {projectV2: {id: "P4", number: 4, url: "u", fields: {nodes: [
-    {id: "F1", name: "Status", dataType: "SINGLE_SELECT", options: [
-      {id: "O1", name: "Todo"}, {id: "O2", name: "In Progress"}, {id: "O3", name: "Done"}]}]}}}}}' \
+  echo '{"id": "P4", "number": 4, "url": "u", "owner": {"login": "me", "type": "User"}}' >"$FIX/ProjectView.json"
+  # REST の項目の一覧。id は数値、node_id が gh project で使う id
+  jq -n '[{id: 1, node_id: "F1", name: "Status", data_type: "single_select", options: [
+    {id: "O1", name: {raw: "Todo"}}, {id: "O2", name: {raw: "In Progress"}}, {id: "O3", name: {raw: "Done"}}]}]' \
     >"$FIX/ProjectFields.json"
   issue_item Todo
-  echo '{"data": {"addProjectV2ItemById": {"item": {"id": "IT9"}}}}' >"$FIX/AddItem.json"
-  echo '{"data": {"updateProjectV2ItemFieldValue": {"projectV2Item": {"id": "IT1"}}}}' >"$FIX/SetField.json"
+  echo '{"id": "IT9"}' >"$FIX/AddItem.json"
 }
 
 # 使い方: fake_issue <番号> <ラベルの配列> [状態（既定 OPEN）] [割り当てられた login の配列]
@@ -123,7 +127,7 @@ fake_issue() {
 
 # Project P4 での Issue の項目と今の列。使い方: issue_item <列名 | none（列が空） | absent（Project に無い）>
 issue_item() {
-  jq -n --arg s "$1" '{data: {repository: {issue: {id: "I17", projectItems: {nodes: (
+  jq -n --arg s "$1" '{data: {repository: {issue: {url: "https://github.com/me/demo/issues/17", projectItems: {nodes: (
     if $s == "absent" then [] else [{id: "IT1", project: {id: "P4"},
       fieldValueByName: (if $s == "none" then null else {name: $s} end)}] end)}}}}}' >"$FIX/IssueItem.json"
 }

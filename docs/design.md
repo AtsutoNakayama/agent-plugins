@@ -85,8 +85,8 @@ agent-plugins/
 
 - **Story Point**：数値の項目。使える値はフィボナッチ数の 1, 2, 3, 5, 8, 13, 21, 34 に固定し（設定では変えられない）、スクリプトで検証する。起票時は AI が見積もりを提案し、ユーザーが確定する（空欄も可）。21 と 34 は見積もりの精度が低いので分割を提案し、それでもよければそのまま設定する。34 より大きい作業は分割する。
 - **Project への自動追加**：Project に組み込みの Auto-add を使う。有効にする API は無いので、Web の画面で1回だけ手動で有効にする。`setup-project.sh` が手順を表示し、有効になったかを API で確認する。
-- `task-create` は起票の後、毎回 `addProjectV2ItemById` を呼んで項目の ID を取得する。既に追加済みなら既存の項目が返るだけなので、自動追加とは重複しない。
-- **依存する Issue**：先に終わらせる Issue があれば、本文の「依存」の見出しに `#N` で書き（無ければ「なし」）、GitHub の Issue の依存関係（blocked by。GraphQL の `addBlockedBy`）にも登録する。本文は読む人のため、依存関係はボードや Issue の画面で区別するため。文章だけ（「〜の Issue の後に」）では番号が分からないので、必ず番号で書く。存在しない Issue の番号は、起票の前に止める。1回の依頼で複数の Issue を起票するときは、依存される側から順に起票し、先に起票した番号を後の Issue の依存に使う。
+- `task-create` は起票の後、毎回 `gh project item-add` を呼んで項目の ID を取得する。既に追加済みなら既存の項目が返るだけなので、自動追加とは重複しない。
+- **依存する Issue**：先に終わらせる Issue があれば、本文の「依存」の見出しに `#N` で書き（無ければ「なし」）、GitHub の Issue の依存関係（blocked by。REST の `issues/{番号}/dependencies/blocked_by`）にも登録する。本文は読む人のため、依存関係はボードや Issue の画面で区別するため。文章だけ（「〜の Issue の後に」）では番号が分からないので、必ず番号で書く。存在しない Issue の番号は、起票の前に止める。1回の依頼で複数の Issue を起票するときは、依存される側から順に起票し、先に起票した番号を後の Issue の依存に使う。
 - **やらない Issue を閉じる**：誤って起票した Issue や、やらないことにした Issue は、`task-cancel` で not planned（重複なら duplicate）で閉じる。
   - Issue の終わり方は、完了（completed。PR のマージで閉じる）とやめた（not planned・duplicate）の2つに分ける。完了は PR が閉じ、やめたときは `task-cancel` が閉じる。`task-finish` は Issue には触れず、マージした後の手元を片付けるだけ。名前を `task-close` にしなかったのは、close は完了で閉じるときにも使う言葉で、`task-finish` と混同しやすいため。
   - 閉じる前に、理由と参照先（代わりに作業する Issue など）を `#N` でコメントする。理由が空（空白だけを含む）なら閉じない。
@@ -176,6 +176,18 @@ agent-plugins/
 - **bash 3.2 でも動く書き方**（macOS の標準の bash に合わせる）＋ `gh` ＋ `jq`。`set -euo pipefail` を書き、`shellcheck` と `bats` を CI で実行する。
 - 判断と文章の生成だけを AI が担当し、決まった手順で済む処理はスクリプトに切り出す（トークン削減のため）。
 - 出力は JSON、エラーは終了コードと1行のメッセージ。初期設定用のスクリプトは `--dry-run` に対応する。
+- **GitHub の操作は gh のサブコマンドと REST で行う**（`gh issue`・`gh project` など、無ければ `gh api` で REST）。GraphQL（`gh api graphql`）は他に手段が無いときだけ使い、使う箇所には理由をコメントに書く。
+  - 速さや API の負荷のためではない。GraphQL は入れ子のデータを1回で取れるので、呼び出しの回数はむしろ少ないことが多い。`gh project` のサブコマンドも内部では GraphQL を使う。レート制限は GraphQL と REST で別々に数えられ、このワークフローの回数ではどちらも上限に届かない。
+  - 理由は次の4つ。
+    - 読みやすい：クエリの文字列が無く、何をしているかがコマンド名で分かる。
+    - 保守しやすい：ページ送りやスキーマの変化への対応を gh に任せられる。
+    - テストしやすい：偽物の gh は、コマンドの名前ごとに応答を切り替えるだけで済む（GraphQL では、クエリの文字列から操作名を読み取らなければならない）。
+    - node id を引き回さなくてよい：Issue や Project を番号・URL で指定できる。
+  - 今 GraphQL を残しているのは次の箇所。
+    - Issue から、ある Project での項目と今の列を引く（`status-set.sh`・`setup-project.sh` のオープンな Issue の一覧）。REST の Issue には Project の項目が無く、`gh issue view --json projectItems` は Project の名前と列しか返さない（項目の ID も Project の ID も無い）。
+    - Project の詳細（`setup-project.sh`）。紐付け済みのリポジトリと組み込みの自動化（workflows）は、gh にも REST にも無い。Status の選択肢を足す操作（下）に要る項目の一覧も、同じクエリでまとめて取る。
+    - 単一選択の項目の選択肢を足す（`setup-project.sh` の Status 列）。gh にも REST にも、既存の項目を変える操作が無い。
+- **gh は新しいものを前提にする**。古い gh のための回り道は書かず、要る機能が無い gh では止まって更新を促す（`common.sh` の `DW_GH_MIN_VERSION`。`doctor.sh` も更新を促す）。
 
 | プラグイン側（`plugins/dev-workflow/scripts/`） | 役割 |
 |---|---|

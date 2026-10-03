@@ -95,7 +95,8 @@ dw_check_json() {
     || dw_die "JSON のオブジェクトとして読めません: $1" 2
 }
 
-# GitHub の GraphQL API を呼び、応答の JSON を出力する。
+# GitHub の GraphQL API を呼び、応答の JSON を出力する。GraphQL は、gh のサブコマンドにも REST にも手段が無いときだけ使う。
+# 速さのためではなく、読みやすさ・保守のしやすさ・テストのしやすさと、node id を引き回さないため（設計書 §10）。
 # テストの偽 gh が応答を切り替えられるよう、クエリには必ず操作名を付ける（query Foo(...)）。
 # 使い方: dw_gql <クエリ> [変数の JSON]
 dw_gql() {
@@ -103,13 +104,14 @@ dw_gql() {
     | gh api graphql --input -
 }
 
-# dw_gql と同じだが、対象が無い（NOT_FOUND）ときは失敗にせず {"data": null} を出力する。
-# 呼ぶ側は「見つからない」を null で判断でき、スコープ不足・認証・通信など他の失敗は理由を伝えて止まる。
-# 使い方: dw_gql_find <クエリ> [変数の JSON]
-dw_gql_find() {
+# gh のコマンド（関数でもよい）を実行して出力する。対象が無い（GraphQL の NOT_FOUND、REST の 404・410）ときは
+# 失敗にせず null を出力する。呼ぶ側は「見つからない」を null で判断でき、
+# スコープ不足・認証・通信など他の失敗は理由を伝えて止まる。
+# 使い方: dw_gh_find <コマンド> [引数]...
+dw_gh_find() {
   local out err
   err="$(mktemp)"
-  if out="$(dw_gql "$@" 2>"$err")"; then
+  if out="$("$@" 2>"$err")"; then
     rm -f "$err"
     printf '%s\n' "$out"
     return 0
@@ -117,7 +119,7 @@ dw_gql_find() {
   out="$(cat "$err")"
   rm -f "$err"
   case "$out" in
-    *NOT_FOUND* | *"Could not resolve to"*) echo '{"data": null}' ;;
+    *NOT_FOUND* | *"Could not resolve to"* | *"HTTP 404"* | *"HTTP 410"*) echo null ;;
     *) dw_die "GitHub の API に失敗しました: $out" ;;
   esac
 }
@@ -202,42 +204,35 @@ dw_find_nocase() {
 }
 
 # --- GitHub Project（v2） -------------------------------------------------------
-# GraphQL の変数（$login など）を bash に展開させないため、クエリはシングルクォートで書く（SC2016 は意図どおり）
+# gh project と REST で操作する。REST の Project の API は所有者の種類（users / orgs）でパスが分かれる。
 
-# Project の id・番号・URL と項目（Status の選択肢を含む）を出力する。無ければ案内して止まる。
+# Project の id（node id）・番号・URL と項目（Status の選択肢を含む）を出力する。無ければ案内して止まる。
+# 項目は {id（node id）, name, dataType（REST の data_type。number・single_select など）, options: [{id, name}]} の配列。
+# gh project field-list は数値の項目と文字列の項目を区別しないので、項目は REST で読む。
 # 使い方: dw_project_fields <所有者> <番号>
-# shellcheck disable=SC2016
 dw_project_fields() {
-  local project
-  project="$(dw_gql_find 'query ProjectFields($login: String!, $number: Int!) {
-    repositoryOwner(login: $login) { ... on ProjectV2Owner { projectV2(number: $number) {
-      id number url
-      fields(first: 50) { nodes {
-        ... on ProjectV2FieldCommon { id name dataType }
-        ... on ProjectV2SingleSelectField { options { id name } } } } } } }
-  }' "$(jq -nc --arg l "$1" --argjson n "$2" '{login: $l, number: $n}')" \
-    | jq -c '.data.repositoryOwner.projectV2 // null')" || return 1
-  # 無い Project は API がエラー（NOT_FOUND）で返すので、dw_gql_find で null に揃えてから案内する
+  local project path fields
+  project="$(dw_gh_find gh project view "$2" --owner "$1" --format json)" || return 1
+  # 無い Project は gh がエラー（Could not resolve to a ProjectV2）を返すので、dw_gh_find で null に揃えてから案内する
   [ "$project" != null ] || dw_die "Project が見つかりません: ${1}/${2}（setup-project.sh で設定してください）"
-  printf '%s\n' "$project"
+  case "$(jq -r .owner.type <<<"$project")" in
+    Organization) path="orgs/$1" ;;
+    *) path="users/$1" ;;
+  esac
+  fields="$(gh api --paginate "$path/projectsV2/$2/fields?per_page=100" | jq -sc 'add // []')" || return 1
+  jq -c --argjson f "$fields" '{id, number, url,
+    fields: ($f | map({id: .node_id, name, dataType: .data_type,
+      options: ((.options // []) | map({id, name: (.name.raw // .name)}))}))}' <<<"$project"
 }
 
-# Issue などを Project に追加し、項目の id を出力する。既に入っていれば既存の項目が返る。
-# 使い方: dw_project_add_item <Project の id> <Issue などの node id>
-# shellcheck disable=SC2016
+# Issue などを Project に追加し、項目の id（node id）を出力する。既に入っていれば既存の項目が返る。
+# 使い方: dw_project_add_item <所有者> <番号> <Issue などの URL>
 dw_project_add_item() {
-  dw_gql 'mutation AddItem($p: ID!, $c: ID!) {
-    addProjectV2ItemById(input: {projectId: $p, contentId: $c}) { item { id } }
-  }' "$(jq -nc --arg p "$1" --arg c "$2" '{p: $p, c: $c}')" \
-    | jq -er '.data.addProjectV2ItemById.item.id'
+  gh project item-add "$2" --owner "$1" --url "$3" --format json | jq -er '.id'
 }
 
-# 項目の値を設定する。値は {"singleSelectOptionId": ...} や {"number": ...} の JSON。
-# 使い方: dw_project_set_field <Project の id> <項目の id> <フィールドの id> <値の JSON>
-# shellcheck disable=SC2016
+# 項目の値を設定する。値は gh project item-edit のオプションで渡す（--single-select-option-id <id> や --number <数>）。
+# 使い方: dw_project_set_field <Project の id> <項目の id> <フィールドの id> <オプション> <値>
 dw_project_set_field() {
-  dw_gql 'mutation SetField($p: ID!, $i: ID!, $f: ID!, $v: ProjectV2FieldValue!) {
-    updateProjectV2ItemFieldValue(input: {projectId: $p, itemId: $i, fieldId: $f, value: $v}) { projectV2Item { id } }
-  }' "$(jq -nc --arg p "$1" --arg i "$2" --arg f "$3" --argjson v "$4" '{p: $p, i: $i, f: $f, v: $v}')" \
-    | jq -e '.data.updateProjectV2ItemFieldValue.projectV2Item.id' >/dev/null
+  gh project item-edit --project-id "$1" --id "$2" --field-id "$3" "$4" "$5" >/dev/null
 }

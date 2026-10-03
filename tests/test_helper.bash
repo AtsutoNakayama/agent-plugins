@@ -3,6 +3,8 @@
 # TEST_BASH でスクリプトを実行する bash を指定できる（例: macOS の /bin/bash 3.2）。
 
 SCRIPTS="$BATS_TEST_DIRNAME/../plugins/dev-workflow/scripts"
+# 偽の gh から読み込む、GitHub Project の部分（fake_gh_project.bash を参照）
+export FAKE_GH_PROJECT="$BATS_TEST_DIRNAME/fake_gh_project.bash"
 
 # assert_success・assert_equal などを使う（git submodule で同梱。git submodule update --init で取得する）
 load lib/bats-support/load

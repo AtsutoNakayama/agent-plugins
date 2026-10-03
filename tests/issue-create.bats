@@ -4,10 +4,11 @@
 
 load test_helper
 
-# 偽の gh。GraphQL は操作名（query Foo / mutation Foo）ごとに $FIX/<操作名>.json を返し、
-# gh api -X POST .../issues は $FIX/issue.json を返す。BlockingIssue は変数の number に応じて $FIX/issue-<番号>.json を返し、
-# 無ければ NOT_FOUND のエラーにする。どちらも「<操作名> <変数または本文>」を $CALLS に記録する。
+# 偽の gh。gh api -X POST repos/me/demo/issues は $FIX/issue.json を返し、「CreateIssue <本文>」を $CALLS に記録する。
+# gh api repos/me/demo/issues/<番号> は $FIX/issue-<番号>.json を返し（無ければ 404）、「BlockingIssue <番号>」を記録する。
+# gh api -X POST .../issues/<番号>/dependencies/blocked_by は「AddBlockedBy {"issue": <番号>, "issue_id": <id>}」を記録する。
 # gh api repos/me/demo/labels/<名前> は、$FIX/labels に名前の行があればそのラベルを返し、無ければ 404 にする。
+# gh project と Project の REST は fake_gh_project.bash が受け持つ（ProjectView・ProjectFields・AddItem・SetField）。
 # FAKE_FAIL に指定した操作名は、FAKE_FAIL_MSG（既定: gh: failed）を出して失敗する。
 setup_fake_gh() {
   FIX="$TMP/fix"
@@ -17,35 +18,44 @@ setup_fake_gh() {
   : >"$CALLS"
   cat >"$TMP/bin/gh" <<'SH'
 #!/usr/bin/env bash
+# shellcheck source=/dev/null
+. "$FAKE_GH_PROJECT"
+fake_gh_project "$@"
 q=.
 for a in "$@"; do
   if [ "${prev:-}" = -q ]; then q="$a"; fi
   prev="$a"
 done
+fail() { if [ "${FAKE_FAIL:-}" = "$1" ]; then echo "${FAKE_FAIL_MSG:-gh: failed}" >&2; exit 1; fi; }
 case "$1 $2" in
   "repo view") echo '{"nameWithOwner": "me/demo"}' | jq -r "$q" ;;
-  "api repos/"*)
+  "api repos/me/demo/labels/"*)
     name="${2##*/labels/}"
     if [ "${FAKE_FAIL:-}" = Label ]; then echo 'gh: Server Error (HTTP 500)' >&2; exit 1; fi
     grep -qxF "$name" "$FIX/labels" 2>/dev/null || { echo 'gh: Not Found (HTTP 404)' >&2; exit 1; }
     jq -n --arg n "$name" '{name: $n}'
     ;;
-  "api -X")
-    echo "CreateIssue $(jq -c .)" >>"$CALLS"
-    if [ "${FAKE_FAIL:-}" = CreateIssue ]; then echo 'gh: Validation Failed (HTTP 422)' >&2; exit 1; fi
-    cat "$FIX/issue.json"
+  "api repos/me/demo/issues/"*)
+    n="${2##*/}"
+    echo "BlockingIssue $n" >>"$CALLS"
+    fail BlockingIssue
+    [ -f "$FIX/issue-$n.json" ] || { echo 'gh: Not Found (HTTP 404)' >&2; exit 1; }
+    cat "$FIX/issue-$n.json"
     ;;
-  "api graphql")
-    body="$(cat)"
-    op="$(jq -r .query <<<"$body" | grep -oE '(query|mutation) [A-Za-z]+' | head -n 1 | cut -d' ' -f2)"
-    echo "$op $(jq -c .variables <<<"$body")" >>"$CALLS"
-    if [ "${FAKE_FAIL:-}" = "$op" ]; then echo "${FAKE_FAIL_MSG:-gh: failed}" >&2; exit 1; fi
-    if [ "$op" = BlockingIssue ]; then
-      n="$(jq -r .variables.number <<<"$body")"
-      [ -f "$FIX/issue-$n.json" ] \
-        || { echo "GraphQL: Could not resolve to an Issue with the number of $n. (repository.issue)" >&2; exit 1; }
-      jq '{data: {repository: {issue: .}}}' "$FIX/issue-$n.json"
-    elif [ -f "$FIX/$op.json" ]; then cat "$FIX/$op.json"; else echo '{"data": {}}'; fi
+  "api -X")
+    case "$4" in
+      */dependencies/blocked_by)
+        n="${4%/dependencies/blocked_by}"
+        echo "AddBlockedBy $(jq -nc --argjson i "${n##*/}" --argjson b "${6#issue_id=}" '{issue: $i, issue_id: $b}')" >>"$CALLS"
+        fail AddBlockedBy
+        echo '{}'
+        ;;
+      *)
+        echo "CreateIssue $(jq -c .)" >>"$CALLS"
+        if [ "${FAKE_FAIL:-}" = CreateIssue ]; then echo 'gh: Validation Failed (HTTP 422)' >&2; exit 1; fi
+        cat "$FIX/issue.json"
+        ;;
+    esac
     ;;
 esac
 SH
@@ -53,33 +63,33 @@ SH
   export PATH="$TMP/bin:$PATH"
 
   echo '{"project": {"owner": "me", "number": 4}}' >.claude/workflow.json
-  project_fields '[{"id": "O1", "name": "Todo"}, {"id": "O2", "name": "In Progress"}]' true
+  echo '{"id": "P4", "number": 4, "url": "https://github.com/users/me/projects/4", "owner": {"login": "me", "type": "User"}}' \
+    >"$FIX/ProjectView.json"
+  project_fields '[{"id": "O1", "name": "Todo"}, {"id": "O2", "name": "In Progress"}]' number
   created_issue feat
-  echo '{"data": {"addProjectV2ItemById": {"item": {"id": "IT30"}}}}' >"$FIX/AddItem.json"
-  echo '{"data": {"updateProjectV2ItemFieldValue": {"projectV2Item": {"id": "IT30"}}}}' >"$FIX/SetField.json"
-  echo '{"data": {"addBlockedBy": {"issue": {"id": "I30"}}}}' >"$FIX/AddBlockedBy.json"
+  echo '{"id": "IT30"}' >"$FIX/AddItem.json"
 }
 
 # 作った Issue として返す応答。使い方: created_issue <付いたラベル>...
 created_issue() {
-  jq -n --args '{number: 30, html_url: "https://github.com/me/demo/issues/30", node_id: "I30",
+  jq -n --args '{number: 30, id: 1030, html_url: "https://github.com/me/demo/issues/30", node_id: "I30",
     labels: ($ARGS.positional | map({name: .}))}' "$@" >"$FIX/issue.json"
 }
 
-# 依存先として既にある Issue。使い方: existing_issue <番号>...
+# 依存先として既にある Issue。REST の id は 1000 + 番号にする。使い方: existing_issue <番号>...
 existing_issue() {
   local n
   for n in "$@"; do
-    jq -n --argjson n "$n" '{id: "I\($n)", number: $n}' >"$FIX/issue-$n.json"
+    jq -n --argjson n "$n" '{id: (1000 + $n), node_id: "I\($n)", number: $n}' >"$FIX/issue-$n.json"
   done
 }
 
-# 使い方: project_fields <Status の選択肢> <Story Point の項目があるか>
+# REST の項目の一覧（id は数値、node_id が gh project で使う id）。
+# 使い方: project_fields <Status の選択肢> <Story Point の項目の data_type（無ければ none）>
 project_fields() {
-  jq -n --argjson opts "$1" --argjson sp "$2" '{data: {repositoryOwner: {projectV2: {
-    id: "P4", number: 4, url: "https://github.com/users/me/projects/4",
-    fields: {nodes: ([{id: "F1", name: "Status", dataType: "SINGLE_SELECT", options: $opts}]
-      + (if $sp then [{id: "F2", name: "Story Point", dataType: "NUMBER"}] else [] end))}}}}}' \
+  jq -n --argjson opts "$1" --arg sp "$2" '
+    [{id: 1, node_id: "F1", name: "Status", data_type: "single_select", options: ($opts | map({id, name: {raw: .name}}))}]
+    + (if $sp == "none" then [] else [{id: 2, node_id: "F2", name: "Story Point", data_type: $sp, options: null}] end)' \
     >"$FIX/ProjectFields.json"
 }
 
@@ -109,9 +119,9 @@ assert_no_changes() {
   run_create --title "ログインを追加する" --type feat --body-file body.md
   assert_success
   assert_equal "$(args CreateIssue)" '{"title":"ログインを追加する","body":"## 背景\n説明","labels":["feat"]}'
-  assert_equal "$(args AddItem)" '{"p":"P4","c":"I30"}'
+  assert_equal "$(args AddItem)" '{"_":["4"],"owner":"me","url":"https://github.com/me/demo/issues/30","format":"json"}'
   assert_equal "$(called SetField)" 1
-  assert_equal "$(args SetField | jq -c '[.i, .f, .v]')" '["IT30","F1",{"singleSelectOptionId":"O1"}]'
+  assert_equal "$(args SetField | jq -c '[."project-id", .id, ."field-id", ."single-select-option-id"]')" '["P4","IT30","F1","O1"]'
   assert_equal "$(jq -c '[.number, .url, .project.status, .project.story_point]' <<<"$json")" \
     '[30,"https://github.com/me/demo/issues/30","Todo",null]'
 }
@@ -180,7 +190,7 @@ assert_no_changes() {
   run_create --title t --type feat --story-point 5
   assert_success
   assert_equal "$(called SetField)" 2
-  assert_equal "$(args SetField 2 | jq -c '[.f, .v]')" '["F2",{"number":5}]'
+  assert_equal "$(args SetField 2 | jq -c '[."field-id", .number]')" '["F2","5"]'
   assert_equal "$(jq -r .project.story_point <<<"$json")" 5
 }
 
@@ -240,11 +250,28 @@ assert_no_changes() {
 
 @test "Project に Story Point の項目が無いのに指定されたら、何も作らずに止まる" {
   setup_fake_gh
-  project_fields '[{"id": "O1", "name": "Todo"}]' false
+  project_fields '[{"id": "O1", "name": "Todo"}]' none
   run_create --title t --type feat --story-point 3
   assert_failure 1
   assert_output --partial "Story Point の項目「Story Point」がありません"
   assert_no_changes
+}
+
+@test "Project の Story Point の項目が数値でなければ、何も作らずに止まる" {
+  setup_fake_gh
+  project_fields '[{"id": "O1", "name": "Todo"}]' text
+  run_create --title t --type feat --story-point 3
+  assert_failure 1
+  assert_output --partial "項目「Story Point」が数値ではありません"
+  assert_no_changes
+}
+
+@test "組織の Project は、REST の orgs の項目の一覧を読む" {
+  setup_fake_gh
+  echo '{"id": "P4", "number": 4, "url": "u", "owner": {"login": "me", "type": "Organization"}}' >"$FIX/ProjectView.json"
+  run_create --title t --type feat --story-point 3
+  assert_success
+  assert_equal "$(args ProjectFields | jq -r .path)" "orgs/me/projectsV2/4/fields?per_page=100"
 }
 
 @test "todo の列が Status 列に無ければ、何も作らずに止まる" {
@@ -256,9 +283,9 @@ assert_no_changes() {
   assert_no_changes
 }
 
-@test "Project が見つからなければ（API は NOT_FOUND のエラーを返す）、何も作らずに止まる" {
+@test "Project が見つからなければ（gh は Could not resolve のエラーを返す）、何も作らずに止まる" {
   setup_fake_gh
-  FAKE_FAIL=ProjectFields FAKE_FAIL_MSG="GraphQL: Could not resolve to a ProjectV2 with the number 4." \
+  FAKE_FAIL=ProjectView FAKE_FAIL_MSG="GraphQL: Could not resolve to a ProjectV2 with the number 4. (user.projectV2)" \
     run_create --title t --type feat
   assert_failure 1
   assert_output --partial "Project が見つかりません: me/4"
@@ -267,7 +294,7 @@ assert_no_changes() {
 
 @test "Project を読めない（スコープ不足など）ときは、見つからないとは言わずに GitHub の理由を伝える" {
   setup_fake_gh
-  FAKE_FAIL=ProjectFields FAKE_FAIL_MSG="GraphQL: Your token has not been granted the required scopes (INSUFFICIENT_SCOPES)" \
+  FAKE_FAIL=ProjectView FAKE_FAIL_MSG="GraphQL: Your token has not been granted the required scopes (INSUFFICIENT_SCOPES)" \
     run_create --title t --type feat
   assert_failure 1
   assert_output --partial "GitHub の API に失敗しました: GraphQL: Your token has not been granted the required scopes"
@@ -283,7 +310,7 @@ assert_no_changes() {
   assert_success
   assert_output --partial "project.number が未設定なので"
   assert_equal "$(called CreateIssue)" 1
-  assert_equal "$(called ProjectFields)" 0
+  assert_equal "$(called ProjectView)" 0
   assert_equal "$(called AddItem)" 0
   assert_equal "$(jq -c .project <<<"$json")" null
 }
@@ -294,8 +321,8 @@ assert_no_changes() {
   run_create --title t --type feat --blocked-by 12 --blocked-by 15
   assert_success
   assert_equal "$(called AddBlockedBy)" 2
-  assert_equal "$(args AddBlockedBy 1)" '{"i":"I30","b":"I12"}'
-  assert_equal "$(args AddBlockedBy 2)" '{"i":"I30","b":"I15"}'
+  assert_equal "$(args AddBlockedBy 1)" '{"issue":30,"issue_id":1012}'
+  assert_equal "$(args AddBlockedBy 2)" '{"issue":30,"issue_id":1015}'
   assert_equal "$(jq -c .blocked_by <<<"$json")" '[12,15]'
 }
 
@@ -323,6 +350,25 @@ assert_no_changes() {
   run_create --title t --type feat --blocked-by 12 --blocked-by 99
   assert_failure 1
   assert_output --partial "依存する Issue #99 がありません"
+  assert_no_changes
+}
+
+@test "--blocked-by に PR の番号を指定したら、Issue が無いとみなして何も作らずに止まる" {
+  setup_fake_gh
+  jq -n '{id: 1013, number: 13, pull_request: {url: "u"}}' >"$FIX/issue-13.json"
+  run_create --title t --type feat --blocked-by 13
+  assert_failure 1
+  assert_output --partial "依存する Issue #13 がありません"
+  assert_no_changes
+}
+
+@test "--blocked-by の Issue を 404 以外の理由で確かめられなければ、GitHub の理由を伝えて何も作らずに止まる" {
+  setup_fake_gh
+  existing_issue 12
+  FAKE_FAIL=BlockingIssue FAKE_FAIL_MSG="gh: Server Error (HTTP 500)" run_create --title t --type feat --blocked-by 12
+  assert_failure 1
+  assert_output --partial "GitHub の API に失敗しました: gh: Server Error (HTTP 500)"
+  refute_output --partial "がありません"
   assert_no_changes
 }
 

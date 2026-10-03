@@ -222,7 +222,7 @@ set_pr_opened() {
   run_pr --issue 17 --body-file "$TMP/body.md"
   assert_success
   assert_equal "$(jq -c '[.status.from, .status.to]' <<<"$json")" '["Todo","Done"]'
-  assert_equal "$(args SetField | jq -r .v.singleSelectOptionId)" O3
+  assert_equal "$(args SetField | jq -r '."single-select-option-id"')" O3
 }
 
 @test "PR を作った後に列を移せなければ、移し方を伝えて止まる" {
@@ -246,7 +246,7 @@ set_pr_opened() {
   setup_branch
   run_pr --issue 17 --body-file "$TMP/body.md"
   assert_success
-  assert_equal "$(called ProjectFields)" 0
+  assert_equal "$(called ProjectView)" 0
 }
 
 @test "dry-run では push も PR の作成もせず、予定を出す" {

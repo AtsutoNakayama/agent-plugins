@@ -8,8 +8,6 @@
 #
 # Issue が Project に入っていなければ追加してから移す。既にその列なら何もしない。
 # 役割の列が設定で null（例: 既定の pr_opened）なら、何もせずに skipped: true を出力する。
-# GraphQL の変数（$owner など）を bash に展開させないため、クエリはシングルクォートで書く
-# shellcheck disable=SC2016
 set -euo pipefail
 
 # shellcheck source=lib/common.sh
@@ -17,7 +15,7 @@ set -euo pipefail
 dw_require gh jq
 
 # macOS の BSD sed が日本語で失敗しないよう、バイト列として扱わせる
-usage() { LC_ALL=C sed -n '2,/^# GraphQL の変数/{/^# GraphQL の変数/d;s/^# \{0,1\}//;p;}' "$0"; }
+usage() { LC_ALL=C sed -n '2,/^[^#]/{/^[^#]/d;s/^# \{0,1\}//;p;}' "$0"; }
 
 # オプションの値を取り出す。無ければ使い方の誤り（64）で終了する
 need_value() {
@@ -70,15 +68,18 @@ repo_nwo="$(gh repo view --json nameWithOwner -q .nameWithOwner)"
 
 project="$(dw_project_fields "$owner" "$number")"
 project_id="$(jq -r .id <<<"$project")"
-status_field="$(jq -c '[.fields.nodes[] | select(.name == "Status")][0] // null' <<<"$project")"
+status_field="$(jq -c '[.fields[] | select(.name == "Status")][0] // null' <<<"$project")"
 [ "$status_field" != null ] || dw_die "Project に Status 列がありません"
 option_id="$(jq -r --arg n "$column" '[.options[] | select(.name == $n)][0].id // empty' <<<"$status_field")"
 [ -n "$option_id" ] \
   || dw_die "Status 列に「${column}」がありません（$(jq -r '[.options[].name] | join(" / ")' <<<"$status_field")）" 2
 
-# Issue と、この Project での項目・今の列
-found="$(dw_gql_find 'query IssueItem($owner: String!, $name: String!, $number: Int!) {
-  repository(owner: $owner, name: $name) { issue(number: $number) { id
+# Issue と、この Project での項目・今の列。gh にも REST にも、Issue から Project の項目を引く手段が無いので GraphQL で読む
+# （gh issue view --json projectItems は Project の名前と列しか返さない。設計書 §10）
+# GraphQL の変数（$owner など）を bash に展開させないため、クエリはシングルクォートで書く
+# shellcheck disable=SC2016
+found="$(dw_gh_find dw_gql 'query IssueItem($owner: String!, $name: String!, $number: Int!) {
+  repository(owner: $owner, name: $name) { issue(number: $number) { url
     projectItems(first: 50) { nodes { id project { id }
       fieldValueByName(name: "Status") { ... on ProjectV2ItemFieldSingleSelectValue { name } } } } } }
 }' "$(jq -nc --arg r "$repo_nwo" --argjson n "$issue" '{owner: ($r | split("/")[0]), name: ($r | split("/")[1]), number: $n}')" \
@@ -94,7 +95,7 @@ item_id="$(jq -r '.id // empty' <<<"$item")"
 if [ -z "$item_id" ]; then
   note "Issue #${issue} を Project に追加する"
   if ! $dry_run; then
-    item_id="$(dw_project_add_item "$project_id" "$(jq -r .id <<<"$found")")" \
+    item_id="$(dw_project_add_item "$owner" "$number" "$(jq -r .url <<<"$found")")" \
       || dw_die "Issue #${issue} を Project に追加できませんでした"
   fi
 fi
@@ -104,7 +105,7 @@ if [ "$from" != "$column" ]; then
   note "Issue #${issue} を「${from:-（なし）}」から「${column}」に移す"
   if ! $dry_run; then
     dw_project_set_field "$project_id" "$item_id" "$(jq -r .id <<<"$status_field")" \
-      "$(jq -nc --arg o "$option_id" '{singleSelectOptionId: $o}')" \
+      --single-select-option-id "$option_id" \
       || dw_die "Issue #${issue} の Status を「${column}」にできませんでした"
   fi
 fi

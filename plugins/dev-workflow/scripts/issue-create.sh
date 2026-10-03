@@ -109,29 +109,26 @@ sp_name="$(jq -r '.story_point.field' <<<"$config")"
 project=null
 if [ -n "$number" ]; then
   project="$(dw_project_fields "$owner" "$number")"
-  status_field="$(jq -c '[.fields.nodes[] | select(.name == "Status")][0] // null' <<<"$project")"
+  status_field="$(jq -c '[.fields[] | select(.name == "Status")][0] // null' <<<"$project")"
   [ "$status_field" != null ] || dw_die "Project に Status 列がありません"
   todo_id="$(jq -r --arg n "$todo_name" '[.options[] | select(.name == $n)][0].id // empty' <<<"$status_field")"
   [ -n "$todo_id" ] || dw_die "todo の列「${todo_name:-（未設定）}」が Status 列にありません"
   sp_field_id=""
   if [ -n "$sp" ]; then
-    sp_field="$(jq -c --arg n "$sp_name" '[.fields.nodes[] | select(.name == $n)][0] // null' <<<"$project")"
+    sp_field="$(jq -c --arg n "$sp_name" '[.fields[] | select(.name == $n)][0] // null' <<<"$project")"
     [ "$sp_field" != null ] || dw_die "Project に Story Point の項目「${sp_name}」がありません（setup-project.sh で追加してください）"
-    [ "$(jq -r .dataType <<<"$sp_field")" = NUMBER ] || dw_die "項目「${sp_name}」が数値ではありません"
+    [ "$(jq -r .dataType <<<"$sp_field")" = number ] || dw_die "項目「${sp_name}」が数値ではありません"
     sp_field_id="$(jq -r .id <<<"$sp_field")"
   fi
 else
   dw_warn "project.number が未設定なので、Project には追加しません（setup-project.sh --write-config で設定できます）"
 fi
 
-# 依存する Issue の「番号:node id」（空白区切り）
+# 依存する Issue の「番号:id」（空白区切り）。依存関係の登録（REST）には node id ではなく数値の id を使う
 blocking=""
 for n in $blocked_by; do
-  # shellcheck disable=SC2016
-  id="$(dw_gql_find 'query BlockingIssue($owner: String!, $name: String!, $number: Int!) {
-    repository(owner: $owner, name: $name) { issue(number: $number) { id number } }
-  }' "$(jq -nc --arg o "${repo_nwo%%/*}" --arg r "${repo_nwo#*/}" --argjson n "$n" '{owner: $o, name: $r, number: $n}')" \
-    | jq -r '.data.repository.issue.id // empty')"
+  # REST の issues は PR も返すので、PR の番号は無い Issue として扱う
+  id="$(dw_gh_find gh api "repos/$repo_nwo/issues/$n" | jq -r 'if . == null or .pull_request then empty else .id end')"
   [ -n "$id" ] || dw_die "依存する Issue #${n} がありません（${repo_nwo}）"
   blocking="${blocking:+$blocking }$n:$id"
 done
@@ -171,25 +168,21 @@ item_id=""
 if [ "$project" != null ]; then
   project_id="$(jq -r .id <<<"$project")"
   # 自動追加が有効でも、既に入っていれば既存の項目が返るだけなので重複しない
-  item_id="$(dw_project_add_item "$project_id" "$(jq -r .node_id <<<"$issue")")" \
+  item_id="$(dw_project_add_item "$owner" "$number" "$issue_url")" \
     || fail_after_create "Project に追加できませんでした"
 
   set_field() { dw_project_set_field "$project_id" "$item_id" "$@"; }
-  set_field "$(jq -r .id <<<"$status_field")" "$(jq -nc --arg o "$todo_id" '{singleSelectOptionId: $o}')" \
+  set_field "$(jq -r .id <<<"$status_field")" --single-select-option-id "$todo_id" \
     || fail_after_create "Status を「${todo_name}」にできませんでした"
   if [ -n "$sp" ]; then
-    set_field "$sp_field_id" "$(jq -nc --argjson n "$sp" '{number: $n}')" \
+    set_field "$sp_field_id" --number "$sp" \
       || fail_after_create "Story Point を設定できませんでした"
   fi
 fi
 
 # --- 4. 依存関係（blocked by）を登録する -----------------------------------------
-issue_id="$(jq -r .node_id <<<"$issue")"
 for pair in $blocking; do
-  # shellcheck disable=SC2016
-  dw_gql 'mutation AddBlockedBy($i: ID!, $b: ID!) {
-    addBlockedBy(input: {issueId: $i, blockingIssueId: $b}) { issue { id } }
-  }' "$(jq -nc --arg i "$issue_id" --arg b "${pair#*:}" '{i: $i, b: $b}')" >/dev/null \
+  gh api -X POST "repos/$repo_nwo/issues/$issue_number/dependencies/blocked_by" -F issue_id="${pair#*:}" >/dev/null \
     || fail_after_create "#${pair%%:*} への依存（blocked by）を登録できませんでした"
 done
 
