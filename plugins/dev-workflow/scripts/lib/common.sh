@@ -57,6 +57,38 @@ dw_user_review_dir() {
   printf '%s\n' "${WORKFLOW_USER_REVIEW_DIR:-$HOME/.claude/review}"
 }
 
+# gh の最低限のバージョン。issue-cancel.sh の gh issue close --duplicate-of が 2.88.0 から。source した側で使う
+# shellcheck disable=SC2034
+DW_GH_MIN_VERSION=2.88.0
+
+# 今の gh のバージョン（例: 2.96.0）。分からなければ空
+dw_gh_version() {
+  gh --version 2>/dev/null | head -n 1 | LC_ALL=C sed -n 's/^gh version \([0-9][0-9.]*\).*/\1/p'
+}
+
+# バージョン <a> が <b> 以上なら成功する。数字を . で区切って、前から順に比べる
+# 使い方: dw_version_ge <a> <b>
+dw_version_ge() {
+  local a="$1" b="$2" x y
+  while [ -n "$a" ] || [ -n "$b" ]; do
+    x="${a%%.*}" y="${b%%.*}"
+    [ "${x:-0}" -gt "${y:-0}" ] && return 0
+    [ "${x:-0}" -lt "${y:-0}" ] && return 1
+    case "$a" in *.*) a="${a#*.}" ;; *) a="" ;; esac
+    case "$b" in *.*) b="${b#*.}" ;; *) b="" ;; esac
+  done
+  return 0
+}
+
+# gh が <バージョン> より古ければ、更新を促して終了する。
+# 使い方: dw_require_gh_version <バージョン> <要る理由>
+dw_require_gh_version() {
+  local now
+  now="$(dw_gh_version)"
+  [ -n "$now" ] && dw_version_ge "$now" "$1" && return 0
+  dw_die "${2}には gh ${1} 以上が要ります（今は ${now:-不明}）。gh を更新してください（https://cli.github.com/）" 2
+}
+
 # 設定ファイルが JSON のオブジェクト1つだけでできているか確かめる。違えば終了する。
 dw_check_json() {
   jq -se 'length == 1 and (.[0] | type) == "object"' "$1" >/dev/null 2>&1 \

@@ -87,6 +87,15 @@ agent-plugins/
 - **Project への自動追加**：Project に組み込みの Auto-add を使う。有効にする API は無いので、Web の画面で1回だけ手動で有効にする。`setup-project.sh` が手順を表示し、有効になったかを API で確認する。
 - `task-create` は起票の後、毎回 `addProjectV2ItemById` を呼んで項目の ID を取得する。既に追加済みなら既存の項目が返るだけなので、自動追加とは重複しない。
 - **依存する Issue**：先に終わらせる Issue があれば、本文の「依存」の見出しに `#N` で書き（無ければ「なし」）、GitHub の Issue の依存関係（blocked by。GraphQL の `addBlockedBy`）にも登録する。本文は読む人のため、依存関係はボードや Issue の画面で区別するため。文章だけ（「〜の Issue の後に」）では番号が分からないので、必ず番号で書く。存在しない Issue の番号は、起票の前に止める。1回の依頼で複数の Issue を起票するときは、依存される側から順に起票し、先に起票した番号を後の Issue の依存に使う。
+- **やらない Issue を閉じる**：誤って起票した Issue や、やらないことにした Issue は、`task-cancel` で not planned（重複なら duplicate）で閉じる。
+  - Issue の終わり方は、完了（completed。PR のマージで閉じる）とやめた（not planned・duplicate）の2つに分ける。完了は PR が閉じ、やめたときは `task-cancel` が閉じる。`task-finish` は Issue には触れず、マージした後の手元を片付けるだけ。名前を `task-close` にしなかったのは、close は完了で閉じるときにも使う言葉で、`task-finish` と混同しやすいため。
+  - 閉じる前に、理由と参照先（代わりに作業する Issue など）を `#N` でコメントする。理由が空（空白だけを含む）なら閉じない。
+  - duplicate は、重複の元の Issue の番号が分かるときだけ使い、元の Issue に紐付ける（`gh issue close --duplicate-of`。gh 2.88.0 以上。古ければ何もせずに止まって更新を促し、`doctor.sh` も更新を促す。`common.sh` の `DW_GH_MIN_VERSION`）。誤って紐付けると影響が大きいので、迷うときは not planned にする。
+  - Project からは外さない。後からボードで経緯を参照できるように。
+  - Story Point は残す。見積もりも記録の一部で、集計する仕組みも無いので、消す理由が無い。
+  - Project の自動化（Item closed）が有効なら、閉じた Issue は完了した Issue と同じく Done に移る。
+  - 着手した後にやめたときは、やめた作業も片付ける。開いている PR は同じ理由をコメントしてマージせずに閉じ、リモートのブランチを削除し、手元のワークツリーとブランチを削除する（`cleanup.sh --abandon`）。マージしていない作業は消すと戻せないので、失うもの（base_branch に無いコミット・未コミットの変更・git が無視するファイル・サブモジュールのリモートに無いコミット）を確認に出す。
+  - Issue → PR とリモートのブランチ → 手元の順に行う。どのスクリプトも何度実行しても同じ結果になる（同じ理由のコメントは付け直さず、同じ閉じ方で既に閉じた Issue・閉じた PR・削除したブランチは飛ばす）ので、途中で止まっても再実行で続きから進む。
 - 必要なトークンのスコープ：`project`（`gh auth refresh -s project`）。
 
 ## 5. ラベル
@@ -143,6 +152,7 @@ agent-plugins/
 | `review-perspective-add` | 観点ファイルを作る | ほかの層の同じ名前の観点の置き換え（作るのは手元のファイルだけなので、それ以外は確認しない。置く層はユーザーが選ぶ） |
 | `commit` | 規約に沿ったコミット。実装中に論理的な区切りごとに呼ぶ | なし（手元のコミットだけ） |
 | `pr-create` | push と PR 作成 | push と PR の作成 |
+| `task-cancel` | やらない Issue を、理由と参照先をコメントして not planned か duplicate で閉じる。着手していれば、PR を閉じ、リモートと手元のブランチ・ワークツリーを削除する | 閉じる・削除する（理由のコメントと、失う作業を含めて1回で確認する） |
 | `task-finish` | ワークツリーとローカルブランチを削除し、main を最新にする（`git pull --ff-only`） | なし（作業が失われるときは `cleanup.sh` が何も消さずに止まる。git が無視するファイルを消すときだけ確認を取る） |
 | `workflow` | 今の段階を判断して次の段階へ進める | 各段階のスキルに従う |
 | `repo-setup` | 初期設定を対話的に実行し、設定ファイルを作る | ラベル・Project・リポジトリの設定の変更 |
@@ -169,7 +179,7 @@ agent-plugins/
 
 | プラグイン側（`plugins/dev-workflow/scripts/`） | 役割 |
 |---|---|
-| `doctor.sh` | 認証とスコープ、`jq` と bash のバージョン、設定ファイルを確認する |
+| `doctor.sh` | 認証とスコープ、gh・`jq`・bash のバージョン、設定ファイルを確認する（gh が古ければ更新を促す） |
 | `config.sh` | 5つの層を合わせた設定を出力する |
 | `issue-create.sh` | 起票、ラベルの付与、Project への追加、列と Story Point の設定、依存関係（blocked by）の登録 |
 | `status-set.sh` | 列を移す |
@@ -179,7 +189,8 @@ agent-plugins/
 | `review-perspectives.sh` | 観点ファイルを集める |
 | `review-perspective-add.sh` | 観点ファイルを作る。同じ層に同じ名前のファイルがあれば上書きせずに止まり、ほかの層にあれば `--override` が無いかぎり止まる（上位の層にあり、作っても使われないときは、下位の層にあるときと別の終了コードで知らせる） |
 | `pr-create.sh` | PR を作る |
-| `cleanup.sh` | マージを確認し、ワークツリーとブランチを削除し、main を最新にする。未コミットの変更や git が無視するファイルがあれば、何も消さずに止まる（無視するファイルは `--remove-ignored` で消せる） |
+| `issue-cancel.sh` | 理由をコメントし、Issue を not planned か duplicate で閉じる。`--branch` で、そのブランチの開いている PR を閉じ、リモートのブランチを削除する。理由が空、または違う理由で既に閉じていれば何もせずに止まる |
+| `cleanup.sh` | マージを確認し、ワークツリーとブランチを削除し、main を最新にする。未コミットの変更や git が無視するファイルがあれば、何も消さずに止まる（無視するファイルは `--remove-ignored` で消せる）。`--abandon` では、マージの確認と main の更新を飛ばし、失うものを一覧にして削除する |
 
 | 初期設定用（`plugins/dev-workflow/scripts/setup/`） | 役割 |
 |---|---|
@@ -195,7 +206,7 @@ agent-plugins/
 | 0. 土台 | マーケットプレイスとプラグインの骨組み、`common.sh`、`config.sh`、`doctor.sh`、CI | 0.1.0 |
 | 1. 初期設定 | `setup-*.sh`、`repo-setup` | 0.2.0 |
 | 2. 最小のサイクル | `task-create`、`task-start`、`commit`、`pr-create`、`task-finish`、main を守るフック | 0.3.0 |
-| 3. レビュー | `review`、`review-perspective-add` | 0.x（release-please が上げる） |
+| 3. レビューと Issue の整理 | `review`、`review-perspective-add`、`task-cancel`（やらない Issue を閉じ、作業を片付ける） | 0.x（release-please が上げる） |
 | 4. まとめる | `workflow`、`task-status`、ブランチ名を警告するフック | 1.0.0 |
 
 最初の版は段階 0〜2。このリポジトリ自体を最初の利用者にする。

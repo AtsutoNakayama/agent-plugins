@@ -24,6 +24,8 @@ git submodule update --init   # 初回だけ
 4. **PR を出します**（`/dev-workflow:pr-create`）。出す前に、下の「テストとチェック」がすべて通ることを確かめます。
 5. **後片付けをします**（`/dev-workflow:task-finish`）。PR がマージされたら、ワークツリーとローカルのブランチを削除し、main を最新にします。
 
+Issue をやめることにしたときは、`/dev-workflow:task-cancel` を使います。理由と参照先をコメントして not planned（重複なら duplicate）で閉じ、着手していれば PR を閉じて、ブランチとワークツリーも削除します。
+
 ### コミットと PR の規約
 
 - コミットメッセージは [Conventional Commits](https://www.conventionalcommits.org/ja/v1.0.0/)（`<type>(<scope>): <要約>`）で書きます。type は `plugins/dev-workflow/defaults/workflow.json` の `commit.types` のどれかです。

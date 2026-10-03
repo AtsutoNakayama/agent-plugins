@@ -414,3 +414,94 @@ run_cleanup() {
   run_cleanup
   assert_failure 64
 }
+
+@test "--abandon ではマージを確かめず、ワークツリーとブランチを削除し、main は変えない" {
+  setup_branch
+  git commit -q --allow-empty -m "main だけのコミット"
+  before="$(git rev-parse main)"
+  sha="$(git rev-parse --short feat/17-x)"
+  run_cleanup --branch feat/17-x --abandon
+  assert_success
+  [ ! -e "$WT" ]
+  run git show-ref --verify --quiet refs/heads/feat/17-x
+  assert_failure
+  assert_equal "$(git rev-parse main)" "$before"
+  # PR を見ない
+  assert_equal "$(called pr-list)" 0
+  assert_equal "$(jq -c '[.abandon, .pr, .removed.worktree, .removed.branch, .lost.commits]' <<<"$json")" \
+    "[true,null,true,true,[\"$sha feat: work\"]]"
+  assert_equal "$(jq -c '.actions' <<<"$json")" "[\"ワークツリー $WT を削除する\",\"ローカルのブランチ feat/17-x を削除する\"]"
+}
+
+@test "--abandon --dry-run で、失うもの（コミット・未コミットの変更・git が無視するファイル）を一覧にする" {
+  setup_branch
+  sha="$(git rev-parse --short feat/17-x)"
+  echo more >>"$WT/work.txt"
+  echo new >"$WT/new.txt"
+  echo 'secret' >"$WT/.env"
+  echo '.env' >>"$WT/.gitignore"
+  git -C "$WT" add .gitignore
+  git -C "$WT" commit -q -m "chore: ignore .env"
+  sha2="$(git rev-parse --short feat/17-x)"
+  run_cleanup --branch feat/17-x --abandon --dry-run
+  assert_success
+  [ -d "$WT" ]
+  git show-ref --verify --quiet refs/heads/feat/17-x
+  assert_equal "$(jq -c '.lost' <<<"$json")" \
+    "{\"commits\":[\"$sha2 chore: ignore .env\",\"$sha feat: work\"],\"uncommitted\":[\"work.txt\",\"new.txt\"],\"ignored\":[\".env\"],\"submodules\":[]}"
+}
+
+@test "--abandon では、未コミットの変更や git が無視するファイルがあっても削除する" {
+  setup_branch
+  echo more >>"$WT/work.txt"
+  echo 'secret' >"$WT/.env"
+  # info/exclude はワークツリーで共有される
+  echo '.env' >>.git/info/exclude
+  run_cleanup --branch feat/17-x --abandon
+  assert_success
+  [ ! -e "$WT" ]
+}
+
+@test "--abandon では、サブモジュールのリモートに無いコミットも失うものに出して削除する" {
+  add_submodule
+  setup_branch
+  git -C "$WT" submodule update -q --init
+  git -C "$WT/lib/sub" commit -q --allow-empty -m "local only"
+  run_cleanup --branch feat/17-x --abandon --dry-run
+  assert_success
+  assert_equal "$(jq -c '.lost.submodules' <<<"$json")" '["lib/sub"]'
+  run_cleanup --branch feat/17-x --abandon
+  assert_success
+  [ ! -e "$WT" ]
+}
+
+@test "--abandon でも、メインのワークツリーに未コミットの変更があれば止まる" {
+  setup_branch
+  git worktree remove "$WT"
+  git switch -q feat/17-x
+  echo more >>work.txt
+  run_cleanup --branch feat/17-x --abandon
+  assert_failure 2
+  assert_output --partial "$REPO に未コミットの変更があります"
+  assert_equal "$(git symbolic-ref --short HEAD)" feat/17-x
+}
+
+@test "--abandon で、メインのワークツリーでブランチを使っていたら、main に切り替えてから削除する" {
+  setup_branch
+  git worktree remove "$WT"
+  git switch -q feat/17-x
+  run_cleanup --branch feat/17-x --abandon
+  assert_success
+  assert_equal "$(git symbolic-ref --short HEAD)" main
+  run git show-ref --verify --quiet refs/heads/feat/17-x
+  assert_failure
+}
+
+@test "--abandon の2回目は、既に無いワークツリーとブランチを飛ばして成功する" {
+  setup_branch
+  run_cleanup --branch feat/17-x --abandon
+  assert_success
+  run_cleanup --branch feat/17-x --abandon
+  assert_success
+  assert_equal "$(jq -c '[.removed, .actions, .lost.commits]' <<<"$json")" '[{"worktree":false,"branch":false},[],[]]'
+}
