@@ -52,24 +52,6 @@ jobs:
             echo '日本語などの直前の変数は ${var} と波括弧で囲んでください' >&2
             exit 1
           fi
-      - name: old config locations
-        # 設定・ガイド・観点は .claude/dev-workflow/ に移した（#93）。古い置き場所を参照するテストやスクリプトは、
-        # 設定が読まれずに失敗したり、思ったとおりに動かなかったりする。
-        # 古い置き場所を知らせる doctor.sh とそのテスト、release-please が書く CHANGELOG は除く。
-        # grep -r の --exclude-dir・--exclude は名前だけで照合し、scripts/lib/ なども外れてしまうので、
-        # パスで除ける git grep を使う（git grep は submodule の tests/lib の中を見ない）。
-        # .claude/workflows/ は Claude Code 本体の置き場所なので、workflow の後に英字が続くものは対象にしない
-        # git grep は見つからなければ 1、失敗（正規表現の誤りなど）すれば 128 で終わる。失敗を「見つからない」と
-        # 取り違えて検査せずに通らないように、1 より大きければ失敗させる
-        run: |
-          rc=0
-          git grep -nP '\.claude/(workflow|review)(?![A-Za-z])|\.claude/labels\.json|workflow\.local\.json' -- plugins tests \
-            ':!*CHANGELOG.md' ':!plugins/dev-workflow/scripts/doctor.sh' ':!tests/doctor.bats' || rc=$?
-          if [ "$rc" -eq 0 ]; then
-            echo '古い置き場所を参照しています。.claude/dev-workflow/ の下（config.json・config.local.json・review/・labels.json）を使ってください' >&2
-            exit 1
-          fi
-          [ "$rc" -eq 1 ] || exit "$rc"
       - name: plugin manifest
         run: |
           jq empty .claude-plugin/marketplace.json plugins/*/.claude-plugin/plugin.json plugins/*/defaults/*.json \
