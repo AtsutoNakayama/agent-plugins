@@ -126,7 +126,9 @@ create_project() {
   local p
   p="$(gh project create --owner "$owner" --title "$title" --format json | jq -c '{id, number, title, url}')" || return 1
   [ "$(jq -r '.id // empty' <<<"$p")" != "" ] || { echo null; return 0; }
-  gh project link "$(jq -r .number <<<"$p")" --owner "$owner" --repo "$repo_nwo" >/dev/null || return 1
+  # 作成と紐付けは別の呼び出しなので、紐付けだけ失敗したら Project ができていることを伝える
+  gh project link "$(jq -r .number <<<"$p")" --owner "$owner" --repo "$repo_nwo" >/dev/null \
+    || dw_die "Project「${title}」（#$(jq -r .number <<<"$p")）は作りましたが、リポジトリ ${repo_nwo} と紐付けられませんでした（もう一度実行すると紐付けます）"
   printf '%s\n' "$p"
 }
 

@@ -255,6 +255,15 @@ called() { grep -c "^$1 " "$CALLS" || true; }
   assert_equal "$(jq -r .workflows.url <<<"$json")" "https://github.com/orgs/me/projects/7/workflows"
 }
 
+@test "作成した後に紐付けられなければ、Project を作ったことと再実行で紐付くことを伝えて止まる" {
+  setup_fake_gh
+  FAKE_FAIL=LinkRepo run_setup --write-config
+  assert_failure 1
+  assert_output --partial "Project「demo」（#7）は作りましたが、リポジトリ me/demo と紐付けられませんでした（もう一度実行すると紐付けます）"
+  assert_equal "$(called CreateProject)" 1
+  [ ! -f .claude/workflow.json ]
+}
+
 @test "作成の応答に id が無ければエラーで止まる" {
   setup_fake_gh
   fix CreateProject.json '{}'
