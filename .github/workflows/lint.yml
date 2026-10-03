@@ -40,6 +40,8 @@ jobs:
         # macOS の bash 3.2 は "$var」" のように日本語が続くと、その文字のバイトまで変数名とみなすので "${var}」" と書く
         run: |
           if grep -rnP '\$[A-Za-z_][A-Za-z0-9_]*[^\x00-\x7F]' --include='*.sh' --include='*.bash' --exclude-dir='bats-*' plugins tests | grep -vP '^[^:]+:\d+:\s*#'; then
+            # ${var} は展開せず、書き方の例としてそのまま出す
+            # shellcheck disable=SC2016
             echo '日本語などの直前の変数は ${var} と波括弧で囲んでください' >&2
             exit 1
           fi
