@@ -51,3 +51,13 @@ frontmatter() { awk 'NR == 1 && $0 == "---" { on = 1; next } on && $0 == "---" {
       || fail "${name} に、確認に必要な内容を質問の中にも入れることが書かれていません（別の端末から使うと、質問の直前の文章が見えない）"
   done
 }
+
+@test "観点の追加・修正は、きっかけになったタスクの PR に含める（設計書 §7）" {
+  f="$SKILLS/review-perspective-add/SKILL.md"
+  grep -q '今のタスクのワークツリー' "$f" \
+    || fail "review-perspective-add に、リポジトリの層の観点を今のタスクのワークツリーに作ることが書かれていません"
+  grep -q 'work_branch' "$f" \
+    || fail "review-perspective-add に、作業用のブランチの上でないときに伝えることが書かれていません"
+  grep -q 'きっかけになったタスクの PR に含める' "$BATS_TEST_DIRNAME/../plugins/dev-workflow/review/issue-requirements.md" \
+    || fail "issue-requirements に、観点の追加・修正を範囲外として指摘しないことが書かれていません"
+}
