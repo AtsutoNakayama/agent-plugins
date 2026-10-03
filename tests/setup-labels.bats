@@ -222,6 +222,17 @@ assert_no_calls() {
   assert_output --partial "定義に無いラベルがあります: fix, refactor"
 }
 
+@test "定義に breaking ラベルが無ければ警告し、あれば警告しない" {
+  setup_fake_gh
+  printf '%s\n' '[{"name": "feat", "color": "000000"}]' >labels.json
+  run_setup --file labels.json
+  assert_success
+  assert_output --partial "定義に breaking ラベルがありません（無いと破壊的変更の Issue を起票できません。labels.json に足してください）"
+  run_setup
+  assert_success
+  refute_output --partial "breaking ラベルがありません"
+}
+
 @test "定義の色が 6 桁でなければエラーになる" {
   setup_fake_gh
   printf '%s\n' '[{"name": "feat", "color": "red"}]' >labels.json

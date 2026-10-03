@@ -147,7 +147,7 @@ assert_no_changes() {
   setup_fake_gh
   run_create --title t --type feat --breaking
   assert_failure 2
-  assert_output --partial "me/demo に breaking ラベルがありません（setup-labels.sh を実行して作ってください）"
+  assert_output --partial "me/demo に breaking ラベルがありません（setup-labels.sh を実行して作ってください。.claude/labels.json を使っていれば、先にそこへ breaking を足してください）"
   assert_no_changes
 }
 

@@ -141,7 +141,7 @@ labels="$(jq -nc --arg t "$type" '[$t]')"
 if $breaking; then
   if ! err="$(gh api "repos/$repo_nwo/labels/$DW_BREAKING_LABEL" 2>&1 >/dev/null)"; then
     case "$err" in
-      *"HTTP 404"*) dw_die "${repo_nwo} に ${DW_BREAKING_LABEL} ラベルがありません（setup-labels.sh を実行して作ってください）" 2 ;;
+      *"HTTP 404"*) dw_die "${repo_nwo} に ${DW_BREAKING_LABEL} ラベルがありません（setup-labels.sh を実行して作ってください。.claude/labels.json を使っていれば、先にそこへ ${DW_BREAKING_LABEL} を足してください）" 2 ;;
       *) dw_die "${DW_BREAKING_LABEL} ラベルを確かめられませんでした: $err" ;;
     esac
   fi
