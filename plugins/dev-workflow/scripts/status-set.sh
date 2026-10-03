@@ -1,12 +1,14 @@
 #!/usr/bin/env bash
 # Issue の Project の Status を移す。移す先は役割（todo / start / pr_opened / done）か列名で指定する。
 #
-# 使い方: status-set.sh --issue N --to ROLE|COLUMN [--dry-run]
+# 使い方: status-set.sh --issue N --to ROLE|COLUMN [--item-id ID] [--dry-run]
 #   --issue N      Issue の番号
 #   --to ROLE      役割なら設定の status.<役割> の列、それ以外は列名として扱う
+#   --item-id ID   この Project での Issue の項目の id（node id）。呼ぶ側が既に知っているとき（issue-create.sh）に渡す。
+#                  項目と今の列を読まない（GraphQL を省く）ので、from は null になり、今の列にかかわらず設定する
 #   --dry-run      変更せず、行う予定の操作だけを出力する
 #
-# Issue が Project に入っていなければ追加してから移す。既にその列なら何もしない。
+# Issue が Project に入っていなければ追加してから移す。既にその列なら何もしない（--item-id のときは確かめない）。
 # 役割の列が設定で null（例: 既定の pr_opened）なら、何もせずに skipped: true を出力する。
 set -euo pipefail
 
@@ -24,14 +26,15 @@ need_value() {
   fi
 }
 
-issue="" to="" dry_run=false
+issue="" to="" item_id="" dry_run=false
 while [ $# -gt 0 ]; do
   case "$1" in
-    --issue | --to)
+    --issue | --to | --item-id)
       need_value "$@"
       case "$1" in
         --issue) issue="$2" ;;
         --to) to="$2" ;;
+        --item-id) item_id="$2" ;;
       esac
       shift 2
       ;;
@@ -74,35 +77,41 @@ option_id="$(jq -r --arg n "$column" '[.options[] | select(.name == $n)][0].id /
 [ -n "$option_id" ] \
   || dw_die "Status 列に「${column}」がありません（$(jq -r '[.options[].name] | join(" / ")' <<<"$status_field")）" 2
 
-# Issue と、この Project での項目・今の列。gh にも REST にも、Issue から Project の項目を引く手段が無いので GraphQL で読む
-# （gh issue view --json projectItems は Project の名前と列しか返さない。設計書 §10）
-# GraphQL の変数（$owner など）を bash に展開させないため、クエリはシングルクォートで書く
-# shellcheck disable=SC2016
-found="$(dw_gh_find dw_gql 'query IssueItem($owner: String!, $name: String!, $number: Int!) {
+actions='[]'
+note() { actions="$(jq -c --arg a "$1" '. + [$a]' <<<"$actions")"; }
+
+from="" changed=true
+if [ -z "$item_id" ]; then
+  # Issue と、この Project での項目・今の列。gh にも REST にも、Issue から Project の項目を引く手段が無いので GraphQL で読む
+  # （gh issue view --json projectItems は Project の名前と列しか返さない。設計書 §10）
+  # GraphQL の変数（$owner など）を bash に展開させないため、クエリはシングルクォートで書く
+  # shellcheck disable=SC2016
+  found="$(dw_gh_find dw_gql 'query IssueItem($owner: String!, $name: String!, $number: Int!) {
   repository(owner: $owner, name: $name) { issue(number: $number) { url
     projectItems(first: 50) { nodes { id project { id }
       fieldValueByName(name: "Status") { ... on ProjectV2ItemFieldSingleSelectValue { name } } } } } }
 }' "$(jq -nc --arg r "$repo_nwo" --argjson n "$issue" '{owner: ($r | split("/")[0]), name: ($r | split("/")[1]), number: $n}')" \
-  | jq -c '.data.repository.issue // null')"
-[ "$found" != null ] || dw_die "Issue #${issue} が ${repo_nwo} にありません" 2
-item="$(jq -c --arg p "$project_id" '[.projectItems.nodes[] | select(.project.id == $p)][0] // null' <<<"$found")"
-from="$(jq -r '.fieldValueByName.name // empty' <<<"$item" 2>/dev/null || true)"
+    | jq -c '.data.repository.issue // null')"
+  [ "$found" != null ] || dw_die "Issue #${issue} が ${repo_nwo} にありません" 2
+  item="$(jq -c --arg p "$project_id" '[.projectItems.nodes[] | select(.project.id == $p)][0] // null' <<<"$found")"
+  from="$(jq -r '.fieldValueByName.name // empty' <<<"$item" 2>/dev/null || true)"
 
-actions='[]'
-note() { actions="$(jq -c --arg a "$1" '. + [$a]' <<<"$actions")"; }
-
-item_id="$(jq -r '.id // empty' <<<"$item")"
-if [ -z "$item_id" ]; then
-  note "Issue #${issue} を Project に追加する"
-  if ! $dry_run; then
-    item_id="$(dw_project_add_item "$owner" "$number" "$(jq -r .url <<<"$found")")" \
-      || dw_die "Issue #${issue} を Project に追加できませんでした"
+  item_id="$(jq -r '.id // empty' <<<"$item")"
+  if [ -z "$item_id" ]; then
+    note "Issue #${issue} を Project に追加する"
+    if ! $dry_run; then
+      item_id="$(dw_project_add_item "$owner" "$number" "$(jq -r .url <<<"$found")")" \
+        || dw_die "Issue #${issue} を Project に追加できませんでした"
+    fi
   fi
+  [ "$from" != "$column" ] || changed=false
+  from_label="「${from:-（なし）}」から"
+else
+  # 今の列は読んでいないので、どこから移すかは書かない
+  from_label=""
 fi
-changed=false
-if [ "$from" != "$column" ]; then
-  changed=true
-  note "Issue #${issue} を「${from:-（なし）}」から「${column}」に移す"
+if $changed; then
+  note "Issue #${issue} を${from_label}「${column}」に移す"
   if ! $dry_run; then
     dw_project_set_field "$project_id" "$item_id" "$(jq -r .id <<<"$status_field")" \
       --single-select-option-id "$option_id" \
