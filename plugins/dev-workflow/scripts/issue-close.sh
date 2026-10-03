@@ -44,8 +44,11 @@ done
 case "$issue" in
   *[!0-9]*) dw_die "--issue には数字を指定してください: $issue" 64 ;;
 esac
-# 理由の無いまま閉じると経緯が残らないので、空白だけの理由も受け付けない
-[ -n "$(printf '%s' "$reason" | tr -d '[:space:]')" ] || dw_die "--reason に閉じる理由を書いてください" 64
+# 理由の無いまま閉じると経緯が残らないので、空白だけの理由も受け付けない。
+# tr はバイト単位で消すので、日本語の入力でよく入る全角スペース（U+3000）は先に取り除く
+fullwidth_space="$(printf '\343\200\200')"
+stripped="${reason//"$fullwidth_space"/}"
+[ -n "$(printf '%s' "$stripped" | tr -d '[:space:]')" ] || dw_die "--reason に閉じる理由を書いてください" 64
 
 issue_json="$(gh issue view "$issue" --json number,title,state)" || dw_die "Issue #${issue} を読めません"
 [ "$(jq -r .state <<<"$issue_json")" = OPEN ] || dw_die "Issue #${issue} は既に閉じています" 2

@@ -40,6 +40,10 @@ load fake_gh
   run_script issue-close.sh --issue 17 --reason "$(printf ' \n\t ')"
   assert_failure 64
   assert_output --partial "--reason に閉じる理由を書いてください"
+  # 全角スペース（日本語の入力でよく入る）だけでも止まる
+  run_script issue-close.sh --issue 17 --reason "$(printf '\343\200\200 \343\200\200')"
+  assert_failure 64
+  assert_output --partial "--reason に閉じる理由を書いてください"
   assert_equal "$(called close)" 0
 }
 
