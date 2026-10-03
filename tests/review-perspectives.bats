@@ -287,3 +287,21 @@ EOF2
   assert_failure 2
   assert_output --partial "マージ先が見つかりません: origin/main"
 }
+
+@test "同梱の観点の条件：regression-test は fix、issue-requirements は Issue、main-drift はマージ先が進んだときだけ使う" {
+  branch_changing a.txt
+  run_script review-perspectives.sh --base "$BASE" --target main --type feat
+  assert_success
+  for n in regression-test issue-requirements main-drift; do
+    [ -n "$(skipped_reason "$n")" ] || fail "$n が外れていません: $output"
+  done
+  used docs-sync || fail "$output"
+  git checkout -q main
+  git commit -q --allow-empty -m later
+  git checkout -q work
+  run_script review-perspectives.sh --base "$BASE" --target main --type fix --issue 1
+  assert_success
+  for n in regression-test issue-requirements main-drift; do
+    used "$n" || fail "$n が使われていません: $output"
+  done
+}
