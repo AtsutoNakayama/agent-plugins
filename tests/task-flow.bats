@@ -98,6 +98,17 @@ pos() {
   assert_output --partial 'hooks/task-flow.sh'
 }
 
+@test "BMP の外の文字（絵文字など）は2文字と数えて、上限に収める" {
+  # Claude Code は JavaScript の文字列の長さ（UTF-16）で数えるので、絵文字は2文字になる
+  awk 'BEGIN { for (i = 0; i < 12000; i++) printf "😀"; print "" }' >"$REPO/.claude/dev-workflow/task-flow.md"
+  run_hook
+  assert_success
+  n="$(jq -rn --arg s "$output" '$s | explode | map(if . > 65535 then 2 else 1 end) | add')"
+  [ "$n" -le 10000 ] || fail "UTF-16 で ${n} 文字あります"
+  [ "$n" -ge 9999 ] || fail "切りすぎています（UTF-16 で ${n} 文字）"
+  assert_output --partial "続きは次のファイルを読んでください: "
+}
+
 @test "切ったときの知らせでは、読み直すファイルを「、」で区切る（空白を含むパスでも切れ目が分かる）" {
   export WORKFLOW_USER_DIR="$TMP/John Smith"
   mkdir -p "$WORKFLOW_USER_DIR"

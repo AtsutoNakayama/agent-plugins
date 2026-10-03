@@ -50,11 +50,22 @@ ${body}"
   added+=("$f")
 done
 
-# 上限を超えたら、知らせの分を空けて切る（jq は文字単位で切るので、日本語の途中で切れない）。
+# 上限を超えたら、知らせの分を空けて切る。Claude Code は JavaScript の文字列の長さ（UTF-16）で数えるので、
+# BMP の外の文字（絵文字など）は2文字と数える。jq は文字単位で切るので、日本語の途中で切れない。
 # ファイルは空白を含むパスでも切れ目が分かるよう「、」で区切る
 jq -rn --arg out "$out" --argjson limit "$limit" '
-  if ($out | length) <= $limit then $out
+  def width: if . > 65535 then 2 else 1 end;
+  def len16: explode | map(width) | add // 0;
+  # UTF-16 で $n 文字に収まる先頭の部分
+  def head16($n):
+    . as $s
+    | reduce ($s | explode)[] as $c ({i: 0, len: 0, full: false};
+        if .full then .
+        elif .len + ($c | width) > $n then .full = true
+        else .i += 1 | .len += ($c | width) end)
+    | $s[0:.i];
+  if ($out | len16) <= $limit then $out
   else
     "\n\n（上限の \($limit) 文字を超えたので、ここで切りました。続きは次のファイルを読んでください: \($ARGS.positional | join("、"))）" as $note
-    | $out[0:($limit - ($note | length))] + $note
+    | ($out | head16($limit - ($note | len16))) + $note
   end' --args ${added[@]+"${added[@]}"}
