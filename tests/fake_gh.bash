@@ -4,14 +4,12 @@
 # - gh repo view                    me/demo を返す
 # - gh issue view N --json ...      $FIX/issue-N.json を返す（-q があれば適用する）
 # - gh issue edit N ...             引数を「edit N ...」として $CALLS に記録する
-# - gh issue comment N --body B     「comment N」を $CALLS に記録し、B を $TMP/comment-body に写す
-# - gh issue close N ...            引数を「close N ...」として $CALLS に記録する
 # - gh pr list ...                  $FIX/pr-list.json（無ければ []）を返し、引数を「pr-list ...」として $CALLS に記録する
 # - gh pr create ...                引数を「pr-create ...」として $CALLS に記録し、--body-file の中身を $TMP/pr-body に写して、
 #                                   https://github.com/me/demo/pull/42 を返す
 # - gh api user                     login: me を返す
 # - gh api graphql                  操作名ごとに $FIX/<操作名>.json を返し、「<操作名> <変数>」を $CALLS に記録する
-# FAKE_FAIL に指定した操作名（edit・comment・close・pr-list・pr-create を含む）は、FAKE_FAIL_MSG（既定: gh: failed）を出して失敗する。
+# FAKE_FAIL に指定した操作名（edit・pr-list・pr-create を含む）は、FAKE_FAIL_MSG（既定: gh: failed）を出して失敗する。
 
 setup_fake_gh() {
   FIX="$TMP/fix"
@@ -37,20 +35,6 @@ case "$1 $2" in
     shift 2
     echo "edit $*" >>"$CALLS"
     fail edit
-    ;;
-  "issue comment")
-    echo "comment $3" >>"$CALLS"
-    fail comment
-    shift 3
-    while [ $# -gt 0 ]; do
-      if [ "$1" = --body ]; then printf '%s' "$2" >"$(dirname "$FIX")/comment-body"; fi
-      shift
-    done
-    ;;
-  "issue close")
-    shift 2
-    echo "close $*" >>"$CALLS"
-    fail close
     ;;
   "pr list")
     shift 2
@@ -92,11 +76,10 @@ SH
   echo '{"data": {"updateProjectV2ItemFieldValue": {"projectV2Item": {"id": "IT1"}}}}' >"$FIX/SetField.json"
 }
 
-# 使い方: fake_issue <番号> <ラベルの配列> [状態（既定 OPEN）] [割り当てられた login の配列] [コメントの本文の配列]
+# 使い方: fake_issue <番号> <ラベルの配列> [状態（既定 OPEN）] [割り当てられた login の配列]
 fake_issue() {
-  jq -n --argjson n "$1" --argjson l "$2" --arg s "${3:-OPEN}" --argjson a "${4:-[]}" --argjson c "${5:-[]}" \
-    '{number: $n, title: "作業 \($n)", state: $s, labels: ($l | map({name: .})), assignees: ($a | map({login: .})),
-      comments: ($c | map({body: .}))}' \
+  jq -n --argjson n "$1" --argjson l "$2" --arg s "${3:-OPEN}" --argjson a "${4:-[]}" \
+    '{number: $n, title: "作業 \($n)", state: $s, labels: ($l | map({name: .})), assignees: ($a | map({login: .}))}' \
     >"$FIX/issue-$1.json"
 }
 
