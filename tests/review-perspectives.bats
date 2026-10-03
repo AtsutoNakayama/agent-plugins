@@ -295,6 +295,7 @@ EOF2
   for n in regression-test issue-requirements main-drift; do
     [ -n "$(skipped_reason "$n")" ] || fail "$n が外れていません: $output"
   done
+  used code-review || fail "$output"
   used docs-sync || fail "$output"
   git checkout -q main
   git commit -q --allow-empty -m later
@@ -304,4 +305,14 @@ EOF2
   for n in regression-test issue-requirements main-drift; do
     used "$n" || fail "$n が使われていません: $output"
   done
+}
+
+@test "同梱の code-review は組み込みのコマンドを呼ぶ印があり、上の層で止められる" {
+  run_script review-perspectives.sh
+  assert_equal "$(jq -r '.perspectives[] | select(.name == "code-review") | .builtin' <<<"$output")" code-review
+  mkdir -p "$REPO/.claude/dev-workflow/review"
+  printf -- '---\nenabled: false\n---\n' >"$REPO/.claude/dev-workflow/review/code-review.md"
+  run_script review-perspectives.sh
+  assert_success
+  assert_equal "$(jq -r '.disabled[].name' <<<"$output")" code-review
 }
