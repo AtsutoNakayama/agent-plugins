@@ -55,7 +55,7 @@ base_ahead: required
 - `title` 以外の `types`・`paths`・`issue`・`base_ahead` は、実行する条件です（任意。上の例はすべて書いたものです）。書くと、当てはまらない変更ではその観点を実行しません（サブエージェントを起動しないので、そのぶん速く安くなります）。書かなければ毎回実行し、複数書けばすべてに当てはまるときだけ実行します。`types` は Issue の type ラベル（Issue が無ければブランチ名の type）で判断します。`paths` の `*` は `/` にも当たります。外した観点とその理由は、レビューの結果で伝えます。
 - 組み込みの `/code-review` も、同梱の観点 `code-review`（`builtin: code-review`）として扱います。止めたり条件を付けたりするのは、ほかの観点と同じです。
 - 同梱の観点を使わないときは、上の層に同じ名前のファイルを置き、frontmatter に `enabled: false` と書きます（本文と `title` は省けます）。
-- 使われる観点は `plugins/dev-workflow/scripts/review-perspectives.sh` で確かめられます。形式の誤ったファイルは警告を出して使いません。そのファイルと同じ名前の観点は、下の層にあっても使いません（`enabled: false` の書き間違いで、止めたつもりの観点が動かないようにするため）。
+- 使われる観点は `plugins/dev-workflow/scripts/review-perspectives.sh` で確かめられます。引数なしでは、層を合わせた観点の一覧（条件で外す前）が出ます。今の変更で使われる観点を見るには、`--base <基点> --target origin/<マージ先>` と、あれば `--type <type>`・`--issue <番号>` を渡します（基点は `git merge-base origin/<マージ先> HEAD`）。形式の誤ったファイルは警告を出して使いません。そのファイルと同じ名前の観点は、下の層にあっても使いません（`enabled: false` の書き間違いで、止めたつもりの観点が動かないようにするため）。
 
 同梱の観点：
 

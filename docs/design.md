@@ -205,7 +205,7 @@ agent-plugins/
 | `status-set.sh` | 列を移す |
 | `branch-name.sh` | ブランチ名を作り、検証する |
 | `task-start.sh` | ワークツリーの作成（サブモジュールの初期化を含む）、割り当て、In Progress への移動 |
-| `review-perspectives.sh` | 観点ファイルを集める |
+| `review-perspectives.sh` | 観点ファイルを集める。`--base` と `--target`（あれば `--type`・`--issue`）を渡すと、観点ごとの実行する条件（`types`・`paths`・`issue`・`base_ahead`）に当てはまらない観点を外し、理由つきで `skipped` に出す |
 | `review-perspective-add.sh` | 観点ファイルを作る。同じ層に同じ名前のファイルがあれば上書きせずに止まり、ほかの層にあれば `--override` が無いかぎり止まる（上位の層にあり、作っても使われないときは、下位の層にあるときと別の終了コードで知らせる）。リポジトリの層に作ったときは、そのブランチと、作業用のブランチの上か（`work_branch`）も出力する |
 | `pr-create.sh` | PR を作る |
 | `issue-cancel.sh` | 理由をコメントし、Issue を not planned か duplicate で閉じる。`--branch` で、そのブランチの開いている PR を閉じ、リモートのブランチを削除する。理由が空、または違う理由で既に閉じていれば何もせずに止まる |
