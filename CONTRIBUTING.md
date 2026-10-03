@@ -74,7 +74,7 @@ shellcheck は版によって出す指摘が違うので、CI と同じ版（`.g
 
 ```bash
 docker run --rm -v "$PWD:/mnt" -w /mnt koalaman/shellcheck-alpine:v0.11.0 sh -c '
-  find plugins tests -path tests/lib -prune -o -type f \( -name "*.sh" -o -name "*.bash" \) -print0 | xargs -0 shellcheck -x &&
+  find plugins tests -path tests/lib -prune -o -type f \( -name "*.sh" -o -name "*.bash" \) -print0 | xargs -0 -r shellcheck -x &&
   shellcheck -s bash tests/*.bats
 '
 ```
