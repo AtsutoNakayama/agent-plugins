@@ -155,8 +155,15 @@ SH
   assert_success
   assert_equal "$(jq -r '.next_steps[0]' <<<"$json")" ".claude/dev-workflow/config.json をコミットし、PR で main にマージする"
   assert_equal "$(jq -r '.next_steps[1]' <<<"$json")" \
-    ".claude/dev-workflow/config.json が git に無視されているので、.gitignore で無視を外す（例：.claude/ を .claude/* に変えて !.claude/dev-workflow/ を足す）"
+    ".claude/dev-workflow/config.json が git に無視されているので、.gitignore で無視を外す（例：.claude/ を .claude/* に変えて、!.claude/dev-workflow/ と .claude/dev-workflow/config.local.json をこの順に足す）"
   assert_output --partial "git に無視されているのでコミットできません: .claude/dev-workflow/config.json"
+  # 例のとおりに直すと、チームの設定はコミットでき、個人の設定は無視されたままになる
+  printf '%s\n' '.claude/*' '!.claude/dev-workflow/' '.claude/dev-workflow/config.local.json' >.gitignore
+  echo '{}' >.claude/dev-workflow/config.local.json
+  run git check-ignore -q .claude/dev-workflow/config.json
+  assert_failure
+  run git check-ignore -q .claude/dev-workflow/config.local.json
+  assert_success
 }
 
 @test "git に無視され、管理もされていない .claude/dev-workflow/config.json は、中身が変わらなくても案内する" {

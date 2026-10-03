@@ -157,7 +157,7 @@ fi
 if [ "$ignored" != "[]" ]; then
   dw_warn "git に無視されているのでコミットできません: $(jq -r 'join(", ")' <<<"$ignored")"
   next="$(jq -c --argjson f "$ignored" \
-    '. + ["\($f | join("・")) が git に無視されているので、.gitignore で無視を外す（例：.claude/ を .claude/* に変えて !.claude/dev-workflow/ を足す）"]' <<<"$next")"
+    '. + ["\($f | join("・")) が git に無視されているので、.gitignore で無視を外す（例：.claude/ を .claude/* に変えて、!.claude/dev-workflow/ と .claude/dev-workflow/config.local.json をこの順に足す）"]' <<<"$next")"
 fi
 if [ "$(jq -r .workflows.auto_add <<<"$project")" = false ]; then
   next="$(jq -c --arg u "$(jq -r .workflows.url <<<"$project")" \
