@@ -29,7 +29,10 @@ agent-plugins/
 - Claude Code は plugin.json の version → marketplace.json のエントリの version → コミット SHA の順に version を決め、version が変わらないと更新を検出しない（git のタグは読まない）。version は plugin.json だけに書き、marketplace.json のエントリには書かない。
 - version は [release-please](https://github.com/googleapis/release-please) が上げ、手で変えない（`.github/workflows/release-please.yml`）。
   - release-please は今の version を `.release-please-manifest.json` に持ち、リリース PR で plugin.json と同時に上げる。手で plugin.json だけを変えると食い違うので、CI で2つが同じかを確かめる。
-  - ワークフローは GITHUB_TOKEN でリリース PR を作るので、リポジトリの設定（Settings → Actions → General）で「Allow GitHub Actions to create and approve pull requests」をオンにしておく（`gh api -X PUT repos/<owner>/<repo>/actions/permissions/workflow -F can_approve_pull_request_reviews=true`）。オフのままだと、リリース PR を作る段階でジョブが失敗する。
+  - ワークフローは GitHub App のトークンでリリース PR・タグ・GitHub Release を作る。GITHUB_TOKEN が起こしたイベントでは新しいワークフローが動かないので、GITHUB_TOKEN で作るとリリース PR に Lint・Test が付かず、CI を通らないままリリースが出る。また、Lint・Test をルールセットの必須チェックにできない。App は PAT と違って期限の管理が要らず、PR の作者が `<App名>[bot]` になる。
+    - App は Webhook なし・このアカウントだけにインストールできる設定で作り、Repository permissions は Contents・Issues・Pull requests を Read and write にする（Issues はリリース PR のラベルに要る）。インストール先はこのリポジトリだけにする。
+    - リポジトリの Variables の `RELEASE_APP_ID` に App ID を、Secrets の `RELEASE_APP_PRIVATE_KEY` に App の秘密鍵（.pem の中身全体）を登録する。秘密鍵に期限はない。ワークフローは実行ごとに 1 時間で切れるトークンを作る。
+    - GITHUB_TOKEN では PR を作らないので、リポジトリの設定の「Allow GitHub Actions to create and approve pull requests」は要らない。
   - ワークフローは `googleapis/release-please-action` を使わず、版を固定した release-please の CLI（`npx release-please@<版>`）を直接実行する。Action の v5 が同梱する 17.6.0 は、リリース PR の本文にコミットのフッターの `Closes #N` を `closes #N` と書き写す。GitHub はこれを Issue を閉じる紐付けとみなすので、Project の自動化「Pull request linked to issue」が、マージで閉じたばかりの Issue を In Progress に戻してしまう。17.10.4 以降は `refs #N` と書くので紐付けにならない。Action が 17.10.4 以降を同梱したら、Action に戻してもよい。
   - main へのマージごとに、ボットがリリース PR に version の変更をためる。リリース PR をマージすると、plugin.json の version が上がり、`dev-workflow-v<version>` のタグと GitHub Release（リリースノート）が作られる。CHANGELOG.md は配布物に入れないため作らない。
   - `plugins/dev-workflow/` の中を変えたコミットは、type を問わずリリースの対象にする（`changelog-sections` で全ての type を表示する）。SKILL.md の文章だけの変更も AI への指示を変えるので、利用者に届ける。外だけを変えたコミットでは version は上がらない。
