@@ -60,6 +60,34 @@ SH
   assert_equal "$(jq -r '.checks[] | select(.name == "config") | .ok' <<<"$output")" false
 }
 
+@test "古い置き場所のファイルがあれば、止めずに移すよう促す" {
+  fake_gh
+  export FAKE_SCOPES="project"
+  echo '{}' >.claude/workflow.json
+  mkdir -p .claude/review "$TMP/workflow" "$TMP/review" "$TMP/wt-parent"
+  touch .claude/review/mine.md "$TMP/workflow/commit.md" "$TMP/review/mine.md"
+  echo '{}' >.claude/workflow.local.json
+  git worktree add -q -b feat/1-x "$TMP/wt-parent/wt"
+  cd "$TMP/wt-parent/wt"
+  run_script doctor.sh
+  assert_success
+  assert_equal "$(jq -c '.checks[] | select(.name == "old-locations") | [.ok, .level]' <<<"$output")" '[false,"warn"]'
+  detail="$(jq -r '.checks[] | select(.name == "old-locations") | .detail' <<<"$output")"
+  assert_equal "$detail" "古い置き場所のファイルは使われません。移してください: $REPO/.claude/workflow.local.json → $REPO/.claude/dev-workflow/config.local.json、$TMP/workflow → $WORKFLOW_USER_DIR/、$TMP/review → $WORKFLOW_USER_DIR/review/"
+  cd "$REPO"
+  run_script doctor.sh
+  assert_output --partial "$REPO/.claude/workflow.json → $REPO/.claude/dev-workflow/config.json、$REPO/.claude/review → $REPO/.claude/dev-workflow/review/、"
+}
+
+@test "古い置き場所に Markdown の無いディレクトリがあるだけなら、促さない" {
+  fake_gh
+  export FAKE_SCOPES="project"
+  mkdir -p .claude/review "$TMP/workflow"
+  touch "$TMP/workflow/other.txt"
+  run_script doctor.sh
+  assert_equal "$(jq -r '.checks[] | select(.name == "old-locations") | .ok' <<<"$output")" true
+}
+
 @test "gh が古ければ、止めずに更新を促す" {
   fake_gh
   export FAKE_SCOPES="repo, project" FAKE_GH_VERSION=2.87.9

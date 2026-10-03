@@ -70,6 +70,37 @@ else
   check config false error "$config"
 fi
 
+# 古い置き場所（.claude/dev-workflow/ にまとめる前）のファイルは使われないので、移すよう促す
+moves=""
+# 使い方: old_location <古いパス> <新しいパス>。古いパスがディレクトリなら、*.md があるときだけ数える
+old_location() {
+  if [ -d "$1" ]; then
+    ls "$1"/*.md >/dev/null 2>&1 || return 0
+  elif [ ! -f "$1" ]; then
+    return 0
+  fi
+  moves="$moves${moves:+、}$1 → $2"
+}
+repo_root="$(dw_repo_root || true)"
+if [ -n "$repo_root" ]; then
+  old_location "$repo_root/.claude/workflow.json" "$repo_root/.claude/dev-workflow/config.json"
+  old_location "$repo_root/.claude/workflow" "$repo_root/.claude/dev-workflow/"
+  old_location "$repo_root/.claude/review" "$repo_root/.claude/dev-workflow/review/"
+  old_location "$repo_root/.claude/labels.json" "$repo_root/.claude/dev-workflow/labels.json"
+  # 個人の設定はメインのワークツリーに置く
+  main_root="$(dw_main_root "$repo_root" || true)"
+  old_location "${main_root:-$repo_root}/.claude/workflow.local.json" "${main_root:-$repo_root}/.claude/dev-workflow/config.local.json"
+fi
+user_parent="$(dirname "$(dw_user_dir)")"
+old_location "$user_parent/workflow/workflow.json" "$(dw_user_dir)/config.json"
+old_location "$user_parent/workflow" "$(dw_user_dir)/"
+old_location "$user_parent/review" "$(dw_user_review_dir)/"
+if [ -n "$moves" ]; then
+  check old-locations false warn "古い置き場所のファイルは使われません。移してください: ${moves}"
+else
+  check old-locations true warn "古い置き場所のファイルはありません"
+fi
+
 result="$(printf '%s' "$checks" | jq -s '{ok: (map(select(.level == "error" and (.ok | not))) | length == 0), checks: .}')"
 printf '%s\n' "$result"
 [ "$(jq -r .ok <<<"$result")" = true ]
