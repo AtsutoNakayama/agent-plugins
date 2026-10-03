@@ -3,7 +3,7 @@
 #
 # 使い方:
 #   branch-name.sh --issue N --slug TEXT [--type TYPE]   ブランチ名を作る
-#   branch-name.sh --check NAME                          ブランチ名が規約に合うか確かめる
+#   branch-name.sh --check NAME                          ブランチ名が規約（文字と branch.pattern の形）に合うか確かめる
 #
 #   --issue N      Issue の番号
 #   --slug TEXT    短い説明（英語）。小文字にし、英数字以外は - にして 40 文字までに整える
@@ -11,7 +11,7 @@
 #
 # 形は設定の branch.pattern（既定: {type}/{issue_number}-{slug}）。
 # branch.pattern のプレースホルダ: {type} は type ラベル、{issue_number} は Issue の番号、{slug} は英語の短い説明。
-# --check は規約に合わなければ終了コード 1 で、理由を出力する。
+# --check は規約に合わなければ終了コード 1 で、理由を出力する。設定を読めなければ終了コード 2。
 set -euo pipefail
 
 # shellcheck source=lib/common.sh
@@ -63,6 +63,21 @@ problem() {
 
 if [ -n "$check" ]; then
   reason="$(problem "$check")"
+  if [ -z "$reason" ]; then
+    # 設定を読めないときは、規約に合わない（1）と区別できるよう 2 で終わる
+    config="$("$BASH" "$DW_SCRIPTS_DIR/config.sh")" || dw_die "設定を読めません" 2
+    # branch.pattern を正規表現にする。名前は上で [a-z0-9/-] だけと確かめたので、
+    # 形の中の . などの記号に当たることはなく、プレースホルダを置き換えるだけでよい
+    re="$(jq -r '
+      .labels.types as $t
+      | .branch.pattern
+      | gsub("\\{type\\}"; "(" + ($t | join("|")) + ")")
+      | gsub("\\{issue_number\\}"; "[0-9]+")
+      | gsub("\\{slug\\}"; "[a-z0-9]+(-[a-z0-9]+)*")
+      | "^" + . + "$"' <<<"$config")"
+    jq -e -n --arg b "$check" --arg r "$re" '$b | test($r)' >/dev/null \
+      || reason="branch.pattern（$(jq -r '.branch.pattern' <<<"$config")）の形になっていません"
+  fi
   jq -n --arg b "$check" --arg r "$reason" '{branch: $b, valid: ($r == ""), reason: (if $r == "" then null else $r end)}'
   [ -z "$reason" ]
   exit
