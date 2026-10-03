@@ -25,12 +25,13 @@ jobs:
         with:
           node-version: 22
       # App の権限（Contents・Issues・Pull requests の読み書き）とインストール先（このリポジトリだけ）は App の設定で決める（docs/design.md §1）。
-      # app-id は非推奨なので client-id に渡す。GitHub は App ID と Client ID のどちらも受け付ける
+      # v3 では app-id が非推奨で client-id が推奨だが、actionlint 1.7.12 は v3 の client-id を知らずエラーにするので app-id を使う。
+      # actionlint が client-id に対応したら client-id に替える（GitHub は App ID と Client ID のどちらも受け付ける）
       - name: GitHub App token
         id: app-token
         uses: actions/create-github-app-token@v3
         with:
-          client-id: ${{ vars.RELEASE_APP_ID }}
+          app-id: ${{ vars.RELEASE_APP_ID }}
           private-key: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
       # Action と同じく、先にマージ済みのリリース PR からリリースを作り、次にリリース PR を作るか更新する。
       # npx は依存を毎回 npm から入れるので、書き込みのできるトークンは release-please を実行するステップにだけ渡す
