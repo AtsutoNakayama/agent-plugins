@@ -95,6 +95,14 @@ created_issue() {
     labels: ($ARGS.positional | map({name: .}))}' "$@" >"$FIX/issue.json"
 }
 
+# Project の項目の一覧（REST）。使い方: project_items <所有者/名前>:<番号>:<Story Point（空なら null）>...
+project_items() {
+  jq -n --args '$ARGS.positional | map(split(":") | {node_id: "IT\(.[1])",
+    content: {number: (.[1] | tonumber), repository_url: "https://api.github.com/repos/\(.[0])"},
+    fields: [{id: 2, name: "Story Point", data_type: "number", value: (if .[2] == "" then null else (.[2] | tonumber) end)}]})' \
+    "$@" >"$FIX/ProjectItems.json"
+}
+
 # 既にある Issue（依存先や親）。REST の id は 1000 + 番号にする。使い方: existing_issue <番号>...
 existing_issue() {
   local n
@@ -432,7 +440,73 @@ assert_no_changes() {
   assert_success
   assert_equal "$(called AddSubIssue)" 1
   assert_equal "$(args AddSubIssue)" '{"issue":12,"sub_issue_id":1030}'
-  assert_equal "$(jq -r .parent <<<"$json")" 12
+  assert_equal "$(jq -c .parent <<<"$json")" '{"number":12,"story_point_cleared":null}'
+}
+
+@test "--parent の親に Story Point が入っていれば、子を足した後に空欄にする" {
+  setup_fake_gh
+  existing_issue 12
+  # 別のリポジトリの同じ番号の Issue は親ではない
+  project_items other/repo:12:3 me/demo:12:8 me/demo:13:5
+  run_create --title t --type feat --parent 12 --story-point 3
+  assert_success
+  # 項目の一覧は、リポジトリと Issue で絞り、Story Point の項目の値だけを読む
+  assert_equal "$(args ProjectItems)" '{"path":"users/me/projectsV2/4/items","f":["q=repo:me/demo is:issue","per_page=100","fields=2"]}'
+  # Status・子の Story Point・親の Story Point の順に設定する
+  assert_equal "$(called SetField)" 3
+  assert_equal "$(args SetField 3 | jq -c '[.id, ."field-id", has("clear")]')" '["IT12","F2",true]'
+  assert_equal "$(jq -c .parent <<<"$json")" '{"number":12,"story_point_cleared":8}'
+}
+
+@test "--parent の親の Story Point が空欄か、親が Project に無ければ、親の Story Point には触れない" {
+  setup_fake_gh
+  existing_issue 12
+  project_items me/demo:12:
+  run_create --title t --type feat --parent 12
+  assert_success
+  assert_equal "$(called SetField)" 1
+  assert_equal "$(jq -c .parent.story_point_cleared <<<"$json")" null
+
+  : >"$CALLS"
+  project_items me/demo:13:5
+  run_create --title t --type feat --parent 12
+  assert_success
+  assert_equal "$(called SetField)" 1
+}
+
+@test "--parent で Project が未設定、または Story Point の項目が無ければ、項目の一覧を読まない" {
+  setup_fake_gh
+  existing_issue 12
+  project_fields '[{"id": "O1", "name": "Todo"}]' none
+  run_create --title t --type feat --parent 12
+  assert_success
+  assert_equal "$(called ProjectItems)" 0
+
+  echo '{}' >.claude/dev-workflow/config.json
+  created_issue feat
+  run_create --title t --type feat --parent 12
+  assert_success
+  assert_equal "$(called ProjectItems)" 0
+  assert_equal "$(called AddSubIssue)" 2
+}
+
+@test "--parent の親の Story Point を読めなければ、何も作らずに止まる" {
+  setup_fake_gh
+  existing_issue 12
+  FAKE_FAIL=ProjectItems run_create --title t --type feat --parent 12
+  assert_failure 1
+  assert_output --partial "親の Issue #12 の Story Point を読めませんでした"
+  assert_no_changes
+}
+
+@test "--parent の親の Story Point を空欄にできなければ、作った Issue の番号を伝える" {
+  setup_fake_gh
+  existing_issue 12
+  project_items me/demo:12:8
+  # 1回目（Status）は通し、2回目（親の Story Point）で失敗させる
+  FAKE_FAIL=SetField.2 run_create --title t --type feat --parent 12
+  assert_failure 1
+  assert_output --partial "Issue #30（https://github.com/me/demo/issues/30）は作りましたが、#12 のサブ Issue にした後、親の Story Point 8 を空欄にできませんでした"
 }
 
 @test "--parent が無ければ、サブ Issue にせず parent は null" {

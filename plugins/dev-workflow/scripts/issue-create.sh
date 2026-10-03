@@ -9,7 +9,8 @@
 #                        21 と 34 は設定できるが、分割を勧める警告を出す
 #   --blocked-by N       依存する（先に終わらせる）同じリポジトリの Issue の番号。複数回指定できる
 #   --parent N           親にする同じリポジトリの Issue の番号。起票した Issue を N のサブ Issue にする。
-#                        親子の深さが設定の sub_issues.max_depth（既定 2）を超えるなら、Issue を作る前に止める
+#                        親子の深さが設定の sub_issues.max_depth（既定 2）を超えるなら、Issue を作る前に止める。
+#                        Story Point は子にだけ付けるので、親の Project の Story Point が入っていれば空欄にする
 #   --breaking           破壊的変更なので、type ラベルとは別に breaking ラベルも付ける
 #                        （リポジトリにラベルが無ければ、Issue を作る前に止める）
 #
@@ -20,7 +21,7 @@
 #   2. Issue を作る（type ラベル付き。--breaking なら breaking ラベルも）
 #   3. Project に追加し（既に入っていれば既存の項目を使う）、Status を todo の列に（status-set.sh）、Story Point を設定する
 #   4. 依存する Issue を、GitHub の依存関係（blocked by）に登録する
-#   5. 親の Issue があれば、起票した Issue をそのサブ Issue にする
+#   5. 親の Issue があれば、起票した Issue をそのサブ Issue にし、親の Story Point を空欄にする
 # project.number が未設定なら、Issue だけ作って警告する。
 set -euo pipefail
 
@@ -122,17 +123,20 @@ todo_name="$(jq -r '.status.todo // empty' <<<"$config")"
 sp_name="$(jq -r '.story_point.field' <<<"$config")"
 
 project=null
+sp_field_id=""
 if [ -n "$number" ]; then
   project="$(dw_project_fields "$owner" "$number")"
   status_field="$(jq -c '[.fields[] | select(.name == "Status")][0] // null' <<<"$project")"
   [ "$status_field" != null ] || dw_die "Project に Status 列がありません"
   todo_id="$(jq -r --arg n "$todo_name" '[.options[] | select(.name == $n)][0].id // empty' <<<"$status_field")"
   [ -n "$todo_id" ] || dw_die "todo の列「${todo_name:-（未設定）}」が Status 列にありません"
-  sp_field_id=""
+  sp_field="$(jq -c --arg n "$sp_name" '[.fields[] | select(.name == $n)][0] // null' <<<"$project")"
   if [ -n "$sp" ]; then
-    sp_field="$(jq -c --arg n "$sp_name" '[.fields[] | select(.name == $n)][0] // null' <<<"$project")"
     [ "$sp_field" != null ] || dw_die "Project に Story Point の項目「${sp_name}」がありません（setup-project.sh で追加してください）"
     [ "$(jq -r .dataType <<<"$sp_field")" = number ] || dw_die "項目「${sp_name}」が数値ではありません"
+  fi
+  # --parent で親の Story Point を空欄にするときにも使うので、数値の項目があれば --story-point が無くても読む
+  if [ "$sp_field" != null ] && [ "$(jq -r .dataType <<<"$sp_field")" = number ]; then
     sp_field_id="$(jq -r .id <<<"$sp_field")"
   fi
 else
@@ -169,6 +173,19 @@ if [ -n "$parent" ]; then
   done
   [ "$depth" -le "$max_depth" ] \
     || dw_die "#${parent} の子にすると、親子の深さが上限の ${max_depth} 層を超えます（sub_issues.max_depth）" 2
+
+  # 親の Project の項目と、今の Story Point。Issue から項目を引く REST は無いので、項目の一覧をリポジトリで絞って番号で探す
+  # （番号で絞る検索は無く、文字列での検索は本文などにも当たるため）。Project に入っていなければ、外す値も無い
+  parent_item=null
+  if [ -n "$sp_field_id" ]; then
+    sp_db_id="$(jq -r .databaseId <<<"$sp_field")"
+    parent_item="$(gh api --paginate "$(jq -r .restPath <<<"$project")/items" -X GET \
+      -f q="repo:$repo_nwo is:issue" -f per_page=100 -f fields="$sp_db_id" \
+      | jq -sc --arg r "$repo_nwo" --argjson n "$parent" --argjson f "$sp_db_id" '
+          [add // [] | .[] | select(.content.number == $n and (.content.repository_url | endswith("/repos/" + $r)))][0]
+          | if . == null then null else {id: .node_id, story_point: ([.fields[]? | select(.id == $f)][0].value)} end')" \
+      || dw_die "親の Issue #${parent} の Story Point を読めませんでした"
+  fi
 fi
 
 # GitHub は無いラベルを付けようとすると新しく作るので、色と説明の揃ったラベルがあるかを先に確かめる
@@ -224,21 +241,28 @@ for pair in $blocking; do
     || fail_after_create "#${pair%%:*} への依存（blocked by）を登録できませんでした"
 done
 
-# --- 5. 親の Issue のサブ Issue にする（REST には子の数値の id を送る） -----------------
+# --- 5. 親の Issue のサブ Issue にし、親の Story Point を空欄にする（REST には子の数値の id を送る） ---
+parent_sp=""
 if [ -n "$parent" ]; then
   gh api -X POST "repos/$repo_nwo/issues/$parent/sub_issues" -F sub_issue_id="$(jq -r .id <<<"$issue")" >/dev/null \
     || fail_after_create "#${parent} のサブ Issue にできませんでした"
+  parent_sp="$(jq -r '.story_point // empty' <<<"$parent_item")"
+  if [ -n "$parent_sp" ]; then
+    dw_project_set_field "$(jq -r .id <<<"$project")" "$(jq -r .id <<<"$parent_item")" "$sp_field_id" --clear \
+      || fail_after_create "#${parent} のサブ Issue にした後、親の Story Point ${parent_sp} を空欄にできませんでした"
+  fi
 fi
 
 jq -n --argjson n "$issue_number" --arg url "$issue_url" --arg type "$type" --arg item "$item_id" \
   --argjson project "$project" --arg status "$todo_name" --arg sp "$sp" \
-  --arg blocked "$blocked_by" --arg parent "$parent" --argjson breaking "$breaking" '{
+  --arg blocked "$blocked_by" --arg parent "$parent" --arg parent_sp "$parent_sp" --argjson breaking "$breaking" '{
     number: $n,
     url: $url,
     type: $type,
     breaking: $breaking,
     blocked_by: ($blocked | split(" ") | map(select(. != "") | tonumber)),
-    parent: (if $parent == "" then null else ($parent | tonumber) end),
+    parent: (if $parent == "" then null else {number: ($parent | tonumber),
+      story_point_cleared: (if $parent_sp == "" then null else ($parent_sp | tonumber) end)} end),
     project: (if $project then {number: $project.number, item_id: $item, status: $status,
       story_point: (if $sp == "" then null else ($sp | tonumber) end)} else null end)
   }'
