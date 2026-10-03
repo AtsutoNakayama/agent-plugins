@@ -210,7 +210,10 @@ check_branch() {
     if ! $after_dd; then
       case "$w" in
         --) after_dd=true; continue ;;
-        -f | --force | -t | --track | --track=* | --no-track | -q | --quiet | --create-reflog | --recurse-submodules) continue ;;
+        --force | --track | --track=* | --no-track | --quiet | --create-reflog | --recurse-submodules | --color | --color=* | --no-color) continue ;;
+        # 短いオプションはまとめて書ける（-ft）。作るときに使う f・t・q だけなら続ける
+        -*[!ftq]*) return 0 ;;
+        -?*) continue ;;
         -*) return 0 ;;
       esac
     fi

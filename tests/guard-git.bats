@@ -297,3 +297,8 @@ silent() {
   # 名前の一部だけが同じリモートのブランチでは、確かめる
   warned npm/foo "git switch -c npm/foo"
 }
+
+@test "git branch のまとめた短いオプションや --color の後ろの名前も確かめる" {
+  warned bad "git branch -ft bad origin/main" "git branch -qf bad" "git branch --no-color bad" "git branch --color=always bad"
+  silent "git branch -fd bad" "git branch -tm bad"
+}
