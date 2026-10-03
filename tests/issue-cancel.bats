@@ -188,3 +188,101 @@ setup_cancel() {
   assert_failure 64
   assert_output --partial "--issue には数字を指定してください: abc"
 }
+
+# リモートのブランチ feat/17-x と、それを head とする開いている PR。
+# 使い方: cancel_branch <absent（ブランチが無い） | PR の最後のコメントの配列（PR ごと。"" ならコメント無し）>
+cancel_branch() {
+  if [ "$1" = absent ]; then
+    echo '{"data": {"repository": {"ref": null}}}' >"$FIX/CancelBranch.json"
+    return
+  fi
+  jq -n --argjson c "$1" '{data: {repository: {ref: {id: "REF1", associatedPullRequests: {nodes: ($c | to_entries | map({
+    id: "PR\(.key + 42)", number: (.key + 42), title: "PR \(.key + 42)", url: "https://github.com/me/demo/pull/\(.key + 42)",
+    comments: {nodes: (if .value == "" then [] else [{body: .value}] end)}}))}}}}}' >"$FIX/CancelBranch.json"
+}
+
+@test "--branch を付けると、Issue → PR（コメントして閉じる）→ リモートのブランチの順に片付ける" {
+  setup_cancel
+  cancel_branch '[""]'
+  run_script issue-cancel.sh --issue 17 --reason "やらないことにしました" --branch feat/17-x
+  assert_success
+  assert_equal "$(args CancelBranch | jq -r .ref)" refs/heads/feat/17-x
+  assert_equal "$(args AddComment 2)" '{"id":"PR42","body":"やらないことにしました"}'
+  assert_equal "$(args ClosePullRequest)" '{"id":"PR42"}'
+  assert_equal "$(args DeleteRef)" '{"id":"REF1"}'
+  assert_equal "$(grep -oE '^(AddComment|CloseIssue|ClosePullRequest|DeleteRef)' "$CALLS" | tr '\n' ' ')" \
+    "AddComment CloseIssue AddComment ClosePullRequest DeleteRef "
+  assert_equal "$(jq -c '[.branch, .pull_requests, .remote_branch_deleted]' <<<"$output")" \
+    '["feat/17-x",[{"number":42,"title":"PR 42","url":"https://github.com/me/demo/pull/42","commented":true}],true]'
+}
+
+@test "PR が無ければ、リモートのブランチだけを削除する" {
+  setup_cancel
+  cancel_branch '[]'
+  run_script issue-cancel.sh --issue 17 --reason "やらないことにしました" --branch feat/17-x
+  assert_success
+  assert_equal "$(called ClosePullRequest)" 0
+  assert_equal "$(called DeleteRef)" 1
+}
+
+@test "リモートにブランチが無ければ、PR とブランチには何もしない" {
+  setup_cancel
+  cancel_branch absent
+  run_script issue-cancel.sh --issue 17 --reason "やらないことにしました" --branch feat/17-x
+  assert_success
+  assert_equal "$(called ClosePullRequest)" 0
+  assert_equal "$(called DeleteRef)" 0
+  assert_equal "$(jq -c '[.pull_requests, .remote_branch_deleted]' <<<"$output")" '[[],false]'
+}
+
+@test "PR の最後のコメントが同じ理由なら、コメントを付け直さずに閉じる" {
+  setup_cancel
+  cancel_branch '["やらないことにしました"]'
+  run_script issue-cancel.sh --issue 17 --reason "やらないことにしました" --branch feat/17-x
+  assert_success
+  assert_equal "$(called AddComment)" 1
+  assert_equal "$(called ClosePullRequest)" 1
+}
+
+@test "Issue を閉じた後に PR で失敗したら、再実行で Issue を飛ばして PR から続ける" {
+  setup_cancel
+  cancel_branch '[""]'
+  FAKE_FAIL=ClosePullRequest run_script issue-cancel.sh --issue 17 --reason "やらないことにしました" --branch feat/17-x
+  assert_failure
+  assert_output --partial "Issue #17 は閉じましたが、PR #42 を閉じられませんでした（もう一度実行すると続きから進みます）"
+  assert_equal "$(called DeleteRef)" 0
+  # 再実行：Issue は同じ理由で閉じていて、PR には同じ理由のコメントが付いている
+  : >"$CALLS"
+  cancel_issue CLOSED NOT_PLANNED "やらないことにしました"
+  cancel_branch '["やらないことにしました"]'
+  run_script issue-cancel.sh --issue 17 --reason "やらないことにしました" --branch feat/17-x
+  assert_success
+  assert_equal "$(grep -oE '^(AddComment|CloseIssue|ClosePullRequest|DeleteRef)' "$CALLS" | tr '\n' ' ')" \
+    "ClosePullRequest DeleteRef "
+}
+
+@test "リモートのブランチの削除に失敗したら、そう伝えて止まる" {
+  setup_cancel
+  cancel_branch '[]'
+  FAKE_FAIL=DeleteRef run_script issue-cancel.sh --issue 17 --reason "やらないことにしました" --branch feat/17-x
+  assert_failure
+  assert_output --partial "Issue #17 は閉じましたが、リモートのブランチ feat/17-x を削除できませんでした"
+}
+
+@test "--branch に base_branch は指定できない" {
+  setup_cancel
+  run_script issue-cancel.sh --issue 17 --reason "やらないことにしました" --branch main
+  assert_failure 64
+  assert_output --partial "main は削除できません"
+  assert_equal "$(called CancelIssue)" 0
+}
+
+@test "dry-run では PR とブランチにも触れず、予定だけを出力する" {
+  setup_cancel
+  cancel_branch '[""]'
+  run_script issue-cancel.sh --issue 17 --reason "やらないことにしました" --branch feat/17-x --dry-run
+  assert_success
+  assert_equal "$(grep -cE '^(AddComment|CloseIssue|ClosePullRequest|DeleteRef) ' "$CALLS")" 0
+  assert_equal "$(jq -c '.actions[2:]' <<<"$output")" \
+    '["PR #42 に閉じる理由をコメントする","PR #42 をマージせずに閉じる","リモートのブランチ feat/17-x を削除する"]'
+}

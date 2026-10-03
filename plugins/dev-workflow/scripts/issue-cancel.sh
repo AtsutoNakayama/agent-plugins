@@ -1,15 +1,18 @@
 #!/usr/bin/env bash
 # やらないことにした Issue を、理由のコメントを付けて not planned（重複なら duplicate）で閉じる。
 #
-# 使い方: issue-cancel.sh --issue N --reason TEXT [--duplicate-of M] [--dry-run]
+# 使い方: issue-cancel.sh --issue N --reason TEXT [--duplicate-of M] [--branch NAME] [--dry-run]
 #   --issue N           Issue の番号
 #   --reason TEXT       閉じる理由（コメントとして残す。代わりに作業する Issue などの参照先も書く）。空白だけなら止まる
 #   --duplicate-of M    重複の元の Issue の番号。付けると duplicate で閉じ、元の Issue に紐付ける
+#   --branch NAME       やめた作業のブランチ。そのブランチの開いている PR を同じ理由のコメントを付けて閉じ、
+#                       リモート（origin）のブランチを削除する。手元のワークツリーとブランチは消さない（cleanup.sh --abandon）
 #   --dry-run           変更せず、行う予定の操作だけを出力する
 #
 # Project からは外さず、Story Point も変えない（後からボードで経緯を参照できるように。設計書 §4）。
-# 何度実行しても同じ結果になる。最後のコメントが同じ理由ならコメントを付け直さず、同じ閉じ方で既に閉じていれば
-# 閉じる操作を飛ばす。違う閉じ方や違う理由で既に閉じている Issue では、何もせずに止まる。
+# Issue → PR → リモートのブランチの順に行う。何度実行しても同じ結果になるので、途中で失敗しても再実行で続きから進む。
+# 最後のコメントが同じ理由ならコメントを付け直さず、同じ閉じ方で既に閉じていれば閉じる操作を飛ばす。
+# 違う閉じ方や違う理由で既に閉じている Issue では、何もせずに止まる。
 # GraphQL の変数（$owner など）を bash に展開させないため、クエリはシングルクォートで書く
 # shellcheck disable=SC2016
 set -euo pipefail
@@ -28,15 +31,16 @@ need_value() {
   fi
 }
 
-issue="" reason="" duplicate_of="" dry_run=false
+issue="" reason="" duplicate_of="" branch="" dry_run=false
 while [ $# -gt 0 ]; do
   case "$1" in
-    --issue | --reason | --duplicate-of)
+    --issue | --reason | --duplicate-of | --branch)
       need_value "$@"
       case "$1" in
         --issue) issue="$2" ;;
         --reason) reason="$2" ;;
         --duplicate-of) duplicate_of="${2#\#}" ;;
+        --branch) branch="$2" ;;
       esac
       shift 2
       ;;
@@ -63,6 +67,11 @@ stripped="${reason//"$fullwidth_space"/}"
 [ -n "$(printf '%s' "$stripped" | tr -d '[:space:]')" ] || dw_die "--reason に閉じる理由を書いてください" 64
 
 if [ -n "$duplicate_of" ]; then state_reason=DUPLICATE; else state_reason=NOT_PLANNED; fi
+
+if [ -n "$branch" ]; then
+  base="$("$BASH" "$DW_SCRIPTS_DIR/config.sh" | jq -r '.base_branch // "main"')"
+  [ "$branch" != "$base" ] || dw_die "${base} は削除できません。--branch で作業用のブランチを指定してください" 64
+fi
 
 repo_nwo="$(gh repo view --json nameWithOwner -q .nameWithOwner)"
 vars() { jq -nc --arg r "$repo_nwo" --argjson n "$1" '{owner: ($r | split("/")[0]), name: ($r | split("/")[1]), number: $n}'; }
@@ -99,17 +108,30 @@ if [ "$(jq -r .state <<<"$found")" != OPEN ]; then
   fi
 fi
 
+# やめた作業のリモートのブランチと、それを head とする開いている PR
+remote=null
+if [ -n "$branch" ]; then
+  remote="$(dw_gql 'query CancelBranch($owner: String!, $name: String!, $ref: String!) {
+    repository(owner: $owner, name: $name) { ref(qualifiedName: $ref) { id
+      associatedPullRequests(states: OPEN, first: 20) { nodes { id number title url comments(last: 1) { nodes { body } } } } } }
+  }' "$(jq -nc --arg r "$repo_nwo" --arg b "refs/heads/$branch" '{owner: ($r | split("/")[0]), name: ($r | split("/")[1]), ref: $b}')" \
+    | jq -c '.data.repository.ref // null')" || dw_die "リモートのブランチ ${branch} を確かめられませんでした"
+fi
+
 actions='[]'
 note() { actions="$(jq -c --arg a "$1" '. + [$a]' <<<"$actions")"; }
 
+# 使い方: add_comment <node id> <本文> <失敗したときのメッセージ>
+# shellcheck disable=SC2016
+add_comment() {
+  dw_gql 'mutation AddComment($id: ID!, $body: String!) {
+    addComment(input: {subjectId: $id, body: $body}) { commentEdge { node { id } } }
+  }' "$(jq -nc --arg id "$1" --arg b "$2" '{id: $id, body: $b}')" >/dev/null || dw_die "$3"
+}
+
 if $commented; then
   note "Issue #${issue} に閉じる理由をコメントする"
-  if ! $dry_run; then
-    dw_gql 'mutation AddComment($id: ID!, $body: String!) {
-      addComment(input: {subjectId: $id, body: $body}) { commentEdge { node { id } } }
-    }' "$(jq -nc --arg id "$issue_id" --arg b "$reason" '{id: $id, body: $b}')" >/dev/null \
-      || dw_die "Issue #${issue} にコメントできませんでした"
-  fi
+  $dry_run || add_comment "$issue_id" "$reason" "Issue #${issue} にコメントできませんでした"
 fi
 if $closed; then
   if [ -n "$duplicate_of" ]; then
@@ -126,8 +148,38 @@ if $closed; then
   fi
 fi
 
+prs='[]'
+if [ "$remote" != null ]; then
+  prs="$(jq -c --arg r "$reason" '[.associatedPullRequests.nodes[]
+    | {id, number, title, url, commented: (.comments.nodes[-1].body != $r)}]' <<<"$remote")"
+  for i in $(jq -r 'keys[]' <<<"$prs"); do
+    pr="$(jq -c --argjson i "$i" '.[$i]' <<<"$prs")"
+    pr_number="$(jq -r .number <<<"$pr")"
+    pr_id="$(jq -r .id <<<"$pr")"
+    if [ "$(jq -r .commented <<<"$pr")" = true ]; then
+      note "PR #${pr_number} に閉じる理由をコメントする"
+      $dry_run || add_comment "$pr_id" "$reason" \
+        "Issue #${issue} は閉じましたが、PR #${pr_number} にコメントできませんでした（もう一度実行すると続きから進みます）"
+    fi
+    note "PR #${pr_number} をマージせずに閉じる"
+    if ! $dry_run; then
+      dw_gql 'mutation ClosePullRequest($id: ID!) {
+        closePullRequest(input: {pullRequestId: $id}) { pullRequest { state } }
+      }' "$(jq -nc --arg id "$pr_id" '{id: $id}')" >/dev/null \
+        || dw_die "Issue #${issue} は閉じましたが、PR #${pr_number} を閉じられませんでした（もう一度実行すると続きから進みます）"
+    fi
+  done
+  note "リモートのブランチ ${branch} を削除する"
+  if ! $dry_run; then
+    dw_gql 'mutation DeleteRef($id: ID!) { deleteRef(input: {refId: $id}) { clientMutationId } }' \
+      "$(jq -nc --arg id "$(jq -r .id <<<"$remote")" '{id: $id}')" >/dev/null \
+      || dw_die "Issue #${issue} は閉じましたが、リモートのブランチ ${branch} を削除できませんでした（もう一度実行すると続きから進みます）"
+  fi
+fi
+
 jq -n --argjson found "$found" --argjson dry "$dry_run" --arg reason "$reason" --arg sr "$state_reason" \
-  --arg dup "$duplicate_of" --argjson commented "$commented" --argjson closed "$closed" --argjson actions "$actions" '{
+  --arg dup "$duplicate_of" --argjson commented "$commented" --argjson closed "$closed" --argjson actions "$actions" \
+  --arg branch "$branch" --argjson remote "$remote" --argjson prs "$prs" '{
     issue: $found.number,
     title: $found.title,
     dry_run: $dry,
@@ -136,5 +188,8 @@ jq -n --argjson found "$found" --argjson dry "$dry_run" --arg reason "$reason" -
     comment: $reason,
     commented: $commented,
     closed: $closed,
+    branch: (if $branch == "" then null else $branch end),
+    pull_requests: ($prs | map({number, title, url, commented})),
+    remote_branch_deleted: ($remote != null),
     actions: $actions
   }'
