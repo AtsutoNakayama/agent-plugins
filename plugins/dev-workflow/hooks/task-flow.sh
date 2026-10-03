@@ -37,7 +37,9 @@ files=("$(dw_user_dir)/task-flow.md")
 out="$(cat "$default_file")"
 added=()
 for f in "${files[@]}"; do
-  [ -f "$f" ] && [ -r "$f" ] || continue
+  if [ ! -f "$f" ] || [ ! -r "$f" ]; then
+    continue
+  fi
   body="$(cat "$f")"
   [ -n "$body" ] || continue
   out="${out}
