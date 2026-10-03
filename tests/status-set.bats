@@ -102,3 +102,21 @@ load fake_gh
   assert_failure 2
   assert_output --partial "Issue #17 が me/demo にありません"
 }
+
+@test "--item-id を渡すと、項目と今の列を読まずに（GraphQL なしで）その項目を移す" {
+  setup_fake_gh
+  run_script status-set.sh --issue 17 --to todo --item-id IT5
+  assert_success
+  assert_equal "$(called IssueItem)" 0
+  assert_equal "$(called AddItem)" 0
+  assert_equal "$(args SetField | jq -c '[."project-id", .id, ."field-id", ."single-select-option-id"]')" '["P4","IT5","F1","O1"]'
+  assert_equal "$(jq -c '[.item_id, .from, .to, .changed, .actions]' <<<"$output")" \
+    '["IT5",null,"Todo",true,["Issue #17 を「Todo」に移す"]]'
+}
+
+@test "--item-id の値が無ければ使い方の誤りになる" {
+  setup_fake_gh
+  run_script status-set.sh --issue 17 --to todo --item-id
+  assert_failure 64
+  assert_output --partial "--item-id に値がありません"
+}

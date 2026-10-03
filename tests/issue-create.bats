@@ -8,6 +8,7 @@ load test_helper
 # gh api repos/me/demo/issues/<番号> は $FIX/issue-<番号>.json を返し（無ければ 404）、「BlockingIssue <番号>」を記録する。
 # gh api -X POST .../issues/<番号>/dependencies/blocked_by は「AddBlockedBy {"issue": <番号>, "issue_id": <id>}」を記録する。
 # gh api repos/me/demo/labels/<名前> は、$FIX/labels に名前の行があればそのラベルを返し、無ければ 404 にする。
+# gh api graphql は「GraphQL」を記録して失敗する（使わないはずなので）。
 # gh project と Project の REST は fake_gh_project.bash が受け持つ（ProjectView・ProjectFields・AddItem・SetField）。
 # FAKE_FAIL に指定した操作名は、FAKE_FAIL_MSG（既定: gh: failed）を出して失敗する。
 setup_fake_gh() {
@@ -29,6 +30,8 @@ done
 fail() { if [ "${FAKE_FAIL:-}" = "$1" ]; then echo "${FAKE_FAIL_MSG:-gh: failed}" >&2; exit 1; fi; }
 case "$1 $2" in
   "repo view") echo '{"nameWithOwner": "me/demo"}' | jq -r "$q" ;;
+  # issue-create.sh（と中で呼ぶ status-set.sh）は GraphQL を使わない。呼ばれたら記録して失敗する
+  "api graphql") echo "GraphQL {}" >>"$CALLS"; echo 'gh: unexpected graphql' >&2; exit 1 ;;
   "api repos/me/demo/labels/"*)
     name="${2##*/labels/}"
     if [ "${FAKE_FAIL:-}" = Label ]; then echo 'gh: Server Error (HTTP 500)' >&2; exit 1; fi
@@ -124,6 +127,17 @@ assert_no_changes() {
   assert_equal "$(args SetField | jq -c '[."project-id", .id, ."field-id", ."single-select-option-id"]')" '["P4","IT30","F1","O1"]'
   assert_equal "$(jq -c '[.number, .url, .project.status, .project.story_point]' <<<"$json")" \
     '[30,"https://github.com/me/demo/issues/30","Todo",null]'
+}
+
+@test "Status は status-set.sh を通して設定し、項目を読み直す GraphQL は呼ばない" {
+  setup_fake_gh
+  run_create --title t --type feat
+  assert_success
+  # Project は、作る前の確認と status-set.sh とで2回読む
+  assert_equal "$(called ProjectView)" 2
+  assert_equal "$(called GraphQL)" 0
+  assert_equal "$(called AddItem)" 1
+  assert_equal "$(jq -c '[.project.item_id, .project.status]' <<<"$json")" '["IT30","Todo"]'
 }
 
 @test "--breaking なら、type ラベルとは別に breaking ラベルも付ける" {
