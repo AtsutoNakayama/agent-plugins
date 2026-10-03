@@ -25,7 +25,7 @@ on:
 # 確かめるために残すので、コミットごとに別のグループにして取り消さない
 concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.sha }}
-  cancel-in-progress: ${{ github.event_nam == 'pull_request' }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   lint:
