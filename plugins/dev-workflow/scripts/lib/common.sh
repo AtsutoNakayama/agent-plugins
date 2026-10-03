@@ -95,7 +95,8 @@ dw_check_json() {
     || dw_die "JSON のオブジェクトとして読めません: $1" 2
 }
 
-# GitHub の GraphQL API を呼び、応答の JSON を出力する。GraphQL は他に手段が無いときだけ使う（設計書 §10）。
+# GitHub の GraphQL API を呼び、応答の JSON を出力する。GraphQL は、gh のサブコマンドにも REST にも手段が無いときだけ使う。
+# 速さのためではなく、読みやすさ・保守のしやすさ・テストのしやすさと、node id を引き回さないため（設計書 §10）。
 # テストの偽 gh が応答を切り替えられるよう、クエリには必ず操作名を付ける（query Foo(...)）。
 # 使い方: dw_gql <クエリ> [変数の JSON]
 dw_gql() {

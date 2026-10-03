@@ -176,10 +176,17 @@ agent-plugins/
 - **bash 3.2 でも動く書き方**（macOS の標準の bash に合わせる）＋ `gh` ＋ `jq`。`set -euo pipefail` を書き、`shellcheck` と `bats` を CI で実行する。
 - 判断と文章の生成だけを AI が担当し、決まった手順で済む処理はスクリプトに切り出す（トークン削減のため）。
 - 出力は JSON、エラーは終了コードと1行のメッセージ。初期設定用のスクリプトは `--dry-run` に対応する。
-- **GitHub の操作は gh のサブコマンドと REST で行う**（`gh issue`・`gh project` など、無ければ `gh api` で REST）。GraphQL（`gh api graphql`）は重く、クエリも読みにくいので、他に手段が無いときだけ使い、使う箇所には理由をコメントに書く。今 GraphQL を残しているのは次の箇所。
-  - Issue から、ある Project での項目と今の列を引く（`status-set.sh`・`setup-project.sh` のオープンな Issue の一覧）。REST の Issue には Project の項目が無く、`gh issue view --json projectItems` は Project の名前と列しか返さない（項目の ID も Project の ID も無い）。
-  - Project の詳細（`setup-project.sh`）。紐付け済みのリポジトリと組み込みの自動化（workflows）は、gh にも REST にも無い。Status の選択肢を足す操作（下）に要る項目の一覧も、同じクエリでまとめて取る。
-  - 単一選択の項目の選択肢を足す（`setup-project.sh` の Status 列）。gh にも REST にも、既存の項目を変える操作が無い。
+- **GitHub の操作は gh のサブコマンドと REST で行う**（`gh issue`・`gh project` など、無ければ `gh api` で REST）。GraphQL（`gh api graphql`）は他に手段が無いときだけ使い、使う箇所には理由をコメントに書く。
+  - 速さや API の負荷のためではない。GraphQL は入れ子のデータを1回で取れるので、呼び出しの回数はむしろ少ないことが多い。`gh project` のサブコマンドも内部では GraphQL を使う。レート制限は GraphQL と REST で別々に数えられ、このワークフローの回数ではどちらも上限に届かない。
+  - 理由は次の4つ。
+    - 読みやすい：クエリの文字列が無く、何をしているかがコマンド名で分かる。
+    - 保守しやすい：ページ送りやスキーマの変化への対応を gh に任せられる。
+    - テストしやすい：偽物の gh は、コマンドの名前ごとに応答を切り替えるだけで済む（GraphQL では、クエリの文字列から操作名を読み取らなければならない）。
+    - node id を引き回さなくてよい：Issue や Project を番号・URL で指定できる。
+  - 今 GraphQL を残しているのは次の箇所。
+    - Issue から、ある Project での項目と今の列を引く（`status-set.sh`・`setup-project.sh` のオープンな Issue の一覧）。REST の Issue には Project の項目が無く、`gh issue view --json projectItems` は Project の名前と列しか返さない（項目の ID も Project の ID も無い）。
+    - Project の詳細（`setup-project.sh`）。紐付け済みのリポジトリと組み込みの自動化（workflows）は、gh にも REST にも無い。Status の選択肢を足す操作（下）に要る項目の一覧も、同じクエリでまとめて取る。
+    - 単一選択の項目の選択肢を足す（`setup-project.sh` の Status 列）。gh にも REST にも、既存の項目を変える操作が無い。
 - **gh は新しいものを前提にする**。古い gh のための回り道は書かず、要る機能が無い gh では止まって更新を促す（`common.sh` の `DW_GH_MIN_VERSION`。`doctor.sh` も更新を促す）。
 
 | プラグイン側（`plugins/dev-workflow/scripts/`） | 役割 |
