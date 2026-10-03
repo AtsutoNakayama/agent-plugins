@@ -7,7 +7,8 @@
 #   --dry-run       変更せず、行う予定の操作だけを出力する
 #
 # Project からは外さず、Story Point も変えない（後からボードで経緯を参照できるように。設計書 §4）。
-# 既に閉じている Issue では、コメントも付けずに止まる。
+# 既に閉じている Issue では、コメントも付けずに止まる。最後のコメントが同じ理由なら（閉じるのに失敗した後の
+# 再実行）、コメントを付け直さずに閉じる。
 set -euo pipefail
 
 # shellcheck source=lib/common.sh
@@ -50,23 +51,33 @@ fullwidth_space="$(printf '\343\200\200')"
 stripped="${reason//"$fullwidth_space"/}"
 [ -n "$(printf '%s' "$stripped" | tr -d '[:space:]')" ] || dw_die "--reason に閉じる理由を書いてください" 64
 
-issue_json="$(gh issue view "$issue" --json number,title,state)" || dw_die "Issue #${issue} を読めません"
+issue_json="$(gh issue view "$issue" --json number,title,state,comments)" || dw_die "Issue #${issue} を読めません"
 [ "$(jq -r .state <<<"$issue_json")" = OPEN ] || dw_die "Issue #${issue} は既に閉じています" 2
 
-if ! $dry_run; then
-  # gh はコメントを付けてから閉じる
-  gh issue close "$issue" --reason "not planned" --comment "$reason" >/dev/null \
-    || dw_die "Issue #${issue} を閉じられませんでした"
+# コメントした後に閉じるのに失敗して再実行したときは、同じ理由を二重にコメントしない
+commented=true
+if jq -e --arg r "$reason" '(.comments // [] | last | .body) == $r' <<<"$issue_json" >/dev/null; then
+  commented=false
 fi
 
-jq -n --argjson dry "$dry_run" --arg reason "$reason" --argjson issue "$issue_json" '{
+if ! $dry_run; then
+  if $commented; then
+    gh issue comment "$issue" --body "$reason" >/dev/null || dw_die "Issue #${issue} にコメントできませんでした"
+  fi
+  gh issue close "$issue" --reason "not planned" >/dev/null \
+    || dw_die "Issue #${issue} にコメントしましたが、閉じられませんでした（もう一度実行すると、コメントを付け直さずに閉じます）"
+fi
+
+jq -n --argjson dry "$dry_run" --arg reason "$reason" --argjson commented "$commented" --argjson issue "$issue_json" '{
   issue: $issue.number,
   title: $issue.title,
   dry_run: $dry,
   state_reason: "NOT_PLANNED",
   comment: $reason,
+  commented: $commented,
   actions: [
-    "Issue #\($issue.number) に閉じる理由をコメントする",
+    (if $commented then "Issue #\($issue.number) に閉じる理由をコメントする"
+     else "Issue #\($issue.number) の最後のコメントが同じ理由なので、コメントは付け直さない" end),
     "Issue #\($issue.number) を not planned で閉じる（Project と Story Point はそのまま残す）"
   ]
 }'
