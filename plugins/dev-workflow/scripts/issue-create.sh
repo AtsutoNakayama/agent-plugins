@@ -15,7 +15,7 @@
 #   1. 設定と Project（project.owner / project.number）、Status 列・todo の列・Story Point の項目、
 #      依存する Issue と breaking ラベルがあるかを確かめる（問題があれば Issue を作る前に止める）
 #   2. Issue を作る（type ラベル付き。--breaking なら breaking ラベルも）
-#   3. Project に追加し（既に入っていれば既存の項目を使う）、Status を todo の列に、Story Point を設定する
+#   3. Project に追加し（既に入っていれば既存の項目を使う）、Status を todo の列に（status-set.sh）、Story Point を設定する
 #   4. 依存する Issue を、GitHub の依存関係（blocked by）に登録する
 # project.number が未設定なら、Issue だけ作って警告する。
 set -euo pipefail
@@ -171,11 +171,11 @@ if [ "$project" != null ]; then
   item_id="$(dw_project_add_item "$owner" "$number" "$issue_url")" \
     || fail_after_create "Project に追加できませんでした"
 
-  set_field() { dw_project_set_field "$project_id" "$item_id" "$@"; }
-  set_field "$(jq -r .id <<<"$status_field")" --single-select-option-id "$todo_id" \
+  # 列を移す処理は status-set.sh にまとめる。項目の ID は分かっているので渡し、項目を読み直す GraphQL を省く
+  "$BASH" "$DW_SCRIPTS_DIR/status-set.sh" --issue "$issue_number" --to todo --item-id "$item_id" >/dev/null \
     || fail_after_create "Status を「${todo_name}」にできませんでした"
   if [ -n "$sp" ]; then
-    set_field "$sp_field_id" --number "$sp" \
+    dw_project_set_field "$project_id" "$item_id" "$sp_field_id" --number "$sp" \
       || fail_after_create "Story Point を設定できませんでした"
   fi
 fi
