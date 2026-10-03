@@ -52,6 +52,16 @@ jobs:
             echo '日本語などの直前の変数は ${var} と波括弧で囲んでください' >&2
             exit 1
           fi
+      - name: old config locations
+        # 設定・ガイド・観点は .claude/dev-workflow/ に移した（#93）。古い置き場所に書いたテストは、設定が読まれずに失敗する。
+        # 古い置き場所を知らせる doctor.sh とそのテスト、release-please が書く CHANGELOG は除く。
+        # .claude/workflows/ は Claude Code 本体の置き場所なので、workflow の後に英字が続くものは対象にしない
+        run: |
+          if grep -rnP '\.claude/(workflow|review)(?![A-Za-z])|\.claude/labels\.json|workflow\.local\.json' \
+            --exclude-dir='lib' --exclude=CHANGELOG.md --exclude=doctor.sh --exclude=doctor.bats plugins tests; then
+            echo '古い置き場所を参照しています。.claude/dev-workflow/ の下（config.json・config.local.json・review/・labels.json）を使ってください' >&2
+            exit 1
+          fi
       - name: plugin manifest
         run: |
           jq empty .claude-plugin/marketplace.json plugins/*/.claude-plugin/plugin.json plugins/*/defaults/*.json \
