@@ -6,7 +6,9 @@ load test_helper
 
 # 偽の gh。gh api -X POST repos/me/demo/issues は $FIX/issue.json を返し、「CreateIssue <本文>」を $CALLS に記録する。
 # gh api repos/me/demo/issues/<番号> は $FIX/issue-<番号>.json を返し（無ければ 404）、「GetIssue <番号>」を記録する。
+# gh api repos/<所有者>/<名前>/issues/<番号>/parent は $FIX/parent-<番号>.json を返し（無ければ 404）、「GetParent <番号>」を記録する。
 # gh api -X POST .../issues/<番号>/dependencies/blocked_by は「AddBlockedBy {"issue": <番号>, "issue_id": <id>}」を記録する。
+# gh api -X POST .../issues/<番号>/sub_issues は「AddSubIssue {"issue": <番号>, "sub_issue_id": <id>}」を記録する。
 # gh api repos/me/demo/labels/<名前> は、$FIX/labels に名前の行があればそのラベルを返し、無ければ 404 にする。
 # gh api graphql は「GraphQL」を記録して失敗する（使わないはずなので）。
 # gh project と Project の REST は fake_gh_project.bash が受け持つ（ProjectView・ProjectFields・AddItem・SetField）。
@@ -38,6 +40,14 @@ case "$1 $2" in
     grep -qxF "$name" "$FIX/labels" 2>/dev/null || { echo 'gh: Not Found (HTTP 404)' >&2; exit 1; }
     jq -n --arg n "$name" '{name: $n}'
     ;;
+  "api repos/"*/issues/*/parent)
+    n="${2%/parent}"
+    n="${n##*/}"
+    echo "GetParent $n" >>"$CALLS"
+    fail GetParent
+    [ -f "$FIX/parent-$n.json" ] || { echo 'gh: No parent issue found (HTTP 404)' >&2; exit 1; }
+    cat "$FIX/parent-$n.json"
+    ;;
   "api repos/me/demo/issues/"*)
     n="${2##*/}"
     echo "GetIssue $n" >>"$CALLS"
@@ -51,6 +61,12 @@ case "$1 $2" in
         n="${4%/dependencies/blocked_by}"
         echo "AddBlockedBy $(jq -nc --argjson i "${n##*/}" --argjson b "${6#issue_id=}" '{issue: $i, issue_id: $b}')" >>"$CALLS"
         fail AddBlockedBy
+        echo '{}'
+        ;;
+      */sub_issues)
+        n="${4%/sub_issues}"
+        echo "AddSubIssue $(jq -nc --argjson i "${n##*/}" --argjson s "${6#sub_issue_id=}" '{issue: $i, sub_issue_id: $s}')" >>"$CALLS"
+        fail AddSubIssue
         echo '{}'
         ;;
       *)
@@ -79,12 +95,24 @@ created_issue() {
     labels: ($ARGS.positional | map({name: .}))}' "$@" >"$FIX/issue.json"
 }
 
-# 依存先として既にある Issue。REST の id は 1000 + 番号にする。使い方: existing_issue <番号>...
+# 既にある Issue（依存先や親）。REST の id は 1000 + 番号にする。使い方: existing_issue <番号>...
 existing_issue() {
   local n
   for n in "$@"; do
-    jq -n --argjson n "$n" '{id: (1000 + $n), node_id: "I\($n)", number: $n}' >"$FIX/issue-$n.json"
+    issue_json me/demo "$n" >"$FIX/issue-$n.json"
   done
+}
+
+# REST の Issue の応答。使い方: issue_json <所有者/名前> <番号>
+issue_json() {
+  jq -n --arg r "$1" --argjson n "$2" \
+    '{id: (1000 + $n), node_id: "I\($n)", number: $n, url: "https://api.github.com/repos/\($r)/issues/\($n)"}'
+}
+
+# <子> の親を <親> にする（親は同じリポジトリ。別のリポジトリなら <所有者/名前> も渡す）。
+# 使い方: set_parent <子> <親> [所有者/名前]
+set_parent() {
+  issue_json "${3:-me/demo}" "$2" >"$FIX/parent-$1.json"
 }
 
 # REST の項目の一覧（id は数値、node_id が gh project で使う id）。
@@ -111,7 +139,7 @@ args() { grep "^$1 " "$CALLS" | sed -n "${2:-1}p" | cut -d' ' -f2-; }
 
 # 変更を伴う呼び出しが1つも無いことを確かめる。あれば記録を表示して失敗する
 assert_no_changes() {
-  if grep -qE '^(CreateIssue|AddItem|SetField|AddBlockedBy) ' "$CALLS"; then
+  if grep -qE '^(CreateIssue|AddItem|SetField|AddBlockedBy|AddSubIssue) ' "$CALLS"; then
     fail "$(printf '呼ばれないはずの操作が呼ばれました:\n%s' "$(cat "$CALLS")")"
   fi
 }
@@ -397,6 +425,115 @@ assert_no_changes() {
   assert_no_changes
 }
 
+@test "--parent を指定すると、起票した Issue を親のサブ Issue にする" {
+  setup_fake_gh
+  existing_issue 12
+  run_create --title t --type feat --parent '#12'
+  assert_success
+  assert_equal "$(called AddSubIssue)" 1
+  assert_equal "$(args AddSubIssue)" '{"issue":12,"sub_issue_id":1030}'
+  assert_equal "$(jq -r .parent <<<"$json")" 12
+}
+
+@test "--parent が無ければ、サブ Issue にせず parent は null" {
+  setup_fake_gh
+  run_create --title t --type feat
+  assert_success
+  assert_equal "$(called GetParent)" 0
+  assert_equal "$(called AddSubIssue)" 0
+  assert_equal "$(jq -c .parent <<<"$json")" null
+}
+
+@test "--parent の親に親があると 3 層目になるので、既定の上限 2 層では何も作らずに止まる" {
+  setup_fake_gh
+  existing_issue 12
+  set_parent 12 5
+  run_create --title t --type feat --parent 12
+  assert_failure 2
+  assert_output --partial "#12 の子にすると、親子の深さが上限の 2 層を超えます（sub_issues.max_depth）"
+  assert_no_changes
+}
+
+@test "sub_issues.max_depth が 3 なら 3 層目まで作れ、4 層目は何も作らずに止まる" {
+  setup_fake_gh
+  echo '{"project": {"owner": "me", "number": 4}, "sub_issues": {"max_depth": 3}}' >.claude/dev-workflow/config.json
+  existing_issue 12
+  set_parent 12 5
+  run_create --title t --type feat --parent 12
+  assert_success
+  assert_equal "$(args AddSubIssue)" '{"issue":12,"sub_issue_id":1030}'
+
+  # 親の親は別のリポジトリにあってもたどる
+  : >"$CALLS"
+  set_parent 5 2 other/repo
+  run_create --title t --type feat --parent 12
+  assert_failure 2
+  assert_output --partial "親子の深さが上限の 3 層を超えます"
+  assert_equal "$(args GetParent 2)" 5
+  assert_no_changes
+}
+
+@test "親子の深さを数えるとき、上限を超えると分かったらそれより上はたどらない" {
+  setup_fake_gh
+  existing_issue 12
+  set_parent 12 5
+  set_parent 5 2
+  run_create --title t --type feat --parent 12
+  assert_failure 2
+  assert_equal "$(called GetParent)" 1
+}
+
+@test "sub_issues.max_depth が 1・2・3 のどれでもなければ、何も作らずに止まる" {
+  setup_fake_gh
+  existing_issue 12
+  for v in 0 4 '"2"' null; do
+    echo "{\"project\": {\"owner\": \"me\", \"number\": 4}, \"sub_issues\": {\"max_depth\": $v}}" >.claude/dev-workflow/config.json
+    run_create --title t --type feat --parent 12
+    assert_failure 2
+    assert_output --partial "sub_issues.max_depth は 1・2・3 のどれかにしてください"
+  done
+  assert_no_changes
+}
+
+@test "--parent の Issue が無い、または PR の番号なら、何も作らずに止まる" {
+  setup_fake_gh
+  jq -n '{id: 1013, number: 13, pull_request: {url: "u"}}' >"$FIX/issue-13.json"
+  for n in 99 13; do
+    run_create --title t --type feat --parent "$n"
+    assert_failure 1
+    assert_output --partial "親にする Issue #${n} がありません（me/demo）"
+  done
+  assert_no_changes
+}
+
+@test "--parent の親を 404 以外の理由でたどれなければ、GitHub の理由を伝えて何も作らずに止まる" {
+  setup_fake_gh
+  existing_issue 12
+  FAKE_FAIL=GetParent FAKE_FAIL_MSG="gh: Server Error (HTTP 500)" run_create --title t --type feat --parent 12
+  assert_failure 1
+  assert_output --partial "GitHub の API に失敗しました: gh: Server Error (HTTP 500)"
+  assert_no_changes
+}
+
+@test "--parent が正の整数でなければ、何も作らずに止まる" {
+  setup_fake_gh
+  for v in abc 0 '#'; do
+    run_create --title t --type feat --parent "$v"
+    assert_failure 64
+    assert_output --partial "--parent には Issue の番号を指定してください: $v"
+  done
+  assert_equal "$(called GetIssue)" 0
+  assert_no_changes
+}
+
+@test "サブ Issue にできなければ、作った Issue の番号を伝える" {
+  setup_fake_gh
+  existing_issue 12
+  FAKE_FAIL=AddSubIssue run_create --title t --type feat --parent 12
+  assert_failure 1
+  assert_output --partial "Issue #30（https://github.com/me/demo/issues/30）は作りましたが、#12 のサブ Issue にできませんでした"
+}
+
 @test "依存関係を登録できなければ、作った Issue の番号を伝える" {
   setup_fake_gh
   existing_issue 12
@@ -436,5 +573,6 @@ assert_no_changes() {
   assert_success
   assert_output --partial "--story-point"
   assert_output --partial "--blocked-by"
+  assert_output --partial "--parent"
   refute_output --partial "set -euo"
 }

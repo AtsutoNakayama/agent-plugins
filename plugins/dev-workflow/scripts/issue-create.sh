@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Issue を起票し、type ラベルを付け、Project に追加して todo の列にする。Story Point と依存する Issue も設定できる。
+# Issue を起票し、type ラベルを付け、Project に追加して todo の列にする。Story Point と依存する Issue・親の Issue も設定できる。
 #
 # 使い方: issue-create.sh --title TITLE --type TYPE [オプション]
 #   --title TITLE        Issue のタイトル（必須）
@@ -8,15 +8,19 @@
 #   --story-point N      Story Point。1, 2, 3, 5, 8, 13, 21, 34 のどれか（既定: 空欄）。
 #                        21 と 34 は設定できるが、分割を勧める警告を出す
 #   --blocked-by N       依存する（先に終わらせる）同じリポジトリの Issue の番号。複数回指定できる
+#   --parent N           親にする同じリポジトリの Issue の番号。起票した Issue を N のサブ Issue にする。
+#                        親子の深さが設定の sub_issues.max_depth（既定 2）を超えるなら、Issue を作る前に止める
 #   --breaking           破壊的変更なので、type ラベルとは別に breaking ラベルも付ける
 #                        （リポジトリにラベルが無ければ、Issue を作る前に止める）
 #
 # 行うこと:
 #   1. 設定と Project（project.owner / project.number）、Status 列・todo の列・Story Point の項目、
-#      依存する Issue と breaking ラベルがあるかを確かめる（問題があれば Issue を作る前に止める）
+#      依存する Issue・親の Issue と breaking ラベルがあるか、親子の深さが上限を超えないかを確かめる
+#      （問題があれば Issue を作る前に止める）
 #   2. Issue を作る（type ラベル付き。--breaking なら breaking ラベルも）
 #   3. Project に追加し（既に入っていれば既存の項目を使う）、Status を todo の列に（status-set.sh）、Story Point を設定する
 #   4. 依存する Issue を、GitHub の依存関係（blocked by）に登録する
+#   5. 親の Issue があれば、起票した Issue をそのサブ Issue にする
 # project.number が未設定なら、Issue だけ作って警告する。
 set -euo pipefail
 
@@ -46,7 +50,7 @@ issue_number() {
   printf '%s\n' "$n"
 }
 
-title="" type="" body_file="" sp="" breaking=false
+title="" type="" body_file="" sp="" parent="" breaking=false
 # 依存する Issue の番号（空白区切り。重複は除く）
 blocked_by=""
 while [ $# -gt 0 ]; do
@@ -68,6 +72,11 @@ while [ $# -gt 0 ]; do
         *" $n "*) ;;
         *) blocked_by="${blocked_by:+$blocked_by }$n" ;;
       esac
+      shift 2
+      ;;
+    --parent)
+      need_value "$@"
+      parent="$(issue_number "$1" "$2")"
       shift 2
       ;;
     --breaking) breaking=true; shift ;;
@@ -139,6 +148,29 @@ for n in $blocked_by; do
   blocking="${blocking:+$blocking }$n:$id"
 done
 
+# 親の Issue があるか（PR は除く）と、親子の深さが上限を超えないかを確かめる
+if [ -n "$parent" ]; then
+  # "2" のような文字列は認めないよう、JSON の形のまま比べる
+  max_depth="$(jq -c '.sub_issues.max_depth' <<<"$config")"
+  case "$max_depth" in
+    1 | 2 | 3) ;;
+    *) dw_die "sub_issues.max_depth は 1・2・3 のどれかにしてください: $max_depth" 2 ;;
+  esac
+  parent_issue="$(dw_gh_find gh api "repos/$repo_nwo/issues/$parent" | jq -c 'if . == null or .pull_request then null else . end')"
+  [ "$parent_issue" != null ] || dw_die "親にする Issue #${parent} がありません（${repo_nwo}）"
+  # 親から上へたどり、起票する Issue が何層目になるかを数える（一番上の Issue が 1 層目）。
+  # 親の親は別のリポジトリにあることもあるので、応答の API の URL からパスを作る
+  depth=2
+  node="$parent_issue"
+  while [ "$depth" -le "$max_depth" ]; do
+    node="$(dw_gh_find gh api "repos/$(jq -r '.url | sub("^.*?/repos/"; "")' <<<"$node")/parent")"
+    [ "$node" != null ] || break
+    depth="$((depth + 1))"
+  done
+  [ "$depth" -le "$max_depth" ] \
+    || dw_die "#${parent} の子にすると、親子の深さが上限の ${max_depth} 層を超えます（sub_issues.max_depth）" 2
+fi
+
 # GitHub は無いラベルを付けようとすると新しく作るので、色と説明の揃ったラベルがあるかを先に確かめる
 labels="$(jq -nc --arg t "$type" '[$t]')"
 if $breaking; then
@@ -192,14 +224,21 @@ for pair in $blocking; do
     || fail_after_create "#${pair%%:*} への依存（blocked by）を登録できませんでした"
 done
 
+# --- 5. 親の Issue のサブ Issue にする（REST には子の数値の id を送る） -----------------
+if [ -n "$parent" ]; then
+  gh api -X POST "repos/$repo_nwo/issues/$parent/sub_issues" -F sub_issue_id="$(jq -r .id <<<"$issue")" >/dev/null \
+    || fail_after_create "#${parent} のサブ Issue にできませんでした"
+fi
+
 jq -n --argjson n "$issue_number" --arg url "$issue_url" --arg type "$type" --arg item "$item_id" \
   --argjson project "$project" --arg status "$todo_name" --arg sp "$sp" \
-  --arg blocked "$blocked_by" --argjson breaking "$breaking" '{
+  --arg blocked "$blocked_by" --arg parent "$parent" --argjson breaking "$breaking" '{
     number: $n,
     url: $url,
     type: $type,
     breaking: $breaking,
     blocked_by: ($blocked | split(" ") | map(select(. != "") | tonumber)),
+    parent: (if $parent == "" then null else ($parent | tonumber) end),
     project: (if $project then {number: $project.number, item_id: $item, status: $status,
       story_point: (if $sp == "" then null else ($sp | tonumber) end)} else null end)
   }'
