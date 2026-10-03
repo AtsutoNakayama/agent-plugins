@@ -1,4 +1,6 @@
 #!/usr/bin/env bats
+# bats はテストごとにサブシェルで動くので、変数の変更がテスト内に閉じるのは意図どおり
+# shellcheck disable=SC2030,SC2031
 
 load test_helper
 
@@ -128,4 +130,160 @@ EOF
   run_script review-perspectives.sh --foo
   assert_failure 64
   assert_output --partial "不明な引数です: --foo"
+}
+
+# 条件で絞り込むテストの準備。基点（init）の後に main へ1つコミットし、work ブランチで <ファイル> を変える
+# 使い方: branch_changing <ファイル>...
+branch_changing() {
+  BASE="$(git rev-parse HEAD)"
+  git checkout -q -b work
+  for f in "$@"; do
+    mkdir -p "$(dirname "$f")"
+    echo x >"$f"
+  done
+  git add -A
+  git commit -q -m change
+}
+
+# 使い方: perspective_when <名前> <frontmatter に足す行>
+perspective_when() {
+  mkdir -p "$REPO/.claude/dev-workflow/review"
+  printf -- '---\ntitle: %s\n%b\n---\n本文\n' "$1" "$2" >"$REPO/.claude/dev-workflow/review/$1.md"
+}
+
+# 使い方: skipped_reason <名前> → 外した理由（外していなければ空）
+skipped_reason() { jq -r --arg n "$1" '.skipped[] | select(.name == $n) | .reason' <<<"$output"; }
+used() { jq -e --arg n "$1" '.perspectives | any(.name == $n)' <<<"$output" >/dev/null; }
+
+@test "types に当てはまる観点だけを使い、当てはまらない観点は理由とともに skipped に出す" {
+  branch_changing a.txt
+  perspective_when only-fix 'types: [fix, perf]'
+  perspective_when only-feat 'types: feat'
+  run_script review-perspectives.sh --base "$BASE" --target main --type feat
+  assert_success
+  used only-feat || fail "only-feat が使われていません: $output"
+  used only-fix && fail "only-fix が外れていません: $output"
+  assert_equal "$(skipped_reason only-fix)" "type（feat）が types（fix、perf）のどれでもない"
+  assert_equal "$(jq -r '.skipped[] | select(.name == "only-fix") | .layer' <<<"$output")" repo
+}
+
+@test "type が分からなければ、types の条件では外さない" {
+  branch_changing a.txt
+  perspective_when only-fix 'types: [fix]'
+  run_script review-perspectives.sh --base "$BASE" --target main
+  assert_success
+  used only-fix || fail "$output"
+}
+
+@test "paths は差分のファイルのどれかが当たるときだけ使い、* は / にも当たる" {
+  branch_changing src/lib/a.sh docs/b.md
+  perspective_when shell 'paths: ["*.sh"]'
+  perspective_when ci 'paths: [".github/*", "*.yml"]'
+  run_script review-perspectives.sh --base "$BASE" --target main
+  assert_success
+  used shell || fail "$output"
+  assert_equal "$(skipped_reason ci)" "差分のファイルが paths（.github/*、*.yml）のどれにも当たらない"
+}
+
+@test "名前を変えたファイルは、元の名前も paths に当てる" {
+  mkdir -p old
+  echo x >old/a.txt
+  git add -A && git commit -q -m add
+  BASE="$(git rev-parse HEAD)"
+  git checkout -q -b work
+  git mv old new
+  git commit -q -m rename
+  perspective_when old-dir 'paths: old/*'
+  run_script review-perspectives.sh --base "$BASE" --target main
+  assert_success
+  used old-dir || fail "$output"
+}
+
+@test "issue: required は Issue があるときだけ使う" {
+  branch_changing a.txt
+  perspective_when needs-issue 'issue: required'
+  run_script review-perspectives.sh --base "$BASE" --target main
+  assert_success
+  assert_equal "$(skipped_reason needs-issue)" "Issue が無い（issue: required）"
+  run_script review-perspectives.sh --base "$BASE" --target main --issue 12
+  assert_success
+  used needs-issue || fail "$output"
+}
+
+@test "base_ahead: required はマージ先が基点より進んでいるときだけ使う" {
+  branch_changing a.txt
+  perspective_when drift 'base_ahead: required'
+  run_script review-perspectives.sh --base "$BASE" --target main
+  assert_success
+  assert_equal "$(skipped_reason drift)" "マージ先（main）が基点より進んでいない（base_ahead: required）"
+  git checkout -q main
+  git commit -q --allow-empty -m later
+  git checkout -q work
+  run_script review-perspectives.sh --base "$BASE" --target main
+  assert_success
+  used drift || fail "$output"
+}
+
+@test "条件を複数書くと、すべてに当てはまるときだけ使う" {
+  branch_changing a.sh
+  perspective_when both 'types: fix\npaths: "*.md"'
+  run_script review-perspectives.sh --base "$BASE" --target main --type fix
+  assert_success
+  assert_equal "$(skipped_reason both)" "差分のファイルが paths（*.md）のどれにも当たらない"
+}
+
+@test "条件を書いていない観点と、--base を渡さないときは、条件で外さない" {
+  branch_changing a.txt
+  perspective_when plain ''
+  perspective_when only-fix 'types: fix\nissue: required'
+  run_script review-perspectives.sh --base "$BASE" --target main --type feat
+  assert_success
+  used plain || fail "$output"
+  run_script review-perspectives.sh
+  assert_success
+  used only-fix || fail "$output"
+  assert_equal "$(jq -c .skipped <<<"$output")" "[]"
+}
+
+@test "条件の書き方が誤っていれば invalid に入れる" {
+  perspective_when bad-types 'types: [Fix]'
+  perspective_when empty-types 'types: []'
+  perspective_when empty-paths 'paths:'
+  perspective_when bad-issue 'issue: yes'
+  perspective_when bad-ahead 'base_ahead: true'
+  perspective_when bad-builtin 'builtin: lint'
+  run bash -c "${TEST_BASH:-bash} '$SCRIPTS/review-perspectives.sh' 2>/dev/null"
+  assert_success
+  assert_equal "$(jq -r '.invalid[] | "\(.path | split("/") | last) \(.reason)"' <<<"$output" | LC_ALL=C sort)" "$(LC_ALL=C sort <<'EOF2'
+bad-ahead.md base_ahead は required にしてください
+bad-builtin.md builtin は code-review にしてください
+bad-issue.md issue は required にしてください
+bad-types.md types は type の名前（小文字の英数字と -）の一覧にしてください
+empty-paths.md paths にパターンがありません
+empty-types.md types に type がありません
+EOF2
+)"
+}
+
+@test "builtin の観点は本文を省け、perspectives に builtin を出す" {
+  mkdir -p "$REPO/.claude/dev-workflow/review"
+  printf -- '---\ntitle: 組み込み\nbuiltin: code-review\n---\n' >"$REPO/.claude/dev-workflow/review/mine.md"
+  run_script review-perspectives.sh
+  assert_success
+  assert_equal "$(jq -r '.perspectives[] | select(.name == "mine") | .builtin' <<<"$output")" code-review
+  assert_equal "$(jq -r '.perspectives[] | select(.name == "docs-sync") | .builtin' <<<"$output")" null
+}
+
+@test "条件で絞り込む引数の誤りは使い方の誤りにし、無い ref は止める" {
+  run_script review-perspectives.sh --type fix
+  assert_failure 64
+  assert_output --partial "--base と --target の両方を渡してください"
+  run_script review-perspectives.sh --base HEAD --target HEAD --issue abc
+  assert_failure 64
+  run_script review-perspectives.sh --base nothing --target HEAD
+  assert_failure 2
+  assert_output --partial "基点のコミットが見つかりません: nothing"
+  run_script review-perspectives.sh --base HEAD --target origin/main
+  assert_failure 2
+  assert_output --partial "マージ先が見つかりません: origin/main"
 }
