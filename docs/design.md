@@ -87,7 +87,7 @@ agent-plugins/
 - **Project への自動追加**：Project に組み込みの Auto-add を使う。有効にする API は無いので、Web の画面で1回だけ手動で有効にする。`setup-project.sh` が手順を表示し、有効になったかを API で確認する。
 - `task-create` は起票の後、毎回 `addProjectV2ItemById` を呼んで項目の ID を取得する。既に追加済みなら既存の項目が返るだけなので、自動追加とは重複しない。
 - **依存する Issue**：先に終わらせる Issue があれば、本文の「依存」の見出しに `#N` で書き（無ければ「なし」）、GitHub の Issue の依存関係（blocked by。GraphQL の `addBlockedBy`）にも登録する。本文は読む人のため、依存関係はボードや Issue の画面で区別するため。文章だけ（「〜の Issue の後に」）では番号が分からないので、必ず番号で書く。存在しない Issue の番号は、起票の前に止める。1回の依頼で複数の Issue を起票するときは、依存される側から順に起票し、先に起票した番号を後の Issue の依存に使う。
-- **やらない Issue を閉じる**：誤って起票した Issue や、やらないことにした Issue は、`task-close` で not planned で閉じる。
+- **やらない Issue を閉じる**：誤って起票した Issue や、やらないことにした Issue は、`task-cancel` で not planned で閉じる。
   - 閉じる前に、理由と参照先（代わりに作業する Issue など）を `#N` でコメントする。理由が空なら閉じない。
   - Project からは外さない。後からボードで経緯を参照できるように。
   - Story Point は残す。見積もりも記録の一部で、集計する仕組みも無いので、消す理由が無い。
@@ -148,7 +148,7 @@ agent-plugins/
 | `review-perspective-add` | 観点ファイルを作る | ほかの層の同じ名前の観点の置き換え（作るのは手元のファイルだけなので、それ以外は確認しない。置く層はユーザーが選ぶ） |
 | `commit` | 規約に沿ったコミット。実装中に論理的な区切りごとに呼ぶ | なし（手元のコミットだけ） |
 | `pr-create` | push と PR 作成 | push と PR の作成 |
-| `task-close` | やらない Issue を、理由と参照先をコメントして not planned で閉じる | 閉じる（理由のコメントを含む） |
+| `task-cancel` | やらない Issue を、理由と参照先をコメントして not planned で閉じる | 閉じる（理由のコメントを含む） |
 | `task-finish` | ワークツリーとローカルブランチを削除し、main を最新にする（`git pull --ff-only`） | なし（作業が失われるときは `cleanup.sh` が何も消さずに止まる。git が無視するファイルを消すときだけ確認を取る） |
 | `workflow` | 今の段階を判断して次の段階へ進める | 各段階のスキルに従う |
 | `repo-setup` | 初期設定を対話的に実行し、設定ファイルを作る | ラベル・Project・リポジトリの設定の変更 |
@@ -185,7 +185,7 @@ agent-plugins/
 | `review-perspectives.sh` | 観点ファイルを集める |
 | `review-perspective-add.sh` | 観点ファイルを作る。同じ層に同じ名前のファイルがあれば上書きせずに止まり、ほかの層にあれば `--override` が無いかぎり止まる（上位の層にあり、作っても使われないときは、下位の層にあるときと別の終了コードで知らせる） |
 | `pr-create.sh` | PR を作る |
-| `issue-close.sh` | 理由をコメントし、Issue を not planned で閉じる。理由が空、または既に閉じていれば何もせずに止まる |
+| `issue-cancel.sh` | 理由をコメントし、Issue を not planned で閉じる。理由が空、または既に閉じていれば何もせずに止まる |
 | `cleanup.sh` | マージを確認し、ワークツリーとブランチを削除し、main を最新にする。未コミットの変更や git が無視するファイルがあれば、何も消さずに止まる（無視するファイルは `--remove-ignored` で消せる） |
 
 | 初期設定用（`plugins/dev-workflow/scripts/setup/`） | 役割 |
@@ -202,7 +202,7 @@ agent-plugins/
 | 0. 土台 | マーケットプレイスとプラグインの骨組み、`common.sh`、`config.sh`、`doctor.sh`、CI | 0.1.0 |
 | 1. 初期設定 | `setup-*.sh`、`repo-setup` | 0.2.0 |
 | 2. 最小のサイクル | `task-create`、`task-start`、`commit`、`pr-create`、`task-finish`、main を守るフック | 0.3.0 |
-| 3. レビューと Issue の整理 | `review`、`review-perspective-add`、`task-close`（やらない Issue を閉じる） | 0.x（release-please が上げる） |
+| 3. レビューと Issue の整理 | `review`、`review-perspective-add`、`task-cancel`（やらない Issue を閉じる） | 0.x（release-please が上げる） |
 | 4. まとめる | `workflow`、`task-status`、ブランチ名を警告するフック | 1.0.0 |
 
 最初の版は段階 0〜2。このリポジトリ自体を最初の利用者にする。

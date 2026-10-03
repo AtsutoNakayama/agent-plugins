@@ -1,5 +1,5 @@
 # shellcheck shell=bash
-# branch-name・status-set・task-start・cleanup・pr-create・issue-close のテストで使う偽の gh。load fake_gh で読み込み、setup_fake_gh を呼ぶ。
+# branch-name・status-set・task-start・cleanup・pr-create・issue-cancel のテストで使う偽の gh。load fake_gh で読み込み、setup_fake_gh を呼ぶ。
 #
 # - gh repo view                    me/demo を返す
 # - gh issue view N --json ...      $FIX/issue-N.json を返す（-q があれば適用する）

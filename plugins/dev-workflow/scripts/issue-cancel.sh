@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # やらないことにした Issue を、理由のコメントを付けて not planned で閉じる。
 #
-# 使い方: issue-close.sh --issue N --reason TEXT [--dry-run]
+# 使い方: issue-cancel.sh --issue N --reason TEXT [--dry-run]
 #   --issue N       Issue の番号
 #   --reason TEXT   閉じる理由（コメントとして残す。代わりに作業する Issue などの参照先も書く）。空白だけなら止まる
 #   --dry-run       変更せず、行う予定の操作だけを出力する
