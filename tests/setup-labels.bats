@@ -60,8 +60,8 @@ current() { printf '%s\n' "$1" >"$FIX/labels.json"; }
 
 # GitHub が新しいリポジトリに付ける既定のラベル
 github_defaults() {
-  jq -c 'map({name: ., color: "ededed", description: ""})' <<<'["bug", "documentation", "duplicate",
-    "enhancement", "good first issue", "help wanted", "invalid", "question", "wontfix"]'
+  jq -c 'map({name: ., color: "ededed", description: ""})' <<<'["accessibility", "bug", "documentation",
+    "duplicate", "enhancement", "good first issue", "help wanted", "invalid", "question", "wontfix"]'
 }
 
 run_setup() {
@@ -88,12 +88,28 @@ assert_no_calls() {
   run_setup
   assert_success
   assert_equal "$(called create)" 10
-  assert_equal "$(called delete)" 9
+  assert_equal "$(called delete)" 10
   assert_equal "$(called edit)" 0
   grep -qF 'create [feat] [-R] [me/demo] [--color] [0e8a16] [--description] [新しい機能]' "$CALLS"
   grep -qF 'create [breaking] [-R] [me/demo] [--color] [b60205] [--description] [破壊的変更（type とは別に付ける）]' "$CALLS"
   grep -qF 'delete [good first issue] [-R] [me/demo] [--yes]' "$CALLS"
-  assert_equal "$(jq -c '.labels | [(.created | length), (.deleted | length), .unchanged]' <<<"$json")" '[10,9,0]'
+  assert_equal "$(jq -c '.labels | [(.created | length), (.deleted | length), .unchanged]' <<<"$json")" '[10,10,0]'
+}
+
+@test "既定の accessibility ラベルは、定義に無ければ削除し、あれば削除しない" {
+  setup_fake_gh
+  current '[{"name": "accessibility", "color": "ededed", "description": ""}]'
+  printf '%s\n' '[{"name": "feat", "color": "000000"}]' >labels.json
+  run_setup --file labels.json
+  assert_success
+  assert_equal "$(called delete)" 1
+  grep -qF 'delete [accessibility] [-R] [me/demo] [--yes]' "$CALLS"
+
+  : >"$CALLS"
+  printf '%s\n' '[{"name": "accessibility", "color": "ededed"}]' >labels.json
+  run_setup --file labels.json
+  assert_success
+  assert_equal "$(called delete)" 0
 }
 
 @test "定義と同じラベルは変更しない（2回目の実行では何もしない）" {

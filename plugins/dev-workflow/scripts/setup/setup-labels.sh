@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # labels.json の定義どおりに、リポジトリのラベルを作成・更新する。何度実行しても同じ結果になる。
-# 定義に無い GitHub の既定のラベル（bug・enhancement など）は削除する。
+# 定義に無い GitHub の既定のラベル（accessibility・bug・enhancement など）は削除する。
 #
 # 使い方: setup-labels.sh [オプション]
 #   --repo OWNER/NAME  対象のリポジトリ（既定: 今いるリポジトリ）
@@ -29,7 +29,7 @@ need_value() {
 }
 
 # GitHub が新しいリポジトリに付ける既定のラベル
-GITHUB_DEFAULT_LABELS='["bug", "documentation", "duplicate", "enhancement", "good first issue", "help wanted", "invalid", "question", "wontfix"]'
+GITHUB_DEFAULT_LABELS='["accessibility", "bug", "documentation", "duplicate", "enhancement", "good first issue", "help wanted", "invalid", "question", "wontfix"]'
 
 repo="" file="" keep_defaults=false dry_run=false
 while [ $# -gt 0 ]; do
