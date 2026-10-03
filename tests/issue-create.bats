@@ -5,7 +5,7 @@
 load test_helper
 
 # 偽の gh。gh api -X POST repos/me/demo/issues は $FIX/issue.json を返し、「CreateIssue <本文>」を $CALLS に記録する。
-# gh api repos/me/demo/issues/<番号> は $FIX/issue-<番号>.json を返し（無ければ 404）、「BlockingIssue <番号>」を記録する。
+# gh api repos/me/demo/issues/<番号> は $FIX/issue-<番号>.json を返し（無ければ 404）、「GetIssue <番号>」を記録する。
 # gh api -X POST .../issues/<番号>/dependencies/blocked_by は「AddBlockedBy {"issue": <番号>, "issue_id": <id>}」を記録する。
 # gh api repos/me/demo/labels/<名前> は、$FIX/labels に名前の行があればそのラベルを返し、無ければ 404 にする。
 # gh api graphql は「GraphQL」を記録して失敗する（使わないはずなので）。
@@ -40,8 +40,8 @@ case "$1 $2" in
     ;;
   "api repos/me/demo/issues/"*)
     n="${2##*/}"
-    echo "BlockingIssue $n" >>"$CALLS"
-    fail BlockingIssue
+    echo "GetIssue $n" >>"$CALLS"
+    fail GetIssue
     [ -f "$FIX/issue-$n.json" ] || { echo 'gh: Not Found (HTTP 404)' >&2; exit 1; }
     cat "$FIX/issue-$n.json"
     ;;
@@ -344,7 +344,7 @@ assert_no_changes() {
   setup_fake_gh
   run_create --title t --type feat
   assert_success
-  assert_equal "$(called BlockingIssue)" 0
+  assert_equal "$(called GetIssue)" 0
   assert_equal "$(called AddBlockedBy)" 0
   assert_equal "$(jq -c .blocked_by <<<"$json")" '[]'
 }
@@ -379,7 +379,7 @@ assert_no_changes() {
 @test "--blocked-by の Issue を 404 以外の理由で確かめられなければ、GitHub の理由を伝えて何も作らずに止まる" {
   setup_fake_gh
   existing_issue 12
-  FAKE_FAIL=BlockingIssue FAKE_FAIL_MSG="gh: Server Error (HTTP 500)" run_create --title t --type feat --blocked-by 12
+  FAKE_FAIL=GetIssue FAKE_FAIL_MSG="gh: Server Error (HTTP 500)" run_create --title t --type feat --blocked-by 12
   assert_failure 1
   assert_output --partial "GitHub の API に失敗しました: gh: Server Error (HTTP 500)"
   refute_output --partial "がありません"
@@ -393,7 +393,7 @@ assert_no_changes() {
     assert_failure 64
     assert_output --partial "--blocked-by には Issue の番号を指定してください: $v"
   done
-  assert_equal "$(called BlockingIssue)" 0
+  assert_equal "$(called GetIssue)" 0
   assert_no_changes
 }
 

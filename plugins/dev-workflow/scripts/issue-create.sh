@@ -34,6 +34,18 @@ need_value() {
   fi
 }
 
+# Issue の番号を取り出して出力する。本文に書くときと同じ #12 の形や、先頭の 0 も受け付ける
+# 使い方: issue_number <オプション名> <値>
+issue_number() {
+  local n="${2#\#}"
+  case "$n" in
+    '' | *[!0-9]*) dw_die "$1 には Issue の番号を指定してください: $2" 64 ;;
+  esac
+  n="$((10#$n))"
+  [ "$n" -gt 0 ] || dw_die "$1 には Issue の番号を指定してください: $2" 64
+  printf '%s\n' "$n"
+}
+
 title="" type="" body_file="" sp="" breaking=false
 # 依存する Issue の番号（空白区切り。重複は除く）
 blocked_by=""
@@ -51,13 +63,7 @@ while [ $# -gt 0 ]; do
       ;;
     --blocked-by)
       need_value "$@"
-      # 本文に書くときと同じ #12 の形も受け付ける
-      n="${2#\#}"
-      case "$n" in
-        '' | *[!0-9]*) dw_die "--blocked-by には Issue の番号を指定してください: $2" 64 ;;
-      esac
-      n="$((10#$n))"
-      [ "$n" -gt 0 ] || dw_die "--blocked-by には Issue の番号を指定してください: $2" 64
+      n="$(issue_number "$1" "$2")"
       case " $blocked_by " in
         *" $n "*) ;;
         *) blocked_by="${blocked_by:+$blocked_by }$n" ;;
