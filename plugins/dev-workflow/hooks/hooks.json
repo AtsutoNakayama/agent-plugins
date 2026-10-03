@@ -1,5 +1,5 @@
 {
-  "description": "base_branch（既定は main）を守る。main の上での commit、main への push、強制 push を止める",
+  "description": "base_branch（既定は main）を守る。main の上での commit、main への push、強制 push を止める。規約（branch.pattern）に合わない名前でブランチを作るときは、止めずに警告する",
   "hooks": {
     "PreToolUse": [
       {

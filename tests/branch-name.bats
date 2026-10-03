@@ -80,3 +80,27 @@ load fake_gh
     assert_equal "$(jq -r .valid <<<"$output")" false
   done
 }
+
+@test "--check は branch.pattern の形に合わなければ理由を出して終了コード 1" {
+  for name in foo wip/17-x feat/x-y feat/17 feat/17-a--b feat/17-x/y; do
+    run_script branch-name.sh --check "$name"
+    assert_failure 1
+    assert_equal "$(jq -r .reason <<<"$output")" "branch.pattern（{type}/{issue_number}-{slug}）の形になっていません"
+  done
+}
+
+@test "--check は設定の branch.pattern と labels.types に従う" {
+  echo '{"branch": {"pattern": "{type}-{issue_number}/{slug}"}, "labels": {"types": ["feat", "wip"]}}' >.claude/workflow.json
+  run_script branch-name.sh --check wip-17/add-login
+  assert_success
+  for name in feat/17-add-login fix-17/add-login wip-x/add-login; do
+    run_script branch-name.sh --check "$name"
+    assert_failure 1
+  done
+}
+
+@test "--check は設定を読めなければ終了コード 2" {
+  echo '{' >.claude/workflow.json
+  run_script branch-name.sh --check feat/17-add-login
+  assert_failure 2
+}
