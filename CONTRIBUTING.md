@@ -46,7 +46,7 @@ git submodule update --init   # 初回だけ
 
 ## テストとチェック
 
-PR を出す前に、次がすべて通ることを確かめます。`claude plugin validate` 以外は CI でも実行します（shellcheck などは `.github/workflows/lint.yml`、bats は `.github/workflows/test.yml`）。
+PR を出す前に、次がすべて通ることを確かめます。`claude plugin validate` 以外は CI でも実行します（shellcheck などは `.github/workflows/lint.yml`、bats は `.github/workflows/test.yml`）。ただし、`README.md`・`docs/`・Issue と PR のテンプレート（`.github/ISSUE_TEMPLATE/`・`.github/pull_request_template.md`）だけを変えた PR では、CI は動きません。
 
 ```bash
 # tests/lib は外部のライブラリ（git submodule）なので対象にしない
