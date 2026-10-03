@@ -4,7 +4,7 @@
 
 ## 環境の準備
 
-必要なもの：`git`、`gh`、`jq`、`shellcheck`（CI と同じ 0.11.0）、`bats`（bats-core）、`actionlint`（shellcheck と actionlint は、無ければ Docker で実行できます。下の「テストとチェック」）。bats を並列に実行するなら GNU `parallel` も使います
+必要なもの：`git`、`gh`、`jq`、`shellcheck`（CI と同じ版）、`bats`（bats-core）、`actionlint`（shellcheck と actionlint は、無ければ Docker で実行できます。下の「テストとチェック」）。bats を並列に実行するなら GNU `parallel` も使います
 
 テストの補助ライブラリ（bats-support・bats-assert）は git submodule で同梱しています。
 
@@ -70,7 +70,7 @@ bats は `--jobs` で並列に実行できます（GNU parallel が要ります�
 bats --jobs "$(( $(getconf _NPROCESSORS_ONLN) * 2 ))" tests/
 ```
 
-shellcheck は版によって出す指摘が違うので、CI と同じ版（`.github/workflows/lint.yml` の `SHELLCHECK_VERSION`、今は 0.11.0）を使います。CI の版を上げるときは、ここに書いた版もそろえます。手元に同じ版が無ければ、Docker で実行できます。
+shellcheck は版によって出す指摘が違うので、CI と同じ版（`.github/workflows/lint.yml` の `SHELLCHECK_VERSION`、今は 0.11.0）を使います。CI の版を上げるときは、ここに書いた版（この段落と、下の Docker のイメージのタグ）もそろえます。手元に同じ版が無ければ、Docker で実行できます。
 
 ```bash
 docker run --rm -v "$PWD:/mnt" -w /mnt koalaman/shellcheck-alpine:v0.11.0 sh -c '
