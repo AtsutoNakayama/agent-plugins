@@ -283,3 +283,17 @@ silent() {
   denied "main の上ではコミットしません" "git branch foo && git commit -m x"
   denied "強制 push" "git switch -c foo && git push -f"
 }
+
+@test "base_branch や、手元・リモートに既にあるブランチの名前は確かめない" {
+  git branch wip
+  git update-ref refs/remotes/origin/dependabot/npm/foo HEAD
+  silent \
+    "git switch -C main origin/main" \
+    "git checkout -B main origin/main" \
+    "git branch -f main origin/main" \
+    "git branch -f wip main" \
+    "git switch -c dependabot/npm/foo origin/dependabot/npm/foo" \
+    "git worktree add -b dependabot/npm/foo ../wt origin/dependabot/npm/foo"
+  # 名前の一部だけが同じリモートのブランチでは、確かめる
+  warned npm/foo "git switch -c npm/foo"
+}

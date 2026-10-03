@@ -139,7 +139,9 @@ check_push() {
 }
 
 # 作るブランチの名前を branch-name.sh --check で確かめ、規約に合わなければ警告を覚えておく。
-# 名前に展開前の $ や ` があるとき、設定を読めないときなどは何もしない
+# 名前に展開前の $ や ` があるとき、設定を読めないときなどは何もしない。
+# base_branch や、手元・リモートに既にあるブランチ（-C・-B・-f で合わせ直すとき、他人のブランチを取ってくるとき）は、
+# 名前を変えさせないよう確かめない
 # 使い方: check_branch_name <名前>
 check_branch_name() {
   local name="$1" root out
@@ -148,6 +150,9 @@ check_branch_name() {
   esac
   root="$(git_at rev-parse --show-toplevel || true)"
   [ -n "$root" ] || return 0
+  [ "$name" != "$(base_branch)" ] || return 0
+  git_at show-ref --verify --quiet "refs/heads/$name" && return 0
+  [ -z "$(git_at for-each-ref --format=x "refs/remotes/*/$name" || true)" ] || return 0
   # 規約に合わないときだけ終了コード 1（設定を読めないなどは 2）
   out="$( (cd "$git_dir" && WORKFLOW_REPO_ROOT="$root" "$BASH" "$DW_SCRIPTS_DIR/branch-name.sh" --check "$name") 2>/dev/null)" \
     && return 0
