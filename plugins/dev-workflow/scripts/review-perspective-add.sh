@@ -21,6 +21,10 @@
 #   name・layer・path  作った観点
 #   overrides          作った観点で置き換えた下位の層のファイル
 #   shadowed_by        作った観点より優先される上位の層のファイル（あればこの観点は使われない）
+#   branch             repo の層に作ったときの、そのリポジトリ（ワークツリー）のブランチ。detached HEAD や
+#                      user の層なら null
+#   work_branch        repo の層に作ったとき、作業用のブランチ（base_branch 以外のブランチ）の上なら true。
+#                      false なら、そのままではタスクの PR に含められない。user の層なら null
 set -euo pipefail
 
 # shellcheck source=lib/common.sh
@@ -78,10 +82,21 @@ case "$layer" in
   repo)
     [ -n "$repo_dir" ] || dw_die "git のリポジトリの中ではないので、repo の層には置けません" 2
     dir="$repo_dir"
+    # 観点の追加はきっかけになったタスクの PR に含めるので、作業用のブランチの上かを知らせる（設計書 §7）
+    base="$("$BASH" "$DW_SCRIPTS_DIR/config.sh" .base_branch)"
+    branch="$(git -C "$repo_root" symbolic-ref --short -q HEAD || true)"
     ;;
   *) dw_die "--layer は user か repo にしてください" 64 ;;
 esac
 path="$dir/$name.md"
+branch_json=null work_branch=null
+if [ "$layer" = repo ]; then
+  work_branch=false
+  if [ -n "$branch" ]; then
+    branch_json="$(jq -n --arg b "$branch" '$b')"
+    [ "$branch" = "$base" ] || work_branch=true
+  fi
+fi
 
 body="$(cat)"
 printf '%s' "$body" | grep -q '[^[:space:]]' || dw_die "本文（レビューの指示）が標準入力にありません" 64
@@ -129,4 +144,5 @@ if ! (set -C; printf -- '---\ntitle: %s\n---\n\n%s\n' "$title" "$body" >"$path")
 fi
 
 jq -n --arg n "$name" --arg l "$layer" --arg p "$path" --argjson o "$overrides" --argjson s "$shadowed" \
-  '{name: $n, layer: $l, path: $p, overrides: $o, shadowed_by: $s}'
+  --argjson b "$branch_json" --argjson w "$work_branch" \
+  '{name: $n, layer: $l, path: $p, overrides: $o, shadowed_by: $s, branch: $b, work_branch: $w}'

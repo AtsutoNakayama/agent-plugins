@@ -32,6 +32,43 @@ add() {
   [ -f "$REPO/.claude/dev-workflow/review/repo-only.md" ] || fail "ファイルがありません"
 }
 
+@test "repo の層に base_branch の上で作ると、work_branch が false になる" {
+  add "指示" --name on-main --layer repo --title "観点"
+  assert_success
+  assert_equal "$(jq -c '[.branch, .work_branch]' <<<"$output")" '["main",false]'
+}
+
+@test "repo の層に作業用のブランチのワークツリーで作ると、そのワークツリーにでき、work_branch が true になる" {
+  git -C "$REPO" worktree add -q -b feat/1-x "$TMP/wt"
+  cd "$TMP/wt"
+  add "指示" --name in-task --layer repo --title "観点"
+  assert_success
+  assert_equal "$(jq -c '[.path, .branch, .work_branch]' <<<"$output")" \
+    "[\"$TMP/wt/.claude/dev-workflow/review/in-task.md\",\"feat/1-x\",true]"
+  [ ! -e "$REPO/.claude/dev-workflow/review/in-task.md" ] || fail "メインのワークツリーに作っています"
+}
+
+@test "base_branch を設定で変えていれば、それを作業用のブランチとみなさない" {
+  printf '{"base_branch": "develop"}\n' >"$REPO/.claude/dev-workflow/config.json"
+  git -C "$REPO" switch -q -c develop
+  add "指示" --name on-develop --layer repo --title "観点"
+  assert_success
+  assert_equal "$(jq -c '[.branch, .work_branch]' <<<"$output")" '["develop",false]'
+}
+
+@test "repo の層に detached HEAD で作ると、branch が null で work_branch が false になる" {
+  git -C "$REPO" switch -q --detach
+  add "指示" --name detached --layer repo --title "観点"
+  assert_success
+  assert_equal "$(jq -c '[.branch, .work_branch]' <<<"$output")" '[null,false]'
+}
+
+@test "user の層に作ると、branch と work_branch は null になる" {
+  add "指示" --name mine-only --layer user --title "観点"
+  assert_success
+  assert_equal "$(jq -c '[.branch, .work_branch]' <<<"$output")" '[null,null]'
+}
+
 @test "同じ層に同じ名前の観点があれば、上書きせずに止まる" {
   mkdir -p "$WORKFLOW_USER_DIR/review"
   printf 'もとの内容\n' >"$WORKFLOW_USER_DIR/review/mine.md"
