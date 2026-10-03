@@ -1,12 +1,19 @@
 #!/usr/bin/env bash
 # レビューの観点ファイルを1つ作り、JSON で出力する。本文（レビューの指示）は標準入力から読む。
 #
-# 使い方: review-perspective-add.sh --name <名前> --layer user|repo --title <title> [--override] <本文
+# 使い方: review-perspective-add.sh --name <名前> --layer user|repo --title <title> [条件...] [--override] <本文
 #
 #   --name      観点の名前（ファイル名から .md を除いたもの）。小文字の英数字と - だけ
 #   --layer     置く層。user は ~/.claude/dev-workflow/review/、repo は <repo>/.claude/dev-workflow/review/
 #   --title     一覧に出す1行の説明
 #   --override  ほかの層にある同じ名前の観点を、作る観点で置き換えてよい
+#
+# 実行する条件（任意。書かなければ毎回実行する。複数書けば、すべてに当てはまるときだけ実行する）:
+#   --type <type>          変更の type がこのどれかのとき（繰り返して複数書ける）。小文字の英数字と - だけ
+#   --path <パターン>      差分のファイルがこのどれかに当たるとき（繰り返して複数書ける）。* は / にも当たる。
+#                          , と引用符は使えない
+#   --issue-required       Issue があるときだけ
+#   --base-ahead-required  マージ先が基点より進んでいる（ブランチを作った後にコミットが入った）ときだけ
 #
 # --title は全体を引用符で囲まない（読むときに外れる）。
 #
@@ -39,6 +46,10 @@ name=""
 layer=""
 title=""
 override=false
+types=""
+paths=""
+issue_required=false
+base_ahead_required=false
 while [ $# -gt 0 ]; do
   case "$1" in
     -h | --help) usage; exit 0 ;;
@@ -52,6 +63,27 @@ while [ $# -gt 0 ]; do
       shift 2
       ;;
     --override) override=true; shift ;;
+    --type | --path)
+      [ $# -ge 2 ] || dw_die "$1 に値がありません" 64
+      case "$2" in
+        *"
+"*) dw_die "$1 は1行にしてください" 64 ;;
+      esac
+      if [ "$1" = --type ]; then
+        printf '%s' "$2" | grep -Eq '^[a-z0-9][a-z0-9-]*$' \
+          || dw_die "--type は小文字の英数字と - だけにしてください: ${2}" 64
+        types="${types:+$types, }$2"
+      else
+        # review-perspectives.sh は , で区切り、前後の空白と引用符を外して読むので、書いたとおりに読めないものは弾く
+        case "$2" in
+          "" | *,* | *\"* | *\'* | [[:space:]]* | *[[:space:]]) dw_die "--path は , と引用符を含まず、前後に空白の無いパターンにしてください: ${2}" 64 ;;
+        esac
+        paths="${paths:+$paths, }\"$2\""
+      fi
+      shift 2
+      ;;
+    --issue-required) issue_required=true; shift ;;
+    --base-ahead-required) base_ahead_required=true; shift ;;
     *) dw_die "不明な引数です: $1" 64 ;;
   esac
 done
@@ -144,8 +176,18 @@ if [ "$override" = false ]; then
 fi
 
 mkdir -p "$dir" 2>/dev/null || dw_die "観点ファイルを置くディレクトリを作れません: ${dir}" 1
+# frontmatter の条件の行（review-perspectives.sh --help の形式）
+when=""
+[ -z "$types" ] || when="${when}types: [${types}]
+"
+[ -z "$paths" ] || when="${when}paths: [${paths}]
+"
+[ "$issue_required" = false ] || when="${when}issue: required
+"
+[ "$base_ahead_required" = false ] || when="${when}base_ahead: required
+"
 # 確かめた後に別の処理が作ったファイルも上書きしないよう、noclobber で書く
-if ! (set -C; printf -- '---\ntitle: %s\n---\n\n%s\n' "$title" "$body" >"$path") 2>/dev/null; then
+if ! (set -C; printf -- '---\ntitle: %s\n%s---\n\n%s\n' "$title" "$when" "$body" >"$path") 2>/dev/null; then
   exists "$path" && dw_die "同じ名前の観点が既にあるので上書きしません: ${path}" 3
   dw_die "観点ファイルを書き込めません: ${path}" 1
 fi

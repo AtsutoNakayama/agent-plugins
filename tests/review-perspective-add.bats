@@ -179,3 +179,37 @@ add() {
   chmod 755 "$WORKFLOW_USER_DIR/review"
   assert_failure 1
 }
+
+@test "条件を付けて作ると frontmatter に書き、review-perspectives.sh がその条件で外す" {
+  add "指示" --name cond --layer repo --title "条件つき" --type fix --type perf --path '*.sh' --path 'docs/*' \
+    --issue-required --base-ahead-required
+  assert_success
+  assert_equal "$(cat "$REPO/.claude/dev-workflow/review/cond.md")" "$(printf -- '%s\n' '---' 'title: 条件つき' \
+    'types: [fix, perf]' 'paths: ["*.sh", "docs/*"]' 'issue: required' 'base_ahead: required' '---' '' '指示')"
+  base="$(git rev-parse HEAD)"
+  git commit -q --allow-empty -m later
+  echo x >a.sh && git add a.sh
+  run_script review-perspectives.sh --base "$base" --target HEAD --type feat --issue 1
+  assert_success
+  assert_equal "$(jq -r '.skipped[] | select(.name == "cond") | .reason' <<<"$output")" \
+    "type（feat）が types（fix、perf）のどれでもない"
+  run_script review-perspectives.sh --base "$base" --target HEAD --type perf --issue 1
+  assert_success
+  jq -e '.perspectives | any(.name == "cond")' <<<"$output" >/dev/null || fail "$output"
+}
+
+@test "書いたとおりに読めない条件は、何も作らずに止まる" {
+  add "指示" --name ok --layer user --title "観点" --type Fix
+  assert_failure 64
+  add "指示" --name ok --layer user --title "観点" --path 'a,b'
+  assert_failure 64
+  add "指示" --name ok --layer user --title "観点" --path '"a"'
+  assert_failure 64
+  add "指示" --name ok --layer user --title "観点" --path ' a'
+  assert_failure 64
+  add "指示" --name ok --layer user --title "観点" --path ''
+  assert_failure 64
+  add "指示" --name ok --layer user --title "観点" --type
+  assert_failure 64
+  [ ! -e "$WORKFLOW_USER_DIR/review" ] || fail "何か作っています"
+}
