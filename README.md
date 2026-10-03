@@ -46,6 +46,7 @@ title: 一覧に出す1行の説明（必須）
 ```
 
 - 観点ファイルは `/dev-workflow:review-perspective-add` で作れます（手で書いても構いません）。
+- レビューの観点の追加・修正は、そのきっかけになったタスクの PR に含め、別の Issue にはしません。`/dev-workflow:review-perspective-add` は、リポジトリの層の観点を今のタスクのワークツリーに作ります。同梱の観点 `issue-requirements` は、観点の追加・修正を範囲外の変更として指摘しません。
 - 観点の名前はファイル名（`.md` を除く）です。小文字の英数字と `-` だけを使います。
 - 同梱の観点を使わないときは、上の層に同じ名前のファイルを置き、frontmatter に `enabled: false` と書きます（本文と `title` は省けます）。
 - 使われる観点は `plugins/dev-workflow/scripts/review-perspectives.sh` で確かめられます。形式の誤ったファイルは警告を出して使いません。そのファイルと同じ名前の観点は、下の層にあっても使いません（`enabled: false` の書き間違いで、止めたつもりの観点が動かないようにするため）。
