@@ -7,5 +7,6 @@
   { "name": "docs", "color": "0075ca", "description": "ドキュメント" },
   { "name": "build", "color": "5319e7", "description": "ビルド設定・依存関係・Dockerfile" },
   { "name": "ci", "color": "1d76db", "description": "CI/CD パイプラインの変更" },
-  { "name": "chore", "color": "bfbfbf", "description": "雑務（設定など）" }
+  { "name": "chore", "color": "bfbfbf", "description": "雑務（設定など）" },
+  { "name": "breaking", "color": "b60205", "description": "破壊的変更（type とは別に付ける）" }
 ]

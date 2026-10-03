@@ -114,6 +114,9 @@ else
 fi
 missing_types="$(jq -r --argjson l "$labels" '. - ($l | map(.name)) | join(", ")' <<<"$types")"
 [ -z "$missing_types" ] || dw_warn "設定の labels.types のうち、定義に無いラベルがあります: $missing_types"
+# breaking ラベルは名前が決まっているので、独自の定義に無ければ、破壊的変更の Issue を起票できない
+jq -e --arg b "$DW_BREAKING_LABEL" 'any(.[]; (.name | ascii_downcase) == $b)' <<<"$labels" >/dev/null \
+  || dw_warn "定義に ${DW_BREAKING_LABEL} ラベルがありません（無いと破壊的変更の Issue を起票できません。${file_label} に足してください）"
 
 actions='[]'
 # 行った（または dry-run で行う予定の）操作を記録する

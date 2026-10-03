@@ -7,11 +7,15 @@
 #   --issue N         紐付ける Issue の番号
 #   --body-file PATH  PR の本文のファイル。- なら標準入力
 #   --title TEXT      PR のタイトル。省略すると <Issue の type ラベル>: <Issue のタイトル>
+#                     （Issue に breaking ラベルがあれば <type>!: <Issue のタイトル>）
 #   --dry-run         push も PR の作成もせず、行う予定の操作と PR のタイトル・本文だけを出力する
 #
 # 行うこと:
-#   1. タイトルを設定の pr.title_pattern で検証する。type は Issue の type ラベルと同じにする
-#   2. 本文に <pr.close_keyword> #N（既定: Closes #N）が無ければ末尾に足す。
+#   1. タイトルを設定の pr.title_pattern で検証する。type は Issue の type ラベルと同じにする。
+#      Issue に breaking ラベルがあれば、type の後に ! が無いタイトルは止める
+#   2. Issue に breaking ラベルがあれば、本文に BREAKING CHANGE: <移行のしかた> の行が無いと止める。
+#      PR が既にあるときは、その PR のタイトルに ! が無い、または本文に BREAKING CHANGE が無いと、push の前に止める。
+#      本文に <pr.close_keyword> #N（既定: Closes #N）が無ければ末尾に足す。
 #      テンプレートの番号が空のままの行（Closes #）は消す
 #   3. origin に push する（-u で追跡させる）。未コミットの変更や、PR にするコミットが無ければ止まる
 #   4. base_branch に向けた PR を作り、Issue のラベルを引き継ぐ。pr.draft が true なら下書きにする
@@ -83,9 +87,32 @@ types="$(jq -c --argjson t "$(jq -c '.labels.types' <<<"$config")" 'map(select(.
 [ "$(jq length <<<"$types")" = 1 ] \
   || dw_die "Issue #${issue} の type ラベルを1つにしてください（今は $(jq -r 'if length == 0 then "なし" else join(", ") end' <<<"$types")）" 2
 type="$(jq -r '.[0]' <<<"$types")"
+# GitHub と同じく、ラベルの名前は大文字と小文字を区別せずに照合する
+breaking="$(jq --arg b "$DW_BREAKING_LABEL" 'any(.[]; ascii_downcase == $b)' <<<"$labels")"
+
+# スカッシュのコミットの type に ! が無いと、release-please などが破壊的変更とみなさない
+has_bang() { jq -e --arg s "$1" '$s | test("^[^:]*!:")' <<<null >/dev/null; }
+# スカッシュマージでは PR の本文がコミットの本文になるので、移行のしかたを本文に残す
+has_breaking_note() { jq -e --arg b "$1" '$b | test("(^|\n)BREAKING[ -]CHANGE: *\\S")' <<<null >/dev/null; }
+
+# --- 既にある PR ----------------------------------------------------------------
+# --head はブランチ名だけで探すので、fork の同じ名前のブランチからの PR を除く
+existing="$(gh pr list --head "$branch" --state open --json number,url,title,body,isCrossRepository \
+  | jq -c 'map(select(.isCrossRepository | not))')" \
+  || dw_die "${branch} の PR を取得できませんでした"
+pr_number="$(jq -r '.[0].number // empty' <<<"$existing")"
+pr_url="$(jq -r '.[0].url // empty' <<<"$existing")"
+# 既にある PR のタイトルと本文は変えないので、PR を出した後に breaking ラベルを付けたときは、
+# ! と BREAKING CHANGE の無いままマージされないよう、push の前に止める
+if [ -n "$pr_number" ] && $breaking; then
+  has_bang "$(jq -r '.[0].title' <<<"$existing")" \
+    || dw_die "Issue #${issue} は破壊的変更（${DW_BREAKING_LABEL} ラベル）なのに、既にある PR #${pr_number} のタイトルの type の後に ! がありません（gh pr edit ${pr_number} --title で直してから実行してください）" 2
+  has_breaking_note "$(jq -r '.[0].body' <<<"$existing")" \
+    || dw_die "Issue #${issue} は破壊的変更（${DW_BREAKING_LABEL} ラベル）なのに、既にある PR #${pr_number} の本文に「BREAKING CHANGE: <移行のしかた>」がありません（gh pr edit ${pr_number} --body-file で直してから実行してください）" 2
+fi
 
 # --- 1. タイトル ----------------------------------------------------------------
-[ -n "$title" ] || title="${type}: $(jq -r .title <<<"$issue_json")"
+[ -n "$title" ] || title="${type}$($breaking && echo '!'): $(jq -r .title <<<"$issue_json")"
 case "$title" in
   *$'\n'*) dw_die "タイトルは1行にしてください" 64 ;;
 esac
@@ -96,8 +123,16 @@ jq -e --arg s "$title" --arg p "$pattern" '$s | test($p)' <<<null >/dev/null \
 title_type="$(jq -rn --arg s "$title" '$s | capture("^(?<t>[a-z]+)").t // ""')"
 [ "$title_type" = "$type" ] \
   || dw_die "タイトルの type（${title_type}）が Issue #${issue} の type ラベル（${type}）と違います" 2
+if [ -z "$pr_number" ] && $breaking; then
+  has_bang "$title" \
+    || dw_die "Issue #${issue} は破壊的変更（${DW_BREAKING_LABEL} ラベル）なので、タイトルの type の後に ! を付けてください（${type}!: …）: $title" 2
+fi
 
 # --- 2. 本文 --------------------------------------------------------------------
+if [ -z "$pr_number" ] && $breaking; then
+  has_breaking_note "$body" \
+    || dw_die "Issue #${issue} は破壊的変更（${DW_BREAKING_LABEL} ラベル）なので、本文の最後に「BREAKING CHANGE: <移行のしかた>」を書いてください" 64
+fi
 keyword="$(jq -r '.pr.close_keyword' <<<"$config")"
 body="$(jq -rn --arg b "$body" --arg k "$keyword" --arg n "$issue" '
   # テンプレートの番号が空のままの行（Closes #）を消し、末尾の空行を落とす
@@ -125,12 +160,6 @@ if ! $dry_run; then
 fi
 
 # --- 4. PR ----------------------------------------------------------------------
-# --head はブランチ名だけで探すので、fork の同じ名前のブランチからの PR を除く
-existing="$(gh pr list --head "$branch" --state open --json number,url,isCrossRepository \
-  | jq -c 'map(select(.isCrossRepository | not))')" \
-  || dw_die "${branch} の PR を取得できませんでした"
-pr_number="$(jq -r '.[0].number // empty' <<<"$existing")"
-pr_url="$(jq -r '.[0].url // empty' <<<"$existing")"
 draft="$(jq -r '.pr.draft // false' <<<"$config")"
 created=false
 if [ -n "$pr_number" ]; then
@@ -173,7 +202,7 @@ while IFS= read -r a; do
 done <<<"$(jq -r '.actions[]?' <<<"$status")"
 
 jq -n --argjson i "$issue" --arg branch "$branch" --arg base "$base" --arg title "$title" --arg body "$body" \
-  --argjson labels "$labels" --argjson draft "$draft" --argjson created "$created" \
+  --argjson labels "$labels" --argjson breaking "$breaking" --argjson draft "$draft" --argjson created "$created" \
   --arg number "$pr_number" --arg url "$pr_url" --argjson status "$status" \
   --argjson dry "$dry_run" --argjson actions "$actions" '{
     issue: $i,
@@ -184,6 +213,7 @@ jq -n --argjson i "$issue" --arg branch "$branch" --arg base "$base" --arg title
     title: (if $created then $title else null end),
     body: (if $created then $body else null end),
     labels: (if $created then $labels else null end),
+    breaking: $breaking,
     draft: $draft,
     created: $created,
     pr: (if $number == "" then null else {number: ($number | tonumber), url: $url} end),
