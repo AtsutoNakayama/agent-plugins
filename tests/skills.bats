@@ -43,3 +43,11 @@ frontmatter() { awk 'NR == 1 && $0 == "---" { on = 1; next } on && $0 == "---" {
       || fail "${name} に「内部の手順は書かない」と書かれていません"
   done
 }
+
+@test "確認を残すスキルは、確認に必要な内容を質問の中にも入れる（設計書 §8）" {
+  for name in task-create pr-create repo-setup review task-finish; do
+    f="$SKILLS/$name/SKILL.md"
+    grep -q '質問の中にも入れる' "$f" \
+      || fail "${name} に、確認に必要な内容を質問の中にも入れることが書かれていません（別の端末から使うと、質問の直前の文章が見えない）"
+  done
+}
