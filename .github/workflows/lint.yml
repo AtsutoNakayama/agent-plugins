@@ -58,6 +58,8 @@ jobs:
           shellcheck -s bash tests/*.bats
       - name: actionlint
         # ワークフローのキー・式と、run: の中のスクリプト（shellcheck）を検査する。この lint.yml 自身も対象に入る
+        # run: の検査には、上で入れた shellcheck ではなく、イメージに入っている shellcheck を使う（1.7.12 では 0.11.0）。
+        # イメージのタグを上げると、その shellcheck の版も変わる
         uses: docker://rhysd/actionlint:1.7.12
         with:
           args: -color
