@@ -19,6 +19,12 @@ on:
       - .github/ISSUE_TEMPLATE/**
       - .github/pull_request_template.md
 
+# 同じ PR に続けて push したら、古い実行を取り消す。main への push は PR のときとの差を
+# 確かめるために残すので、コミットごとに別のグループにして取り消さない
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.sha }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   lint:
     runs-on: ubuntu-latest
