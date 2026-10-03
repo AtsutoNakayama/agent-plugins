@@ -107,7 +107,7 @@ SH
   chmod +x "$TMP/bin/gh"
   export PATH="$TMP/bin:$PATH"
 
-  echo '{"project": {"owner": "me", "number": 4}}' >"$REPO/.claude/workflow.json"
+  echo '{"project": {"owner": "me", "number": 4}}' >"$REPO/.claude/dev-workflow/config.json"
   fake_issue 17 '["feat"]'
   echo '{"id": "P4", "number": 4, "url": "u", "owner": {"login": "me", "type": "User"}}' >"$FIX/ProjectView.json"
   # REST の項目の一覧。id は数値、node_id が gh project で使う id

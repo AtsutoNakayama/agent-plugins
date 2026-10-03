@@ -64,7 +64,7 @@ if config="$("$BASH" "$DW_SCRIPTS_DIR/config.sh" 2>&1)"; then
   if [ "$(jq -r '.project.number // empty' <<<"$config")" != "" ]; then
     check project true warn "$(jq -r '"\(.project.owner)/\(.project.number)"' <<<"$config")"
   else
-    check project false warn "Project が未設定です（.claude/workflow.json の project）"
+    check project false warn "Project が未設定です（.claude/dev-workflow/config.json の project）"
   fi
 else
   check config false error "$config"

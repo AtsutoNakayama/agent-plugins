@@ -13,8 +13,8 @@
 #      強制 push と削除を禁止する。管理者も例外にしない
 #      このスクリプトが扱わないルール（必須のステータスチェックなど）は残す
 # リポジトリの管理者権限が必要（dry-run でも確かめる）。守るブランチがリポジトリに無ければ止める。
-# 守るブランチは、チームの設定（.claude/workflow.json）の base_branch で決める（個人の設定は使わない）。
-# --repo が今いるリポジトリと違うときは、対象のリポジトリの .claude/workflow.json を API で読む。
+# 守るブランチは、チームの設定（.claude/dev-workflow/config.json）の base_branch で決める（個人の設定は使わない）。
+# --repo が今いるリポジトリと違うときは、対象のリポジトリの .claude/dev-workflow/config.json を API で読む。
 set -euo pipefail
 
 # shellcheck source=../lib/common.sh
@@ -73,24 +73,24 @@ if [ -n "$repo" ]; then
 fi
 
 # --- 守るブランチ（設定の base_branch） ------------------------------------------
-# ルールセットはリポジトリ全体で共有するので、個人の層（workflow.local.json・~/.claude/workflow）は使わず、
-# チームの設定（.claude/workflow.json）とプラグインの既定だけで決める
+# ルールセットはリポジトリ全体で共有するので、個人の層（config.local.json・~/.claude/dev-workflow）は使わず、
+# チームの設定（.claude/dev-workflow/config.json）とプラグインの既定だけで決める
 branch="$(jq -r '.base_branch' "$DW_PLUGIN_ROOT/defaults/workflow.json")"
 tmp="$(mktemp -d)"
 trap 'rm -rf "$tmp"' EXIT
 team=""
 if [ -z "$repo" ] || [ "$here_nwo" = "$repo_nwo" ]; then
   repo_root="$(dw_repo_root || true)"
-  if [ -n "$repo_root" ] && [ -f "$repo_root/.claude/workflow.json" ]; then
-    team="$repo_root/.claude/workflow.json"
+  if [ -n "$repo_root" ] && [ -f "$repo_root/.claude/dev-workflow/config.json" ]; then
+    team="$repo_root/.claude/dev-workflow/config.json"
   fi
-elif dw_fetch_repo_file "$repo_nwo" .claude/workflow.json "$tmp/workflow.json"; then
+elif dw_fetch_repo_file "$repo_nwo" .claude/dev-workflow/config.json "$tmp/workflow.json"; then
   # 別のリポジトリでは、そのリポジトリの既定のブランチにある設定を読む
   team="$tmp/workflow.json"
 fi
 if [ -n "$team" ]; then
   branch="$(jq -r --arg d "$branch" '.base_branch // $d' "$team" 2>/dev/null)" \
-    || dw_die "${repo_nwo} の .claude/workflow.json を JSON として読めません" 2
+    || dw_die "${repo_nwo} の .claude/dev-workflow/config.json を JSON として読めません" 2
 fi
 [ -n "$branch" ] || dw_die "設定の base_branch が空です" 2
 
@@ -129,7 +129,7 @@ default_branch="$(jq -r .default_branch <<<"$current")"
 if [ "$branch" != "$default_branch" ]; then
   if ! out="$(gh api "repos/$repo_nwo/branches/$(jq -rn --arg b "$branch" '$b | @uri')" 2>&1)"; then
     case "$out" in
-      *"HTTP 404"*) dw_die "守るブランチ ${branch} が ${repo_nwo} にありません（既定のブランチは ${default_branch}）。.claude/workflow.json の base_branch を設定してください" 2 ;;
+      *"HTTP 404"*) dw_die "守るブランチ ${branch} が ${repo_nwo} にありません（既定のブランチは ${default_branch}）。.claude/dev-workflow/config.json の base_branch を設定してください" 2 ;;
       *) dw_die "ブランチ ${branch} を確かめられません: $out" ;;
     esac
   fi

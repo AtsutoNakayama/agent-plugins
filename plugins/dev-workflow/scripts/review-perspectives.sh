@@ -5,8 +5,8 @@
 #
 # 層（下ほど優先。同じ名前の観点は上位の層のファイルが使われる）:
 #   3. プラグインに同梱する共通の観点   review/*.md
-#   2. ユーザーの観点                   ~/.claude/review/*.md
-#   1. リポジトリの観点                 <repo>/.claude/review/*.md
+#   2. ユーザーの観点                   ~/.claude/dev-workflow/review/*.md
+#   1. リポジトリの観点                 <repo>/.claude/dev-workflow/review/*.md
 #
 # 観点ファイルの形式（1ファイルに1観点）:
 #   ---
@@ -114,7 +114,7 @@ collect() {
 
 collect plugin "$DW_PLUGIN_ROOT/review"
 collect user "$(dw_user_review_dir)"
-[ -z "$repo_root" ] || collect repo "$repo_root/.claude/review"
+[ -z "$repo_root" ] || collect repo "$repo_root/.claude/dev-workflow/review"
 
 # 優先度の低い層から順に入れ、同じ名前は後の層で置き換える
 result="$(jq -n --argjson r "$records" --argjson inv "$invalid" '

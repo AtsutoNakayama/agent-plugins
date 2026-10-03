@@ -175,7 +175,7 @@ called() { grep -c "^$1 " "$CALLS" || true; }
 
 @test "設定に project.number があれば、名前で探さずにその Project を使う" {
   setup_fake_gh
-  echo '{"project": {"owner": "team", "number": 12}}' >.claude/workflow.json
+  echo '{"project": {"owner": "team", "number": 12}}' >.claude/dev-workflow/config.json
   fix ProjectView.json '{"id": "P12", "number": 12, "title": "Team Board", "url": "u", "owner": {"login": "team", "type": "Organization"}}'
   run_setup
   assert_success
@@ -211,7 +211,7 @@ called() { grep -c "^$1 " "$CALLS" || true; }
 
 @test "todo の列が無ければ警告し、Status を設定しない" {
   setup_fake_gh
-  echo '{"status": {"todo": "Backlog"}}' >.claude/workflow.json
+  echo '{"status": {"todo": "Backlog"}}' >.claude/dev-workflow/config.json
   detail '["R1"]' '[{"id": "O2", "name": "In Progress"}, {"id": "O3", "name": "Done"}]' true
   fix UpdateStatus.json '{"data": {}}'
   run_setup
@@ -261,7 +261,7 @@ called() { grep -c "^$1 " "$CALLS" || true; }
   assert_failure 1
   assert_output --partial "Project「demo」（#7）は作りましたが、リポジトリ me/demo と紐付けられませんでした（もう一度実行すると紐付けます）"
   assert_equal "$(called CreateProject)" 1
-  [ ! -f .claude/workflow.json ]
+  [ ! -f .claude/dev-workflow/config.json ]
 }
 
 @test "作成の応答に id が無ければエラーで止まる" {
@@ -270,25 +270,33 @@ called() { grep -c "^$1 " "$CALLS" || true; }
   run_setup --write-config
   assert_failure 1
   assert_output --partial "Project を作成できませんでした"
-  [ ! -f .claude/workflow.json ]
+  [ ! -f .claude/dev-workflow/config.json ]
 }
 
 @test "--write-config は他の設定を残したまま project を書き込む" {
   setup_fake_gh
-  echo '{"language": "en"}' >.claude/workflow.json
+  echo '{"language": "en"}' >.claude/dev-workflow/config.json
   run_setup --write-config
   assert_success
-  assert_equal "$(jq -c . .claude/workflow.json)" '{"language":"en","project":{"owner":"me","number":7}}'
+  assert_equal "$(jq -c . .claude/dev-workflow/config.json)" '{"language":"en","project":{"owner":"me","number":7}}'
+}
+
+@test "--write-config は、.claude/dev-workflow/ が無ければ作って書き込む" {
+  setup_fake_gh
+  rm -rf .claude
+  run_setup --write-config
+  assert_success
+  assert_equal "$(jq -c . .claude/dev-workflow/config.json)" '{"project":{"owner":"me","number":7}}'
 }
 
 @test "--write-config は、project が同じならファイルを書き直さず、予定にも出さない" {
   setup_fake_gh
-  printf '%s\n' '{"project":{"owner":"me","number":9},"language":"ja"}' >.claude/workflow.json
+  printf '%s\n' '{"project":{"owner":"me","number":9},"language":"ja"}' >.claude/dev-workflow/config.json
   fix ProjectView.json '{"id": "P9", "number": 9, "title": "demo", "url": "u", "owner": {"login": "me", "type": "User"}}'
   run_setup --write-config
   assert_success
-  assert_equal "$(cat .claude/workflow.json)" '{"project":{"owner":"me","number":9},"language":"ja"}'
-  assert_equal "$(jq '[.actions[] | select(contains("workflow.json"))] | length' <<<"$json")" 0
+  assert_equal "$(cat .claude/dev-workflow/config.json)" '{"project":{"owner":"me","number":9},"language":"ja"}'
+  assert_equal "$(jq '[.actions[] | select(contains("config.json"))] | length' <<<"$json")" 0
 }
 
 @test "--repo が今いるリポジトリと違うとき --write-config はエラーになる" {

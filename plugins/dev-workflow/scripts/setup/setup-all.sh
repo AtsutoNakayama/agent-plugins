@@ -10,7 +10,7 @@
 #
 # 行うこと:
 #   1. setup-labels.sh：type ラベルと breaking ラベルの登録
-#   2. setup-project.sh --write-config：Project の作成・接続と、.claude/workflow.json への書き込み
+#   2. setup-project.sh --write-config：Project の作成・接続と、.claude/dev-workflow/config.json への書き込み
 #   3. setup-repo.sh：マージ方法の設定と、ルールセットの登録
 #   4. PR テンプレート（.github/pull_request_template.md）と Issue テンプレート
 #      （.github/ISSUE_TEMPLATE/task.md）を作る。既にテンプレートがあれば作らない
@@ -74,7 +74,7 @@ else
     dw_die "確認（dry-run）で失敗したので、何も変更していません"
   fi
   # git に無視されていると git status に出ないので、変わったかどうかは中身で比べる
-  config_before="$(cat .claude/workflow.json 2>/dev/null || true)"
+  config_before="$(cat .claude/dev-workflow/config.json 2>/dev/null || true)"
   run_steps
 fi
 
@@ -94,11 +94,11 @@ place() {
 }
 # 既にあるかは、合わせた設定（個人の層で書き換えたり、チームの層で null にしたりできる）ではなく、
 # GitHub がテンプレートを探す場所にある実際のファイルで決める。候補は空白区切りの一覧なので、わざと分割して渡す。
-# ただし、チームの設定（.claude/workflow.json そのもの）が pr.template で実在するファイルを指定していれば、
+# ただし、チームの設定（.claude/dev-workflow/config.json そのもの）が pr.template で実在するファイルを指定していれば、
 # チームが独自の場所にテンプレートを置いているので作らない
 team_pr_template=""
-if [ -f .claude/workflow.json ]; then
-  team_pr_template="$(jq -r '.pr.template // empty | strings' .claude/workflow.json 2>/dev/null || true)"
+if [ -f .claude/dev-workflow/config.json ]; then
+  team_pr_template="$(jq -r '.pr.template // empty | strings' .claude/dev-workflow/config.json 2>/dev/null || true)"
   # リポジトリの外（絶対パスや ..）は、マシンによって有無が変わり、GitHub からも使えないので無視する
   case "/$team_pr_template/" in
     //* | */../*) team_pr_template="" ;;
@@ -114,32 +114,32 @@ place ISSUE_TEMPLATE/task.md .github/ISSUE_TEMPLATE/task.md "$(dw_find_nocase . 
 # --- 次にやること ---------------------------------------------------------------
 # コミットが必要なファイル（dry-run では作る予定のもの）
 files="$created"
-# .claude/workflow.json を git が管理していないか、コミットしていない変更がある。
+# .claude/dev-workflow/config.json を git が管理していないか、コミットしていない変更がある。
 # git に無視されていると git status に出ないので、管理しているかは ls-files で確かめる
 config_uncommitted() {
-  [ -f .claude/workflow.json ] || return 1
-  ! git ls-files --error-unmatch -- .claude/workflow.json >/dev/null 2>&1 \
-    || [ -n "$(git status --porcelain -- .claude/workflow.json)" ]
+  [ -f .claude/dev-workflow/config.json ] || return 1
+  ! git ls-files --error-unmatch -- .claude/dev-workflow/config.json >/dev/null 2>&1 \
+    || [ -n "$(git status --porcelain -- .claude/dev-workflow/config.json)" ]
 }
 if $dry_run; then
   # 書き込む予定の project と今のファイルが違えば、変わる予定とみなす。
   # Project を新しく作る予定なら番号はまだ無いので必ず変わり、コミットしていないファイルもコミットが要る
   config_changes=true
-  if [ -f .claude/workflow.json ] \
+  if [ -f .claude/dev-workflow/config.json ] \
     && [ "$(jq -r '.project.created' <<<"$project")" != true ] \
     && ! config_uncommitted \
     && jq -e --argjson p "$project" \
-      '.project.owner == $p.project.owner and .project.number == $p.project.number' .claude/workflow.json >/dev/null 2>&1; then
+      '.project.owner == $p.project.owner and .project.number == $p.project.number' .claude/dev-workflow/config.json >/dev/null 2>&1; then
     config_changes=false
   fi
 else
   config_changes=false
-  if [ "$(cat .claude/workflow.json 2>/dev/null || true)" != "$config_before" ] || config_uncommitted; then
+  if [ "$(cat .claude/dev-workflow/config.json 2>/dev/null || true)" != "$config_before" ] || config_uncommitted; then
     config_changes=true
   fi
 fi
 if $config_changes; then
-  files="$(jq -c '. + [".claude/workflow.json"]' <<<"$files")"
+  files="$(jq -c '. + [".claude/dev-workflow/config.json"]' <<<"$files")"
 fi
 # git に無視されているファイルはコミットできないので、.gitignore を直すよう伝える
 ignored='[]'
@@ -157,7 +157,7 @@ fi
 if [ "$ignored" != "[]" ]; then
   dw_warn "git に無視されているのでコミットできません: $(jq -r 'join(", ")' <<<"$ignored")"
   next="$(jq -c --argjson f "$ignored" \
-    '. + ["\($f | join("・")) が git に無視されているので、.gitignore で無視を外す（例：.claude/ を .claude/* に変えて !.claude/workflow.json を足す）"]' <<<"$next")"
+    '. + ["\($f | join("・")) が git に無視されているので、.gitignore で無視を外す（例：.claude/ を .claude/* に変えて !.claude/dev-workflow/ を足す）"]' <<<"$next")"
 fi
 if [ "$(jq -r .workflows.auto_add <<<"$project")" = false ]; then
   next="$(jq -c --arg u "$(jq -r .workflows.url <<<"$project")" \

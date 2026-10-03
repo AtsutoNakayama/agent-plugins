@@ -49,12 +49,12 @@ dw_main_root() {
 
 # ユーザーごとの設定の置き場所。
 dw_user_dir() {
-  printf '%s\n' "${WORKFLOW_USER_DIR:-$HOME/.claude/workflow}"
+  printf '%s\n' "${WORKFLOW_USER_DIR:-$HOME/.claude/dev-workflow}"
 }
 
 # ユーザーごとのレビューの観点の置き場所。
 dw_user_review_dir() {
-  printf '%s\n' "${WORKFLOW_USER_REVIEW_DIR:-$HOME/.claude/review}"
+  printf '%s\n' "$(dw_user_dir)/review"
 }
 
 # gh の最低限のバージョン。issue-cancel.sh の gh issue close --duplicate-of が 2.88.0 から。source した側で使う

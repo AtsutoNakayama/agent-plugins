@@ -43,7 +43,7 @@ load fake_gh
 
 @test "設定の branch.pattern に従う" {
   setup_fake_gh
-  echo '{"branch": {"pattern": "{issue_number}/{type}-{slug}"}}' >.claude/workflow.json
+  echo '{"branch": {"pattern": "{issue_number}/{type}-{slug}"}}' >.claude/dev-workflow/config.json
   run_script branch-name.sh --issue 17 --slug x
   assert_equal "$(jq -r .branch <<<"$output")" 17/feat-x
 }

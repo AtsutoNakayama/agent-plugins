@@ -44,7 +44,7 @@ commit_with() {
 
 @test "scope_required ならスコープが必要" {
   setup_branch
-  echo '{"commit": {"scope_required": true}}' >.claude/workflow.json
+  echo '{"commit": {"scope_required": true}}' >.claude/dev-workflow/config.json
   commit_with "feat: x"
   assert_failure 2
   assert_output --partial "スコープが必要です"

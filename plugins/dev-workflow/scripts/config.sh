@@ -6,10 +6,10 @@
 #
 # 層（下ほど優先。上位の層が決めていない項目には下位の値が効く）:
 #   5. プラグインの既定             defaults/workflow.json
-#   4. ユーザーの好み               ~/.claude/workflow/workflow.json
+#   4. ユーザーの好み               ~/.claude/dev-workflow/config.json
 #   3. 既にある規約                 PR テンプレートなどを自動で検出
-#   2. チームの規約                 <repo>/.claude/workflow.json
-#   1. 個人がそのリポジトリで上書き  <repo>/.claude/workflow.local.json
+#   2. チームの規約                 <repo>/.claude/dev-workflow/config.json
+#   1. 個人がそのリポジトリで上書き  <repo>/.claude/dev-workflow/config.local.json
 #
 # 文章のガイド（*.md）は guides.<名前> にパスの配列として入る（優先度の低い順）。
 set -euo pipefail
@@ -66,22 +66,22 @@ detect_existing() {
 }
 
 add_layer "$DW_PLUGIN_ROOT/defaults/workflow.json"
-add_layer "$user_dir/workflow.json"
+add_layer "$user_dir/config.json"
 if [ -n "$repo_root" ]; then
   layers+=("$(detect_existing)")
-  add_layer "$repo_root/.claude/workflow.json"
-  local_file="$repo_root/.claude/workflow.local.json"
+  add_layer "$repo_root/.claude/dev-workflow/config.json"
+  local_file="$repo_root/.claude/dev-workflow/config.local.json"
   if [ ! -f "$local_file" ]; then
     # ワークツリーで作業中なら、メインのワークツリーに置いた個人の設定を使う
     main_root="$(dw_main_root "$repo_root" || true)"
-    [ -n "$main_root" ] && local_file="$main_root/.claude/workflow.local.json"
+    [ -n "$main_root" ] && local_file="$main_root/.claude/dev-workflow/config.local.json"
   fi
   add_layer "$local_file"
 fi
 
 # 文章のガイド（優先度の低い順: ユーザー → リポジトリ）
 guides='{}'
-for dir in "$user_dir" "${repo_root:+$repo_root/.claude/workflow}"; do
+for dir in "$user_dir" "${repo_root:+$repo_root/.claude/dev-workflow}"; do
   if [ -z "$dir" ] || [ ! -d "$dir" ]; then
     continue
   fi

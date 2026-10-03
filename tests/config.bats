@@ -9,29 +9,29 @@ load test_helper
 }
 
 @test "上位の層が決めていない項目には下位の層の値が効く" {
-  echo '{"language": "en"}' >"$WORKFLOW_USER_DIR/workflow.json"
-  echo '{"commit": {"scope_required": true}}' >.claude/workflow.json
+  echo '{"language": "en"}' >"$WORKFLOW_USER_DIR/config.json"
+  echo '{"commit": {"scope_required": true}}' >.claude/dev-workflow/config.json
   run_script config.sh '[.language, .commit.scope_required, .commit.types[0]] | tojson'
   assert_success
   assert_output '["en",true,"feat"]'
 }
 
 @test "同じ項目はリポジトリの規約がユーザーの好みより優先される" {
-  echo '{"language": "en"}' >"$WORKFLOW_USER_DIR/workflow.json"
-  echo '{"language": "ja"}' >.claude/workflow.json
+  echo '{"language": "en"}' >"$WORKFLOW_USER_DIR/config.json"
+  echo '{"language": "ja"}' >.claude/dev-workflow/config.json
   run_script config.sh .language
   assert_output "ja"
 }
 
 @test "個人の上書き（local）はリポジトリの規約より優先される" {
-  echo '{"language": "ja"}' >.claude/workflow.json
-  echo '{"language": "en"}' >.claude/workflow.local.json
+  echo '{"language": "ja"}' >.claude/dev-workflow/config.json
+  echo '{"language": "en"}' >.claude/dev-workflow/config.local.json
   run_script config.sh .language
   assert_output "en"
 }
 
 @test "ワークツリーではメインのワークツリーの local を使う" {
-  echo '{"language": "en"}' >.claude/workflow.local.json
+  echo '{"language": "en"}' >.claude/dev-workflow/config.local.json
   git worktree add -q -b feat/1-x "$TMP/wt"
   cd "$TMP/wt"
   run_script config.sh .language
@@ -44,7 +44,7 @@ load test_helper
   run_script config.sh .pr.template
   assert_output ".github/pull_request_template.md"
 
-  echo '{"pr": {"template": "docs/pr.md"}}' >.claude/workflow.json
+  echo '{"pr": {"template": "docs/pr.md"}}' >.claude/dev-workflow/config.json
   run_script config.sh .pr.template
   assert_output "docs/pr.md"
 }
@@ -56,23 +56,23 @@ load test_helper
 }
 
 @test "ガイドはユーザー → リポジトリの順に並ぶ" {
-  mkdir -p .claude/workflow
+  mkdir -p .claude/dev-workflow
   echo user >"$WORKFLOW_USER_DIR/commit.md"
-  echo repo >.claude/workflow/commit.md
+  echo repo >.claude/dev-workflow/commit.md
   run_script config.sh '.guides.commit[1]'
-  assert_output "$REPO/.claude/workflow/commit.md"
+  assert_output "$REPO/.claude/dev-workflow/commit.md"
   run_script config.sh '.guides.commit[0]'
   assert_output "$WORKFLOW_USER_DIR/commit.md"
 }
 
 @test "明示的な null で既定値を消せる" {
-  echo '{"status": {"done": null}}' >.claude/workflow.json
+  echo '{"status": {"done": null}}' >.claude/dev-workflow/config.json
   run_script config.sh .status.done
   assert_output "null"
 }
 
 @test "JSON として読めない設定はエラーになる" {
-  echo '{broken' >.claude/workflow.json
+  echo '{broken' >.claude/dev-workflow/config.json
   run_script config.sh
   assert_failure 2
   assert_output --partial "JSON のオブジェクトとして読めません"
@@ -80,7 +80,7 @@ load test_helper
 
 @test "オブジェクト以外の設定（配列・null・複数の値）はエラーになる" {
   for body in '[]' 'null' '{"a": 1}{"b": 2}'; do
-    printf '%s\n' "$body" >"$WORKFLOW_USER_DIR/workflow.json"
+    printf '%s\n' "$body" >"$WORKFLOW_USER_DIR/config.json"
     run_script config.sh
     assert_failure 2
     assert_output --partial "JSON のオブジェクトとして読めません"
@@ -88,11 +88,11 @@ load test_helper
 }
 
 @test "WORKFLOW_REPO_ROOT を指定すると、今いる場所ではなくそのリポジトリの local を使う" {
-  echo '{"language": "en"}' >.claude/workflow.local.json
+  echo '{"language": "en"}' >.claude/dev-workflow/config.local.json
   git worktree add -q -b feat/1-x "$TMP/wt"
-  mkdir -p "$TMP/other/.claude"
+  mkdir -p "$TMP/other/.claude/dev-workflow"
   git -C "$TMP/other" init -q -b main
-  echo '{"language": "fr"}' >"$TMP/other/.claude/workflow.local.json"
+  echo '{"language": "fr"}' >"$TMP/other/.claude/dev-workflow/config.local.json"
   cd "$TMP/other"
   WORKFLOW_REPO_ROOT="$TMP/wt" run_script config.sh .language
   assert_output "en"

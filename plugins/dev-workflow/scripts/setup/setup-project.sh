@@ -7,7 +7,7 @@
 #   --owner LOGIN      Project の所有者（既定: 設定の project.owner、無ければリポジトリの所有者）
 #   --number N         既存の Project に接続する（既定: 設定の project.number）
 #   --title TITLE      Project の名前で探し、無ければその名前で作る（既定: リポジトリ名）
-#   --write-config     .claude/workflow.json の project を書き換える（対象のリポジトリの中で実行すること）
+#   --write-config     .claude/dev-workflow/config.json の project を書き換える（対象のリポジトリの中で実行すること）
 #   --dry-run          変更せず、行う予定の操作だけを出力する
 #
 # 行うこと:
@@ -277,7 +277,7 @@ fi
 # --- 設定ファイルへの書き込み ---------------------------------------------------
 if $write_config; then
   repo_root="$(dw_repo_root)" || dw_die "リポジトリの中で実行してください"
-  config_file="$repo_root/.claude/workflow.json"
+  config_file="$repo_root/.claude/dev-workflow/config.json"
   # 既に同じ project なら書き直さない（書式の違いで空白だけの差分を作らない）
   write=true
   if [ -n "$project_number" ] && [ -f "$config_file" ] \
@@ -287,7 +287,7 @@ if $write_config; then
   fi
   $write && note "$config_file の project を $owner/${project_number:-（作成後の番号）} にする"
   if $write && ! $dry_run; then
-    mkdir -p "$repo_root/.claude"
+    mkdir -p "$repo_root/.claude/dev-workflow"
     current='{}'
     if [ -f "$config_file" ]; then
       dw_check_json "$config_file"

@@ -215,17 +215,17 @@ assert_no_calls() {
 @test "設定の base_branch を守る（既定のブランチと違えば警告する）" {
   setup_fake_gh
   mkdir -p "$FIX/branches" && touch "$FIX/branches/develop"
-  echo '{"base_branch": "develop"}' >.claude/workflow.json
+  echo '{"base_branch": "develop"}' >.claude/dev-workflow/config.json
   run_setup
   assert_success
   assert_equal "$(body POST | jq -c .conditions.ref_name.include)" '["refs/heads/develop"]'
   assert_output --partial "守るブランチ develop は、リポジトリの既定のブランチ（main）と違います"
 }
 
-@test "個人の設定（workflow.local.json・ユーザーの設定）の base_branch は使わない" {
+@test "個人の設定（config.local.json・ユーザーの設定）の base_branch は使わない" {
   setup_fake_gh
-  echo '{"base_branch": "mine"}' >.claude/workflow.local.json
-  echo '{"base_branch": "user"}' >"$WORKFLOW_USER_DIR/workflow.json"
+  echo '{"base_branch": "mine"}' >.claude/dev-workflow/config.local.json
+  echo '{"base_branch": "user"}' >"$WORKFLOW_USER_DIR/config.json"
   run_setup
   assert_success
   assert_equal "$(body POST | jq -c .conditions.ref_name.include)" '["refs/heads/main"]'
@@ -266,9 +266,9 @@ assert_no_calls() {
 @test "--repo で別のリポジトリを指定したら、そのリポジトリの base_branch を使う" {
   setup_fake_gh
   echo '{"nameWithOwner": "me/here"}' >"$FIX/here.json"
-  echo '{"base_branch": "develop"}' >.claude/workflow.json
-  mkdir -p "$FIX/remote/.claude"
-  echo '{"base_branch": "trunk"}' >"$FIX/remote/.claude/workflow.json"
+  echo '{"base_branch": "develop"}' >.claude/dev-workflow/config.json
+  mkdir -p "$FIX/remote/.claude/dev-workflow"
+  echo '{"base_branch": "trunk"}' >"$FIX/remote/.claude/dev-workflow/config.json"
   mkdir -p "$FIX/branches" && touch "$FIX/branches/trunk"
   run_setup --repo me/demo
   assert_success
@@ -278,7 +278,7 @@ assert_no_calls() {
 @test "別のリポジトリに設定が無ければ、プラグインの既定（main）を使う" {
   setup_fake_gh
   echo '{"nameWithOwner": "me/here"}' >"$FIX/here.json"
-  echo '{"base_branch": "develop"}' >.claude/workflow.json
+  echo '{"base_branch": "develop"}' >.claude/dev-workflow/config.json
   run_setup --repo me/demo
   assert_success
   assert_equal "$(body POST | jq -c .conditions.ref_name.include)" '["refs/heads/main"]'

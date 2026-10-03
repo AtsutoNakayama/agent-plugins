@@ -4,7 +4,7 @@
 # 使い方: review-perspective-add.sh --name <名前> --layer user|repo --title <title> [--override] <本文
 #
 #   --name      観点の名前（ファイル名から .md を除いたもの）。小文字の英数字と - だけ
-#   --layer     置く層。user は ~/.claude/review/、repo は <repo>/.claude/review/
+#   --layer     置く層。user は ~/.claude/dev-workflow/review/、repo は <repo>/.claude/dev-workflow/review/
 #   --title     一覧に出す1行の説明
 #   --override  ほかの層にある同じ名前の観点を、作る観点で置き換えてよい
 #
@@ -72,7 +72,7 @@ esac
 repo_root="$(dw_repo_root || true)"
 user_dir="$(dw_user_review_dir)"
 repo_dir=""
-[ -z "$repo_root" ] || repo_dir="$repo_root/.claude/review"
+[ -z "$repo_root" ] || repo_dir="$repo_root/.claude/dev-workflow/review"
 case "$layer" in
   user) dir="$user_dir" ;;
   repo)

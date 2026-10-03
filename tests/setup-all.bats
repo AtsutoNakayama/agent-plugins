@@ -90,25 +90,25 @@ args_of() { grep "^$1" "$CALLS" | tail -n 1 | sed "s/^$1 \{0,1\}//"; }
   assert_equal "$(jq -c '[.templates.skipped[].existing]' <<<"$json")" '[".github/PULL_REQUEST_TEMPLATE.md",".github/ISSUE_TEMPLATE"]'
 }
 
-@test "作ったファイルと、変わった .claude/workflow.json を PR でマージするよう案内する" {
+@test "作ったファイルと、変わった .claude/dev-workflow/config.json を PR でマージするよう案内する" {
   setup_fake_plugin
-  echo '{}' >.claude/workflow.json
+  echo '{}' >.claude/dev-workflow/config.json
   run_all
   assert_success
   assert_equal "$(jq -r '.next_steps[0]' <<<"$json")" \
-    ".github/pull_request_template.md・.github/ISSUE_TEMPLATE/task.md・.claude/workflow.json をコミットし、PR で main にマージする"
+    ".github/pull_request_template.md・.github/ISSUE_TEMPLATE/task.md・.claude/dev-workflow/config.json をコミットし、PR で main にマージする"
 }
 
-# テンプレートを既にあるものとし、.claude/workflow.json をコミットした状態にする。使い方: committed_config <JSON>
+# テンプレートを既にあるものとし、.claude/dev-workflow/config.json をコミットした状態にする。使い方: committed_config <JSON>
 committed_config() {
   mkdir -p .github/ISSUE_TEMPLATE
   touch .github/pull_request_template.md .github/ISSUE_TEMPLATE/x.md
-  echo "$1" >.claude/workflow.json
-  git add .claude/workflow.json
+  echo "$1" >.claude/dev-workflow/config.json
+  git add .claude/dev-workflow/config.json
   git -c user.name=t -c user.email=t@example.com commit -q -m config
 }
 
-@test "dry-run では、.claude/workflow.json の project が変わるときだけ案内する" {
+@test "dry-run では、.claude/dev-workflow/config.json の project が変わるときだけ案内する" {
   setup_fake_plugin
   committed_config '{"project": {"owner": "me", "number": 3}}'
   echo '{"actions": [], "project": {"owner": "me", "number": 3, "created": false}, "workflows": {"auto_add": true}}' >"$FIX/setup-project.json"
@@ -116,10 +116,10 @@ committed_config() {
   assert_success
   assert_equal "$(jq -c .next_steps <<<"$json")" '[]'
 
-  echo '{"project": {"owner": "me", "number": 2}}' >.claude/workflow.json
+  echo '{"project": {"owner": "me", "number": 2}}' >.claude/dev-workflow/config.json
   git -c user.name=t -c user.email=t@example.com commit -q -am config2
   run_all --dry-run
-  assert_equal "$(jq -r '.next_steps[0]' <<<"$json")" ".claude/workflow.json をコミットし、PR で main にマージする"
+  assert_equal "$(jq -r '.next_steps[0]' <<<"$json")" ".claude/dev-workflow/config.json をコミットし、PR で main にマージする"
 }
 
 @test "dry-run で Project を新しく作る予定なら、owner だけの設定でも変わるとみなす" {
@@ -128,49 +128,49 @@ committed_config() {
   echo '{"actions": [], "project": {"owner": "me", "created": true}, "workflows": {"auto_add": null}}' >"$FIX/setup-project.json"
   run_all --dry-run
   assert_success
-  assert_equal "$(jq -r '.next_steps[0]' <<<"$json")" ".claude/workflow.json をコミットし、PR で main にマージする"
+  assert_equal "$(jq -r '.next_steps[0]' <<<"$json")" ".claude/dev-workflow/config.json をコミットし、PR で main にマージする"
 }
 
-@test "dry-run で .claude/workflow.json が未コミットなら、中身が同じでもコミットを案内する" {
+@test "dry-run で .claude/dev-workflow/config.json が未コミットなら、中身が同じでもコミットを案内する" {
   setup_fake_plugin
   committed_config '{"project": {"owner": "me", "number": 3}}'
-  git rm -q --cached .claude/workflow.json
+  git rm -q --cached .claude/dev-workflow/config.json
   echo '{"actions": [], "project": {"owner": "me", "number": 3, "created": false}, "workflows": {"auto_add": true}}' >"$FIX/setup-project.json"
   run_all --dry-run
   assert_success
-  assert_equal "$(jq -r '.next_steps[0]' <<<"$json")" ".claude/workflow.json をコミットし、PR で main にマージする"
+  assert_equal "$(jq -r '.next_steps[0]' <<<"$json")" ".claude/dev-workflow/config.json をコミットし、PR で main にマージする"
 }
 
-@test "git に無視された .claude/workflow.json も、中身が変われば案内し、.gitignore を直すよう伝える" {
+@test "git に無視された .claude/dev-workflow/config.json も、中身が変われば案内し、.gitignore を直すよう伝える" {
   setup_fake_plugin
   mkdir -p .github/ISSUE_TEMPLATE
   touch .github/pull_request_template.md .github/ISSUE_TEMPLATE/x.md
   echo '.claude/' >.gitignore
-  echo '{}' >.claude/workflow.json
+  echo '{}' >.claude/dev-workflow/config.json
   # 偽の setup-project が、本番（dry-run でないとき）だけ project を書き込む
   cat >>"$PLUGIN/scripts/setup/setup-project.sh" <<'SH'
-case " $* " in *" --dry-run "*) ;; *) echo '{"project": {"owner": "me", "number": 3}}' >.claude/workflow.json ;; esac
+case " $* " in *" --dry-run "*) ;; *) echo '{"project": {"owner": "me", "number": 3}}' >.claude/dev-workflow/config.json ;; esac
 SH
   run_all
   assert_success
-  assert_equal "$(jq -r '.next_steps[0]' <<<"$json")" ".claude/workflow.json をコミットし、PR で main にマージする"
+  assert_equal "$(jq -r '.next_steps[0]' <<<"$json")" ".claude/dev-workflow/config.json をコミットし、PR で main にマージする"
   assert_equal "$(jq -r '.next_steps[1]' <<<"$json")" \
-    ".claude/workflow.json が git に無視されているので、.gitignore で無視を外す（例：.claude/ を .claude/* に変えて !.claude/workflow.json を足す）"
-  assert_output --partial "git に無視されているのでコミットできません: .claude/workflow.json"
+    ".claude/dev-workflow/config.json が git に無視されているので、.gitignore で無視を外す（例：.claude/ を .claude/* に変えて !.claude/dev-workflow/ を足す）"
+  assert_output --partial "git に無視されているのでコミットできません: .claude/dev-workflow/config.json"
 }
 
-@test "git に無視され、管理もされていない .claude/workflow.json は、中身が変わらなくても案内する" {
+@test "git に無視され、管理もされていない .claude/dev-workflow/config.json は、中身が変わらなくても案内する" {
   setup_fake_plugin
   mkdir -p .github/ISSUE_TEMPLATE
   touch .github/pull_request_template.md .github/ISSUE_TEMPLATE/x.md
   echo '.claude/' >.gitignore
-  echo '{"project": {"owner": "me", "number": 3}}' >.claude/workflow.json
+  echo '{"project": {"owner": "me", "number": 3}}' >.claude/dev-workflow/config.json
   echo '{"actions": [], "project": {"owner": "me", "number": 3, "created": false}, "workflows": {"auto_add": true}}' >"$FIX/setup-project.json"
   for mode in --dry-run ""; do
     run_all ${mode:+"$mode"}
     assert_success
-    assert_equal "$(jq -r '.next_steps[0]' <<<"$json")" ".claude/workflow.json をコミットし、PR で main にマージする"
-    assert_output --partial "git に無視されているのでコミットできません: .claude/workflow.json"
+    assert_equal "$(jq -r '.next_steps[0]' <<<"$json")" ".claude/dev-workflow/config.json をコミットし、PR で main にマージする"
+    assert_output --partial "git に無視されているのでコミットできません: .claude/dev-workflow/config.json"
   done
 }
 
@@ -215,7 +215,7 @@ SH
   setup_fake_plugin
   mkdir -p .github
   echo mine >.github/Pull_Request_Template.md
-  echo '{"pr": {"template": null}}' >.claude/workflow.json
+  echo '{"pr": {"template": null}}' >.claude/dev-workflow/config.json
   run_all
   assert_success
   # macOS は大文字小文字を区別しないので、ファイルの有無ではなく中身と数で確かめる
@@ -226,8 +226,8 @@ SH
 
 @test "個人の設定の pr.template があっても、リポジトリに無ければテンプレートを作る" {
   setup_fake_plugin
-  echo '{"pr": {"template": "mine.md"}}' >"$WORKFLOW_USER_DIR/workflow.json"
-  echo '{"pr": {"template": "local.md"}}' >.claude/workflow.local.json
+  echo '{"pr": {"template": "mine.md"}}' >"$WORKFLOW_USER_DIR/config.json"
+  echo '{"pr": {"template": "local.md"}}' >.claude/dev-workflow/config.local.json
   run_all
   assert_success
   cmp .github/pull_request_template.md "$PLUGIN/templates/pull_request_template.md"
@@ -237,7 +237,7 @@ SH
   setup_fake_plugin
   mkdir -p docs
   echo mine >docs/PULL_REQUEST_TEMPLATE.md
-  echo '{"pr": {"template": null}}' >.claude/workflow.json
+  echo '{"pr": {"template": null}}' >.claude/dev-workflow/config.json
   run_all
   assert_success
   [ ! -e .github/pull_request_template.md ]
@@ -248,7 +248,7 @@ SH
   setup_fake_plugin
   mkdir -p .github/templates
   echo team >.github/templates/pr.md
-  echo '{"pr": {"template": ".github/templates/pr.md"}}' >.claude/workflow.json
+  echo '{"pr": {"template": ".github/templates/pr.md"}}' >.claude/dev-workflow/config.json
   run_all
   assert_success
   [ ! -e .github/pull_request_template.md ]
@@ -257,7 +257,7 @@ SH
 
 @test "チームの設定の pr.template が無いファイルを指していれば、PR テンプレートを作る" {
   setup_fake_plugin
-  echo '{"pr": {"template": ".github/templates/missing.md"}}' >.claude/workflow.json
+  echo '{"pr": {"template": ".github/templates/missing.md"}}' >.claude/dev-workflow/config.json
   run_all
   assert_success
   cmp .github/pull_request_template.md "$PLUGIN/templates/pull_request_template.md"
@@ -268,7 +268,7 @@ SH
   echo outside >"$TMP/outside.md"
   for path in "$TMP/outside.md" ../outside.md; do
     rm -rf .github
-    jq -n --arg p "$path" '{pr: {template: $p}}' >.claude/workflow.json
+    jq -n --arg p "$path" '{pr: {template: $p}}' >.claude/dev-workflow/config.json
     run_all
     assert_success
     cmp .github/pull_request_template.md "$PLUGIN/templates/pull_request_template.md"

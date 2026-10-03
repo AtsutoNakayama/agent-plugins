@@ -5,9 +5,9 @@
 load test_helper
 load fake_gh
 
-# チームの設定（.claude/workflow.json）をコミットし、origin 役の bare リポジトリに main を push しておく
+# チームの設定（.claude/dev-workflow/config.json）をコミットし、origin 役の bare リポジトリに main を push しておく
 setup_origin() {
-  git add .claude/workflow.json
+  git add .claude/dev-workflow/config.json
   git -c user.name=t -c user.email=t@example.com commit -q -m config
   git init -q --bare -b main "$TMP/origin.git"
   git -C "$REPO" remote add origin "$TMP/origin.git"
@@ -132,7 +132,7 @@ run_start() {
 
 @test "project.number が未設定なら、警告して列の移動だけ飛ばす（dry-run も同じ）" {
   setup_fake_gh
-  echo '{}' >.claude/workflow.json
+  echo '{}' >.claude/dev-workflow/config.json
   setup_origin
   for mode in --dry-run ""; do
     run_start --issue 17 --slug x ${mode:+"$mode"}
@@ -146,7 +146,7 @@ run_start() {
 
 @test "branch.worktree_dir が絶対パスなら、その下に作る" {
   setup_fake_gh
-  jq '. + {branch: {worktree_dir: "'"$TMP"'/wt"}}' .claude/workflow.json >"$TMP/c.json" && mv "$TMP/c.json" .claude/workflow.json
+  jq '. + {branch: {worktree_dir: "'"$TMP"'/wt"}}' .claude/dev-workflow/config.json >"$TMP/c.json" && mv "$TMP/c.json" .claude/dev-workflow/config.json
   setup_origin
   run_start --issue 17 --slug x
   assert_success

@@ -62,7 +62,7 @@ SH
   chmod +x "$TMP/bin/gh"
   export PATH="$TMP/bin:$PATH"
 
-  echo '{"project": {"owner": "me", "number": 4}}' >.claude/workflow.json
+  echo '{"project": {"owner": "me", "number": 4}}' >.claude/dev-workflow/config.json
   echo '{"id": "P4", "number": 4, "url": "https://github.com/users/me/projects/4", "owner": {"login": "me", "type": "User"}}' \
     >"$FIX/ProjectView.json"
   project_fields '[{"id": "O1", "name": "Todo"}, {"id": "O2", "name": "In Progress"}]' number
@@ -157,7 +157,7 @@ assert_no_changes() {
   setup_fake_gh
   run_create --title t --type feat --breaking
   assert_failure 2
-  assert_output --partial "me/demo に breaking ラベルがありません（setup-labels.sh を実行して作ってください。.claude/labels.json を使っていれば、先にそこへ breaking を足してください）"
+  assert_output --partial "me/demo に breaking ラベルがありません（setup-labels.sh を実行して作ってください。.claude/dev-workflow/labels.json を使っていれば、先にそこへ breaking を足してください）"
   assert_no_changes
 }
 
@@ -276,7 +276,7 @@ assert_no_changes() {
 
 @test "todo の列が Status 列に無ければ、何も作らずに止まる" {
   setup_fake_gh
-  echo '{"project": {"owner": "me", "number": 4}, "status": {"todo": "Backlog"}}' >.claude/workflow.json
+  echo '{"project": {"owner": "me", "number": 4}, "status": {"todo": "Backlog"}}' >.claude/dev-workflow/config.json
   run_create --title t --type feat
   assert_failure 1
   assert_output --partial "todo の列「Backlog」が Status 列にありません"
@@ -304,7 +304,7 @@ assert_no_changes() {
 
 @test "project.number が未設定なら、Issue だけ作って警告する" {
   setup_fake_gh
-  echo '{}' >.claude/workflow.json
+  echo '{}' >.claude/dev-workflow/config.json
   created_issue docs
   run_create --title t --type docs
   assert_success

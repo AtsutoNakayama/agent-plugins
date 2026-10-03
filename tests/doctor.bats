@@ -54,7 +54,7 @@ SH
 @test "設定が壊れていれば config が失敗する" {
   fake_gh
   export FAKE_SCOPES="project"
-  echo '{broken' >.claude/workflow.json
+  echo '{broken' >.claude/dev-workflow/config.json
   run_script doctor.sh
   assert_failure 1
   assert_equal "$(jq -r '.checks[] | select(.name == "config") | .ok' <<<"$output")" false

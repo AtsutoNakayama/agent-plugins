@@ -8,7 +8,7 @@ load fake_gh
 # origin 役の bare リポジトリに main を push し、作業用のブランチ feat/17-x に1つコミットしておく
 setup_branch() {
   setup_fake_gh
-  git add .claude/workflow.json
+  git add .claude/dev-workflow/config.json
   git commit -q -m config
   git init -q --bare -b main "$TMP/origin.git"
   git remote add origin "$TMP/origin.git"
@@ -154,7 +154,7 @@ run_pr() {
 
 @test "pr.draft が true なら下書きにする" {
   setup_branch
-  jq '. + {pr: {draft: true}}' .claude/workflow.json >"$TMP/c.json" && mv "$TMP/c.json" .claude/workflow.json
+  jq '. + {pr: {draft: true}}' .claude/dev-workflow/config.json >"$TMP/c.json" && mv "$TMP/c.json" .claude/dev-workflow/config.json
   git commit -q -am "chore: draft"
   run_pr --issue 17 --body-file "$TMP/body.md"
   assert_success
@@ -165,7 +165,7 @@ run_pr() {
 
 # status.pr_opened を Done にする
 set_pr_opened() {
-  jq '. + {status: {pr_opened: "Done"}}' .claude/workflow.json >"$TMP/c.json" && mv "$TMP/c.json" .claude/workflow.json
+  jq '. + {status: {pr_opened: "Done"}}' .claude/dev-workflow/config.json >"$TMP/c.json" && mv "$TMP/c.json" .claude/dev-workflow/config.json
   git commit -q -am "chore: status"
 }
 
