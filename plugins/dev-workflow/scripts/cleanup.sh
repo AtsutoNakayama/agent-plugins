@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # PR がマージされた後の後片付け。マージを確かめてから、ワークツリーとローカルのブランチを削除し、
 # マージ先のブランチ（base_branch）を最新にする。
+# --abandon では、マージせずにやめた作業を片付ける（マージを確かめず、base_branch も更新しない）。
 # 何度実行しても同じ結果になる（既に無いワークツリー・ブランチは飛ばす）。
 #
 # 使い方: cleanup.sh [--branch NAME] [--remove-ignored] [--abandon] [--dry-run]
