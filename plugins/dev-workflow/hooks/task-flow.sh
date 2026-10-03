@@ -50,10 +50,11 @@ ${body}"
   added+=("$f")
 done
 
-# 上限を超えたら、知らせの分を空けて切る（jq は文字単位で切るので、日本語の途中で切れない）
-jq -rn --arg out "$out" --argjson limit "$limit" --arg files "${added[*]+"${added[*]}"}" '
+# 上限を超えたら、知らせの分を空けて切る（jq は文字単位で切るので、日本語の途中で切れない）。
+# ファイルは空白を含むパスでも切れ目が分かるよう「、」で区切る
+jq -rn --arg out "$out" --argjson limit "$limit" '
   if ($out | length) <= $limit then $out
   else
-    "\n\n（上限の \($limit) 文字を超えたので、ここで切りました。続きは次のファイルを読んでください: \($files)）" as $note
+    "\n\n（上限の \($limit) 文字を超えたので、ここで切りました。続きは次のファイルを読んでください: \($ARGS.positional | join("、"))）" as $note
     | $out[0:($limit - ($note | length))] + $note
-  end'
+  end' --args ${added[@]+"${added[@]}"}

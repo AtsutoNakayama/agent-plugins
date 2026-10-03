@@ -87,7 +87,7 @@ pos() {
   awk 'BEGIN { for (i = 0; i < 12000; i++) printf "あ"; print "" }' >"$REPO/.claude/dev-workflow/task-flow.md"
   run_hook
   assert_success
-  assert_equal "$(jq -Rrs 'rtrimstr("\n") | length' <<<"$output")" 10000
+  assert_equal "$(jq -rn --arg s "$output" '$s | length')" 10000
   assert_output --partial "$(cat "$DEFAULT")"
   assert_output --partial "続きは次のファイルを読んでください: $REPO/.claude/dev-workflow/task-flow.md）"
 }
@@ -96,4 +96,14 @@ pos() {
   run jq -r '.hooks.SessionStart[] | select(.matcher == null) | .hooks[].command' "$HOOKS/hooks.json"
   assert_success
   assert_output --partial 'hooks/task-flow.sh'
+}
+
+@test "切ったときの知らせでは、読み直すファイルを「、」で区切る（空白を含むパスでも切れ目が分かる）" {
+  export WORKFLOW_USER_DIR="$TMP/John Smith"
+  mkdir -p "$WORKFLOW_USER_DIR"
+  echo "個人の追記です" >"$WORKFLOW_USER_DIR/task-flow.md"
+  awk 'BEGIN { for (i = 0; i < 12000; i++) printf "あ"; print "" }' >"$REPO/.claude/dev-workflow/task-flow.md"
+  run_hook
+  assert_success
+  assert_output --partial "続きは次のファイルを読んでください: $WORKFLOW_USER_DIR/task-flow.md、$REPO/.claude/dev-workflow/task-flow.md）"
 }
