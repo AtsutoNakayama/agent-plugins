@@ -79,6 +79,22 @@ SH
   assert_output --partial "$REPO/.claude/workflow.json → $REPO/.claude/dev-workflow/config.json、$REPO/.claude/review → $REPO/.claude/dev-workflow/review/、"
 }
 
+@test "個人の設定が git に無視されていなければ、.gitignore に足すよう促す" {
+  fake_gh
+  export FAKE_SCOPES="project"
+  echo '.claude/workflow.local.json' >.gitignore
+  echo '{}' >.claude/workflow.local.json
+  run_script doctor.sh
+  assert_success
+  assert_equal "$(jq -c '.checks[] | select(.name == "local-ignored") | [.ok, .level]' <<<"$output")" '[false,"warn"]'
+  assert_output --partial "個人の設定が git に無視されていません。.gitignore に .claude/dev-workflow/config.local.json を足してください"
+  # 移して .gitignore も直せば促さない
+  mv .claude/workflow.local.json .claude/dev-workflow/config.local.json
+  echo '.claude/dev-workflow/config.local.json' >.gitignore
+  run_script doctor.sh
+  assert_equal "$(jq '[.checks[] | select(.name == "local-ignored")] | length' <<<"$output")" 0
+}
+
 @test "古い置き場所に Markdown の無いディレクトリがあるだけなら、促さない" {
   fake_gh
   export FAKE_SCOPES="project"
