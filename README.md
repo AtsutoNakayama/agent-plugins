@@ -96,6 +96,8 @@ plugins/dev-workflow/scripts/setup/setup-labels.sh --dry-run
 
 定義は `plugins/dev-workflow/defaults/labels.json`。リポジトリに `.claude/labels.json` を置くとそちらを使います（`--file` でも指定できます）。`--repo` で別のリポジトリを指定したときは、そのリポジトリの既定のブランチにある `.claude/labels.json` を読みます。独自の `.claude/labels.json` には `breaking` ラベルも定義してください（無いと破壊的変更の Issue を起票できないので、警告を出します）。
 
+削除するのは、GitHub が新しいリポジトリに作る既定のラベル（`accessibility`・`bug`・`enhancement` など）のうち、定義に無いものだけです。既定のラベルを残したいときは、そのラベルを定義に書くか、`--keep-defaults` ですべて残してください。
+
 ### Project
 
 ```bash
