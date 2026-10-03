@@ -56,6 +56,18 @@ jobs:
         run: |
           jq empty .claude-plugin/marketplace.json plugins/*/.claude-plugin/plugin.json plugins/*/defaults/*.json \
             release-please-config.json .release-please-manifest.json
+      - name: claude plugin validate
+        # Claude Code がマニフェストとスキルを受け付けるかを検査する。マーケットプレイス（.）だけを指定すると
+        # plugin.json までしか検査されず、スキル（SKILL.md）などは検査されないので、プラグイン本体も指定する。
+        # --strict で知らないキーなどの警告もエラーにする。
+        # 更新で検査が厳しくなって急に落ちないように、バージョンを固定する。上げるときは手元で両方が通ることを確かめる。
+        # validate はログインしなくても動く
+        env:
+          CLAUDE_CODE_VERSION: 2.1.288
+        run: |
+          npm install -g "@anthropic-ai/claude-code@${CLAUDE_CODE_VERSION}"
+          claude plugin validate --strict .
+          claude plugin validate --strict plugins/dev-workflow
       - name: plugin version
         # version は release-please がリリース PR で manifest と plugin.json を同時に上げる。手で plugin.json だけを変えると食い違う
         run: |
