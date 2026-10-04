@@ -174,8 +174,8 @@ fi
 desired="$(jq -n --argjson ex "$existing" --arg name "$RULESET_NAME" --arg ref "refs/heads/$branch" \
   --arg n "$approvals" --argjson checks "$checks_json" '
   ([($ex // {}).rules // [] | .[] | select(.type == "pull_request")][0].parameters // {}) as $old
-  | ["deletion", "non_fast_forward", "pull_request"]
-    + (if ($checks | length) > 0 then ["required_status_checks"] else [] end) as $managed
+  | (["deletion", "non_fast_forward", "pull_request"]
+    + (if ($checks | length) > 0 then ["required_status_checks"] else [] end)) as $managed
   | {
       name: $name,
       target: "branch",
