@@ -169,7 +169,7 @@ agent-plugins/
 | `review-perspective-add` | 観点ファイルを作る | ほかの層の同じ名前の観点の置き換え（作るのは手元のファイルだけなので、それ以外は確認しない。置く層はユーザーが選ぶ） |
 | `commit` | 規約に沿ったコミット。実装中に論理的な区切りごとに呼ぶ | なし（手元のコミットだけ） |
 | `adr-create` | 設計上の判断を、MADR 4.0.0 の書式の ADR として残す。判断に合うテンプレートを選び、中身まで書く | なし（作るのは手元のファイルだけ） |
-| `pr-create` | push と PR 作成 | push と PR の作成 |
+| `pr-create` | push と PR 作成。Issue の「やること」のうち差分で済んだ項目にチェックを付ける | push と PR の作成、Issue のチェック（1回の確認で行う） |
 | `branch-update` | PR のブランチに、設定済みの `base_branch` の最新状態を取り込む。遅れを調べ（`branch-status.sh`）、`origin/<base_branch>` を merge し（rebase と強制 push は使わない）、衝突を直し、リポジトリのテストとチェックを通してから push し、CI が通り直るのを待つ | push（取り込んだコミットとチェックの結果を見せる）。判断できない衝突は聞く |
 | `task-cancel` | やらない Issue を、理由と参照先をコメントして not planned か duplicate で閉じる。着手していれば、PR を閉じ、リモートと手元のブランチ・ワークツリーを削除する | 閉じる・削除する（理由のコメントと、失う作業を含めて1回で確認する） |
 | `task-finish` | ワークツリーとローカルブランチを削除し、main を最新にして（`git pull --ff-only`）、PR が閉じる Issue が閉じたかを伝える | なし（作業が失われるときは `cleanup.sh` が何も消さずに止まる。git が無視するファイルを消すときだけ確認を取る） |
@@ -276,7 +276,7 @@ Todo が増えたとき、どれから着手するか、同時に進めてよい
 | `review-perspectives.sh` | 観点ファイルを集める。`--auto`（または `--base` と `--target`）を渡すと、観点ごとの実行する条件（`types`・`paths`・`issue`・`base_ahead`）に当てはまらない観点を外し、理由つきで `skipped` に出す |
 | `review-perspective-add.sh` | 観点ファイルを作る。同じ層に同じ名前のファイルがあれば上書きせずに止まり、ほかの層にあれば `--override` が無いかぎり止まる（上位の層にあり、作っても使われないときは、下位の層にあるときと別の終了コードで知らせる）。リポジトリの層に作ったときは、そのブランチと、作業用のブランチの上か（`work_branch`）も出力する |
 | `adr-create.sh` | ADR をテンプレートから作る（ファイル名の決定、`date` と `issue` の記入）。`--supersedes` で置き換える ADR の `status` の行だけを書き換える。同じファイル名があれば上書きせずに止まる |
-| `pr-create.sh` | PR を作る |
+| `pr-create.sh` | PR を作る。`--check` で指定した Issue のチェックリストの項目にだけチェックを付ける（既にある PR に push するときも付ける。ほかの行は変えない） |
 | `issue-cancel.sh` | 理由をコメントし、Issue を not planned か duplicate で閉じる。`--branch` で、そのブランチの開いている PR を閉じ、リモートのブランチを削除する。理由が空、または違う理由で既に閉じていれば何もせずに止まる |
 | `branch-status.sh` | 作業用のブランチの、base_branch に対する遅れ・先行、追跡しているファイルの未コミットの変更（未追跡のファイルは除く）、origin のブランチとのずれ、開いている PR のマージ状態（`merge_state`）を調べる。変更はしない（origin からの取得だけ行う） |
 | `cleanup.sh` | マージを確認し、ワークツリーとブランチを削除し、main を最新にし、PR が閉じる Issue の状態（`issues`）を出す。未コミットの変更や git が無視するファイルがあれば、何も消さずに止まる（無視するファイルは `--remove-ignored` で消せる）。`--abandon` では、マージの確認・main の更新・Issue の状態の確認を飛ばし、失うものを一覧にして削除する |

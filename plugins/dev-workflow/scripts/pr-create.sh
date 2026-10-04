@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # 今のブランチを push し、Issue に紐付けた PR を作る。
-# 何度実行しても同じ結果になる（そのブランチの開いた PR が既にあれば、push だけする。
+# 何度実行しても同じ結果になる（そのブランチの開いた PR が既にあれば、push と（--check があれば）Issue のチェックだけを行い、
 # その PR のタイトル・本文・ラベル・Project の列は変えない）。
 #
 # 使い方: pr-create.sh --issue N --body-file PATH [--title TEXT] [--check N]... [--dry-run]
@@ -10,7 +10,8 @@
 #                     （Issue に breaking ラベルがあれば <type>!: <Issue のタイトル>）
 #   --check N         Issue の本文のチェックリストの N 番目（出力の tasks の index。1 から）の項目にチェックを付ける。
 #                     繰り返し指定できる。既にチェックがある項目は変えない
-#   --dry-run         push も PR の作成もせず、行う予定の操作と PR のタイトル・本文だけを出力する
+#   --dry-run         push も PR の作成も Issue のチェックもせず、行う予定の操作と PR のタイトル・本文、
+#                     Issue のチェックリストの項目（tasks）を出力する
 #
 # 行うこと:
 #   1. タイトルを設定の pr.title_pattern で検証する。type は Issue の type ラベルと同じにする。
