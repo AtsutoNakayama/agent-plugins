@@ -235,9 +235,11 @@ dw_project_fields() {
 # Issue などを Project に追加し、項目の id（node id）を出力する。既に入っていれば既存の項目が返る。
 # Project の自動追加と同時に走ると、片方が「Content already exists」で失敗する。再試行すれば既存の項目が返るので、
 # その失敗のときだけ、待って最大3回まで試す（待つ秒数は DW_RETRY_SLEEP、既定 1）。
+# それでも「Content already exists」で失敗したときは、項目が既にあるので、gh project item-list で探して、その id を使う。
+# 見つからないとき、ほかのエラーのときは、エラーを出して止まる。
 # 使い方: dw_project_add_item <所有者> <番号> <Issue などの URL>
 dw_project_add_item() {
-  local out errfile tries=0
+  local out errfile tries=0 existing
   errfile="$(mktemp)"
   while :; do
     if out="$(gh project item-add "$2" --owner "$1" --url "$3" --format json 2>"$errfile")"; then
@@ -246,14 +248,35 @@ dw_project_add_item() {
       return
     fi
     tries=$((tries + 1))
-    if [ "$tries" -lt 3 ] && grep -q 'Content already exists' "$errfile"; then
-      sleep "${DW_RETRY_SLEEP:-1}"
-      continue
+    if grep -q 'Content already exists' "$errfile"; then
+      if [ "$tries" -lt 3 ]; then
+        sleep "${DW_RETRY_SLEEP:-1}"
+        continue
+      fi
+      if existing="$(dw_project_find_item "$1" "$2" "$3")" && [ -n "$existing" ]; then
+        rm -f "$errfile"
+        printf '%s\n' "$existing"
+        return
+      fi
     fi
     cat "$errfile" >&2
     rm -f "$errfile"
     return 1
   done
+}
+
+# Project の項目から、URL が <Issue などの URL> の項目の id（node id）を探して出力する。無ければ何も出さずに失敗する。
+# URL が応答に無い古い gh のために、リポジトリと番号でも照合する。
+# 使い方: dw_project_find_item <所有者> <番号> <Issue などの URL>
+dw_project_find_item() {
+  local list id
+  list="$(gh project item-list "$2" --owner "$1" --limit 1000 --format json 2>/dev/null)" || return 1
+  id="$(jq -r --arg u "$3" '
+    ($u | capture("^https://[^/]+/(?<repo>[^/]+/[^/]+)/(issues|pull)/(?<n>[0-9]+)$")? // {repo: "", n: "0"}) as $k
+    | [(.items // [])[] | select(.content.url == $u
+        or (.content.number == ($k.n | tonumber) and .content.repository == $k.repo))][0].id // empty' <<<"$list")" || return 1
+  [ -n "$id" ] || return 1
+  printf '%s\n' "$id"
 }
 
 # 項目の値を設定する。値は gh project item-edit のオプションで渡す（--single-select-option-id <id> や --number <数>。
