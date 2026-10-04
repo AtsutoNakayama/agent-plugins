@@ -6,6 +6,7 @@
 #   --number N              既存の Project に接続する
 #   --title TITLE           Project の名前で探し、無ければその名前で作る（既定: リポジトリ名）
 #   --require-approval N    マージに必要な承認の数（既定: 今の値のまま。新しく作るときは 0）
+#   --required-check NAME   マージの前に成功を求めるチェックの名前（繰り返し指定できる。既定: 必須のチェックに触れない）
 #   --dry-run               変更せず、行う予定の操作だけを出力する
 #
 # 行うこと:
@@ -40,7 +41,7 @@ while [ $# -gt 0 ]; do
       project_args+=("$1" "$2")
       shift 2
       ;;
-    --require-approval)
+    --require-approval | --required-check)
       need_value "$@"
       repo_args+=("$1" "$2")
       shift 2

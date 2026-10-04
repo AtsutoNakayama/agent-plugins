@@ -21,7 +21,7 @@ git submodule update --init   # 初回だけ
 1. **Issue を起票します**（`/dev-workflow:task-create`）。作業はすべて Issue から始めます。
 2. **着手します**（`/dev-workflow:task-start`）。ブランチとワークツリー（`.claude/worktrees/<ブランチ名>`）ができるので、以後はその中で作業します。
 3. **コミットします**（`/dev-workflow:commit`）。全部を直し終えてから1回でコミットするのではなく、論理的な区切り（1つの変更を仕上げてテストが通ったところ）ごとにコミットします。
-4. **PR を出します**（`/dev-workflow:pr-create`）。出す前に、下の「テストとチェック」がすべて通ることを確かめます。
+4. **PR を出します**（`/dev-workflow:pr-create`）。出す前に、下の「テストとチェック」がすべて通ることを確かめます。main が先に進んだ PR は、最新の main を取り込んで CI が通り直すまでマージできません（下の「コミットと PR の規約」のマージの条件）。
 5. **後片付けをします**（`/dev-workflow:task-finish`）。PR がマージされたら、ワークツリーとローカルのブランチを削除し、main を最新にします。
 
 レビューの観点（`.claude/dev-workflow/review/`）の追加・修正は、そのきっかけになったタスクの PR に含め、別の Issue にはしません。`/dev-workflow:review-perspective-add` は、今のタスクのワークツリーで実行します。
@@ -32,6 +32,7 @@ Issue をやめることにしたときは、`/dev-workflow:task-cancel` を使�
 
 - コミットメッセージは [Conventional Commits](https://www.conventionalcommits.org/ja/v1.0.0/)（`<type>(<scope>): <要約>`）で書きます。type は `plugins/dev-workflow/defaults/workflow.json` の `commit.types` のどれかです。
 - PR のタイトルは `<type>: <Issueのタイトル>` とし、本文に `Closes #<Issue番号>` を付けます。
+- マージの条件：main のルールセットは、`lint-result` と `test-result` の成功と、PR が最新の main を取り込んでいることを求めます。別の PR が先にマージされて main が進んだら、PR に main を取り込み（PR の「ブランチを更新」か `git merge origin/main`）、CI が通り直すのを待ってからマージします。古い main で通った CI の結果のままだと、先にマージされた変更と組み合わさって main が壊れることがあるためです（#108）。
 - マージはスカッシュのみです。main への直接 push・強制 push はルールセットとフックで禁止されています。
 - プラグインのラベルの定義（`plugins/dev-workflow/defaults/labels.json`）を変えた PR では、このリポジトリでも `plugins/dev-workflow/scripts/setup/setup-labels.sh` を実行して、ラベルを定義に揃えます。定義を変えても、既にあるリポジトリのラベルは変わらず、足したラベルが無いと起票などで止まります（`doctor.sh` が足りないラベルを知らせます）。
 - プラグインのバージョンは release-please がリリース PR で上げます。`plugin.json` の `version` や `.release-please-manifest.json` を手で変えないでください。
@@ -82,11 +83,11 @@ CodeRabbit の全体のレビューは、PR を作ったときの1回だけで�
 
 ## テストとチェック
 
-PR を出す前に、次がすべて通ることを確かめます。どれも CI でも実行します（shellcheck・actionlint・`claude plugin validate` などは `.github/workflows/lint.yml`、bats は `.github/workflows/test.yml`）。ただし、`README.md`・`docs/`・Issue と PR のテンプレート（`.github/ISSUE_TEMPLATE/`・`.github/pull_request_template.md`）だけを変えた PR では、CI は動きません。
+PR を出す前に、次がすべて通ることを確かめます。どれも CI でも実行します（shellcheck・actionlint・`claude plugin validate` などは `.github/workflows/lint.yml`、bats は `.github/workflows/test.yml`）。ただし、`README.md`・`docs/`・Issue と PR のテンプレート（`.github/ISSUE_TEMPLATE/`・`.github/pull_request_template.md`）だけを変えた PR では、重いジョブ（lint・test）を飛ばします。ワークフローは動いて、必須のチェック（`lint-result`・`test-result`）は成功になるので、これまでどおりマージできます。
 
 ```bash
 # tests/lib は外部のライブラリ（git submodule）なので対象にしない
-find plugins tests -path tests/lib -prune -o -type f \( -name '*.sh' -o -name '*.bash' \) -print0 | xargs -0 shellcheck -x
+find plugins tests .github/scripts -path tests/lib -prune -o -type f \( -name '*.sh' -o -name '*.bash' \) -print0 | xargs -0 shellcheck -x
 shellcheck -s bash tests/*.bats
 actionlint                         # 入っていなければ docker run --rm -v "$PWD:/repo" -w /repo rhysd/actionlint:1.7.12
 bats tests/
@@ -105,7 +106,7 @@ shellcheck は版によって出す指摘が違うので、CI と同じ版（`.g
 
 ```bash
 docker run --rm -v "$PWD:/mnt" -w /mnt koalaman/shellcheck-alpine:v0.11.0 sh -c '
-  find plugins tests -path tests/lib -prune -o -type f \( -name "*.sh" -o -name "*.bash" \) -print0 | xargs -0 -r shellcheck -x &&
+  find plugins tests .github/scripts -path tests/lib -prune -o -type f \( -name "*.sh" -o -name "*.bash" \) -print0 | xargs -0 -r shellcheck -x &&
   shellcheck -s bash tests/*.bats
 '
 ```
