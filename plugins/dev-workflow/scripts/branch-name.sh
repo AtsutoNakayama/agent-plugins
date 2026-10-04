@@ -5,7 +5,7 @@
 #   branch-name.sh --issue N --slug TEXT [--type TYPE]   ブランチ名を作る
 #   branch-name.sh --check NAME                          ブランチ名が規約（文字と branch.pattern の形）に合うか確かめる
 #
-#   --issue N      Issue の番号
+#   --issue N      Issue の番号（#N でもよい）
 #   --slug TEXT    短い説明（英語）。小文字にし、英数字以外は - にして 40 文字までに整える
 #   --type TYPE    type（既定: Issue の type ラベル。labels.types のどれか1つが付いている必要がある）
 #
@@ -84,6 +84,8 @@ if [ -n "$check" ]; then
 fi
 
 [ -n "$issue" ] || dw_die "--issue は必須です" 64
+# スキルの引数の #12 も受ける。# だけは番号が無いので、そのまま残して数字以外として拒否する
+case "$issue" in "#"?*) issue="${issue#\#}" ;; esac
 case "$issue" in
   *[!0-9]*) dw_die "--issue には数字を指定してください: $issue" 64 ;;
 esac

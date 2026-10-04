@@ -1,6 +1,7 @@
 ---
 name: task-status
 description: Issue を GitHub Project の任意の列へ移す。利用者が追加した列（例：Blocked）へも移せる。「#12 を Blocked に移して」「#12 を Todo に戻して」のように、Issue の列を指定して移すときに使う。作業の開始（task-start）や PR の作成（pr-create）のように、スキルが自動で列を移す場面には使わない。
+argument-hint: "[Issue番号] [列名]"
 ---
 
 # 列の移動
@@ -17,7 +18,7 @@ Issue を Project の Status の指定された列へ移す。スキルが自動
 
 ### 1. Issue と列を読み取る
 
-依頼から Issue の番号と移す先の列名を読み取る。
+引数があれば、Issue の番号と移す先の列名として使う（`12 Blocked` のように、番号（`12` でも `#12` でもよい）、列名の順）。引数が無ければ、依頼の文章から読む。それでも分からなければ、次のようにする。
 
 - Issue の番号が無ければ、今いるブランチ名（`git branch --show-current`）の、`branch.pattern`（`${CLAUDE_PLUGIN_ROOT}/scripts/config.sh` で読める）の `{issue_number}` の位置から読む。ブランチ名が `branch.pattern` に合わない、または `branch.pattern` に `{issue_number}` が無ければ、ブランチ名の数字を推測で使わずにユーザーに聞く（確認を取らずに移すので、読み違えると別の Issue が移る）
 - 列名は、依頼に書かれたとおりに使う（「Blocked に」なら `Blocked`）。列名が無ければユーザーに聞く。日本語の言い換え（「保留に」など）から列名を推測しない

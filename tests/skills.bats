@@ -61,3 +61,13 @@ frontmatter() { awk 'NR == 1 && $0 == "---" { on = 1; next } on && $0 == "---" {
   grep -q 'きっかけになったタスクの PR に含める' "$BATS_TEST_DIRNAME/../plugins/dev-workflow/review/issue-requirements.md" \
     || fail "issue-requirements に、観点の追加・修正を範囲外として指摘しないことが書かれていません"
 }
+
+@test "Issue の番号を取るスキルは、引数で番号を受け取れる（設計書 §8）" {
+  for name in task-start task-status task-finish task-cancel; do
+    f="$SKILLS/$name/SKILL.md"
+    frontmatter "$f" | grep -q '^argument-hint: .*Issue番号' \
+      || fail "${name} の frontmatter に argument-hint（Issue番号）がありません"
+    grep -q '引数があれば' "$f" || fail "${name} に、引数の Issue の番号の扱い（引数があれば…）が書かれていません"
+    grep -qF "\`#12\`" "$f" || fail "${name} に、12 と #12 のどちらも受けることが書かれていません"
+  done
+}

@@ -19,7 +19,7 @@
 #   --base    基点のコミット。差分のファイルは git diff <基点> で読む
 #   --target  マージ先の ref（例: origin/main）。base_ahead の条件で、基点より進んでいるかを見る
 #   --type    変更の type。分からなければ省く
-#   --issue   作業中の Issue の番号。Issue が無ければ省く
+#   --issue   作業中の Issue の番号（#N でもよい）。Issue が無ければ省く
 #
 # 層（下ほど優先。同じ名前の観点は上位の層のファイルが使われる）:
 #   3. プラグインに同梱する共通の観点   review/*.md
@@ -151,6 +151,8 @@ if [ "$auto" = true ] || [ -n "$base" ] || [ -n "$target" ] || [ -n "$type" ] ||
   if [ -z "$base" ] || [ -z "$target" ]; then
     dw_die "条件で絞り込むには --base と --target の両方を渡してください" 64
   fi
+  # スキルの引数の #12 も受ける。# だけは番号が無いので、そのまま残して数字以外として拒否する
+  case "$issue" in "#"?*) issue="${issue#\#}" ;; esac
   case "$issue" in
     "" | *[!0-9]*) [ -z "$issue" ] || dw_die "--issue は Issue の番号にしてください: ${issue}" 64 ;;
   esac
