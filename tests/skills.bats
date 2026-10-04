@@ -98,6 +98,10 @@ frontmatter() { awk 'NR == 1 && $0 == "---" { on = 1; next } on && $0 == "---" {
     grep -q "$choice" <<<"$step2" || fail "重複があるときの選択肢「${choice}」がありません"
   done
   grep -q '親の候補は、重なりとして数えない' <<<"$step2" || fail "指定された親と親の候補を、重なりから外すことが書かれていません"
+  grep -q 'サブ Issue を既に持つ Issue.*だけを候補にする' <<<"$step2" \
+    || fail "親の候補が、サブ Issue を持つ仕様の Issue に限られていません（作業の Issue を親にすると Story Point が消える）"
+  grep -q 'サブ Issue を持たない Issue は.*重なりとして扱う' <<<"$step2" \
+    || fail "サブ Issue を持たない広い Issue を重なりとして扱うことが書かれていません"
   grep -q '明らかな親' "$f" && fail "親の候補が、探した結果ではなく「明らかな親」のままです"
   step3="$(awk '/^### 3\./ { on = 1; next } /^### 4\./ { on = 0 } on' "$f")"
   grep -q '手順2で探した結果' <<<"$step3" || fail "手順3の確認に、探した結果がありません"

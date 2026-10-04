@@ -32,8 +32,8 @@ description: 依頼の内容から Issue を起票し、type ラベルを付け�
 
 下書きの前に、開いている Issue を読み（`gh issue list --state open --limit 1000 --json number,title,labels`）、次を探す。タイトルだけで判断できないものは、`gh issue view <番号> --json number,title,body,parent` で本文も読む。
 
-- **重複・重なり**：依頼と同じ内容の Issue や、やることの一部が重なる Issue。依頼で指定された親と、下の親の候補は、重なりとして数えない（親のやることには子の作業が含まれるため）
-- **親の候補**：依頼が、その一部にあたる仕様の Issue（サブ Issue を持つ Issue や、依頼より広い仕様を書いた Issue）
+- **親の候補**：依頼が、その一部にあたる仕様の Issue。サブ Issue を既に持つ Issue（`gh api repos/{owner}/{repo}/issues/<番号> --jq .sub_issues_summary.total` が1以上）だけを候補にする。サブ Issue を持たない Issue は、依頼より広い内容でも、それ自体が着手する作業の Issue なので、親の候補にせず、次の重なりとして扱う（親にすると、その Issue の Story Point が空欄になり、同じ作業を二重に数えることになる）
+- **重複・重なり**：依頼と同じ内容の Issue や、やることの一部が重なる Issue（依頼を含む、サブ Issue を持たない広い Issue も含む）。依頼で指定された親と、上の親の候補は、重なりとして数えない（親のやることには子の作業が含まれるため）
 
 重複・重なりがあれば、下書きの前に AskUserQuestion で、どうするかを聞く。質問の中と各選択肢の preview に、重なる Issue の番号・タイトルと、重なる部分を入れる（質問の中にも入れる。設計書 §8）。選択肢は次の3つ。選択肢の説明には、選ぶと何が起きるかを書く。
 
