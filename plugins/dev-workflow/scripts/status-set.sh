@@ -2,7 +2,7 @@
 # Issue の Project の Status を移す。移す先は役割（todo / start / pr_opened / done）か列名で指定する。
 #
 # 使い方: status-set.sh --issue N --to ROLE|COLUMN [--item-id ID] [--dry-run]
-#   --issue N      Issue の番号
+#   --issue N      Issue の番号（#N でもよい）
 #   --to ROLE      役割なら設定の status.<役割> の列、それ以外は列名として扱う
 #   --item-id ID   この Project での Issue の項目の id（node id）。呼ぶ側が既に知っているとき（issue-create.sh）に渡す。
 #                  項目と今の列を読まない（GraphQL を省く）ので、from は null になり、今の列にかかわらず設定する
@@ -45,6 +45,8 @@ while [ $# -gt 0 ]; do
 done
 [ -n "$issue" ] || dw_die "--issue は必須です" 64
 [ -n "$to" ] || dw_die "--to は必須です" 64
+# スキルの引数の #12 も受ける。# だけは番号が無いので、そのまま残して数字以外として拒否する
+case "$issue" in "#"?*) issue="${issue#\#}" ;; esac
 case "$issue" in
   *[!0-9]*) dw_die "--issue には数字を指定してください: $issue" 64 ;;
 esac

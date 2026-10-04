@@ -15,6 +15,9 @@
   "story_point": {
     "field": "Story Point"
   },
+  "review": {
+    "max_rounds": 3
+  },
   "sub_issues": {
     "max_depth": 3
   },

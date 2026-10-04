@@ -1,6 +1,7 @@
 ---
 name: task-cancel
 description: やらないことにした Issue や誤って起票した Issue を、作業せずに取りやめる。理由と参照先をコメントしてから not planned（重複なら duplicate）で閉じ、Project からは外さず Story Point も残す。着手していれば、PR を閉じ、リモートと手元のブランチ・ワークツリーも片付ける。「#12 はやらないので閉じて」「#12 は誤って起票したので取り消して」のように使う。PR がマージされた後の片付けには使わない（それは task-finish）。
+argument-hint: "[Issue番号]"
 ---
 
 # 作業の取りやめ
@@ -20,7 +21,7 @@ Project からは外さず、Story Point も変えない。後からボードで
 
 ### 1. Issue を読む
 
-`gh issue view <番号> --json number,title,body,state,stateReason` で Issue を読む。番号が分からなければユーザーに聞く。既に閉じていれば止める。ただし、前に取りやめの途中で止まった（Issue は閉じたが、PR やブランチが残った）続きなら、同じ理由で手順4から進める。
+引数があれば Issue の番号として使う（`12` でも `#12` でもよい）。引数が無ければ、依頼の文章から番号を読む。それでも分からなければユーザーに聞く。`gh issue view <番号> --json number,title,body,state,stateReason` で Issue を読む。既に閉じていれば止める。ただし、前に取りやめの途中で止まった（Issue は閉じたが、PR やブランチが残った）続きなら、同じ理由で手順4から進める。
 
 ### 2. やめた作業のブランチを探す
 

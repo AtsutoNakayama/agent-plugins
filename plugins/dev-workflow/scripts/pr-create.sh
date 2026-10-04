@@ -4,7 +4,7 @@
 # その PR のタイトル・本文・ラベル・Project の列は変えない）。
 #
 # 使い方: pr-create.sh --issue N --body-file PATH [--title TEXT] [--dry-run]
-#   --issue N         紐付ける Issue の番号
+#   --issue N         紐付ける Issue の番号（#N でもよい）
 #   --body-file PATH  PR の本文のファイル。- なら標準入力
 #   --title TEXT      PR のタイトル。省略すると <Issue の type ラベル>: <Issue のタイトル>
 #                     （Issue に breaking ラベルがあれば <type>!: <Issue のタイトル>）
@@ -55,6 +55,8 @@ while [ $# -gt 0 ]; do
   esac
 done
 [ -n "$issue" ] || dw_die "--issue は必須です" 64
+# スキルの引数の #12 も受ける。# だけは番号が無いので、そのまま残して数字以外として拒否する
+case "$issue" in "#"?*) issue="${issue#\#}" ;; esac
 case "$issue" in
   *[!0-9]*) dw_die "--issue には数字を指定してください: $issue" 64 ;;
 esac
