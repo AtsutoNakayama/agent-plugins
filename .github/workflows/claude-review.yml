@@ -15,11 +15,11 @@ on:
     types: [created, edited]
   schedule:
     - cron: "*/30 * * * *"
-  workflow_dispatch:
 
 # コメントを書くのに要る権限だけにする。Claude は読み取り専用の権限で動かし、コメントはワークフローが書く
 permissions:
   contents: read
+  issues: read
   pull-requests: write
 
 env:
@@ -136,8 +136,14 @@ jobs:
           set -euo pipefail
           mkdir -p "$REVIEW_DIR"
           # 差分が大きすぎる（約2万行）と gh pr diff は HTTP 406 で失敗し、30分ごとに失敗を繰り返すので、
-          # その旨を目印付きでコメントして、同じコミットには動かないようにする
-          if ! gh pr diff "$PR_NUMBER" --repo "$GITHUB_REPOSITORY" > "${REVIEW_DIR}/pr.diff"; then
+          # そのときだけ目印付きでコメントして、同じコミットには動かないようにする。
+          # 一時的な API のエラーなどは、目印を付けずにジョブを失敗させ、次の機会に再試行する
+          if ! gh pr diff "$PR_NUMBER" --repo "$GITHUB_REPOSITORY" \
+            > "${REVIEW_DIR}/pr.diff" 2> "${REVIEW_DIR}/pr.diff.err"; then
+            if ! grep -q 'HTTP 406' "${REVIEW_DIR}/pr.diff.err"; then
+              cat "${REVIEW_DIR}/pr.diff.err" >&2
+              exit 1
+            fi
             printf '%s\n### Claude によるレビュー\n\n差分が大きすぎて取得できないため、レビューしませんでした。\n' "$MARKER" |
               gh pr comment "$PR_NUMBER" --repo "$GITHUB_REPOSITORY" --body-file -
             echo "ok=false" >> "$GITHUB_OUTPUT"
@@ -153,10 +159,11 @@ jobs:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           github_token: ${{ github.token }}
           allowed_bots: coderabbitai[bot]
-          # Claude は読み取りと、結果のファイルの書き込みだけ。コメントはあとのステップが書く
+          # Claude は読み取りと、結果のファイル（review.md）の書き込みだけ。コメントはあとのステップが書く。
+          # Write の絶対パスの規則は、先頭を // にする
           claude_args: >-
             --max-turns 30
-            --allowedTools "Read,Glob,Grep,Write"
+            --allowedTools "Read,Glob,Grep,Write(/${{ env.REVIEW_DIR }}/review.md)"
           prompt: |
             あなたはこのリポジトリの PR レビュアーです。PR #${{ matrix.pr }} の変更をレビューしてください。
 
