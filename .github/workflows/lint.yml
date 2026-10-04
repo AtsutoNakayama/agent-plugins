@@ -1,25 +1,13 @@
 name: Lint
 
-# プラグインの外にあるドキュメントだけの変更では動かさない。**.md でまとめて除外しないのは、
-# plugins/ の SKILL.md やテンプレートの .md をテストで使っているため。
-# 将来ルールセットで CI の成功を必須にするときは、paths-ignore で動かなかった PR のチェックが
-# 「待ち」のまま残ってマージできなくなるので、paths-ignore をやめるなどの対応が要る。
-# .github/workflows/** は入れない（ワークフローを変えた PR で actionlint を動かすため）。
-# paths-ignore は test.yml と同じリストにそろえず、lint が何を検査するかで決める。
+# ドキュメントだけの変更では、重いジョブを飛ばす（changes ジョブが判定する）。ワークフロー自体は paths-ignore で
+# 止めず、いつも動かす。ルールセットの必須のチェックにしているので、ワークフローが動かないとチェックが
+# 「待ち」のまま残ってマージできないため。必須のチェックは、最後に必ず動く lint-result ジョブ。
+# 何をドキュメントとするかは、.github/scripts/docs-only.sh にある。
 on:
   pull_request:
-    paths-ignore:
-      - README.md
-      - docs/**
-      - .github/ISSUE_TEMPLATE/**
-      - .github/pull_request_template.md
   push:
     branches: [main]
-    paths-ignore:
-      - README.md
-      - docs/**
-      - .github/ISSUE_TEMPLATE/**
-      - .github/pull_request_template.md
 
 # 同じ PR に続けて push したら、古い実行を取り消す。main への push は PR のときとの差を
 # 確かめるために残すので、コミットごとに別のグループにして取り消さない
@@ -28,7 +16,24 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
+  changes:
+    # ドキュメントだけの変更かを調べる。pull_request ではマージコミット（HEAD^ が main の先端）、push では
+    # main に入ったコミットを見るので、直前の1つ前まで取得する
+    runs-on: ubuntu-latest
+    outputs:
+      docs_only: ${{ steps.docs-only.outputs.docs_only }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 2
+      - name: docs only
+        id: docs-only
+        run: |
+          echo "docs_only=$(.github/scripts/docs-only.sh | jq -r .docs_only)" >> "$GITHUB_OUTPUT"
+
   lint:
+    needs: changes
+    if: needs.changes.outputs.docs_only != 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
@@ -53,7 +58,7 @@ jobs:
           # find が失敗したら（ディレクトリが無いなど）、検査したことにせず止める
           set -o pipefail
           # tests/lib は外部のライブラリ（git submodule）なので対象にしない
-          find plugins tests -path tests/lib -prune -o -type f \( -name '*.sh' -o -name '*.bash' \) -print0 \
+          find plugins tests .github/scripts -path tests/lib -prune -o -type f \( -name '*.sh' -o -name '*.bash' \) -print0 \
             | xargs -0 -r shellcheck -x
           shellcheck -s bash tests/*.bats
       - name: actionlint
@@ -69,7 +74,7 @@ jobs:
         # 失敗を「見つからない」と取り違えて通らないように、パイプでつながず grep 1つで調べて終了コードを見分ける
         run: |
           rc=0
-          grep -rnP '^(?!\s*#).*\$[A-Za-z_][A-Za-z0-9_]*[^\x00-\x7F]' --include='*.sh' --include='*.bash' --exclude-dir='bats-*' plugins tests || rc=$?
+          grep -rnP '^(?!\s*#).*\$[A-Za-z_][A-Za-z0-9_]*[^\x00-\x7F]' --include='*.sh' --include='*.bash' --exclude-dir='bats-*' plugins tests .github/scripts || rc=$?
           case "$rc" in
             0)
               # ${var} は展開せず、書き方の例としてそのまま出す
@@ -109,3 +114,21 @@ jobs:
             echo "plugin.json の version（${plugin}）が .release-please-manifest.json（${manifest}）と違います。version は release-please が上げるので、手で変えないでください" >&2
             exit 1
           fi
+
+  lint-result:
+    # ルールセットの必須のチェック。ドキュメントだけで lint を飛ばしたときも成功にし、
+    # changes か lint が失敗・取り消しになったときは失敗にする
+    if: always()
+    needs: [changes, lint]
+    runs-on: ubuntu-latest
+    steps:
+      - name: result
+        env:
+          CHANGES: ${{ needs.changes.result }}
+          DOCS_ONLY: ${{ needs.changes.outputs.docs_only }}
+          JOB: ${{ needs.lint.result }}
+        run: |
+          echo "changes: ${CHANGES}, docs_only: ${DOCS_ONLY}, lint: ${JOB}"
+          [ "$CHANGES" = success ] || exit 1
+          [ "$JOB" = success ] && exit 0
+          [ "$JOB" = skipped ] && [ "$DOCS_ONLY" = true ]
