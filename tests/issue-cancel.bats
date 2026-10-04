@@ -29,6 +29,7 @@ setup_cancel() {
 sub_issue() {
   jq -nc --argjson n "$1" --arg s "$2" --argjson t "${3:-0}" --arg r "${4:-me/demo}" '{number: $n, title: "子 \($n)",
     state: $s, html_url: "https://github.com/\($r)/issues/\($n)", url: "https://api.github.com/repos/\($r)/issues/\($n)",
+    repository_url: "https://api.github.com/repos/\($r)",
     sub_issues_summary: {total: $t}}'
 }
 
@@ -458,7 +459,8 @@ writes() { grep -oE '^(issue-comment|issue-close|pr-comment|pr-close|api-delete)
 @test "github.com 以外のホスト（GHES など）の子も、開いている子孫として数える" {
   setup_cancel
   jq -n '[{number: 50, title: "子 50", state: "open", html_url: "https://ghe.example.com/me/demo/issues/50",
-    url: "https://ghe.example.com/api/v3/repos/me/demo/issues/50", sub_issues_summary: {total: 0}}]' >"$FIX/sub-issues-17.json"
+    url: "https://ghe.example.com/api/v3/repos/me/demo/issues/50", repository_url: "https://ghe.example.com/api/v3/repos/me/demo",
+    sub_issues_summary: {total: 0}}]' >"$FIX/sub-issues-17.json"
   run_script issue-cancel.sh --issue 17 --reason "やめます"
   assert_failure 2
   assert_output --partial "開いている子の Issue（#50）があります"

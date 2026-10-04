@@ -133,8 +133,8 @@ if [ "$(jq -r .state <<<"$found")" != OPEN ]; then
   fi
 fi
 
-# 開いている子孫（サブ Issue とその下）。子は別のリポジトリにもありうるので、たどるパスも、子のリポジトリ（ref）も、
-# REST の url（API の URL。ホストによらず .../repos/OWNER/NAME/issues/N）から取る。
+# 開いている子孫（サブ Issue とその下）。子は別のリポジトリにもありうるので、ホストによらない API の URL から、
+# たどるパスは url（.../repos/OWNER/NAME/issues/N）、子のリポジトリ（ref）は repository_url（.../repos/OWNER/NAME）から取る。
 # 浅いものから順に読み、閉じるときは深いものから閉じる（子を残したまま親が閉じた状態にしない）
 # 使い方: sub_issues_of <repos/OWNER/NAME/issues/N> → 子の配列
 sub_issues_of() {
@@ -149,7 +149,7 @@ while [ "$(jq length <<<"$level")" -gt 0 ] && [ "$depth" -lt 8 ]; do
   depth=$((depth + 1))
   open_subs="$(jq -c --argjson l "$level" --arg nwo "$repo_nwo" '. + ($l | map(select(.state == "open") | {
     number, title, url: .html_url,
-    ref: ((.url | sub("^.*?/repos/"; "") | sub("/issues/[0-9]+$"; "")) as $r
+    ref: ((.repository_url | sub("^.*/repos/"; "")) as $r
       | if $r == $nwo then "#\(.number)" else "\($r)#\(.number)" end)}))' <<<"$open_subs")"
   next='[]'
   for path in $(jq -r '.[] | select((.sub_issues_summary.total // 0) > 0) | .url | sub("^.*?/repos/"; "repos/")' <<<"$level"); do
