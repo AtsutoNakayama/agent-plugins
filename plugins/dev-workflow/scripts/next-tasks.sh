@@ -6,7 +6,10 @@
 # 並び順は Project 上の並び（手動で並べ替えた順）。依存（GitHub の blocked by と、本文の「依存」の #N）に
 # 閉じていない Issue があれば waiting にする。コンフリクトの見込みは、本文の「変更するファイル・領域」と、
 # 着手中（start の列）の Issue の開いている PR が変えているファイルで見る（パスの一方がもう一方の接頭辞なら重なる）。
-# 領域が分からない Issue は、並列にできる組に入れない。出力の next と parallel は、待ちを除いた上からの提案。
+# 領域が分からない Issue は、並列にできる組に入れない。「.」「*」「**」はリポジトリ全体として、全部と重なる。
+# パスと判断できない行（日本語の文・途中のグロブ）は areas_ignored に出す。着手中の Issue に領域も PR も無いときは、
+# 重なるか分からないので、Todo の各 Issue に warnings を付け、その番号を active_unknown に出す。
+# 出力の next と parallel は、待ちを除いた上からの提案。
 set -euo pipefail
 
 # shellcheck source=lib/common.sh
