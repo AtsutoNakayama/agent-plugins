@@ -145,6 +145,11 @@ DW_STORY_POINTS='[1, 2, 3, 5, 8, 13, 21, 34]'
 # shellcheck disable=SC2034
 DW_STORY_POINT_SPLIT=21
 
+# 親子の Issue（サブ Issue）の目安の深さ。上限（設定の sub_issues.max_depth。既定 3）までは作れるが、
+# これより深い Issue を作るときは警告する（一番上の Issue が 1 層目）。source した側で使う
+# shellcheck disable=SC2034
+DW_SUB_ISSUE_DEPTH_GUIDE=2
+
 # 破壊的変更を表すラベル。type ラベルとは別に付け、PR のタイトルの type の後に ! を付ける（設計書 §5）。source した側で使う
 # shellcheck disable=SC2034
 DW_BREAKING_LABEL=breaking

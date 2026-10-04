@@ -9,7 +9,8 @@
 #                        21 と 34 は設定できるが、分割を勧める警告を出す
 #   --blocked-by N       依存する（先に終わらせる）同じリポジトリの Issue の番号。複数回指定できる
 #   --parent N           親にする同じリポジトリの Issue の番号。起票した Issue を N のサブ Issue にする。
-#                        親子の深さが設定の sub_issues.max_depth（既定 2）を超えるなら、Issue を作る前に止める。
+#                        親子の深さが設定の sub_issues.max_depth（既定 3）を超えるなら、Issue を作る前に止める。
+#                        目安の 2 層より深くなる（3 層目になる）ときは、作るが警告する。
 #                        Story Point は子にだけ付けるので、親の Project の Story Point が入っていれば空欄にする
 #   --breaking           破壊的変更なので、type ラベルとは別に breaking ラベルも付ける
 #                        （リポジトリにラベルが無ければ、Issue を作る前に止める）
@@ -173,6 +174,9 @@ if [ -n "$parent" ]; then
   done
   [ "$depth" -le "$max_depth" ] \
     || dw_die "#${parent} の子にすると、親子の深さが上限の ${max_depth} 層を超えます（sub_issues.max_depth）" 2
+  if [ "$depth" -gt "$DW_SUB_ISSUE_DEPTH_GUIDE" ]; then
+    dw_warn "#${parent} の子にすると ${depth} 層目になります（目安は ${DW_SUB_ISSUE_DEPTH_GUIDE} 層まで）"
+  fi
 
   # 親の Project の項目と、今の Story Point。Issue から項目を引く REST は無いので、項目の一覧をリポジトリで絞って番号で探す
   # （番号で絞る検索は無く、文字列での検索は本文などにも当たるため）。Project に入っていなければ、外す値も無い
@@ -255,13 +259,13 @@ fi
 
 jq -n --argjson n "$issue_number" --arg url "$issue_url" --arg type "$type" --arg item "$item_id" \
   --argjson project "$project" --arg status "$todo_name" --arg sp "$sp" \
-  --arg blocked "$blocked_by" --arg parent "$parent" --arg parent_sp "$parent_sp" --argjson breaking "$breaking" '{
+  --arg blocked "$blocked_by" --arg parent "$parent" --arg depth "${depth:-}" --arg parent_sp "$parent_sp" --argjson breaking "$breaking" '{
     number: $n,
     url: $url,
     type: $type,
     breaking: $breaking,
     blocked_by: ($blocked | split(" ") | map(select(. != "") | tonumber)),
-    parent: (if $parent == "" then null else {number: ($parent | tonumber),
+    parent: (if $parent == "" then null else {number: ($parent | tonumber), depth: ($depth | tonumber),
       story_point_cleared: (if $parent_sp == "" then null else ($parent_sp | tonumber) end)} end),
     project: (if $project then {number: $project.number, item_id: $item, status: $status,
       story_point: (if $sp == "" then null else ($sp | tonumber) end)} else null end)

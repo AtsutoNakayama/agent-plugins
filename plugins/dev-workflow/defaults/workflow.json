@@ -16,7 +16,7 @@
     "field": "Story Point"
   },
   "sub_issues": {
-    "max_depth": 2
+    "max_depth": 3
   },
   "labels": {
     "types": ["feat", "fix", "refactor", "perf", "test", "docs", "build", "ci", "chore"]

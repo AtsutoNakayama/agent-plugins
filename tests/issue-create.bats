@@ -440,7 +440,7 @@ assert_no_changes() {
   assert_success
   assert_equal "$(called AddSubIssue)" 1
   assert_equal "$(args AddSubIssue)" '{"issue":12,"sub_issue_id":1030}'
-  assert_equal "$(jq -c .parent <<<"$json")" '{"number":12,"story_point_cleared":null}'
+  assert_equal "$(jq -c .parent <<<"$json")" '{"number":12,"depth":2,"story_point_cleared":null}'
 }
 
 @test "--parent の親に Story Point が入っていれば、子を足した後に空欄にする" {
@@ -455,7 +455,7 @@ assert_no_changes() {
   # Status・子の Story Point・親の Story Point の順に設定する
   assert_equal "$(called SetField)" 3
   assert_equal "$(args SetField 3 | jq -c '[.id, ."field-id", has("clear")]')" '["IT12","F2",true]'
-  assert_equal "$(jq -c .parent <<<"$json")" '{"number":12,"story_point_cleared":8}'
+  assert_equal "$(jq -c .parent <<<"$json")" '{"number":12,"depth":2,"story_point_cleared":8}'
 }
 
 @test "--parent の親の Story Point が空欄か、親が Project に無ければ、親の Story Point には触れない" {
@@ -518,8 +518,37 @@ assert_no_changes() {
   assert_equal "$(jq -c .parent <<<"$json")" null
 }
 
-@test "--parent の親に親があると 3 層目になるので、既定の上限 2 層では何も作らずに止まる" {
+@test "--parent で 2 層目になるときは警告しない" {
   setup_fake_gh
+  existing_issue 12
+  run_create --title t --type feat --parent 12
+  assert_success
+  refute_output --partial "層目になります"
+}
+
+@test "既定の上限 3 層では、3 層目は警告して作り、4 層目は何も作らずに止まる" {
+  setup_fake_gh
+  existing_issue 12
+  set_parent 12 5
+  run_create --title t --type feat --parent 12
+  assert_success
+  assert_output --partial "warn: #12 の子にすると 3 層目になります（目安は 2 層まで）"
+  assert_equal "$(args AddSubIssue)" '{"issue":12,"sub_issue_id":1030}'
+  assert_equal "$(jq -c .parent.depth <<<"$json")" 3
+
+  # 親の親は別のリポジトリにあってもたどる
+  : >"$CALLS"
+  set_parent 5 2 other/repo
+  run_create --title t --type feat --parent 12
+  assert_failure 2
+  assert_output --partial "#12 の子にすると、親子の深さが上限の 3 層を超えます（sub_issues.max_depth）"
+  assert_equal "$(args GetParent 2)" 5
+  assert_no_changes
+}
+
+@test "sub_issues.max_depth を 2 にすると、3 層目になる指定は何も作らずに止まる" {
+  setup_fake_gh
+  echo '{"project": {"owner": "me", "number": 4}, "sub_issues": {"max_depth": 2}}' >.claude/dev-workflow/config.json
   existing_issue 12
   set_parent 12 5
   run_create --title t --type feat --parent 12
@@ -528,33 +557,15 @@ assert_no_changes() {
   assert_no_changes
 }
 
-@test "sub_issues.max_depth が 3 なら 3 層目まで作れ、4 層目は何も作らずに止まる" {
-  setup_fake_gh
-  echo '{"project": {"owner": "me", "number": 4}, "sub_issues": {"max_depth": 3}}' >.claude/dev-workflow/config.json
-  existing_issue 12
-  set_parent 12 5
-  run_create --title t --type feat --parent 12
-  assert_success
-  assert_equal "$(args AddSubIssue)" '{"issue":12,"sub_issue_id":1030}'
-
-  # 親の親は別のリポジトリにあってもたどる
-  : >"$CALLS"
-  set_parent 5 2 other/repo
-  run_create --title t --type feat --parent 12
-  assert_failure 2
-  assert_output --partial "親子の深さが上限の 3 層を超えます"
-  assert_equal "$(args GetParent 2)" 5
-  assert_no_changes
-}
-
 @test "親子の深さを数えるとき、上限を超えると分かったらそれより上はたどらない" {
   setup_fake_gh
   existing_issue 12
   set_parent 12 5
   set_parent 5 2
+  set_parent 2 1
   run_create --title t --type feat --parent 12
   assert_failure 2
-  assert_equal "$(called GetParent)" 1
+  assert_equal "$(called GetParent)" 2
 }
 
 @test "sub_issues.max_depth が 1・2・3 のどれでもなければ、何も作らずに止まる" {
