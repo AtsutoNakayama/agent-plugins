@@ -19,7 +19,7 @@
 #   --base    基点のコミット。差分のファイルは git diff <基点> で読む
 #   --target  マージ先の ref（例: origin/main）。base_ahead の条件で、基点より進んでいるかを見る
 #   --type    変更の type。分からなければ省く
-#   --issue   作業中の Issue の番号。Issue が無ければ省く
+#   --issue   作業中の Issue の番号（#N でもよい）。Issue が無ければ省く
 #
 # 層（下ほど優先。同じ名前の観点は上位の層のファイルが使われる）:
 #   3. プラグインに同梱する共通の観点   review/*.md
@@ -59,7 +59,8 @@
 #   invalid       形式の誤りで使わないファイル。path・reason・overrides（標準エラーにも warn を出す）
 #                 ファイル名が正しければ、下位の層にある同じ名前の観点も使わない（止めるつもりの書き間違いで動かさない）
 #   context       絞り込みに使った値（絞り込まないときは null）。base・target・ahead（マージ先が基点より
-#                 進んだコミットの数）・issue（番号か null）・type（null もある）・type_from（issue・branch・given・null）
+#                 進んだコミットの数）・issue（番号か null）・type（null もある）・type_from（issue・branch・given・null）・
+#                 max_rounds（--auto のとき、設定 review.max_rounds の値。1以上の整数でなければ止まる。--auto でなければ null）
 set -euo pipefail
 
 # shellcheck source=lib/common.sh
@@ -104,12 +105,17 @@ parse_branch() {
 }
 
 type_from=null
+max_rounds=null
 if [ "$auto" = true ]; then
   if [ -n "$base$target$type$issue" ]; then
     dw_die "--auto と --base・--target・--type・--issue は一緒に使えません" 64
   fi
   dw_repo_root >/dev/null || dw_die "git のリポジトリの中ではないので、絞り込めません" 2
   config="$("$BASH" "$DW_SCRIPTS_DIR/config.sh")" || dw_die "設定を読めません（config.sh で確かめてください）" 2
+  max_rounds="$(jq -c '.review.max_rounds' <<<"$config")"
+  case "$max_rounds" in
+    "" | null | 0 | 0[0-9]* | *[!0-9]*) dw_die "review.max_rounds は1以上の整数にしてください: ${max_rounds}" 2 ;;
+  esac
   base_branch="$(jq -r .base_branch <<<"$config")"
   target="origin/$base_branch"
   git fetch -q origin "$base_branch" 2>/dev/null \
@@ -151,6 +157,8 @@ if [ "$auto" = true ] || [ -n "$base" ] || [ -n "$target" ] || [ -n "$type" ] ||
   if [ -z "$base" ] || [ -z "$target" ]; then
     dw_die "条件で絞り込むには --base と --target の両方を渡してください" 64
   fi
+  # スキルの引数の #12 も受ける。# だけは番号が無いので、そのまま残して数字以外として拒否する
+  case "$issue" in "#"?*) issue="${issue#\#}" ;; esac
   case "$issue" in
     "" | *[!0-9]*) [ -z "$issue" ] || dw_die "--issue は Issue の番号にしてください: ${issue}" 64 ;;
   esac
@@ -378,10 +386,10 @@ if [ "$filter" = true ]; then
     fi
   done < <(jq -c '.perspectives[]' <<<"$result")
   result="$(jq -c --argjson k "$kept" '.perspectives = $k' <<<"$result")"
-  context="$(jq -nc --arg b "$base" --arg t "$target" --argjson a "$ahead" --arg i "$issue" --arg ty "$type" \
+  context="$(jq -nc --arg b "$base" --arg t "$target" --argjson a "$ahead" --arg i "$issue" --arg ty "$type" --argjson mr "$max_rounds" \
     --argjson f "$(if [ "$type_from" = null ]; then echo null; else jq -n --arg x "$type_from" '$x'; fi)" \
     '{base: $b, target: $t, ahead: $a, issue: (if $i == "" then null else ($i | tonumber) end),
-      type: (if $ty == "" then null else $ty end), type_from: $f}')"
+      type: (if $ty == "" then null else $ty end), type_from: $f, max_rounds: $mr}')"
 fi
 
 jq --argjson s "$skipped" --argjson c "$context" \

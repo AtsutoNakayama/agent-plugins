@@ -3,7 +3,7 @@
 # 何度実行しても同じ結果になる（既にあるワークツリー・ブランチ・割り当ては使い回す）。
 #
 # 使い方: task-start.sh --issue N --slug TEXT [--dry-run]
-#   --issue N      Issue の番号
+#   --issue N      Issue の番号（#N でもよい）
 #   --slug TEXT    ブランチ名の短い説明（英語）。branch-name.sh で整える
 #   --dry-run      変更せず、行う予定の操作だけを出力する
 #
@@ -49,6 +49,8 @@ while [ $# -gt 0 ]; do
   esac
 done
 [ -n "$issue" ] || dw_die "--issue は必須です" 64
+# スキルの引数の #12 も受ける。# だけは番号が無いので、そのまま残して数字以外として拒否する
+case "$issue" in "#"?*) issue="${issue#\#}" ;; esac
 case "$issue" in
   *[!0-9]*) dw_die "--issue には数字を指定してください: $issue" 64 ;;
 esac

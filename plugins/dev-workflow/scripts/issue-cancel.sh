@@ -2,7 +2,7 @@
 # やらないことにした Issue を、理由のコメントを付けて not planned（重複なら duplicate）で閉じる。
 #
 # 使い方: issue-cancel.sh --issue N --reason TEXT [--duplicate-of M] [--branch NAME] [--dry-run]
-#   --issue N           Issue の番号
+#   --issue N           Issue の番号（#N でもよい）
 #   --reason TEXT       閉じる理由（コメントとして残す。代わりに作業する Issue などの参照先も書く）。空白だけなら止まる
 #   --duplicate-of M    重複の元の Issue の番号。付けると duplicate で閉じ、元の Issue に紐付ける（gh 2.88.0 以上）
 #   --branch NAME       やめた作業のブランチ。そのブランチの開いている PR を同じ理由のコメントを付けて閉じ、
@@ -52,6 +52,8 @@ while [ $# -gt 0 ]; do
   esac
 done
 [ -n "$issue" ] || dw_die "--issue は必須です" 64
+# スキルの引数の #12 も受ける。# だけは番号が無いので、そのまま残して数字以外として拒否する
+case "$issue" in "#"?*) issue="${issue#\#}" ;; esac
 case "$issue" in
   *[!0-9]*) dw_die "--issue には数字を指定してください: $issue" 64 ;;
 esac
