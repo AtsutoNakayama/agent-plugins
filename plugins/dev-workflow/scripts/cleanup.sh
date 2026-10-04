@@ -22,7 +22,8 @@
 #      （--abandon でも、メインのワークツリーに未コミットの変更があれば止まる。捨てずに残すため）
 #   3. ローカルのブランチを削除する（git branch -D）
 #   4. base_branch を最新にする（git pull --ff-only に当たる。fetch --prune の後、早送りだけで取り込む）
-#   5. PR が閉じる Issue（Closes #N）が閉じたかを調べて issues に出す（--abandon では調べない）。
+#   5. PR が閉じる Issue（Closes #N）が閉じたかを調べて issues（number・repo・state）に出す（--abandon では調べない）。
+#      Issue のリポジトリ（owner/repo）は repo に出す（参照に無ければ null）。
 #      調べられなくても片付けは止めず、その Issue の state を null にして警告する
 #
 # 削除するワークツリーの中から実行すると、実行後にその場所が無くなる。メインのワークツリー（main_root）で実行する。
@@ -225,14 +226,16 @@ fi
 # PR の本文の Closes #N でマージ時に GitHub が閉じる。閉じたかを伝えるだけなので、調べられなくても止めない
 issues='[]'
 if ! $abandon; then
-  for n in $(jq -r '.closingIssuesReferences // [] | .[].number' <<<"$pr"); do
-    if state="$(gh issue view "$n" --json state -q .state 2>/dev/null)" && [ -n "$state" ]; then
-      issues="$(jq -c --argjson n "$n" --arg s "$state" '. + [{number: $n, state: $s}]' <<<"$issues")"
+  # 別のリポジトリの Issue（Closes owner/repo#N）も参照に入るので、その Issue のリポジトリで調べる（無ければ今のリポジトリ）
+  while read -r n repo; do
+    [ -n "$n" ] || continue
+    if state="$(gh issue view "$n" ${repo:+--repo "$repo"} --json state -q .state 2>/dev/null)" && [ -n "$state" ]; then
+      issues="$(jq -c --argjson n "$n" --arg r "$repo" --arg s "$state" '. + [{number: $n, repo: (if $r == "" then null else $r end), state: $s}]' <<<"$issues")"
     else
-      dw_warn "Issue #${n} の状態を取得できませんでした"
-      issues="$(jq -c --argjson n "$n" '. + [{number: $n, state: null}]' <<<"$issues")"
+      dw_warn "Issue ${repo:+${repo}}#${n} の状態を取得できませんでした"
+      issues="$(jq -c --argjson n "$n" --arg r "$repo" '. + [{number: $n, repo: (if $r == "" then null else $r end), state: null}]' <<<"$issues")"
     fi
-  done
+  done < <(jq -r '.closingIssuesReferences // [] | .[] | "\(.number) \(.repository.nameWithOwner // "")"' <<<"$pr")
 fi
 
 jq -n --arg branch "$branch" --arg path "$path" --arg main "$main_root" --arg base "$base" \

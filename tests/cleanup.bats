@@ -516,7 +516,7 @@ run_cleanup() {
   echo '{"state": "OPEN"}' >"$FIX/issue-18.json"
   run_cleanup --branch feat/17-x
   assert_success
-  assert_equal "$(jq -c .issues <<<"$json")" '[{"number":17,"state":"CLOSED"},{"number":18,"state":"OPEN"}]'
+  assert_equal "$(jq -c .issues <<<"$json")" '[{"number":17,"repo":null,"state":"CLOSED"},{"number":18,"repo":null,"state":"OPEN"}]'
 }
 
 @test "Issue の状態を取得できなくても、片付けは続けて state を null にする" {
@@ -527,7 +527,18 @@ run_cleanup() {
   assert_success
   assert_output --partial "warn: Issue #17 の状態を取得できませんでした"
   [ ! -e "$WT" ]
-  assert_equal "$(jq -c .issues <<<"$json")" '[{"number":17,"state":null}]'
+  assert_equal "$(jq -c .issues <<<"$json")" '[{"number":17,"repo":null,"state":null}]'
+}
+
+@test "別のリポジトリの Issue は、そのリポジトリで状態を調べる" {
+  setup_branch
+  squash_merge
+  FAKE_CLOSING='[{"number": 17, "repository": {"nameWithOwner": "other/repo"}}]' fake_pr MERGED
+  echo '{"state": "CLOSED"}' >"$FIX/issue-17.json"
+  run_cleanup --branch feat/17-x
+  assert_success
+  assert_equal "$(jq -c .issues <<<"$json")" '[{"number":17,"repo":"other/repo","state":"CLOSED"}]'
+  assert_equal "$(args issue-view)" "17 --repo other/repo --json state -q .state"
 }
 
 @test "PR が閉じる Issue が無ければ、issues は空" {
