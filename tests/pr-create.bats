@@ -453,3 +453,11 @@ fake_issue_tasks() {
   assert_success
   assert_equal "$(jq -c '[.tasks[].text]' <<<"$json")" '["a <!-- 補足","b"]'
 }
+
+@test "入れ子のリストの中で字下げした複数行の HTML のコメントの中の行も、項目とみなさない" {
+  setup_branch
+  set_issue_body "$(printf -- '- [ ] a\n  - [ ] b\n    <!--\n    - [ ] 隠れた項目\n    -->\n- [ ] c')"
+  run_pr --issue 17 --body-file "$TMP/body.md" --dry-run
+  assert_success
+  assert_equal "$(jq -c '[.tasks[].text]' <<<"$json")" '["a","b","c"]'
+}

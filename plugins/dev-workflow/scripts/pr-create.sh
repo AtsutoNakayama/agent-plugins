@@ -26,7 +26,7 @@
 #   5. PR を新しく作ったときだけ、status.pr_opened が設定されていれば Issue をその列に移す（status-set.sh）。
 #      既にある PR では移さない（手で先の列に移した Issue を戻さないため）
 #   6. --check があれば、Issue の本文を読み直し、指定した文の項目だけにチェックを付ける（既にある PR のときも付ける）。
-#      ほかの行は変えない。コードブロックと、行頭の <!-- から --> までの HTML のコメントの中の行は、項目とみなさない
+#      ほかの行は変えない。コードブロックと、行頭（字下げは問わない）の <!-- から --> までの HTML のコメントの中の行は、項目とみなさない
 set -euo pipefail
 
 # shellcheck source=lib/common.sh
@@ -110,7 +110,7 @@ has_breaking_note() { jq -e --arg b "$1" '$b | test("(^|\n)BREAKING[ -]CHANGE: *
 # 閉じるのは、開いたときと同じ文字が同じ数以上並び、後ろが空白だけの行（中の短い囲みや ```js では閉じない）。
 # ` の囲みの後ろに ` がある行（```x``` のようなインラインのコード）は囲みとみなさない。
 # リストの中のコードブロックも拾うため、囲みの字下げは問わない。
-# 複数行の HTML のコメント（行頭の <!-- から --> まで）の中の行も、GitHub に表示されないので項目とみなさない。
+# 複数行の HTML のコメント（行頭の <!-- から --> まで。囲みと同じく字下げは問わない）の中の行も、GitHub に表示されないので項目とみなさない。
 # GitHub と同じく、行の途中の <!--（インラインのコードや項目の補足）はコメントの始まりとみなさない
 # shellcheck disable=SC2016 # jq のプログラムなので、$ は展開しない
 tasks_jq='
@@ -122,7 +122,7 @@ tasks_jq='
       elif $f != null then
         (if $l | test("^\\s*" + $f + "+\\s*$") then .fence = null else . end)
       elif $l | test("^\\s*(`{3,}[^`]*|~{3,}.*)$") then .fence = ($l | capture("^\\s*(?<f>`{3,}|~{3,})").f)
-      elif $l | test("^ {0,3}<!--(?!.*-->)") then .comment = true
+      elif $l | test("^\\s*<!--(?!.*-->)") then .comment = true
       elif $l | test(item) then
         ($l | capture(item)) as $m
         | .out += [{line: $e.key, checked: ($m.c != " "), text: ($m.t // "" | sub("\\s+$"; ""))}]
