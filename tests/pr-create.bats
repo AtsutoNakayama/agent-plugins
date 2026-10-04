@@ -390,3 +390,14 @@ fake_issue_tasks() {
   assert_failure 1
   assert_output --partial "PR #42 はできていますが、Issue #17 にチェックを付けられませんでした（もう一度実行すれば付けます）"
 }
+
+@test "長い囲みのコードブロックは、中の短い囲みや情報文字列付きの囲みでは閉じない" {
+  setup_branch
+  fake_issue 17 '["feat"]'
+  # shellcheck disable=SC2016 # ``` はコードブロックの囲みで、展開させない
+  jq --arg b "$(printf -- '- [ ] a\n````md\n```\n- [ ] 中1\n```\n````\n- [ ] b\n~~~~\n~~~ js\n- [ ] 中2\n~~~\n~~~~~\n- [ ] c')" \
+    '. + {body: $b}' "$FIX/issue-17.json" >"$TMP/i.json" && mv "$TMP/i.json" "$FIX/issue-17.json"
+  run_pr --issue 17 --body-file "$TMP/body.md" --dry-run
+  assert_success
+  assert_equal "$(jq -c '[.tasks[].text]' <<<"$json")" '["a","b","c"]'
+}

@@ -109,15 +109,16 @@ has_breaking_note() { jq -e --arg b "$1" '$b | test("(^|\n)BREAKING[ -]CHANGE: *
 
 # --- Issue のチェックリスト -----------------------------------------------------
 # 本文のチェックリストの項目を、上から順に {index, line（0 からの行番号）, checked, text} で出す。
-# GitHub と同じく、コードブロック（``` か ~~~）の中の行は項目とみなさない
+# GitHub と同じく、コードブロック（3つ以上の ` か ~ で囲む）の中の行は項目とみなさない。
+# 閉じるのは、開いたときと同じ文字が同じ数以上並び、後ろが空白だけの行（中の短い囲みや ```js では閉じない）
 # shellcheck disable=SC2016 # jq のプログラムなので、$ は展開しない
 tasks_jq='
   def item: "^\\s*(?:[-*+]|[0-9]+[.)])\\s+\\[(?<c>[ xX])\\](?:\\s+(?<t>.*))?$";
   reduce (split("\n") | to_entries[]) as $e ({fence: null, out: []};
     ($e.value | sub("\r$"; "")) as $l | .fence as $f
     | if $f != null then
-        (if $l | test("^\\s{0,3}" + $f) then .fence = null else . end)
-      elif $l | test("^\\s{0,3}(```|~~~)") then .fence = ($l | capture("^\\s{0,3}(?<f>```|~~~)").f)
+        (if $l | test("^\\s{0,3}" + $f + "+\\s*$") then .fence = null else . end)
+      elif $l | test("^\\s{0,3}(`{3,}|~{3,})") then .fence = ($l | capture("^\\s{0,3}(?<f>`{3,}|~{3,})").f)
       elif $l | test(item) then
         ($l | capture(item)) as $m
         | .out += [{index: (.out | length + 1), line: $e.key, checked: ($m.c != " "), text: ($m.t // "" | sub("\\s+$"; ""))}]
