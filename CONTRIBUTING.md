@@ -52,12 +52,20 @@ Claude のレビューは、上限のコメントがきっかけのときは同�
 
 ### 指摘に手元の Claude Code で対応する
 
-PR のレビューの指摘は `gh` で読めるので、そのまま Claude Code に渡して直します。
+CodeRabbit の全体のレビューは、PR を作ったときの1回だけです。あとは、指摘に返信して resolved にしていきます。この流れは、このリポジトリ専用の skill `.claude/skills/coderabbit-respond/`（プラグインには同梱しません）で行えます。
 
-```bash
-gh pr view <PR番号> --comments                                  # Claude のレビューと CodeRabbit の要約
-gh api repos/{owner}/{repo}/pulls/<PR番号>/comments             # CodeRabbit の行ごとの指摘
-```
+- `@coderabbitai review` は使いません。1回ごとにレビューの上限を消費し、使った後の PR では、push のたびに増分のレビューが走って上限を消費するためです。
+- 指摘は `gh` で読みます。行ごとの指摘はスレッドで、diff の外の指摘はレビュー本文にあります。
+
+  ```bash
+  gh pr view <PR番号> --comments                                  # Claude のレビューと CodeRabbit の要約
+  gh api repos/{owner}/{repo}/pulls/<PR番号>/comments             # CodeRabbit の行ごとの指摘
+  ```
+
+- 直した指摘は、そのスレッドに、直したコミットを添えて `@coderabbitai` 付きで返信します。CodeRabbit が現在のコードを読み、直っていれば resolved にします。チャットのメッセージは、PR のレビューとは別の上限です。
+- diff の外の指摘はスレッドが無いので、PR のコメントに `@coderabbitai` を付けて、同じように確認させます。
+- 直さない指摘は、理由を返信します。resolved にするのは、直したか、理由に合意できたものだけにします。
+- `@coderabbitai resolve` でまとめて resolved にしません。
 
 ## 書き方のルール
 
