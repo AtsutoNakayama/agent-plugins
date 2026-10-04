@@ -1,13 +1,25 @@
 #!/usr/bin/env bash
 # レビューの観点ファイルを3つの層から集め、JSON で出力する。
-# --base と --target を渡すと、観点ごとの実行する条件で、今の変更に当てはまらない観点を外す。
+# --auto（または --base と --target）を渡すと、観点ごとの実行する条件で、今の変更に当てはまらない観点を外す。
 #
-# 使い方: review-perspectives.sh [--base <基点> --target <マージ先> [--type <type>] [--issue <番号>]]
+# 使い方:
+#   review-perspectives.sh                 観点の一覧（条件で外す前）
+#   review-perspectives.sh --auto          今のブランチの変更で絞り込む（review スキルはこれを使う）
+#   review-perspectives.sh --base <基点> --target <マージ先> [--type <type>] [--issue <番号>]
+#                                          渡した値で絞り込む（--auto が決める値を自分で渡す）
 #
-#   --base    基点のコミット（git merge-base origin/<base_branch> HEAD）。差分のファイルは git diff <基点> で読む
+#   --auto    次を決めて絞り込み、決めた値を context に出す
+#             - マージ先: origin/<base_branch>（git fetch origin <base_branch> で最新にする。できなければ警告して
+#               手元の origin/<base_branch> を使う。それも無ければ終了コード 2）
+#             - 基点: git merge-base <マージ先> HEAD
+#             - Issue の番号: ブランチ名（branch.pattern の {issue_number}）。gh で Issue を読み、見つからなければ
+#               Issue は無いものとする（警告）。gh で読めなければ（認証・通信など）、番号は使い、type はブランチ名から決める（警告）
+#             - type: Issue の type ラベル（labels.types のどれか1つ）。無いか1つに決まらなければ、
+#               ブランチ名（branch.pattern の {type}）。どちらでも決まらなければ無し
+#   --base    基点のコミット。差分のファイルは git diff <基点> で読む
 #   --target  マージ先の ref（例: origin/main）。base_ahead の条件で、基点より進んでいるかを見る
-#   --type    変更の type（Issue の type ラベル。Issue が無ければブランチ名の type）。分からなければ省く
-#   --issue   作業中の Issue の番号。Issue が無ければ省く（issue: required の観点を外す）
+#   --type    変更の type。分からなければ省く
+#   --issue   作業中の Issue の番号。Issue が無ければ省く
 #
 # 層（下ほど優先。同じ名前の観点は上位の層のファイルが使われる）:
 #   3. プラグインに同梱する共通の観点   review/*.md
@@ -17,22 +29,26 @@
 # 観点ファイルの形式（1ファイルに1観点）:
 #   ---
 #   title: 一覧に出す1行の説明（必須）
-#   enabled: false            （任意。下位の層にある同じ名前の観点を止める）
-#   builtin: code-review      （任意。本文の代わりに、組み込みの /code-review を実行する）
-#   types: [fix, perf]        （任意。変更の type がこのどれかのときだけ実行する）
-#   paths: ["*.sh", "docs/*"] （任意。差分のファイルがこのパターンのどれかに当たるときだけ実行する）
-#   issue: required           （任意。Issue があるときだけ実行する）
-#   base_ahead: required      （任意。マージ先が基点より進んでいる（ブランチを作った後に
-#                               コミットが入った）ときだけ実行する）
+#   enabled: false                （任意。下位の層にある同じ名前の観点を止める）
+#   builtin: code-review          （任意。本文の代わりに、組み込みの /code-review を実行する）
+#   types: [fix, perf]            （任意。変更の type がこのどれかのときだけ実行する）
+#   paths: ["**/*.sh", "!docs/**"] （任意。差分のファイルがこのパターンに当たるときだけ実行する）
+#   issue: required               （任意。Issue があるときだけ実行する）
+#   base_ahead: required          （任意。マージ先が基点より進んでいる（ブランチを作った後に
+#                                   コミットが入った）ときだけ実行する）
 #   ---
 #   本文：サブエージェントへのレビューの指示（何を確かめ、どう指摘するか）
 #
 #   - 観点の名前はファイル名（.md を除く）。小文字の英数字と - だけ
 #   - enabled: false のときは本文を省いてよい。builtin を書いたときも本文を省いてよい
 #   - 条件（types・paths・issue・base_ahead）を書かなければ毎回実行する。複数書けば、すべてに当てはまるときだけ実行する
-#   - types・paths は [a, b] の形か、1つだけの値で書く。paths のパターンはリポジトリからの相対パスに当て、
-#     * は / も含めて任意の文字列に当たる（例: "*.sh" はどのディレクトリの .sh にも当たる）
-#   - --type を渡さなければ（type が分からなければ）、types の条件では外さない
+#   - types・paths は [a, b] の形か、1つだけの値で書く。, と引用符は値に使えない
+#   - type が分からなければ、types を書いた観点は外す
+#   - paths は .gitignore や GitHub Actions の paths と同じ書き方（git の pathspec の glob）で、リポジトリの
+#     ルートからの相対パスに当てる。* と ? は / をまたがない。**/ は0個以上のディレクトリ、/** はその下のすべてに当たる
+#     （例: "**/*.sh" はどこの .sh にも、"*.sh" はルートの .sh だけに、"docs/**" は docs の下のすべてに当たる）。
+#     ! で始まるパターンは除外で、除外されないファイルが1つでも当たれば実行する
+#     （例: ["!docs/**"] は docs の下だけを変えたときは実行しない）
 #   - 条件は観点ファイルごとに書く。上位の層で同じ名前の観点を置くと、条件も上位の層のファイルのものになる
 #
 # 出力:
@@ -42,6 +58,8 @@
 #   disabled      enabled: false で止めた観点。name・layer・path・overrides
 #   invalid       形式の誤りで使わないファイル。path・reason・overrides（標準エラーにも warn を出す）
 #                 ファイル名が正しければ、下位の層にある同じ名前の観点も使わない（止めるつもりの書き間違いで動かさない）
+#   context       絞り込みに使った値（絞り込まないときは null）。base・target・ahead（マージ先が基点より
+#                 進んだコミットの数）・issue（番号か null）・type（null もある）・type_from（issue・branch・given・null）
 set -euo pipefail
 
 # shellcheck source=lib/common.sh
@@ -51,10 +69,11 @@ dw_require jq
 # macOS の BSD sed が日本語で失敗しないよう、バイト列として扱わせる
 usage() { LC_ALL=C sed -n '2,/^[^#]/{/^[^#]/d;s/^# \{0,1\}//;p;}' "$0"; }
 
-base="" target="" type="" issue=""
+auto=false base="" target="" type="" issue=""
 while [ $# -gt 0 ]; do
   case "$1" in
     -h | --help) usage; exit 0 ;;
+    --auto) auto=true; shift ;;
     --base | --target | --type | --issue)
       if [ $# -lt 2 ] || [ -z "$2" ]; then dw_die "$1 に値がありません" 64; fi
       case "$1" in
@@ -69,9 +88,65 @@ while [ $# -gt 0 ]; do
   esac
 done
 
-# 条件で絞り込むのは --base を渡したときだけ（--type・--issue が無いことを「type も Issue も無い」と読むため）
+# ブランチ名を branch.pattern に当て、type と Issue の番号を「<type> <番号>」で出力する（無いものは空）
+# 使い方: parse_branch <設定の JSON> <ブランチ名>
+parse_branch() {
+  jq -r --arg b "$2" '
+    .labels.types as $t
+    | (.branch.pattern
+      | gsub("\\{type\\}"; "(?<type>" + ($t | join("|")) + ")")
+      | gsub("\\{issue_number\\}"; "(?<issue>[0-9]+)")
+      | gsub("\\{slug\\}"; "[a-z0-9]+(?:-[a-z0-9]+)*")
+      | "^" + . + "$") as $re
+    | (try ($b | capture($re)) catch null) // {}
+    | "\(.type // "") \(.issue // "")"' <<<"$1"
+}
+
+type_from=null
+if [ "$auto" = true ]; then
+  if [ -n "$base$target$type$issue" ]; then
+    dw_die "--auto と --base・--target・--type・--issue は一緒に使えません" 64
+  fi
+  dw_repo_root >/dev/null || dw_die "git のリポジトリの中ではないので、絞り込めません" 2
+  config="$("$BASH" "$DW_SCRIPTS_DIR/config.sh")" || dw_die "設定を読めません（config.sh で確かめてください）" 2
+  base_branch="$(jq -r .base_branch <<<"$config")"
+  target="origin/$base_branch"
+  git fetch -q origin "$base_branch" 2>/dev/null \
+    || dw_warn "${target} を最新にできませんでした。手元の ${target} で判断します"
+  git rev-parse --verify --quiet "$target^{commit}" >/dev/null \
+    || dw_die "マージ先が見つかりません: ${target}（git fetch origin ${base_branch} で取得してください）" 2
+  base="$(git merge-base "$target" HEAD)" || dw_die "${target} と HEAD の基点が見つかりません" 2
+  branch="$(git symbolic-ref --short -q HEAD || true)"
+  read -r branch_type issue <<<"$(parse_branch "$config" "$branch")"
+  if [ -n "$issue" ]; then
+    err="$(mktemp)"
+    if ! command -v gh >/dev/null 2>&1; then
+      dw_warn "gh が無いので Issue #${issue} を読めません。type はブランチ名から決めます"
+    elif labels="$(gh issue view "$issue" --json labels 2>"$err")"; then
+      type="$(jq -r --argjson t "$(jq -c .labels.types <<<"$config")" \
+        '[.labels[].name | select(. as $n | $t | index($n))] | if length == 1 then .[0] else "" end' <<<"$labels")"
+      [ -z "$type" ] || type_from=issue
+    else
+      case "$(cat "$err")" in
+        *NOT_FOUND* | *"Could not resolve to"*)
+          dw_warn "Issue #${issue} が見つからないので、Issue は無いものとして判断します"
+          issue=""
+          ;;
+        *) dw_warn "Issue #${issue} を読めません（$(head -n 1 "$err")）。type はブランチ名から決めます" ;;
+      esac
+    fi
+    rm -f "$err"
+  fi
+  if [ -z "$type" ] && [ -n "$branch_type" ]; then
+    type="$branch_type" type_from=branch
+  fi
+elif [ -n "$type" ]; then
+  type_from=given
+fi
+
+# 条件で絞り込むのは --auto か --base を渡したときだけ（--type・--issue が無いことを「type も Issue も無い」と読むため）
 filter=false
-if [ -n "$base" ] || [ -n "$target" ] || [ -n "$type" ] || [ -n "$issue" ]; then
+if [ "$auto" = true ] || [ -n "$base" ] || [ -n "$target" ] || [ -n "$type" ] || [ -n "$issue" ]; then
   if [ -z "$base" ] || [ -z "$target" ]; then
     dw_die "条件で絞り込むには --base と --target の両方を渡してください" 64
   fi
@@ -149,6 +224,14 @@ conditions() {
   if printf '%s\n' "$fm" | grep -q '^paths:'; then
     v="$(fm_list "$(fm_value "$fm" paths)")"
     if [ -z "$v" ]; then echo "paths にパターンがありません"; return 1; fi
+    while IFS= read -r t; do
+      case "${t#!}" in
+        "" | /* | .. | ../* | */.. | */../*)
+          echo "paths はリポジトリのルートからの相対パスのパターンにしてください（/ で始めない・.. を使わない）: ${t}"
+          return 1
+          ;;
+      esac
+    done <<<"$v"
     paths="$(lines_json <<<"$v")"
   fi
   case "$(fm_value "$fm" issue)" in
@@ -238,29 +321,38 @@ jq -r '.invalid[] | select(.overrides != []) | .path | split("/") | last | rtrim
 # 条件に当てはまらない理由を出力する。当てはまれば何も出力しない
 # 使い方: skip_reason <条件の JSON>
 skip_reason() {
-  local when="$1" list pat f hit=false
+  local when="$1" list pat files
+  local -a specs
   if [ "$(jq -r .issue <<<"$when")" = true ] && [ -z "$issue" ]; then
     echo "Issue が無い（issue: required）"
     return
   fi
   list="$(jq -r '.types // empty | .[]' <<<"$when")"
-  # type が分からなければ、types の条件では外さない
-  if [ -n "$list" ] && [ -n "$type" ] && ! printf '%s\n' "$list" | grep -Fxq -- "$type"; then
-    echo "type（${type}）が types（$(jq -r '.types | join("、")' <<<"$when")）のどれでもない"
-    return
+  if [ -n "$list" ]; then
+    if [ -z "$type" ]; then
+      echo "type が分からない（types: $(jq -r '.types | join("、")' <<<"$when")）"
+      return
+    fi
+    if ! printf '%s\n' "$list" | grep -Fxq -- "$type"; then
+      echo "type（${type}）が types（$(jq -r '.types | join("、")' <<<"$when")）のどれでもない"
+      return
+    fi
   fi
   list="$(jq -r '.paths // empty | .[]' <<<"$when")"
   if [ -n "$list" ]; then
+    # git の pathspec の glob で当てる。top でリポジトリのルートからのパスにし、! は除外にする
+    specs=()
     while IFS= read -r pat; do
-      while IFS= read -r f; do
-        [ -n "$f" ] || continue
-        # パターンとして当てるので、$pat は引用符で囲まない
-        # shellcheck disable=SC2254
-        case "$f" in $pat) hit=true; break 2 ;; esac
-      done <<<"$changed"
+      case "$pat" in
+        '!'*) specs+=(":(top,exclude,glob)${pat#!}") ;;
+        *) specs+=(":(top,glob)${pat}") ;;
+      esac
     done <<<"$list"
-    if [ "$hit" = false ]; then
-      echo "差分のファイルが paths（$(jq -r '.paths | join("、")' <<<"$when")）のどれにも当たらない"
+    # 名前を変えたファイルは、元の名前と新しい名前の両方を差分のファイルとみなす
+    files="$(git diff --name-only --no-renames "$base" -- "${specs[@]}")" \
+      || dw_die "差分のファイルを paths に当てられません: $(jq -r '.paths | join("、")' <<<"$when")"
+    if [ -z "$files" ]; then
+      echo "差分のファイルが paths（$(jq -r '.paths | join("、")' <<<"$when")）に当たらない"
       return
     fi
   fi
@@ -270,11 +362,10 @@ skip_reason() {
 }
 
 skipped='[]'
+context=null
 if [ "$filter" = true ]; then
-  # 名前を変えたファイルは、元の名前と新しい名前の両方を差分のファイルとみなす
-  # 日本語などのファイル名を "docs/\350..." のように引用符で囲まずに出させる（囲むとパターンに当たらない）
-  changed="$(git -c core.quotePath=false diff --name-only --no-renames "$base")" || dw_die "差分のファイルを読めません: git diff ${base}"
   ahead="$(git rev-list --count "$base..$target")" || dw_die "マージ先の進み具合を読めません: ${base}..${target}"
+  # pathspec の top はリポジトリのルートからなので、どのディレクトリで実行しても同じに当たる
   kept='[]'
   while IFS= read -r p; do
     [ -n "$p" ] || continue
@@ -286,6 +377,11 @@ if [ "$filter" = true ]; then
     fi
   done < <(jq -c '.perspectives[]' <<<"$result")
   result="$(jq -c --argjson k "$kept" '.perspectives = $k' <<<"$result")"
+  context="$(jq -nc --arg b "$base" --arg t "$target" --argjson a "$ahead" --arg i "$issue" --arg ty "$type" \
+    --argjson f "$(if [ "$type_from" = null ]; then echo null; else jq -n --arg x "$type_from" '$x'; fi)" \
+    '{base: $b, target: $t, ahead: $a, issue: (if $i == "" then null else ($i | tonumber) end),
+      type: (if $ty == "" then null else $ty end), type_from: $f}')"
 fi
 
-jq --argjson s "$skipped" '{perspectives: [.perspectives[] | del(.when)], skipped: $s, disabled, invalid}' <<<"$result"
+jq --argjson s "$skipped" --argjson c "$context" \
+  '{perspectives: [.perspectives[] | del(.when)], skipped: $s, disabled, invalid, context: $c}' <<<"$result"

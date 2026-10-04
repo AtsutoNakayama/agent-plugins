@@ -181,11 +181,11 @@ add() {
 }
 
 @test "条件を付けて作ると frontmatter に書き、review-perspectives.sh がその条件で外す" {
-  add "指示" --name cond --layer repo --title "条件つき" --type fix --type perf --path '*.sh' --path 'docs/*' \
+  add "指示" --name cond --layer repo --title "条件つき" --type fix --type perf --path '**/*.sh' --path '!docs/**' \
     --issue-required --base-ahead-required
   assert_success
   assert_equal "$(cat "$REPO/.claude/dev-workflow/review/cond.md")" "$(printf -- '%s\n' '---' 'title: 条件つき' \
-    'types: [fix, perf]' 'paths: ["*.sh", "docs/*"]' 'issue: required' 'base_ahead: required' '---' '' '指示')"
+    'types: [fix, perf]' 'paths: ["**/*.sh", "!docs/**"]' 'issue: required' 'base_ahead: required' '---' '' '指示')"
   base="$(git rev-parse HEAD)"
   git commit -q --allow-empty -m later
   echo x >a.sh && git add a.sh
@@ -208,6 +208,12 @@ add() {
   add "指示" --name ok --layer user --title "観点" --path ' a'
   assert_failure 64
   add "指示" --name ok --layer user --title "観点" --path ''
+  assert_failure 64
+  add "指示" --name ok --layer user --title "観点" --path '/etc/*'
+  assert_failure 64
+  add "指示" --name ok --layer user --title "観点" --path '!../x'
+  assert_failure 64
+  add "指示" --name ok --layer user --title "観点" --path '!'
   assert_failure 64
   add "指示" --name ok --layer user --title "観点" --type
   assert_failure 64

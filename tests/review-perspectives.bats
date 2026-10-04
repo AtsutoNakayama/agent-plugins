@@ -3,6 +3,7 @@
 # shellcheck disable=SC2030,SC2031
 
 load test_helper
+load fake_gh
 
 PLUGIN_REVIEW="$(cd "$BATS_TEST_DIRNAME/../plugins/dev-workflow/review" && pwd)"
 
@@ -167,22 +168,62 @@ used() { jq -e --arg n "$1" '.perspectives | any(.name == $n)' <<<"$output" >/de
   assert_equal "$(jq -r '.skipped[] | select(.name == "only-fix") | .layer' <<<"$output")" repo
 }
 
-@test "type が分からなければ、types の条件では外さない" {
+@test "type が分からなければ、types を書いた観点は外す" {
   branch_changing a.txt
   perspective_when only-fix 'types: [fix]'
   run_script review-perspectives.sh --base "$BASE" --target main
   assert_success
-  used only-fix || fail "$output"
+  assert_equal "$(skipped_reason only-fix)" "type が分からない（types: fix）"
 }
 
-@test "paths は差分のファイルのどれかが当たるときだけ使い、* は / にも当たる" {
+@test "paths は差分のファイルのどれかが当たるときだけ使う" {
   branch_changing src/lib/a.sh docs/b.md
-  perspective_when shell 'paths: ["*.sh"]'
-  perspective_when ci 'paths: [".github/*", "*.yml"]'
+  perspective_when shell 'paths: ["**/*.sh"]'
+  perspective_when ci 'paths: [".github/**", "*.yml"]'
   run_script review-perspectives.sh --base "$BASE" --target main
   assert_success
   used shell || fail "$output"
-  assert_equal "$(skipped_reason ci)" "差分のファイルが paths（.github/*、*.yml）のどれにも当たらない"
+  assert_equal "$(skipped_reason ci)" "差分のファイルが paths（.github/**、*.yml）に当たらない"
+}
+
+@test "paths は .gitignore と同じ書き方：* は / をまたがず、**/ は0個以上のディレクトリに当たる" {
+  branch_changing src/a.ts lib/sub/b.sh
+  perspective_when root-sh 'paths: "*.sh"'
+  perspective_when star-dir 'paths: "lib/*.sh"'
+  perspective_when ts 'paths: "src/**/*.ts"'
+  perspective_when lib-all 'paths: "lib/**"'
+  run_script review-perspectives.sh --base "$BASE" --target main
+  assert_success
+  [ -n "$(skipped_reason root-sh)" ] || fail "*.sh がルートの外の .sh に当たっています: $output"
+  [ -n "$(skipped_reason star-dir)" ] || fail "lib/*.sh が lib/sub/b.sh に当たっています: $output"
+  used ts || fail "src/**/*.ts が src/a.ts に当たっていません: $output"
+  used lib-all || fail "$output"
+}
+
+@test "paths の ! は除外で、除外されないファイルが1つでもあれば使う" {
+  branch_changing docs/a.md
+  perspective_when not-docs 'paths: ["!docs/**"]'
+  perspective_when code 'paths: ["**", "!**/*.md"]'
+  run_script review-perspectives.sh --base "$BASE" --target main
+  assert_success
+  [ -n "$(skipped_reason not-docs)" ] || fail "$output"
+  [ -n "$(skipped_reason code)" ] || fail "$output"
+  echo x >b.sh
+  git add b.sh
+  git commit -q -m code
+  run_script review-perspectives.sh --base "$BASE" --target main
+  assert_success
+  used not-docs || fail "$output"
+  used code || fail "$output"
+}
+
+@test "サブディレクトリで実行しても、paths はリポジトリのルートから当てる" {
+  branch_changing src/a.sh
+  perspective_when shell 'paths: "src/*.sh"'
+  cd src
+  run_script review-perspectives.sh --base "$BASE" --target main
+  assert_success
+  used shell || fail "$output"
 }
 
 @test "名前を変えたファイルは、元の名前も paths に当てる" {
@@ -229,7 +270,7 @@ used() { jq -e --arg n "$1" '.perspectives | any(.name == $n)' <<<"$output" >/de
   perspective_when both 'types: fix\npaths: "*.md"'
   run_script review-perspectives.sh --base "$BASE" --target main --type fix
   assert_success
-  assert_equal "$(skipped_reason both)" "差分のファイルが paths（*.md）のどれにも当たらない"
+  assert_equal "$(skipped_reason both)" "差分のファイルが paths（*.md）に当たらない"
 }
 
 @test "条件を書いていない観点と、--base を渡さないときは、条件で外さない" {
@@ -252,6 +293,8 @@ used() { jq -e --arg n "$1" '.perspectives | any(.name == $n)' <<<"$output" >/de
   perspective_when bad-issue 'issue: yes'
   perspective_when bad-ahead 'base_ahead: true'
   perspective_when bad-builtin 'builtin: lint'
+  perspective_when abs-path 'paths: "/etc/*"'
+  perspective_when up-path 'paths: ["!../x"]'
   run bash -c "${TEST_BASH:-bash} '$SCRIPTS/review-perspectives.sh' 2>/dev/null"
   assert_success
   assert_equal "$(jq -r '.invalid[] | "\(.path | split("/") | last) \(.reason)"' <<<"$output" | LC_ALL=C sort)" "$(LC_ALL=C sort <<'EOF2'
@@ -259,6 +302,8 @@ bad-ahead.md base_ahead は required にしてください
 bad-builtin.md builtin は code-review にしてください
 bad-issue.md issue は required にしてください
 bad-types.md types は type の名前（小文字の英数字と -）の一覧にしてください
+abs-path.md paths はリポジトリのルートからの相対パスのパターンにしてください（/ で始めない・.. を使わない）: /etc/*
+up-path.md paths はリポジトリのルートからの相対パスのパターンにしてください（/ で始めない・.. を使わない）: !../x
 empty-paths.md paths にパターンがありません
 empty-types.md types に type がありません
 EOF2
@@ -323,4 +368,96 @@ EOF2
   run_script review-perspectives.sh --base "$BASE" --target main
   assert_success
   used docs || fail "$output"
+}
+
+# --auto のテストの準備。偽の gh と origin 役の bare リポジトリを用意し、ブランチ <名前> を作って a.txt を変える
+# 使い方: auto_branch <ブランチ名>
+auto_branch() {
+  setup_fake_gh
+  git init -q --bare -b main "$TMP/origin.git"
+  git remote add origin "$TMP/origin.git"
+  git push -q origin main
+  BASE="$(git rev-parse HEAD)"
+  git checkout -q -b "$1"
+  echo x >a.txt
+  git add a.txt
+  git commit -q -m change
+}
+
+@test "--auto は Issue の type ラベルと番号、origin のマージ先と基点を決めて絞り込む" {
+  auto_branch feat/17-add-thing
+  fake_issue 17 '["fix", "breaking"]'
+  run_script review-perspectives.sh --auto
+  assert_success
+  assert_equal "$(jq -c .context <<<"$output")" \
+    "{\"base\":\"$BASE\",\"target\":\"origin/main\",\"ahead\":0,\"issue\":17,\"type\":\"fix\",\"type_from\":\"issue\"}"
+  used regression-test || fail "Issue の type（fix）で regression-test が使われていません: $output"
+  used issue-requirements || fail "$output"
+  [ -n "$(skipped_reason main-drift)" ] || fail "$output"
+}
+
+@test "--auto は、マージ先に後から入ったコミットを fetch して base_ahead を判断する" {
+  auto_branch feat/17-add-thing
+  fake_issue 17 '["feat"]'
+  git clone -q "$TMP/origin.git" "$TMP/other"
+  git -C "$TMP/other" commit -q --allow-empty -m later
+  git -C "$TMP/other" push -q origin main
+  run_script review-perspectives.sh --auto
+  assert_success
+  assert_equal "$(jq -c '[.context.base, .context.ahead]' <<<"$output")" "[\"$BASE\",1]"
+  used main-drift || fail "$output"
+}
+
+@test "--auto は、Issue の type ラベルが1つに決まらなければブランチ名の type を使う" {
+  auto_branch fix/17-bug
+  fake_issue 17 '["feat", "fix"]'
+  run_script review-perspectives.sh --auto
+  assert_success
+  assert_equal "$(jq -c '[.context.type, .context.type_from, .context.issue]' <<<"$output")" '["fix","branch",17]'
+}
+
+@test "--auto は、Issue が見つからなければ Issue は無いものとし、ブランチ名の type を使う" {
+  auto_branch fix/17-bug
+  rm "$FIX/issue-17.json"
+  run bash -c "${TEST_BASH:-bash} '$SCRIPTS/review-perspectives.sh' --auto 2>'$TMP/err'"
+  assert_success
+  assert_equal "$(jq -c '[.context.issue, .context.type, .context.type_from]' <<<"$output")" '[null,"fix","branch"]'
+  assert_equal "$(skipped_reason issue-requirements)" "Issue が無い（issue: required）"
+  grep -q "Issue #17 が見つからないので" "$TMP/err" || fail "$(cat "$TMP/err")"
+}
+
+@test "--auto は、gh で Issue を読めなければ番号は使い、type はブランチ名から決める" {
+  auto_branch fix/17-bug
+  fake_issue 17 '["feat"]'
+  export FAKE_FAIL=issue-view FAKE_FAIL_MSG="HTTP 401: Bad credentials"
+  run bash -c "${TEST_BASH:-bash} '$SCRIPTS/review-perspectives.sh' --auto 2>'$TMP/err'"
+  assert_success
+  assert_equal "$(jq -c '[.context.issue, .context.type, .context.type_from]' <<<"$output")" '[17,"fix","branch"]'
+  grep -q "Issue #17 を読めません（HTTP 401: Bad credentials）" "$TMP/err" || fail "$(cat "$TMP/err")"
+}
+
+@test "--auto は、ブランチ名が branch.pattern の形でなければ Issue も type も無いものとする" {
+  auto_branch hotfix-typo
+  run_script review-perspectives.sh --auto
+  assert_success
+  assert_equal "$(jq -c '[.context.issue, .context.type, .context.type_from]' <<<"$output")" '[null,null,null]'
+  assert_equal "$(skipped_reason regression-test)" "type が分からない（types: fix）"
+}
+
+@test "--auto は、fetch できなくても手元の origin のマージ先で判断し、それも無ければ止まる" {
+  auto_branch feat/17-add-thing
+  fake_issue 17 '["feat"]'
+  mv "$TMP/origin.git" "$TMP/gone.git"
+  run bash -c "${TEST_BASH:-bash} '$SCRIPTS/review-perspectives.sh' --auto 2>'$TMP/err'"
+  assert_success
+  grep -q "origin/main を最新にできませんでした" "$TMP/err" || fail "$(cat "$TMP/err")"
+  git update-ref -d refs/remotes/origin/main
+  run_script review-perspectives.sh --auto
+  assert_failure 2
+  assert_output --partial "マージ先が見つかりません: origin/main"
+}
+
+@test "--auto はほかの絞り込みの引数と一緒に使えない" {
+  run_script review-perspectives.sh --auto --type fix
+  assert_failure 64
 }
