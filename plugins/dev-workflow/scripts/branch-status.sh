@@ -40,7 +40,7 @@ branch="$(git -C "$repo_root" symbolic-ref --short -q HEAD || true)"
 [ -n "$branch" ] || dw_die "ブランチの上にいません。取り込む作業用のブランチに切り替えてください" 64
 [ "$branch" != "$base" ] || dw_die "${base} には取り込めません。作業用のブランチで実行してください" 64
 
-git -C "$repo_root" fetch -q origin "$base" || dw_die "origin/${base} を取得できませんでした"
+git -C "$repo_root" fetch -q origin -- "$base" || dw_die "origin/${base} を取得できませんでした"
 ref="refs/remotes/origin/$base"
 git -C "$repo_root" show-ref --verify --quiet "$ref" || dw_die "origin/${base} がありません"
 
@@ -57,7 +57,7 @@ remote_rc=0
 git -C "$repo_root" ls-remote --exit-code --heads origin "refs/heads/$branch" >/dev/null 2>&1 || remote_rc=$?
 case "$remote_rc" in
   0)
-    git -C "$repo_root" fetch -q origin "$branch" || dw_die "origin/${branch} を取得できませんでした"
+    git -C "$repo_root" fetch -q origin -- "$branch" || dw_die "origin/${branch} を取得できませんでした"
     unpushed="$(git -C "$repo_root" rev-list --count "refs/remotes/origin/$branch..refs/heads/$branch")"
     unpulled="$(git -C "$repo_root" rev-list --count "refs/heads/$branch..refs/remotes/origin/$branch")"
     ;;
