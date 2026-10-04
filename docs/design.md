@@ -18,6 +18,7 @@ agent-plugins/
 │   ├── skills/        # 各スキル
 │   ├── hooks/         # ガードレール
 │   ├── review/        # 共通のレビュー観点
+│   ├── templates/     # スキルが使うテンプレート（ADR・Issue・PR など）
 │   └── scripts/       # スキルから呼ぶスクリプト（lib/common.sh を含む）
 │       └── setup/     # リポジトリの初期設定用
 └── tests/
