@@ -202,8 +202,15 @@ jobs:
         if: steps.diff.outputs.ok == 'true'
         env:
           MARKER: ${{ steps.pr.outputs.marker }}
+          SHA: ${{ steps.pr.outputs.sha }}
         run: |
           set -euo pipefail
+          # Claude の実行中に head が変わっていたら、古い sha のレビューを現在の PR に投稿しない。
+          # 目印が付かないので、次の見回りや上限のコメントでやり直せる
+          if [ "$(gh api "repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}" --jq '.head.sha')" != "$SHA" ]; then
+            echo "warn: レビューの間に PR の head が変わったので、コメントしません" >&2
+            exit 0
+          fi
           review="${REVIEW_DIR}/review.md"
           if [ ! -s "$review" ]; then
             echo "error: Claude のレビュー結果がありません" >&2
