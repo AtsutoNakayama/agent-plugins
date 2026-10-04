@@ -435,3 +435,12 @@ fake_issue_tasks() {
   assert_success
   assert_equal "$(jq -c '[.tasks[].text]' <<<"$json")" '["b","c"]'
 }
+
+@test "複数行の HTML のコメントの中の行は、項目とみなさない" {
+  setup_branch
+  set_issue_body "$(printf -- '<!-- 例:\n- [ ] テストを足す\n-->\n- [ ] テストを足す\n- [ ] b <!-- 1行のコメント -->\n- [ ] c')"
+  run_pr --issue 17 --body-file "$TMP/body.md" --check テストを足す
+  assert_success
+  assert_equal "$(jq -c '[.tasks[].text]' <<<"$json")" '["テストを足す","b <!-- 1行のコメント -->","c"]'
+  assert_equal "$(cat "$TMP/issue-edit-body")" "$(printf -- '<!-- 例:\n- [ ] テストを足す\n-->\n- [x] テストを足す\n- [ ] b <!-- 1行のコメント -->\n- [ ] c')"
+}
