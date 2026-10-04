@@ -253,11 +253,12 @@ desired="$(jq -n --argjson ex "$existing" --arg name "$RULESET_NAME" --arg ref "
             } + ($oldqueue // {}) + {merge_method: "SQUASH"})}]
           else [] end)
       )
-      | if $strict == null then . else
-          map(if .type == "required_status_checks"
-            then .parameters.strict_required_status_checks_policy = $strict else . end)
-        end
-    }')"
+    }
+  # 既存の必須のチェックも含めて strict を揃える。jq 1.7 はオブジェクトの値の中の「| if」を読めないので、作った後に書き換える
+  | if $strict == null then . else
+      .rules |= map(if .type == "required_status_checks"
+        then .parameters.strict_required_status_checks_policy = $strict else . end)
+    end')"
 # 必須のチェックの規則（無ければ null）と、キューを使うか
 checks_rule="$(jq -c '[.rules[] | select(.type == "required_status_checks")][0]' <<<"$desired")"
 queue_enabled="$(jq '[.rules[] | select(.type == "merge_queue")] | length > 0' <<<"$desired")"
