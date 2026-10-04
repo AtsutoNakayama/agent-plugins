@@ -9,14 +9,18 @@
 #   behind                origin/<base> にあって、ブランチに無いコミットの数
 #   ahead                 ブランチにあって、origin/<base> に無いコミットの数
 #   up_to_date            behind が 0 か（取り込むものが無いか）
+#   dirty                 未コミットの変更（git が無視するファイルは除く）があるか
+#   unpushed              origin/<ブランチ> に無い、手元のコミットの数。origin にブランチが無ければ null
+#   unpulled              手元に無い、origin/<ブランチ> のコミットの数（push が拒否される原因になる）。origin にブランチが無ければ null
 #   pr                    そのブランチの開いている PR（number・url・merge_state）。無ければ null
 #                         merge_state は GitHub の mergeStateStatus（BEHIND・DIRTY・BLOCKED・CLEAN など）。
-#                         PR が無い、または gh で取得できないときは、pr は null になる
+#                         fork の同じ名前のブランチからの PR は除く。PR が無い、gh が無い、
+#                         または gh で取得できないときは、pr は null になる（behind と ahead は gh が無くても出る）
 set -euo pipefail
 
 # shellcheck source=lib/common.sh
 . "$(cd "$(dirname "$0")" && pwd)/lib/common.sh"
-dw_require gh jq git
+dw_require jq git
 
 # macOS の BSD sed が日本語で失敗しないよう、バイト列として扱わせる
 usage() { LC_ALL=C sed -n '2,/^[^#]/{/^[^#]/d;s/^# \{0,1\}//;p;}' "$0"; }
@@ -52,10 +56,26 @@ git -C "$repo_root" show-ref --verify --quiet "$ref" || dw_die "origin/${base} �
 behind="$(git -C "$repo_root" rev-list --count "refs/heads/$branch..$ref")"
 ahead="$(git -C "$repo_root" rev-list --count "$ref..refs/heads/$branch")"
 
-pr=null
-if prs="$(gh pr list --head "$branch" --state open --json number,url,mergeStateStatus 2>/dev/null)"; then
-  pr="$(jq -c 'first // null | if . then {number, url, merge_state: .mergeStateStatus} else null end' <<<"$prs")"
+dirty=false
+[ -z "$(git -C "$repo_root" status --porcelain)" ] || dirty=true
+
+# 手元のブランチと origin のブランチのずれ。origin に無ければ null
+# （fetch の失敗は、ブランチが origin に無いのと見分けられないので、ここでは null として続ける）
+unpushed=null unpulled=null
+if git -C "$repo_root" fetch -q origin "$branch" 2>/dev/null \
+  && git -C "$repo_root" show-ref --verify --quiet "refs/remotes/origin/$branch"; then
+  unpushed="$(git -C "$repo_root" rev-list --count "refs/remotes/origin/$branch..refs/heads/$branch")"
+  unpulled="$(git -C "$repo_root" rev-list --count "refs/heads/$branch..refs/remotes/origin/$branch")"
 fi
 
-jq -n --arg branch "$branch" --arg base "$base" --argjson behind "$behind" --argjson ahead "$ahead" --argjson pr "$pr" \
-  '{branch: $branch, base: $base, behind: $behind, ahead: $ahead, up_to_date: ($behind == 0), pr: $pr}'
+# --head はブランチ名だけで探すので、fork の同じ名前のブランチからの PR を除く
+pr=null
+if command -v gh >/dev/null 2>&1 \
+  && prs="$(gh pr list --head "$branch" --state open --json number,url,mergeStateStatus,isCrossRepository 2>/dev/null)"; then
+  pr="$(jq -c 'map(select(.isCrossRepository | not)) | first // null | if . then {number, url, merge_state: .mergeStateStatus} else null end' <<<"$prs")"
+fi
+
+jq -n --arg branch "$branch" --arg base "$base" --argjson behind "$behind" --argjson ahead "$ahead" \
+  --argjson dirty "$dirty" --argjson unpushed "$unpushed" --argjson unpulled "$unpulled" --argjson pr "$pr" \
+  '{branch: $branch, base: $base, behind: $behind, ahead: $ahead, up_to_date: ($behind == 0), dirty: $dirty,
+    unpushed: $unpushed, unpulled: $unpulled, pr: $pr}'

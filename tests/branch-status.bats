@@ -53,11 +53,62 @@ run_status() {
 
 @test "開いている PR のマージ状態を出す" {
   setup_branch
-  echo '[{"number": 5, "url": "https://github.com/me/demo/pull/5", "mergeStateStatus": "BEHIND"}]' >"$FIX/pr-list.json"
+  echo '[{"number": 5, "url": "https://github.com/me/demo/pull/5", "mergeStateStatus": "BEHIND", "isCrossRepository": false}]' >"$FIX/pr-list.json"
   run_status
   assert_success
   assert_equal "$(jq -r '.pr | [.number, .merge_state] | map(tostring) | join(" ")' <<<"$output")" "5 BEHIND"
-  assert_equal "$(args pr-list)" "--head feat/17-x --state open --json number,url,mergeStateStatus"
+  assert_equal "$(args pr-list)" "--head feat/17-x --state open --json number,url,mergeStateStatus,isCrossRepository"
+}
+
+@test "fork の同じ名前のブランチからの PR は除く" {
+  setup_branch
+  echo '[{"number": 9, "url": "u", "mergeStateStatus": "CLEAN", "isCrossRepository": true}]' >"$FIX/pr-list.json"
+  run_status
+  assert_success
+  assert_equal "$(jq -c .pr <<<"$output")" "null"
+}
+
+@test "gh が無くても、遅れの数は出す（pr は null）" {
+  setup_branch
+  mkdir "$TMP/nogh"
+  for c in git jq bash env sed awk cat dirname basename grep cut head tr sort mktemp rm wc; do
+    ln -s "$(command -v "$c")" "$TMP/nogh/$c" 2>/dev/null || true
+  done
+  PATH="$TMP/nogh" run_status
+  assert_success
+  assert_equal "$(jq -r '[.behind, .pr] | map(tostring) | join(" ")' <<<"$output")" "0 null"
+}
+
+@test "未コミットの変更があれば dirty が true" {
+  setup_branch
+  run_status
+  assert_equal "$(jq -r .dirty <<<"$output")" "false"
+  echo more >>work.txt
+  run_status
+  assert_equal "$(jq -r .dirty <<<"$output")" "true"
+}
+
+@test "origin にブランチが無ければ unpushed・unpulled は null" {
+  setup_branch
+  run_status
+  assert_equal "$(jq -c '[.unpushed, .unpulled]' <<<"$output")" "[null,null]"
+}
+
+@test "未 push のコミットと、手元に無い origin のコミットの数を出す" {
+  setup_branch
+  git push -q origin feat/17-x
+  echo a >a.txt
+  git add a.txt
+  git commit -q -m "feat: a"
+  run_status
+  assert_equal "$(jq -c '[.unpushed, .unpulled]' <<<"$output")" "[1,0]"
+  git clone -q -b feat/17-x "$TMP/origin.git" "$TMP/other2"
+  echo b >"$TMP/other2/b.txt"
+  git -C "$TMP/other2" add b.txt
+  git -C "$TMP/other2" commit -q -m "feat: b"
+  git -C "$TMP/other2" push -q origin feat/17-x
+  run_status
+  assert_equal "$(jq -c '[.unpushed, .unpulled]' <<<"$output")" "[1,1]"
 }
 
 @test "PR を取得できなくても、遅れの数は出す（pr は null）" {
