@@ -2,7 +2,8 @@
 # branch-name・status-set・task-start・cleanup・pr-create・issue-cancel のテストで使う偽の gh。load fake_gh で読み込み、setup_fake_gh を呼ぶ。
 #
 # - gh repo view                    me/demo を返す
-# - gh issue view N --json ...      $FIX/issue-N.json を返す（-q があれば適用する）。引数を「issue-view N ...」として $CALLS に記録する
+# - gh issue view N --json ...      $FIX/issue-N.json を返す（-q があれば適用する）。引数を「issue-view N ...」として $CALLS に記録する。
+#                                   N が Issue の URL なら、末尾の番号の $FIX/issue-<番号>.json を返す（記録は URL のまま）
 # - gh issue edit N ...             引数を「edit N ...」として $CALLS に記録する
 # - gh issue comment N --body-file -  「issue-comment N」を $CALLS に記録し、標準入力を $TMP/issue-comment-body に写す
 # - gh issue close N ...            引数を「issue-close N ...」として $CALLS に記録する
@@ -13,11 +14,13 @@
 # - gh pr close N                   「pr-close N」を $CALLS に記録する
 # - gh --version                    gh version $FAKE_GH_VERSION（既定: 2.96.0）を返す
 # - gh api user                     login: me を返す
+# - gh api --paginate repos/.../issues/N/sub_issues?...
+#                                   「api-sub-issues <パス（? より前）>」を $CALLS に記録し、$FIX/sub-issues-N.json（無ければ []）を返す
 # - gh api repos/...                「api-get <パス>」を $CALLS に記録する。$FIX/remote-ref があれば {} を、無ければ HTTP 404 で失敗する
 # - gh api -X DELETE <パス>          「api-delete <パス>」を $CALLS に記録する
 # - gh api graphql                  操作名ごとに $FIX/<操作名>.json を返し、「<操作名> <変数>」を $CALLS に記録する
 # - gh project ・Project の REST     fake_gh_project.bash が受け持つ（ProjectView・ProjectFields・AddItem・SetField など）
-# FAKE_FAIL に指定した操作名（issue-view・edit・issue-comment・issue-close・pr-list・pr-create・pr-comment・pr-close・api-get・api-delete を含む）は、FAKE_FAIL_MSG（既定: gh: failed）を出して失敗する。
+# FAKE_FAIL に指定した操作名（issue-view・edit・issue-comment・issue-close・pr-list・pr-create・pr-comment・pr-close・api-get・api-delete・api-sub-issues を含む）は、FAKE_FAIL_MSG（既定: gh: failed）を出して失敗する。
 
 setup_fake_gh() {
   FIX="$TMP/fix"
@@ -42,8 +45,8 @@ case "$1 $2" in
   "issue view")
     echo "issue-view $3 ${*:4}" >>"$CALLS"
     fail issue-view
-    [ -f "$FIX/issue-$3.json" ] || { echo "GraphQL: Could not resolve to an issue (NOT_FOUND)" >&2; exit 1; }
-    jq -r "$q" "$FIX/issue-$3.json"
+    [ -f "$FIX/issue-${3##*/}.json" ] || { echo "GraphQL: Could not resolve to an issue (NOT_FOUND)" >&2; exit 1; }
+    jq -r "$q" "$FIX/issue-${3##*/}.json"
     ;;
   "issue edit")
     shift 2
@@ -72,6 +75,18 @@ case "$1 $2" in
   "api -X")
     echo "api-delete $4" >>"$CALLS"
     fail api-delete
+    ;;
+  "api --paginate")
+    case "$3" in
+      repos/*/issues/*/sub_issues*)
+        path="${3%%\?*}"
+        echo "api-sub-issues $path" >>"$CALLS"
+        fail api-sub-issues
+        n="${path%/sub_issues}"
+        n="${n##*/}"
+        if [ -f "$FIX/sub-issues-$n.json" ]; then cat "$FIX/sub-issues-$n.json"; else echo '[]'; fi
+        ;;
+    esac
     ;;
   "api repos/"*)
     echo "api-get $2" >>"$CALLS"

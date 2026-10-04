@@ -96,6 +96,7 @@ agent-plugins/
 - **やらない Issue を閉じる**：誤って起票した Issue や、やらないことにした Issue は、`task-cancel` で not planned（重複なら duplicate）で閉じる。
   - Issue の終わり方は、完了（completed。PR のマージで閉じる）とやめた（not planned・duplicate）の2つに分ける。完了は PR が閉じ、やめたときは `task-cancel` が閉じる。`task-finish` は Issue を閉じたり変えたりせず、マージした後の手元を片付けて、PR が閉じる Issue が閉じたかを伝えるだけ（`cleanup.sh` の `issues`。調べられなくても片付けは止めない）。名前を `task-close` にしなかったのは、close は完了で閉じるときにも使う言葉で、`task-finish` と混同しやすいため。
   - 閉じる前に、理由と参照先（代わりに作業する Issue など）を `#N` でコメントする。理由が空（空白だけを含む）なら閉じない。
+  - **親を取りやめるときは、開いている子孫（子・孫）の扱いを確認で選ぶ**。一緒に取りやめる（子孫にも同じ理由をコメントして not planned で閉じる）か、残す（親だけ閉じる）かは、場合によって違う（子を別の親に移して続けることもある）ので、黙って決めずに、閉じる前の確認でユーザーが選ぶ。`issue-cancel.sh` は、開いている子孫があるのに `--sub-issues close|keep` が無ければ、何もせずに止まる。子孫は REST の `issues/{番号}/sub_issues` で、孫を持つ子（`sub_issues_summary.total`）の下までたどる。閉じるときは深いものから閉じ、最後に親を閉じる（途中で止まっても、子を残したまま親が閉じた状態にならず、再実行で続きから進む）。子孫の PR とブランチは `issue-cancel.sh` の親の実行では片付けないので、着手中の子孫は、`task-cancel` が先に子孫ごとに `--branch` を付けて取りやめ、手元も片付けてから、親を閉じる。
   - duplicate は、重複の元の Issue の番号が分かるときだけ使い、元の Issue に紐付ける（`gh issue close --duplicate-of`。gh 2.88.0 以上。古ければ何もせずに止まって更新を促し、`doctor.sh` も更新を促す。`common.sh` の `DW_GH_MIN_VERSION`）。誤って紐付けると影響が大きいので、迷うときは not planned にする。
   - Project からは外さない。後からボードで経緯を参照できるように。
   - Story Point は残す。見積もりも記録の一部で、集計する仕組みも無いので、消す理由が無い。
@@ -172,7 +173,7 @@ agent-plugins/
 | `adr-create` | 設計上の判断を、MADR 4.0.0 の書式の ADR として残す。判断に合うテンプレートを選び、中身まで書く | なし（作るのは手元のファイルだけ） |
 | `pr-create` | push と PR 作成 | push と PR の作成 |
 | `branch-update` | PR のブランチに、設定済みの `base_branch` の最新状態を取り込む。遅れを調べ（`branch-status.sh`）、`origin/<base_branch>` を merge し（rebase と強制 push は使わない）、衝突を直し、リポジトリのテストとチェックを通してから push し、CI が通り直るのを待つ | push（取り込んだコミットとチェックの結果を見せる）。判断できない衝突は聞く |
-| `task-cancel` | やらない Issue を、理由と参照先をコメントして not planned か duplicate で閉じる。着手していれば、PR を閉じ、リモートと手元のブランチ・ワークツリーを削除する | 閉じる・削除する（理由のコメントと、失う作業を含めて1回で確認する） |
+| `task-cancel` | やらない Issue を、理由と参照先をコメントして not planned か duplicate で閉じる。着手していれば、PR を閉じ、リモートと手元のブランチ・ワークツリーを削除する。親の Issue なら、開いている子孫を一緒に取りやめるか残すかを選ばせる | 閉じる・削除する（理由のコメントと、失う作業を含めて1回で確認する） |
 | `task-finish` | ワークツリーとローカルブランチを削除し、main を最新にして（`git pull --ff-only`）、PR が閉じる Issue が閉じたかを伝える | なし（作業が失われるときは `cleanup.sh` が何も消さずに止まる。git が無視するファイルを消すときだけ確認を取る） |
 | `repo-setup` | 初期設定を対話的に実行し、設定ファイルを作る | ラベル・Project・リポジトリの設定の変更 |
 
@@ -278,7 +279,7 @@ Todo が増えたとき、どれから着手するか、同時に進めてよい
 | `review-perspective-add.sh` | 観点ファイルを作る。同じ層に同じ名前のファイルがあれば上書きせずに止まり、ほかの層にあれば `--override` が無いかぎり止まる（上位の層にあり、作っても使われないときは、下位の層にあるときと別の終了コードで知らせる）。リポジトリの層に作ったときは、そのブランチと、作業用のブランチの上か（`work_branch`）も出力する |
 | `adr-create.sh` | ADR をテンプレートから作る（ファイル名の決定、`date` と `issue` の記入）。`--supersedes` で置き換える ADR の `status` の行だけを書き換える。同じファイル名があれば上書きせずに止まる |
 | `pr-create.sh` | PR を作る |
-| `issue-cancel.sh` | 理由をコメントし、Issue を not planned か duplicate で閉じる。`--branch` で、そのブランチの開いている PR を閉じ、リモートのブランチを削除する。理由が空、または違う理由で既に閉じていれば何もせずに止まる |
+| `issue-cancel.sh` | 理由をコメントし、Issue を not planned か duplicate で閉じる。`--branch` で、そのブランチの開いている PR を閉じ、リモートのブランチを削除する。`--sub-issues close|keep` で、親を閉じるときに開いている子孫を閉じるか残すかを決める（開いている子孫があるのに無ければ止まる）。理由が空、または違う理由で既に閉じていれば何もせずに止まる |
 | `branch-status.sh` | 作業用のブランチの、base_branch に対する遅れ・先行、追跡しているファイルの未コミットの変更（未追跡のファイルは除く）、origin のブランチとのずれ、開いている PR のマージ状態（`merge_state`）を調べる。変更はしない（origin からの取得だけ行う） |
 | `cleanup.sh` | マージを確認し、ワークツリーとブランチを削除し、main を最新にし、PR が閉じる Issue の状態（`issues`）を出す。未コミットの変更や git が無視するファイルがあれば、何も消さずに止まる（無視するファイルは `--remove-ignored` で消せる）。`--abandon` では、マージの確認・main の更新・Issue の状態の確認を飛ばし、失うものを一覧にして削除する |
 

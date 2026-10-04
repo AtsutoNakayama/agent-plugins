@@ -25,6 +25,28 @@ setup_cancel() {
   cancel_issue 20
 }
 
+# REST の issues/<親>/sub_issues が返す子。使い方: sub_issue <番号> <open | closed> [孫の数（既定 0）] [所有者/名前（既定 me/demo）]
+sub_issue() {
+  jq -nc --argjson n "$1" --arg s "$2" --argjson t "${3:-0}" --arg r "${4:-me/demo}" '{number: $n, title: "子 \($n)",
+    state: $s, html_url: "https://github.com/\($r)/issues/\($n)", url: "https://api.github.com/repos/\($r)/issues/\($n)",
+    sub_issues_summary: {total: $t}}'
+}
+
+# 親 <番号> の子を設定する。使い方: set_subs <親の番号> <sub_issue の出力>...
+set_subs() {
+  local parent="$1"
+  shift
+  printf '%s\n' "$@" | jq -s . >"$FIX/sub-issues-$parent.json"
+}
+
+# 17 の下に、開いている子 30（その下に開いている孫 31）と、閉じた子 32 を置く
+sub_tree() {
+  set_subs 17 "$(sub_issue 30 open 1)" "$(sub_issue 32 closed)"
+  set_subs 30 "$(sub_issue 31 open)"
+  cancel_issue 30
+  cancel_issue 31
+}
+
 # 呼んだ操作の順番（GitHub に書き込むものだけ）
 writes() { grep -oE '^(issue-comment|issue-close|pr-comment|pr-close|api-delete) [^ ]+' "$CALLS" | tr '\n' ',' ; }
 
@@ -112,8 +134,8 @@ writes() { grep -oE '^(issue-comment|issue-close|pr-comment|pr-close|api-delete)
   setup_cancel
   run_script issue-cancel.sh --issue 17 --reason "やらないことにしました"
   assert_success
-  # Project の操作（GraphQL）もラベルなどの変更（issue edit）も呼ばない（Issue の読み取り issue-view は数えない）
-  assert_equal "$(grep -vEc '^(issue-view|issue-comment|issue-close) ' "$CALLS")" 0
+  # Project の操作（GraphQL）もラベルなどの変更（issue edit）も呼ばない（Issue とサブ Issue の読み取りは数えない）
+  assert_equal "$(grep -vEc '^(issue-view|api-sub-issues|issue-comment|issue-close) ' "$CALLS")" 0
 }
 
 @test "理由が無い・空白だけなら閉じずに止まる" {
@@ -332,4 +354,103 @@ writes() { grep -oE '^(issue-comment|issue-close|pr-comment|pr-close|api-delete)
   assert_equal "$(writes)" ""
   assert_equal "$(jq -c '.actions[2:]' <<<"$output")" \
     '["PR #42 に閉じる理由をコメントする","PR #42 をマージせずに閉じる","リモートのブランチ feat/17-x を削除する"]'
+}
+
+@test "開いている子孫があるのに --sub-issues が無ければ、子孫を挙げて何もせずに止まる（dry-run も同じ）" {
+  setup_cancel
+  sub_tree
+  for mode in --dry-run ""; do
+    run_script issue-cancel.sh --issue 17 --reason "方針が変わったのでやめます" ${mode:+"$mode"}
+    assert_failure 2
+    assert_output "error: Issue #17 には開いている子の Issue（#30, #31）があります。--sub-issues で、一緒に閉じる（close）か残す（keep）かを指定してください"
+  done
+  assert_equal "$(writes)" ""
+}
+
+@test "--sub-issues close なら、開いている子孫を深いものから閉じてから、親を閉じる" {
+  setup_cancel
+  sub_tree
+  run_script issue-cancel.sh --issue 17 --reason "方針が変わったのでやめます" --sub-issues close
+  assert_success
+  u=https://github.com/me/demo/issues
+  assert_equal "$(writes)" "issue-comment $u/31,issue-close $u/31,issue-comment $u/30,issue-close $u/30,issue-comment 17,issue-close 17,"
+  assert_equal "$(grep -c "^issue-close $u/3[01] --reason not planned$" "$CALLS")" 2
+  # 閉じた子 32 の下は読まず、孫を持つ子 30 の下だけを読む
+  assert_equal "$(grep '^api-sub-issues ' "$CALLS" | tr '\n' ,)" \
+    "api-sub-issues repos/me/demo/issues/17/sub_issues,api-sub-issues repos/me/demo/issues/30/sub_issues,"
+  assert_equal "$(jq -c '.sub_issues | [.action, (.open | map([.ref, .commented]))]' <<<"$output")" \
+    '["close",[["#30",true],["#31",true]]]'
+}
+
+@test "--sub-issues keep なら、子孫には触れずに親だけを閉じる" {
+  setup_cancel
+  sub_tree
+  run_script issue-cancel.sh --issue 17 --reason "親だけやめます" --sub-issues keep
+  assert_success
+  assert_equal "$(writes)" "issue-comment 17,issue-close 17,"
+  assert_equal "$(jq -c '.sub_issues | [.action, (.open | map(.ref))]' <<<"$output")" '["keep",["#30","#31"]]'
+}
+
+@test "子がすべて閉じていれば、--sub-issues が無くても親を閉じる" {
+  setup_cancel
+  set_subs 17 "$(sub_issue 32 closed)"
+  run_script issue-cancel.sh --issue 17 --reason "やめます"
+  assert_success
+  assert_equal "$(writes)" "issue-comment 17,issue-close 17,"
+  assert_equal "$(jq -c .sub_issues <<<"$output")" '{"action":null,"open":[]}'
+}
+
+@test "別のリポジトリの子は、所有者/名前#番号 で示し、その URL で閉じる" {
+  setup_cancel
+  set_subs 17 "$(sub_issue 40 open 1 other/repo)"
+  set_subs 40 "$(sub_issue 41 open 0 other/repo)"
+  cancel_issue 40
+  cancel_issue 41
+  run_script issue-cancel.sh --issue 17 --reason "やめます" --dry-run
+  assert_failure 2
+  assert_output --partial "開いている子の Issue（other/repo#40, other/repo#41）"
+  run_script issue-cancel.sh --issue 17 --reason "やめます" --sub-issues close
+  assert_success
+  assert_equal "$(grep '^api-sub-issues ' "$CALLS" | tail -n 1)" "api-sub-issues repos/other/repo/issues/40/sub_issues"
+  assert_equal "$(grep '^issue-close ' "$CALLS" | head -n 1)" "issue-close https://github.com/other/repo/issues/41 --reason not planned"
+}
+
+@test "子を閉じるのに失敗したら、親には触れずに止まる。再実行では、同じ理由をコメント済みの子にはコメントし直さない" {
+  setup_cancel
+  sub_tree
+  FAKE_FAIL=issue-close run_script issue-cancel.sh --issue 17 --reason "やめます" --sub-issues close
+  assert_failure 1
+  assert_output --partial "子の Issue #31 を閉じられませんでした（もう一度実行すると続きから進みます）"
+  assert_equal "$(writes)" "issue-comment https://github.com/me/demo/issues/31,issue-close https://github.com/me/demo/issues/31,"
+  cancel_issue 31 OPEN "" "やめます"
+  : >"$CALLS"
+  run_script issue-cancel.sh --issue 17 --reason "やめます" --sub-issues close
+  assert_success
+  assert_equal "$(writes | cut -d, -f1)" "issue-close https://github.com/me/demo/issues/31"
+  assert_equal "$(jq -c '.sub_issues.open | map(.commented)' <<<"$output")" '[true,false]'
+}
+
+@test "dry-run では子孫も閉じず、予定だけを出力する" {
+  setup_cancel
+  sub_tree
+  run_script issue-cancel.sh --issue 17 --reason "やめます" --sub-issues close --dry-run
+  assert_success
+  assert_equal "$(writes)" ""
+  assert_equal "$(jq -r '.actions[0:4] | join(",")' <<<"$output")" \
+    "子の Issue #31 に閉じる理由をコメントする,子の Issue #31 を not planned で閉じる（Project と Story Point はそのまま残す）,子の Issue #30 に閉じる理由をコメントする,子の Issue #30 を not planned で閉じる（Project と Story Point はそのまま残す）"
+}
+
+@test "--sub-issues が close・keep 以外ならエラーになる" {
+  setup_cancel
+  run_script issue-cancel.sh --issue 17 --reason "やめます" --sub-issues all
+  assert_failure 64
+  assert_output --partial "--sub-issues には close か keep を指定してください: all"
+}
+
+@test "サブ Issue を読めなければ、何もせずに止まる" {
+  setup_cancel
+  FAKE_FAIL=api-sub-issues run_script issue-cancel.sh --issue 17 --reason "やめます"
+  assert_failure
+  assert_output --partial "#17 のサブ Issue を読めませんでした"
+  assert_equal "$(writes)" ""
 }

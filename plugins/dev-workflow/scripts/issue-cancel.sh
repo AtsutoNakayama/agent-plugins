@@ -1,12 +1,17 @@
 #!/usr/bin/env bash
 # やらないことにした Issue を、理由のコメントを付けて not planned（重複なら duplicate）で閉じる。
 #
-# 使い方: issue-cancel.sh --issue N --reason TEXT [--duplicate-of M] [--branch NAME] [--dry-run]
+# 使い方: issue-cancel.sh --issue N --reason TEXT [--duplicate-of M] [--branch NAME] [--sub-issues close|keep] [--dry-run]
 #   --issue N           Issue の番号（#N でもよい）
 #   --reason TEXT       閉じる理由（コメントとして残す。代わりに作業する Issue などの参照先も書く）。空白だけなら止まる
 #   --duplicate-of M    重複の元の Issue の番号。付けると duplicate で閉じ、元の Issue に紐付ける（gh 2.88.0 以上）
 #   --branch NAME       やめた作業のブランチ。そのブランチの開いている PR を同じ理由のコメントを付けて閉じ、
 #                       リモート（origin）のブランチを削除する。手元のワークツリーとブランチは消さない（cleanup.sh --abandon）
+#   --sub-issues MODE   親の Issue（サブ Issue を持つ Issue）を取りやめるときの、開いている子孫（子・孫）の扱い。
+#                       close: 同じ理由をコメントして not planned で閉じる（深いものから順に、親より先に閉じる）
+#                       keep:  閉じずに残す
+#                       開いている子孫があるのに指定しなければ、何もせずに止まる。子孫の作業（PR・ブランチ）は片付けない
+#                       （着手中の子は、先に子ごとに --branch を付けて取りやめる）
 #   --dry-run           変更せず、行う予定の操作だけを出力する
 #
 # Project からは外さず、Story Point も変えない（後からボードで経緯を参照できるように。設計書 §4）。
@@ -29,10 +34,10 @@ need_value() {
   fi
 }
 
-issue="" reason="" duplicate_of="" branch="" dry_run=false
+issue="" reason="" duplicate_of="" branch="" sub_issues="" dry_run=false
 while [ $# -gt 0 ]; do
   case "$1" in
-    --issue | --reason | --duplicate-of | --branch)
+    --issue | --reason | --duplicate-of | --branch | --sub-issues)
       need_value "$@"
       case "$1" in
         --issue) issue="$2" ;;
@@ -43,6 +48,12 @@ while [ $# -gt 0 ]; do
           [ -n "$duplicate_of" ] || dw_die "--duplicate-of に値がありません" 64
           ;;
         --branch) branch="$2" ;;
+        --sub-issues)
+          case "$2" in
+            close | keep) sub_issues="$2" ;;
+            *) dw_die "--sub-issues には close か keep を指定してください: $2" 64 ;;
+          esac
+          ;;
       esac
       shift 2
       ;;
@@ -122,6 +133,45 @@ if [ "$(jq -r .state <<<"$found")" != OPEN ]; then
   fi
 fi
 
+# 開いている子孫（サブ Issue とその下）。子は別のリポジトリにもありうるので、REST の url からたどる。
+# 浅いものから順に読み、閉じるときは深いものから閉じる（子を残したまま親が閉じた状態にしない）
+# 使い方: sub_issues_of <repos/OWNER/NAME/issues/N> → 子の配列
+sub_issues_of() {
+  gh api --paginate "$1/sub_issues?per_page=100" | jq -sc 'add // []' \
+    || dw_die "#${1##*/} のサブ Issue を読めませんでした"
+}
+open_subs='[]'
+level="$(sub_issues_of "repos/$repo_nwo/issues/$issue")"
+# GitHub の親子は8層まで。循環は作れないが、念のため層の数で打ち切る
+depth=0
+while [ "$(jq length <<<"$level")" -gt 0 ] && [ "$depth" -lt 8 ]; do
+  depth=$((depth + 1))
+  open_subs="$(jq -c --argjson l "$level" --arg nwo "$repo_nwo" '. + ($l | map(select(.state == "open") | {
+    number, title, url: .html_url,
+    ref: ((.html_url | capture("github\\.com/(?<r>[^/]+/[^/]+)/issues/").r) as $r
+      | if $r == $nwo then "#\(.number)" else "\($r)#\(.number)" end)}))' <<<"$open_subs")"
+  next='[]'
+  for path in $(jq -r '.[] | select((.sub_issues_summary.total // 0) > 0) | .url | sub("^.*?/repos/"; "repos/")' <<<"$level"); do
+    children="$(sub_issues_of "$path")"
+    next="$(jq -c --argjson c "$children" '. + $c' <<<"$next")"
+  done
+  level="$next"
+done
+if [ "$(jq length <<<"$open_subs")" -gt 0 ] && [ -z "$sub_issues" ]; then
+  dw_die "Issue #${issue} には開いている子の Issue（$(jq -r 'map(.ref) | join(", ")' <<<"$open_subs")）があります。--sub-issues で、一緒に閉じる（close）か残す（keep）かを指定してください" 2
+fi
+if [ "$sub_issues" = close ]; then
+  # 閉じるのに失敗して再実行したときに、同じ理由を二重にコメントしないよう、子ごとに最後のコメントを見る
+  with_comment='[]'
+  for url in $(jq -r '.[].url' <<<"$open_subs"); do
+    last="$(gh issue view "$url" --json comments -q '.comments[-1].body // ""')" \
+      || dw_die "子の Issue ${url} を読めませんでした"
+    with_comment="$(jq -c --arg u "$url" --arg last "$last" --arg r "$reason" \
+      '. + [{url: $u, commented: ($last != $r)}]' <<<"$with_comment")"
+  done
+  open_subs="$(jq -c --argjson w "$with_comment" 'map(. as $s | . + ($w[] | select(.url == $s.url) | {commented}))' <<<"$open_subs")"
+fi
+
 # やめた作業のリモートのブランチ（無ければ空）と、それを head とする開いている PR
 remote="" prs='[]'
 if [ -n "$branch" ]; then
@@ -142,6 +192,23 @@ fi
 
 actions='[]'
 note() { actions="$(jq -c --arg a "$1" '. + [$a]' <<<"$actions")"; }
+
+if [ "$sub_issues" = close ]; then
+  # 浅い順に読んだので、逆にたどって深いものから閉じる
+  for url in $(jq -r 'reverse | .[].url' <<<"$open_subs"); do
+    ref="$(jq -r --arg u "$url" '.[] | select(.url == $u) | .ref' <<<"$open_subs")"
+    if [ "$(jq -r --arg u "$url" '.[] | select(.url == $u) | .commented' <<<"$open_subs")" = true ]; then
+      note "子の Issue ${ref} に閉じる理由をコメントする"
+      if ! $dry_run; then
+        printf '%s' "$reason" | gh issue comment "$url" --body-file - >/dev/null \
+          || dw_die "子の Issue ${ref} にコメントできませんでした（もう一度実行すると続きから進みます）"
+      fi
+    fi
+    note "子の Issue ${ref} を not planned で閉じる（Project と Story Point はそのまま残す）"
+    $dry_run || gh issue close "$url" --reason "not planned" >/dev/null 2>&1 \
+      || dw_die "子の Issue ${ref} を閉じられませんでした（もう一度実行すると続きから進みます）"
+  done
+fi
 
 if $commented; then
   note "Issue #${issue} に閉じる理由をコメントする"
@@ -186,7 +253,8 @@ fi
 
 jq -n --argjson found "$found" --argjson dry "$dry_run" --arg reason "$reason" --arg sr "$state_reason" \
   --arg dup "$duplicate_of" --argjson commented "$commented" --argjson closed "$closed" --argjson actions "$actions" \
-  --arg branch "$branch" --arg remote "$remote" --argjson prs "$prs" '{
+  --arg branch "$branch" --arg remote "$remote" --argjson prs "$prs" \
+  --arg subs_mode "$sub_issues" --argjson subs "$open_subs" '{
     issue: $found.number,
     title: $found.title,
     dry_run: $dry,
@@ -198,5 +266,6 @@ jq -n --argjson found "$found" --argjson dry "$dry_run" --arg reason "$reason" -
     branch: (if $branch == "" then null else $branch end),
     pull_requests: $prs,
     remote_branch_deleted: ($remote != ""),
+    sub_issues: {action: (if $subs_mode == "" then null else $subs_mode end), open: $subs},
     actions: $actions
   }'
