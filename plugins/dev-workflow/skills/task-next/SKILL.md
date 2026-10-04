@@ -1,0 +1,38 @@
+---
+name: task-next
+description: GitHub Project の Todo の Issue から、次に着手すべきものと、同時に進められる組を提案する。優先順位（Todo の上から順）・依存（blocked by と本文の「依存」）・コンフリクトの見込み（本文の「変更するファイル・領域」と着手中の PR のファイル）を見る。何も変えない読み取り専用。「次に何をやればいい？」「並列で進められる Issue はある？」のように、着手する Issue を選ぶときに使う。
+---
+
+# 次に着手する Issue の提案
+
+Todo の Issue を読み、次に着手すべきものと、同時に進められる組を提案する。読むだけで、Issue・Project・ブランチ・ワークツリーのどれも変えない（確認は要らない。設計書 §8）。着手は `task-start` で、使う人が決める。herdr などの並列実行の仕組みが無くても使える。
+
+スクリプト（JSON を出力する）:
+
+- `${CLAUDE_PLUGIN_ROOT}/scripts/next-tasks.sh`：Todo の Issue を Project の並び順で読み、待ち・領域の重なりを判定する（`--help` で使い方）
+
+## 手順
+
+### 1. 読む
+
+`next-tasks.sh` を実行する。「project.number が未設定です」なら、`/dev-workflow:repo-setup` で Project を設定できることを伝えて止める。ほかのエラーは、標準エラーの1行のメッセージをそのまま伝える。
+
+出力の見方:
+
+- `next`：次に着手すべき Issue の番号（待ちを除いた先頭）。無ければ null
+- `parallel`：`next` と同時に進められる Issue の組（`next` を含む）
+- `todo`：Todo の Issue を Project の並び順（`position`）に並べたもの。`waiting`（待ち）、`blocked_by`（まだ閉じていない依存先と、その出どころ `sources`。`dependency` は GitHub の依存関係、`body` は本文の「依存」）、`areas`・`area_known`（本文の「変更するファイル・領域」）、`parallel` と `reason`（並列にできるか、その理由）、`overlaps`（選んだものと重なるパス）、`conflicts_with_active`（着手中の Issue と重なるパス）
+- `in_progress`：着手中の Issue。`areas`（本文の領域）と `pr_files`（開いている PR が変えているファイル）
+
+### 2. 提案する
+
+次を、Issue の番号とタイトルを添えて伝える。
+
+- **次に着手するもの**：`next`。Story Point があれば添える。`conflicts_with_active` があれば、着手中の Issue と重なりそうなパスを警告する（止めはしない）
+- **同時に進められる組**：`parallel` が2つ以上あれば、その組。それぞれがどのパスを触る見込みかを添える。`next` だけなら「並列にできる組は見つからなかった」と伝え、理由（領域が不明・重なる）を添える
+- **並列にできないもの**：`reason` が「領域が重なる」ものは、重なる相手とパス（`overlaps`・`conflicts_with_active`）を添える。「領域が不明」のものは、Issue に「変更するファイル・領域」を書けば並列の候補にできると伝える
+- **待ちのもの**：`waiting` の Issue と、待っている Issue の番号（`blocked_by`）。候補には入れない
+
+領域の重なりは、本文のパスから見た見込みで、実際のコンフリクトとは限らない。警告として伝え、並列にしてよいかは使う人が決める。
+
+続けて着手したいと言われたら、`/dev-workflow:task-start <番号>` を案内する（このスキルでは着手しない）。複数を同時に進めるなら、Issue ごとに別のワークツリーができる。
