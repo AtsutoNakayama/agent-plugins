@@ -54,7 +54,7 @@ jobs:
             # release-please のリリース PR は対象にしない。CodeRabbit のレビュー（上限のコメントは
             # レビューではない）が無いものだけにする。Claude のレビュー済みかは review ジョブが確かめる
             prs='[]'
-            candidates=$(gh pr list --repo "$GITHUB_REPOSITORY" --state open --limit 50 \
+            candidates=$(gh pr list --repo "$GITHUB_REPOSITORY" --state open --limit 1000 \
               --json number,isDraft,createdAt,headRefName,isCrossRepository)
             for n in $(jq -r --argjson m "$STALE_MINUTES" '
                 .[] | select(.isDraft | not) | select(.isCrossRepository | not)
