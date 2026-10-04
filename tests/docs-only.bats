@@ -13,6 +13,7 @@ commit_files() {
   git -c user.name=t -c user.email=t@example.com commit -q -m change
 }
 
+# docs-only.sh を、今のコミット（HEAD^ から HEAD の変更）に対して実行する。結果は run の output に入る
 docs_only() {
   run "${TEST_BASH:-bash}" "$BATS_TEST_DIRNAME/../.github/scripts/docs-only.sh"
 }
