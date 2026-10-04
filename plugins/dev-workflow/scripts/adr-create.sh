@@ -3,7 +3,7 @@
 #
 # 使い方: adr-create.sh --issue N --name TEXT --template TYPE [--supersedes FILE]... [--dry-run]
 #
-#   --issue N          判断をした Issue の番号。ファイル名の先頭（4桁に0埋め）と front matter の issue になる
+#   --issue N          判断をした Issue の番号。ファイル名の先頭（6桁に0埋め。999999 まで）と front matter の issue になる
 #   --name TEXT        短い名前（英語）。小文字にし、英数字以外は - にして 40 文字までに整える
 #   --template TYPE    テンプレート（templates/adr/ の MADR 4.0.0 を日本語に訳したもの）
 #                        full          全部の節・説明あり（adr-template.md）
@@ -15,7 +15,7 @@
 #   --dry-run          何も作らず書き換えず、することを JSON で出力する
 #
 # 置き場所は設定の adr.dir（既定: docs/adr。リポジトリのルートからの相対パス）。
-# ファイル名は <adr.dir>/<Issue 番号を4桁に0埋め>-<短い名前>.md。1つの Issue から、名前を変えて2つ以上作れる。
+# ファイル名は <adr.dir>/<Issue 番号を6桁に0埋め>-<短い名前>.md。1つの Issue から、名前を変えて2つ以上作れる。
 # front matter の date は今日の日付、issue は --issue の値にする。status などは、作った後に書く。
 # 同じファイル名があれば、上書きせずに終了コード 3 で止まる。置き換える ADR の status の行が読めなければ、
 # 何も作らずに終了コード 4 で止まる。
@@ -54,9 +54,9 @@ done
 case "$issue" in
   *[!0-9]*) dw_die "--issue には数字を指定してください: $issue" 64 ;;
 esac
-# 先頭の 0 を外して10進数にする（printf %04d は 08 を8進数として読んで落ちる）。桁あふれを避けるため、数にする前に桁数を見る
+# 先頭の 0 を外して10進数にする（printf %06d は 08 を8進数として読んで落ちる）。桁あふれを避けるため、数にする前に桁数を見る
 stripped="$(printf '%s' "$issue" | sed 's/^0*//')"
-[ "${#stripped}" -le 4 ] || dw_die "--issue は4桁までにしてください: $issue" 64
+[ "${#stripped}" -le 6 ] || dw_die "--issue は6桁までにしてください: $issue" 64
 issue=$((10#${stripped:-0}))
 [ -n "$name" ] || dw_die "--name は必須です" 64
 case "$template" in
@@ -81,7 +81,7 @@ case "$adr_dir" in
   "" | null | /* | .. | ../* | */.. | */../*) dw_die "adr.dir はリポジトリのルートからの相対パスにしてください（/ で始めない・.. を使わない）: ${adr_dir}" 2 ;;
 esac
 
-base="$(printf '%04d-%s' "$issue" "$name")"
+base="$(printf '%06d-%s' "$issue" "$name")"
 rel="$adr_dir/$base.md"
 path="$repo_root/$rel"
 # 壊れたシンボリックリンクも、既にあるものとして扱う
