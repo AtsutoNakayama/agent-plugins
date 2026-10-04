@@ -2,5 +2,8 @@
   "project": {
     "owner": "nakayama-labs",
     "number": 1
+  },
+  "status": {
+    "pr_opened": "In Review"
   }
 }
