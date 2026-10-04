@@ -145,6 +145,11 @@ DW_STORY_POINTS='[1, 2, 3, 5, 8, 13, 21, 34]'
 # shellcheck disable=SC2034
 DW_STORY_POINT_SPLIT=21
 
+# 親子の Issue（サブ Issue）の目安の深さ。上限（設定の sub_issues.max_depth。既定 3）までは作れるが、
+# これより深い Issue を作るときは警告する（一番上の Issue が 1 層目）。source した側で使う
+# shellcheck disable=SC2034
+DW_SUB_ISSUE_DEPTH_GUIDE=2
+
 # 破壊的変更を表すラベル。type ラベルとは別に付け、PR のタイトルの type の後に ! を付ける（設計書 §5）。source した側で使う
 # shellcheck disable=SC2034
 DW_BREAKING_LABEL=breaking
@@ -206,8 +211,10 @@ dw_find_nocase() {
 # --- GitHub Project（v2） -------------------------------------------------------
 # gh project と REST で操作する。REST の Project の API は所有者の種類（users / orgs）でパスが分かれる。
 
-# Project の id（node id）・番号・URL と項目（Status の選択肢を含む）を出力する。無ければ案内して止まる。
-# 項目は {id（node id）, name, dataType（REST の data_type。number・single_select など）, options: [{id, name}]} の配列。
+# Project の id（node id）・番号・URL・REST のパス（restPath。users/<所有者>/projectsV2/<番号> など）と
+# 項目（Status の選択肢を含む）を出力する。無ければ案内して止まる。
+# 項目は {id（node id）, databaseId（REST の数値の id）, name, dataType（REST の data_type。number・single_select など）,
+# options: [{id, name}]} の配列。
 # gh project field-list は数値の項目と文字列の項目を区別しないので、項目は REST で読む。
 # 使い方: dw_project_fields <所有者> <番号>
 dw_project_fields() {
@@ -220,8 +227,8 @@ dw_project_fields() {
     *) path="users/$1" ;;
   esac
   fields="$(gh api --paginate "$path/projectsV2/$2/fields?per_page=100" | jq -sc 'add // []')" || return 1
-  jq -c --argjson f "$fields" '{id, number, url,
-    fields: ($f | map({id: .node_id, name, dataType: .data_type,
+  jq -c --argjson f "$fields" --arg p "$path/projectsV2/$2" '{id, number, url, restPath: $p,
+    fields: ($f | map({id: .node_id, databaseId: .id, name, dataType: .data_type,
       options: ((.options // []) | map({id, name: (.name.raw // .name)}))}))}' <<<"$project"
 }
 
@@ -231,8 +238,9 @@ dw_project_add_item() {
   gh project item-add "$2" --owner "$1" --url "$3" --format json | jq -er '.id'
 }
 
-# 項目の値を設定する。値は gh project item-edit のオプションで渡す（--single-select-option-id <id> や --number <数>）。
-# 使い方: dw_project_set_field <Project の id> <項目の id> <フィールドの id> <オプション> <値>
+# 項目の値を設定する。値は gh project item-edit のオプションで渡す（--single-select-option-id <id> や --number <数>。
+# 空欄にするなら --clear だけ）。
+# 使い方: dw_project_set_field <Project の id> <項目の id> <フィールドの id> <オプション> [値]
 dw_project_set_field() {
-  gh project item-edit --project-id "$1" --id "$2" --field-id "$3" "$4" "$5" >/dev/null
+  gh project item-edit --project-id "$1" --id "$2" --field-id "$3" "${@:4}" >/dev/null
 }

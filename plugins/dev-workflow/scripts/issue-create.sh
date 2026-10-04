@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Issue を起票し、type ラベルを付け、Project に追加して todo の列にする。Story Point と依存する Issue も設定できる。
+# Issue を起票し、type ラベルを付け、Project に追加して todo の列にする。Story Point と依存する Issue・親の Issue も設定できる。
 #
 # 使い方: issue-create.sh --title TITLE --type TYPE [オプション]
 #   --title TITLE        Issue のタイトル（必須）
@@ -8,15 +8,21 @@
 #   --story-point N      Story Point。1, 2, 3, 5, 8, 13, 21, 34 のどれか（既定: 空欄）。
 #                        21 と 34 は設定できるが、分割を勧める警告を出す
 #   --blocked-by N       依存する（先に終わらせる）同じリポジトリの Issue の番号。複数回指定できる
+#   --parent N           親にする同じリポジトリの Issue の番号。起票した Issue を N のサブ Issue にする。
+#                        親子の深さが設定の sub_issues.max_depth（既定 3）を超えるなら、Issue を作る前に止める。
+#                        目安の 2 層より深くなる（3 層目になる）ときは、作るが警告する。
+#                        Story Point は子にだけ付けるので、親の Project の Story Point が入っていれば空欄にする
 #   --breaking           破壊的変更なので、type ラベルとは別に breaking ラベルも付ける
 #                        （リポジトリにラベルが無ければ、Issue を作る前に止める）
 #
 # 行うこと:
 #   1. 設定と Project（project.owner / project.number）、Status 列・todo の列・Story Point の項目、
-#      依存する Issue と breaking ラベルがあるかを確かめる（問題があれば Issue を作る前に止める）
+#      依存する Issue・親の Issue と breaking ラベルがあるか、親子の深さが上限を超えないかを確かめる
+#      （問題があれば Issue を作る前に止める）
 #   2. Issue を作る（type ラベル付き。--breaking なら breaking ラベルも）
 #   3. Project に追加し（既に入っていれば既存の項目を使う）、Status を todo の列に（status-set.sh）、Story Point を設定する
 #   4. 依存する Issue を、GitHub の依存関係（blocked by）に登録する
+#   5. 親の Issue があれば、起票した Issue をそのサブ Issue にし、親の Story Point を空欄にする
 # project.number が未設定なら、Issue だけ作って警告する。
 set -euo pipefail
 
@@ -34,7 +40,19 @@ need_value() {
   fi
 }
 
-title="" type="" body_file="" sp="" breaking=false
+# Issue の番号を取り出して出力する。本文に書くときと同じ #12 の形や、先頭の 0 も受け付ける
+# 使い方: issue_number <オプション名> <値>
+issue_number() {
+  local n="${2#\#}"
+  case "$n" in
+    '' | *[!0-9]*) dw_die "$1 には Issue の番号を指定してください: $2" 64 ;;
+  esac
+  n="$((10#$n))"
+  [ "$n" -gt 0 ] || dw_die "$1 には Issue の番号を指定してください: $2" 64
+  printf '%s\n' "$n"
+}
+
+title="" type="" body_file="" sp="" parent="" breaking=false
 # 依存する Issue の番号（空白区切り。重複は除く）
 blocked_by=""
 while [ $# -gt 0 ]; do
@@ -51,17 +69,16 @@ while [ $# -gt 0 ]; do
       ;;
     --blocked-by)
       need_value "$@"
-      # 本文に書くときと同じ #12 の形も受け付ける
-      n="${2#\#}"
-      case "$n" in
-        '' | *[!0-9]*) dw_die "--blocked-by には Issue の番号を指定してください: $2" 64 ;;
-      esac
-      n="$((10#$n))"
-      [ "$n" -gt 0 ] || dw_die "--blocked-by には Issue の番号を指定してください: $2" 64
+      n="$(issue_number "$1" "$2")"
       case " $blocked_by " in
         *" $n "*) ;;
         *) blocked_by="${blocked_by:+$blocked_by }$n" ;;
       esac
+      shift 2
+      ;;
+    --parent)
+      need_value "$@"
+      parent="$(issue_number "$1" "$2")"
       shift 2
       ;;
     --breaking) breaking=true; shift ;;
@@ -107,17 +124,20 @@ todo_name="$(jq -r '.status.todo // empty' <<<"$config")"
 sp_name="$(jq -r '.story_point.field' <<<"$config")"
 
 project=null
+sp_field_id=""
 if [ -n "$number" ]; then
   project="$(dw_project_fields "$owner" "$number")"
   status_field="$(jq -c '[.fields[] | select(.name == "Status")][0] // null' <<<"$project")"
   [ "$status_field" != null ] || dw_die "Project に Status 列がありません"
   todo_id="$(jq -r --arg n "$todo_name" '[.options[] | select(.name == $n)][0].id // empty' <<<"$status_field")"
   [ -n "$todo_id" ] || dw_die "todo の列「${todo_name:-（未設定）}」が Status 列にありません"
-  sp_field_id=""
+  sp_field="$(jq -c --arg n "$sp_name" '[.fields[] | select(.name == $n)][0] // null' <<<"$project")"
   if [ -n "$sp" ]; then
-    sp_field="$(jq -c --arg n "$sp_name" '[.fields[] | select(.name == $n)][0] // null' <<<"$project")"
     [ "$sp_field" != null ] || dw_die "Project に Story Point の項目「${sp_name}」がありません（setup-project.sh で追加してください）"
     [ "$(jq -r .dataType <<<"$sp_field")" = number ] || dw_die "項目「${sp_name}」が数値ではありません"
+  fi
+  # --parent で親の Story Point を空欄にするときにも使うので、数値の項目があれば --story-point が無くても読む
+  if [ "$sp_field" != null ] && [ "$(jq -r .dataType <<<"$sp_field")" = number ]; then
     sp_field_id="$(jq -r .id <<<"$sp_field")"
   fi
 else
@@ -132,6 +152,45 @@ for n in $blocked_by; do
   [ -n "$id" ] || dw_die "依存する Issue #${n} がありません（${repo_nwo}）"
   blocking="${blocking:+$blocking }$n:$id"
 done
+
+# 親の Issue があるか（PR は除く）と、親子の深さが上限を超えないかを確かめる
+if [ -n "$parent" ]; then
+  # "2" のような文字列は認めないよう、JSON の形のまま比べる
+  max_depth="$(jq -c '.sub_issues.max_depth' <<<"$config")"
+  case "$max_depth" in
+    1 | 2 | 3) ;;
+    *) dw_die "sub_issues.max_depth は 1・2・3 のどれかにしてください: $max_depth" 2 ;;
+  esac
+  parent_issue="$(dw_gh_find gh api "repos/$repo_nwo/issues/$parent" | jq -c 'if . == null or .pull_request then null else . end')"
+  [ "$parent_issue" != null ] || dw_die "親にする Issue #${parent} がありません（${repo_nwo}）"
+  # 親から上へたどり、起票する Issue が何層目になるかを数える（一番上の Issue が 1 層目）。
+  # 親の親は別のリポジトリにあることもあるので、応答の API の URL からパスを作る
+  depth=2
+  node="$parent_issue"
+  while [ "$depth" -le "$max_depth" ]; do
+    node="$(dw_gh_find gh api "repos/$(jq -r '.url | sub("^.*?/repos/"; "")' <<<"$node")/parent")"
+    [ "$node" != null ] || break
+    depth="$((depth + 1))"
+  done
+  [ "$depth" -le "$max_depth" ] \
+    || dw_die "#${parent} の子にすると、親子の深さが上限の ${max_depth} 層を超えます（sub_issues.max_depth）" 2
+  if [ "$depth" -gt "$DW_SUB_ISSUE_DEPTH_GUIDE" ]; then
+    dw_warn "#${parent} の子にすると ${depth} 層目になります（目安は ${DW_SUB_ISSUE_DEPTH_GUIDE} 層まで）"
+  fi
+
+  # 親の Project の項目と、今の Story Point。Issue から項目を引く REST は無いので、項目の一覧をリポジトリで絞って番号で探す
+  # （番号で絞る検索は無く、文字列での検索は本文などにも当たるため）。Project に入っていなければ、外す値も無い
+  parent_item=null
+  if [ -n "$sp_field_id" ]; then
+    sp_db_id="$(jq -r .databaseId <<<"$sp_field")"
+    parent_item="$(gh api --paginate "$(jq -r .restPath <<<"$project")/items" -X GET \
+      -f q="repo:$repo_nwo is:issue" -f per_page=100 -f fields="$sp_db_id" \
+      | jq -sc --arg r "$repo_nwo" --argjson n "$parent" --argjson f "$sp_db_id" '
+          [add // [] | .[] | select(.content.number == $n and (.content.repository_url | endswith("/repos/" + $r)))][0]
+          | if . == null then null else {id: .node_id, story_point: ([.fields[]? | select(.id == $f)][0].value)} end')" \
+      || dw_die "親の Issue #${parent} の Story Point を読めませんでした"
+  fi
+fi
 
 # GitHub は無いラベルを付けようとすると新しく作るので、色と説明の揃ったラベルがあるかを先に確かめる
 labels="$(jq -nc --arg t "$type" '[$t]')"
@@ -186,14 +245,28 @@ for pair in $blocking; do
     || fail_after_create "#${pair%%:*} への依存（blocked by）を登録できませんでした"
 done
 
+# --- 5. 親の Issue のサブ Issue にし、親の Story Point を空欄にする（REST には子の数値の id を送る） ---
+parent_sp=""
+if [ -n "$parent" ]; then
+  gh api -X POST "repos/$repo_nwo/issues/$parent/sub_issues" -F sub_issue_id="$(jq -r .id <<<"$issue")" >/dev/null \
+    || fail_after_create "#${parent} のサブ Issue にできませんでした"
+  parent_sp="$(jq -r '.story_point // empty' <<<"$parent_item")"
+  if [ -n "$parent_sp" ]; then
+    dw_project_set_field "$(jq -r .id <<<"$project")" "$(jq -r .id <<<"$parent_item")" "$sp_field_id" --clear \
+      || fail_after_create "#${parent} のサブ Issue にした後、親の Story Point ${parent_sp} を空欄にできませんでした"
+  fi
+fi
+
 jq -n --argjson n "$issue_number" --arg url "$issue_url" --arg type "$type" --arg item "$item_id" \
   --argjson project "$project" --arg status "$todo_name" --arg sp "$sp" \
-  --arg blocked "$blocked_by" --argjson breaking "$breaking" '{
+  --arg blocked "$blocked_by" --arg parent "$parent" --arg depth "${depth:-}" --arg parent_sp "$parent_sp" --argjson breaking "$breaking" '{
     number: $n,
     url: $url,
     type: $type,
     breaking: $breaking,
     blocked_by: ($blocked | split(" ") | map(select(. != "") | tonumber)),
+    parent: (if $parent == "" then null else {number: ($parent | tonumber), depth: ($depth | tonumber),
+      story_point_cleared: (if $parent_sp == "" then null else ($parent_sp | tonumber) end)} end),
     project: (if $project then {number: $project.number, item_id: $item, status: $status,
       story_point: (if $sp == "" then null else ($sp | tonumber) end)} else null end)
   }'

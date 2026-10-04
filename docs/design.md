@@ -87,6 +87,10 @@ agent-plugins/
 - **Project への自動追加**：Project に組み込みの Auto-add を使う。有効にする API は無いので、Web の画面で1回だけ手動で有効にする。`setup-project.sh` が手順を表示し、有効になったかを API で確認する。
 - `task-create` は起票の後、毎回 `gh project item-add` を呼んで項目の ID を取得する。既に追加済みなら既存の項目が返るだけなので、自動追加とは重複しない。
 - **依存する Issue**：先に終わらせる Issue があれば、本文の「依存」の見出しに `#N` で書き（無ければ「なし」）、GitHub の Issue の依存関係（blocked by。REST の `issues/{番号}/dependencies/blocked_by`）にも登録する。本文は読む人のため、依存関係はボードや Issue の画面で区別するため。文章だけ（「〜の Issue の後に」）では番号が分からないので、必ず番号で書く。存在しない Issue の番号は、起票の前に止める。1回の依頼で複数の Issue を起票するときは、依存される側から順に起票し、先に起票した番号を後の Issue の依存に使う。
+- **親子の Issue（サブ Issue）**：ざっくりした仕様を着手できる大きさに分けて管理するため、親の Issue の下に子の Issue を GitHub のサブ Issue として紐付ける（REST の `issues/{親の番号}/sub_issues` に、子の数値の id を送る）。起票するときに親の番号を指定する（`issue-create.sh --parent N`）。親は同じリポジトリの Issue に限る。1回の依頼で親と子を起票するときは、親から先に起票し、その番号を子の `--parent` に使う。
+  - 親子の深さは「仕様 → 着手できる作業」の2層を目安にし、必要なら3層まで作れる。上限は設定の `sub_issues.max_depth`（既定 3、1〜3）で、3層目を作らせたくないリポジトリは 2 にする。GitHub は8層まで作れるが、深いと全体を見通せなくなるので、3層より深くはしない。目安（`common.sh` の `DW_SUB_ISSUE_DEPTH_GUIDE`）より深い Issue を作るときは、`issue-create.sh` が警告し、`task-create` は起票の前にユーザーに確認する。深さは、親から上へ `issues/{番号}/parent` をたどって数える（一番上の Issue が1層目）。上限を超える紐付けと、存在しない親（PR の番号を含む）は、起票の前に止める。
+  - **Story Point は子にだけ付ける**。親（サブ Issue を持つ Issue）には付けない。親にも付けると、同じ作業を親と子とで二重に数えることになり、親の大きさは子の合計で分かるため。親にする Issue に Story Point が付いていたら、子を足すときに `issue-create.sh` が空欄にする（Issue から Project の項目を引く REST は無いので、REST の項目の一覧をリポジトリと Issue で絞って番号で探す。GraphQL は使わない）。起票の確認には、親の Story Point が入っていれば空欄にすることを書き、空欄にした値は結果で伝える。
+  - **子が全部閉じても、親は自動では閉じない**。GitHub は親に子の進み具合（閉じた子の数）を表示するだけで、子が全部閉じても親を閉じない（[サブ Issue の説明](https://docs.github.com/ja/issues/tracking-your-work-with-issues/using-issues/adding-sub-issues)にも、自動で閉じる機能は書かれていない）。親は、最後の子を閉じた後に人が閉じる（completed）。親で別にやる作業が残っていれば、それを子の Issue として足し、親を PR で直接閉じることはしない。親を閉じたときも、Project の自動化（Item closed）が有効なら Done に移る。
 - **やらない Issue を閉じる**：誤って起票した Issue や、やらないことにした Issue は、`task-cancel` で not planned（重複なら duplicate）で閉じる。
   - Issue の終わり方は、完了（completed。PR のマージで閉じる）とやめた（not planned・duplicate）の2つに分ける。完了は PR が閉じ、やめたときは `task-cancel` が閉じる。`task-finish` は Issue には触れず、マージした後の手元を片付けるだけ。名前を `task-close` にしなかったのは、close は完了で閉じるときにも使う言葉で、`task-finish` と混同しやすいため。
   - 閉じる前に、理由と参照先（代わりに作業する Issue など）を `#N` でコメントする。理由が空（空白だけを含む）なら閉じない。
@@ -198,7 +202,7 @@ agent-plugins/
 |---|---|
 | `doctor.sh` | 認証とスコープ、gh・`jq`・bash のバージョン、設定ファイルを確認する（gh が古ければ更新を促し、古い置き場所の設定・ガイド・観点・ラベルの定義があれば移すよう促し、個人の設定が git に無視されていなければ .gitignore に足すよう促し、ラベルの定義にあってリポジトリに無いラベルがあれば repo-setup を案内する） |
 | `config.sh` | 5つの層を合わせた設定を出力する |
-| `issue-create.sh` | 起票、ラベルの付与、Project への追加、列と Story Point の設定、依存関係（blocked by）の登録 |
+| `issue-create.sh` | 起票、ラベルの付与、Project への追加、列と Story Point の設定、依存関係（blocked by）の登録、親の Issue への紐付け（サブ Issue） |
 | `status-set.sh` | 列を移す |
 | `branch-name.sh` | ブランチ名を作り、検証する |
 | `task-start.sh` | ワークツリーの作成（サブモジュールの初期化を含む）、割り当て、In Progress への移動 |
