@@ -54,7 +54,9 @@ done
 case "$issue" in
   *[!0-9]*) dw_die "--issue には数字を指定してください: $issue" 64 ;;
 esac
-[ "${#issue}" -le 4 ] || dw_die "--issue は4桁までにしてください: $issue" 64
+# 先頭の 0 を外して10進数にする（printf %04d は 08 を8進数として読んで落ちる）
+issue=$((10#$issue))
+[ "$issue" -le 9999 ] || dw_die "--issue は4桁までにしてください: $issue" 64
 [ -n "$name" ] || dw_die "--name は必須です" 64
 case "$template" in
   full) tpl="adr-template.md" ;;
@@ -124,6 +126,8 @@ if [ "$dry_run" = false ]; then
     { [ -e "$path" ] || [ -L "$path" ]; } && dw_die "同じファイル名の ADR が既にあるので上書きしません: ${rel}" 3
     dw_die "ADR を書き込めません: ${rel}" 1
   fi
+  tmp=""
+  trap 'rm -f "$tmp"' EXIT
   for p in ${old_paths[@]+"${old_paths[@]}"}; do
     tmp="$(mktemp)"
     awk -v s="superseded by $base" '
@@ -131,7 +135,7 @@ if [ "$dry_run" = false ]; then
       fm && $0 == "---" { fm = 0 }
       fm && !done && /^status:/ { print "status: \"" s "\""; done = 1; next }
       { print }' "$p" >"$tmp"
-    cat "$tmp" >"$p" # 元のファイルの権限を保つため、mv ではなく中身を書き戻す
+    cat "$tmp" >"$p" || dw_die "置き換える ADR を書き換えられません: ${p#"$repo_root"/}（作った ADR ${rel} は残っています）" 1 # 元のファイルの権限を保つため、mv ではなく中身を書き戻す
     rm -f "$tmp"
   done
 fi

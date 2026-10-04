@@ -143,3 +143,25 @@ TEMPLATES="$(cd "$BATS_TEST_DIRNAME/../plugins/dev-workflow/templates/adr" && pw
   run_script adr-create.sh --issue 1 --name x --template full --bogus
   assert_failure 64
 }
+
+@test "先頭が 0 の Issue 番号は、8進数ではなく10進数として扱う" {
+  run_script adr-create.sh --issue 08 --name x --template full
+  assert_success
+  assert_equal "$(jq -c '[.path, .issue]' <<<"$output")" '["docs/adr/0008-x.md",8]'
+  assert_equal "$(sed -n 's/^issue: //p' docs/adr/0008-x.md)" 8
+  run_script adr-create.sh --issue 010 --name y --template full
+  assert_success
+  assert_equal "$(jq -c '[.path, .issue]' <<<"$output")" '["docs/adr/0010-y.md",10]'
+  assert_equal "$(sed -n 's/^issue: //p' docs/adr/0010-y.md)" 10
+}
+
+@test "置き換える ADR を書き換えられずに失敗しても、一時ファイルを残さない" {
+  run_script adr-create.sh --issue 10 --name old --template full
+  mkdir "$TMP/tmpdir"
+  chmod a-w docs/adr/0010-old.md
+  TMPDIR="$TMP/tmpdir" run_script adr-create.sh --issue 11 --name new --template full --supersedes 0010-old.md
+  chmod u+w docs/adr/0010-old.md
+  [ "$(id -u)" -eq 0 ] && skip "root は読み取り専用のファイルにも書ける"
+  assert_failure
+  assert_equal "$(ls -A "$TMP/tmpdir")" ""
+}
