@@ -14,8 +14,6 @@ reviews:
     # release-please のリリース PR（作成者は GitHub App のボット）はレビューしない
     ignore_usernames:
       - release-please[bot]
-    ignore_title_keywords:
-      - "chore(main): release"
   path_instructions:
     - path: "**"
       instructions: |
