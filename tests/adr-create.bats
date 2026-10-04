@@ -195,12 +195,12 @@ TEMPLATES="$(cd "$BATS_TEST_DIRNAME/../plugins/dev-workflow/templates/adr" && pw
 
 @test "置き換える ADR の書き換えが途中で失敗したら、書き換え済みの ADR と、新しい ADR が残ることを知らせる" {
   for n in 10 11; do run_script adr-create.sh --issue "$n" --name "o$n" --template minimal; done
-  # 2つ目の書き戻し（mktemp のファイルを cat する）だけを失敗させる偽の cat
+  # 2つ目の書き戻し（一時ファイルを cat する）だけを失敗させる偽の cat
   mkdir "$TMP/bin" "$TMP/tmpdir"
   cat >"$TMP/bin/cat" <<FAKE
 #!/bin/sh
 case "\$1" in
-  "$TMP"/tmpdir/tmp.*)
+  "$TMP"/tmpdir/adr-create.*)
     echo x >>"$TMP/cat-calls"
     [ "\$(wc -l <"$TMP/cat-calls")" -ge 2 ] && exit 1
     ;;

@@ -133,7 +133,7 @@ if [ "$dry_run" = false ]; then
   trap 'rm -f "$tmp"' EXIT
   rewritten=""
   for p in ${old_paths[@]+"${old_paths[@]}"}; do
-    tmp="$(mktemp)"
+    tmp="$(mktemp "${TMPDIR:-/tmp}/adr-create.XXXXXX")"
     awk -v s="superseded by $base" '
       NR == 1 { fm = 1; print; next }
       fm && $0 == "---" { fm = 0 }
