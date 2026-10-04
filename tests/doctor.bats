@@ -7,6 +7,8 @@ load test_helper
 # 偽の gh を PATH の先頭に置く。FAKE_SCOPES でトークンのスコープを、FAKE_GH_VERSION で gh のバージョンを変えられる。
 # gh repo view は me/demo を返し、FAKE_NO_REPO があれば失敗する（GitHub のリポジトリでないとき）。
 # gh label list はリポジトリにある今のラベルとして FAKE_LABELS（既定: プラグインの定義のラベルすべて）を返す。
+# gh api repos/{owner}/{repo}/rules/branches/<ブランチ> は、パスを FAKE_RULES_LOG のファイル（あれば）に書き、FAKE_RULES（ブランチに効いているルール）を返す。
+# FAKE_RULES が無ければ失敗する（問い合わせられないとき）。
 # ほかの呼び出しは失敗する。
 fake_gh() {
   mkdir -p "$TMP/bin"
@@ -21,6 +23,11 @@ case "$1 $2" in
     echo me/demo
     ;;
   "label list") printf '%s\n' "$FAKE_LABELS" ;;
+  "api repos/{owner}/{repo}/rules/branches/"*)
+    [ -n "${FAKE_RULES:-}" ] || exit 1
+    if [ -n "${FAKE_RULES_LOG:-}" ]; then printf '%s\n' "$2" >"$FAKE_RULES_LOG"; fi
+    printf '%s\n' "$FAKE_RULES"
+    ;;
   *) exit 1 ;;
 esac
 SH
@@ -192,4 +199,50 @@ labels_check() { jq -c '.checks[] | select(.name == "labels") | [.ok, .level, .d
   cd "$TMP"
   run_script doctor.sh
   assert_equal "$(labels_check)" ""
+}
+
+# 使い方: merge_check → merge-queue の確認の [ok, level, detail]。確認が無ければ空
+merge_check() { jq -c '.checks[] | select(.name == "merge-queue") | [.ok, .level, .detail]' <<<"$output"; }
+
+@test "base_branch にマージキューと strict のどちらが効いているかを示す" {
+  fake_gh
+  export FAKE_SCOPES="project"
+  export FAKE_RULES='[{"type": "required_status_checks", "parameters": {"strict_required_status_checks_policy": false}}, {"type": "merge_queue", "parameters": {}}]'
+  run_script doctor.sh
+  assert_success
+  assert_equal "$(merge_check)" '[true,"warn","main へのマージはマージキューを通します"]'
+  export FAKE_RULES='[{"type": "required_status_checks", "parameters": {"strict_required_status_checks_policy": true}}]'
+  run_script doctor.sh
+  assert_equal "$(merge_check)" '[true,"warn","main へのマージは、PR が最新の main を取り込んでいることを求めます（strict）"]'
+}
+
+@test "必須のチェックがあるのにキューも strict も無ければ、止めずに repo-setup を知らせる" {
+  fake_gh
+  export FAKE_SCOPES="project"
+  export FAKE_RULES='[{"type": "pull_request", "parameters": {}}, {"type": "required_status_checks", "parameters": {"strict_required_status_checks_policy": false}}]'
+  run_script doctor.sh
+  assert_success
+  assert_equal "$(jq -c '.[0:2]' <<<"$(merge_check)")" '[false,"warn"]'
+  assert_output --partial "マージキューも最新の main の取り込み（strict）も求めていません"
+  # 必須のチェックが無ければ、キューも strict も意味がないので知らせない
+  export FAKE_RULES='[{"type": "pull_request", "parameters": {}}]'
+  run_script doctor.sh
+  assert_equal "$(jq -c '.[0]' <<<"$(merge_check)")" true
+}
+
+@test "マージキューの確認は設定の base_branch を見る（/ を含む名前はエンコードする）" {
+  fake_gh
+  export FAKE_SCOPES="project" FAKE_RULES='[{"type": "merge_queue", "parameters": {}}]' FAKE_RULES_LOG="$TMP/rules-path"
+  echo '{"base_branch": "release/v1"}' >.claude/dev-workflow/config.json
+  run_script doctor.sh
+  assert_equal "$(cat "$TMP/rules-path")" 'repos/{owner}/{repo}/rules/branches/release%2Fv1?per_page=100'
+  assert_output --partial "release/v1 へのマージはマージキューを通します"
+}
+
+@test "GitHub に問い合わせられないときは、マージキューの確認を飛ばす" {
+  fake_gh
+  export FAKE_SCOPES="project"
+  run_script doctor.sh
+  assert_success
+  assert_equal "$(merge_check)" ""
 }
