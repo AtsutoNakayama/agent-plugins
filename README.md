@@ -41,7 +41,7 @@ plugins/dev-workflow/scripts/doctor.sh
 ---
 title: 一覧に出す1行の説明（必須）
 types: [fix]
-paths: ["*.sh"]
+paths: ["**/*.sh"]
 issue: required
 base_ahead: required
 ---
@@ -52,10 +52,10 @@ base_ahead: required
 - 観点ファイルは `/dev-workflow:review-perspective-add` で作れます（手で書いても構いません）。
 - レビューの観点の追加・修正は、そのきっかけになったタスクの PR に含め、別の Issue にはしません。`/dev-workflow:review-perspective-add` は、リポジトリの層の観点を今のタスクのワークツリーに作ります。同梱の観点 `issue-requirements` は、観点の追加・修正を範囲外の変更として指摘しません。
 - 観点の名前はファイル名（`.md` を除く）です。小文字の英数字と `-` だけを使います。
-- `title` 以外の `types`・`paths`・`issue`・`base_ahead` は、実行する条件です（任意。上の例はすべて書いたものです）。書くと、当てはまらない変更ではその観点を実行しません（サブエージェントを起動しないので、そのぶん速く安くなります）。書かなければ毎回実行し、複数書けばすべてに当てはまるときだけ実行します。`types` は Issue の type ラベル（Issue が無ければブランチ名の type）で判断します。`paths` の `*` は `/` にも当たります。外した観点とその理由は、レビューの結果で伝えます。
+- `title` 以外の `types`・`paths`・`issue`・`base_ahead` は、実行する条件です（任意。上の例はすべて書いたものです）。書くと、当てはまらない変更ではその観点を実行しません（サブエージェントを起動しないので、そのぶん速く安くなります）。書かなければ毎回実行し、複数書けばすべてに当てはまるときだけ実行します。`types` は Issue の type ラベル（Issue が無いか1つに決まらなければブランチ名の type）で判断し、type が分からなければその観点は実行しません。`paths` は `.gitignore` や GitHub Actions の `paths` と同じ書き方です（`*` は `/` をまたがず、`**/*.sh` でどこの `.sh` にも当たります。`!` で始めると除外で、`["!docs/**"]` は docs の下だけを変えたときは実行しません）。外した観点とその理由は、レビューの結果で伝えます。
 - 組み込みの `/code-review` も、同梱の観点 `code-review`（`builtin: code-review`）として扱います。止めたり条件を付けたりするのは、ほかの観点と同じです。
 - 同梱の観点を使わないときは、上の層に同じ名前のファイルを置き、frontmatter に `enabled: false` と書きます（本文と `title` は省けます）。
-- 使われる観点は `plugins/dev-workflow/scripts/review-perspectives.sh` で確かめられます。引数なしでは、層を合わせた観点の一覧（条件で外す前）が出ます。今の変更で使われる観点を見るには、`--base <基点> --target origin/<マージ先>` と、あれば `--type <type>`・`--issue <番号>` を渡します（基点は `git merge-base origin/<マージ先> HEAD`）。形式の誤ったファイルは警告を出して使いません。そのファイルと同じ名前の観点は、下の層にあっても使いません（`enabled: false` の書き間違いで、止めたつもりの観点が動かないようにするため）。
+- 使われる観点は `plugins/dev-workflow/scripts/review-perspectives.sh` で確かめられます。引数なしでは、層を合わせた観点の一覧（条件で外す前）が出ます。今の変更で使われる観点を見るには、`--auto` を付けます（review スキルと同じく、基点・マージ先・Issue・type をブランチから決め、`context` に出します）。形式の誤ったファイルは警告を出して使いません。そのファイルと同じ名前の観点は、下の層にあっても使いません（`enabled: false` の書き間違いで、止めたつもりの観点が動かないようにするため）。
 
 同梱の観点：
 
