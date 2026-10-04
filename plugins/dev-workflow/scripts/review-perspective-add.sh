@@ -7,6 +7,8 @@
 #   --layer     置く層。user は ~/.claude/dev-workflow/review/、repo は <repo>/.claude/dev-workflow/review/
 #   --title     一覧に出す1行の説明
 #   --override  ほかの層にある同じ名前の観点を、作る観点で置き換えてよい
+#   --builtin   本文の代わりに組み込みのコマンドを実行する観点にする（code-review だけ）。本文には、
+#               そのコマンドの指摘のうち出さないものを「## 指摘しないこと」の節に書く（review スキルが照らして外す）
 #
 # 実行する条件（任意。書かなければ毎回実行する。複数書けば、すべてに当てはまるときだけ実行する）:
 #   --type <type>          変更の type がこのどれかのとき（繰り返して複数書ける）。小文字の英数字と - だけ
@@ -45,6 +47,7 @@ usage() { LC_ALL=C sed -n '2,/^[^#]/{/^[^#]/d;s/^# \{0,1\}//;p;}' "$0"; }
 name=""
 layer=""
 title=""
+builtin=""
 override=false
 types=""
 paths=""
@@ -53,12 +56,13 @@ base_ahead_required=false
 while [ $# -gt 0 ]; do
   case "$1" in
     -h | --help) usage; exit 0 ;;
-    --name | --layer | --title)
+    --name | --layer | --title | --builtin)
       [ $# -ge 2 ] || dw_die "$1 に値がありません" 64
       case "$1" in
         --name) name="$2" ;;
         --layer) layer="$2" ;;
         --title) title="$2" ;;
+        --builtin) builtin="$2" ;;
       esac
       shift 2
       ;;
@@ -107,6 +111,11 @@ title="$(printf '%s' "$title" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//
 # review-perspectives.sh は値を囲む引用符を外して読むので、書いたとおりに読めない title は弾く
 case "$title" in
   \"*\" | \'*\') dw_die "title の全体を引用符で囲まないでください（読むときに外れます）: ${title}" 64 ;;
+esac
+
+case "$builtin" in
+  "" | code-review) ;;
+  *) dw_die "--builtin は code-review にしてください: ${builtin}" 64 ;;
 esac
 
 repo_root="$(dw_repo_root || true)"
@@ -179,8 +188,10 @@ if [ "$override" = false ]; then
 fi
 
 mkdir -p "$dir" 2>/dev/null || dw_die "観点ファイルを置くディレクトリを作れません: ${dir}" 1
-# frontmatter の条件の行（review-perspectives.sh --help の形式）
+# frontmatter の builtin と条件の行（review-perspectives.sh --help の形式）
 when=""
+[ -z "$builtin" ] || when="builtin: ${builtin}
+"
 [ -z "$types" ] || when="${when}types: [${types}]
 "
 [ -z "$paths" ] || when="${when}paths: [${paths}]
