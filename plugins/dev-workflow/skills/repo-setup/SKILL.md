@@ -14,6 +14,7 @@ description: リポジトリの初期設定（type ラベルと breaking ラベ�
 - `${CLAUDE_PLUGIN_ROOT}/scripts/doctor.sh`：実行環境と認証の確認
 - `${CLAUDE_PLUGIN_ROOT}/scripts/config.sh`：合わせた設定の出力
 - `${CLAUDE_PLUGIN_ROOT}/scripts/setup/setup-all.sh`：初期設定をまとめて行う（`--help` で使い方）
+- `${CLAUDE_PLUGIN_ROOT}/scripts/setup/setup-repo.sh`：マージ方法とルールセット（`setup-all.sh` が中で使う。手順2でマージキューを使えるかを読むのに使う）
 
 ## 手順
 
@@ -28,12 +29,13 @@ description: リポジトリの初期設定（type ラベルと breaking ラベ�
 
 ### 2. 選択肢を聞く
 
-`config.sh` で今の設定を読み、決まっていないことだけを AskUserQuestion でまとめて聞く。
+`config.sh` で今の設定を、`setup-repo.sh --dry-run` でマージキューを使えるか（`merge_queue.available`）と今使っているか（`merge_queue.enabled`）を読み、決まっていないことだけを AskUserQuestion でまとめて聞く。
 
 - **Project**：`project.number` が設定済みなら聞かない。無ければ「新しく作る（名前。既定はリポジトリ名）」か「既存の Project に接続する（番号）」か
 - **GitHub の既定のラベル**（bug・enhancement など）：削除する（おすすめ）か残すか。削除すると、付いている Issue からも外れる
 - **マージに必要な承認の数**：0（おすすめ。1人で開発するとき）か 1 以上か
 - **マージの前に成功を求める CI のチェック**：既に決まっていれば聞かない。名前は、チームの CI でそのチェックが一度動いたものにする（CI が無い、または動いたことのない名前を指定すると、マージできなくなる）。CI が無ければ「求めない」にする。指定するときは `--required-check <名前>` を名前ごとに付ける。CI 全体の結果をまとめるジョブがあれば、その名前だけを指定する
+- **マージキュー**：`merge_queue.available` が `false`（個人のアカウントのリポジトリなど）か、`merge_queue.enabled` が `true`（もう使っている）なら聞かない。それ以外は、使う（おすすめ。PR を並列で進めるとき）か使わないかを聞く。使うなら `--merge-queue` を付ける。`available` が `null` のとき（組織の非公開のリポジトリで、プランを確かめられない）は、GitHub Enterprise Cloud でないと使えないことを選択肢の説明に書く。キューを使うと、PR は「Merge when ready」でキューに入れ、キューが最新の base_branch と組み合わせた結果で CI を動かしてからマージする。必須のチェックを指定するなら、チームの CI のワークフローが `merge_group` のイベントでも動くようにしておく（動かないと、キューのチェックが「待ち」のままマージされない）。そのことも説明に書く
 
 ### 3. 予定を見せる
 
@@ -43,7 +45,8 @@ description: リポジトリの初期設定（type ラベルと breaking ラベ�
 
 - 以後、`repo.branch` へ直接 push できなくなり、PR が必須になる。管理者も例外にしない
 - マージはスカッシュだけになる
-- チェックを指定したときは、そのチェックの成功と、PR が最新の `repo.branch` を取り込んでいることが、マージの条件になる
+- チェックを指定したときは、そのチェックの成功が、マージの条件になる。マージキューを使わないなら、PR が最新の `repo.branch` を取り込んでいることも条件になる
+- マージキューを使うときは、PR をキューに入れてマージする（最新の `repo.branch` を取り込み直す必要はない）。必須のチェックは `merge_group` のイベントでも動く必要がある
 
 ### 4. 確認を取って実行する
 
