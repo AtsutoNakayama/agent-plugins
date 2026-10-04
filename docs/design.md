@@ -207,7 +207,8 @@ agent-plugins/
 3. **PostToolUse のフック**（`hooks/pr-link.sh`）：git の操作のあとに、関連する PR・Issue・CI のリンクを出す。Claude が返答に書いたときにしかリンクが見えないと、PR や Issue の画面を毎回探すことになるので、操作のたびに使用者の画面へ出す。
    - 対象は、`git push`、`git commit`、ブランチ・ワークツリーの作成、`gh pr create`・`gh issue create`。スクリプトの中で git や gh が呼ばれるとコマンド文字列に現れないので、`commit.sh`・`task-start.sh`・`pr-create.sh`・`issue-create.sh` の名前でも発火する。コマンドの文字列を簡易に判定するだけなので、`sh -c` や別名を通すと見逃し、引用符の中の文字にも反応する。
    - 出すリンク：push は、開いた PR の URL（無ければ `<リポジトリ>/pull/new/<ブランチ>`）、紐付く Issue、CI（PR があれば `<PR>/checks`、無ければ `<リポジトリ>/actions?query=branch:<ブランチ>`）。commit とブランチの作成は紐付く Issue。PR・Issue の作成は、コマンドの出力に含まれる URL。
-   - 紐付く Issue は、ブランチ名を `branch.pattern` に当てて求める。`task-start.sh` は別のワークツリーを作るので、出力の Issue の番号を使う。コマンドの文字列の `cd` は追わず、フックの入力の `cwd` のブランチで判断する。
+   - 紐付く Issue は、ブランチ名を `branch.pattern` に当てて求める（`lib/common.sh` の `dw_parse_branch`。`review-perspectives.sh` と共有する）。ブランチを作るコマンドは、今のブランチではなく、作るブランチの Issue を出す。名前はコマンドの文字列から拾い（`-c`・`-C`・`-b`・`-B`・`--create` の次の語、`git branch <名前>` の最初の語）、拾えない・Issue の番号が無いときは、間違った Issue を出さないよう何も出さない（`-cname` の書き方など、`guard-git.sh` が警告する書き方でも出さないことがある）。`task-start.sh` は別のワークツリーを作るので、標準出力の JSON の `issue` を使い、取れなければ出さない。それ以外は、コマンドの文字列の `cd` を追わず、フックの入力の `cwd` のブランチで判断する。
+   - 毎回 `gh` を呼ぶ（Issue・PR・リポジトリ）ので、フックには 10 秒のタイムアウトを付け（`hooks.json`）、`gh` が詰まっても作業を止めない。
    - 決まり：同じリンクは、連続でも毎回出す（常に見えるようにするため）。Issue の番号が分からないブランチ（main など）では、ブランチから導くリンクは出さない（作った PR・Issue の URL は、出力から拾うので出す）。`gh` が無い・失敗する・解析できないときは何も出さずに通し、フックは作業を止めない（いつも終了コード 0。エラーの表示も出さない）。
    - 出力は、使用者に見せる `systemMessage` と、Claude に渡す `additionalContext`（返答でも触れてもらう）の両方（`guard-git.sh` の警告と同じ形）。
    - `/remote-control` など別の端末の画面に `systemMessage` が出るかは、確かめられていない（未確認）。出ない場合でも、`additionalContext` を受け取った Claude が返答でリンクに触れるので、リンクは別の端末にも届く。`systemMessage` が出るなら二重になるが、常に見えることを優先する。

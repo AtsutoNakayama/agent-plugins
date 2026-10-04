@@ -89,21 +89,6 @@ while [ $# -gt 0 ]; do
   esac
 done
 
-# ブランチ名を branch.pattern に当て、type と Issue の番号を「<type>|<番号>」で出力する（無いものは空）
-# 区切りを空白にすると、read が先頭の空白を外して、type が空のときに番号を type と取り違える
-# 使い方: parse_branch <設定の JSON> <ブランチ名>
-parse_branch() {
-  jq -r --arg b "$2" '
-    .labels.types as $t
-    | (.branch.pattern
-      | gsub("\\{type\\}"; "(?<type>" + ($t | join("|")) + ")")
-      | gsub("\\{issue_number\\}"; "(?<issue>[0-9]+)")
-      | gsub("\\{slug\\}"; "[a-z0-9]+(?:-[a-z0-9]+)*")
-      | "^" + . + "$") as $re
-    | (try ($b | capture($re)) catch null) // {}
-    | "\(.type // "")|\(.issue // "")"' <<<"$1"
-}
-
 type_from=null
 max_rounds=null
 if [ "$auto" = true ]; then
@@ -124,7 +109,7 @@ if [ "$auto" = true ]; then
     || dw_die "マージ先が見つかりません: ${target}（git fetch origin ${base_branch} で取得してください）" 2
   base="$(git merge-base "$target" HEAD)" || dw_die "${target} と HEAD の基点が見つかりません" 2
   branch="$(git symbolic-ref --short -q HEAD || true)"
-  IFS='|' read -r branch_type issue <<<"$(parse_branch "$config" "$branch")"
+  IFS='|' read -r branch_type issue <<<"$(dw_parse_branch "$config" "$branch")"
   if [ -n "$issue" ]; then
     err="$(mktemp)"
     if ! command -v gh >/dev/null 2>&1; then

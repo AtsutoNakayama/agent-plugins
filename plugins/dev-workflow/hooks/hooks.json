@@ -28,7 +28,8 @@
         "hooks": [
           {
             "type": "command",
-            "command": "bash \"${CLAUDE_PLUGIN_ROOT}/hooks/pr-link.sh\""
+            "command": "bash \"${CLAUDE_PLUGIN_ROOT}/hooks/pr-link.sh\"",
+            "timeout": 10
           }
         ]
       }

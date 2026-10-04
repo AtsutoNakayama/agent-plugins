@@ -103,12 +103,48 @@ silent() {
   done
 }
 
+@test "ブランチを作るコマンドは、今のブランチではなく、作るブランチの Issue を出す" {
+  fake_issue 23 '["feat"]'
+  shows "git branch feat/23-x" "Issue #23: https://github.com/me/demo/issues/23"
+  [[ "$output" != *"issues/17"* ]]
+  shows "git switch -c feat/23-x" "Issue #23: https://github.com/me/demo/issues/23"
+  shows "git checkout -b feat/23-x origin/main" "Issue #23: https://github.com/me/demo/issues/23"
+  git switch -q main
+  shows "git worktree add -b feat/23-x ../wt" "Issue #23: https://github.com/me/demo/issues/23"
+  shows "cd .. && git worktree add ../wt -b \"feat/23-x\"" "Issue #23: https://github.com/me/demo/issues/23"
+}
+
+@test "作るブランチの名前に Issue の番号が無い、または名前を拾えないときは、今のブランチの Issue を出さない" {
+  # guard-git.sh が警告する書き方でも、拾えなければ何も出さない（間違った Issue を出さないため）
+  silent "git branch scratch" "git switch -c scratch" "git switch -cfeat/23-x" "git branch --set-upstream-to origin/main feat/23-x"
+}
+
 @test "task-start.sh 経由では、出力の Issue の番号を使う（main の上からでも出す）" {
   fake_issue 23 '["feat"]'
   git switch -q main
   run_hook "bash \"\${CLAUDE_PLUGIN_ROOT}/scripts/task-start.sh\" --issue 23 --slug x" '{"issue": 23, "branch": "feat/23-x"}'
   [ "$status" -eq 0 ]
   assert_equal "$(jq -r .systemMessage <<<"$output" | tail -n 1)" "- Issue #23: https://github.com/me/demo/issues/23"
+}
+
+@test "task-start.sh の出力から Issue の番号を取れないときは、今のブランチの Issue を出さない" {
+  silent "bash \"\${CLAUDE_PLUGIN_ROOT}/scripts/task-start.sh\" --issue 23 --slug x"
+  run_hook "bash \"\${CLAUDE_PLUGIN_ROOT}/scripts/task-start.sh\" --issue 23 --slug x" 'not json'
+  [ "$status" -eq 0 ]
+  [ -z "$output" ]
+}
+
+@test "task-start.sh の標準エラーに警告があっても、標準出力の Issue の番号を読む" {
+  fake_issue 23 '["feat"]'
+  jq -n --arg d "$PWD" '{tool_input: {command: "bash task-start.sh --issue 23 --slug x"},
+    tool_response: {stdout: "{\n  \"issue\": 23,\n  \"branch\": \"feat/23-x\"\n}\n", stderr: "warn: サブモジュールを初期化できません\n"}, cwd: $d}' >"$TMP/input.json"
+  run "${TEST_BASH:-bash}" "$HOOKS/pr-link.sh" <"$TMP/input.json"
+  [ "$status" -eq 0 ]
+  [[ "$(jq -r .systemMessage <<<"$output")" == *"Issue #23: https://github.com/me/demo/issues/23"* ]]
+}
+
+@test "hooks.json のフックにはタイムアウトがある（gh が詰まっても、作業を止めない）" {
+  jq -e '.hooks.PostToolUse[0].hooks[0].timeout | . > 0 and . <= 30' "$HOOKS/hooks.json"
 }
 
 @test "gh pr create・gh issue create の後に、作った PR・Issue の URL を出す（main の上でも）" {

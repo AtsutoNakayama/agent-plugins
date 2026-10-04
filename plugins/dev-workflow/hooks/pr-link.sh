@@ -89,25 +89,60 @@ fi
 root="$(git -C "$dir" rev-parse --show-toplevel 2>/dev/null || true)"
 branch="$(git -C "$dir" symbolic-ref --short -q HEAD 2>/dev/null || true)"
 issue=""
-if [ -n "$root" ] && [ -n "$branch" ]; then
-  config="$( (cd "$dir" && WORKFLOW_REPO_ROOT="$root" bash "$DW_SCRIPTS_DIR/config.sh") 2>/dev/null || true)"
-  if [ -n "$config" ]; then
-    # ブランチ名を branch.pattern に当てて、Issue の番号を取り出す
-    issue="$(jq -r --arg b "$branch" '
-      .labels.types as $t
-      | (.branch.pattern
-        | gsub("\\{type\\}"; "(?<type>" + ($t | join("|")) + ")")
-        | gsub("\\{issue_number\\}"; "(?<issue>[0-9]+)")
-        | gsub("\\{slug\\}"; "[a-z0-9]+(?:-[a-z0-9]+)*")
-        | "^" + . + "$") as $re
-      | (try ($b | capture($re)) catch null) // {}
-      | .issue // empty' <<<"$config" 2>/dev/null || true)"
-  fi
+config=""
+if [ -n "$root" ]; then
+  config="$( (cd "$dir" && WORKFLOW_REPO_ROOT="$root" "$BASH" "$DW_SCRIPTS_DIR/config.sh") 2>/dev/null || true)"
 fi
-# task-start.sh は別のワークツリーを作るので、今のブランチではなく、出力の Issue の番号を使う
+# ブランチ名を branch.pattern に当てて、Issue の番号を取り出す。使い方: issue_of <ブランチ名>
+issue_of() {
+  [ -n "$config" ] || return 0
+  local parsed
+  parsed="$(dw_parse_branch "$config" "$1" 2>/dev/null || true)"
+  printf '%s\n' "${parsed#*|}"
+}
+[ -z "$branch" ] || issue="$(issue_of "$branch")"
+
+# ブランチを作るコマンドは、今のブランチではなく、作るブランチの Issue を出す。
+# ブランチの名前はコマンドの文字列から拾う。guard-git.sh（check_create）のようには解析せず、
+# -c・-C・-b・-B・--create・--force-create の次の語と、git branch <名前> の最初の語だけを見る。
+# そのため、-cname のようにオプションと名前をくっつけた書き方や、git branch --set-upstream-to <上流> <名前> のように
+# 値を取るオプションを挟む書き方は、名前を取り違えるか拾えず、Issue のリンクを出さない
+# （guard-git.sh は警告するのに、ここは出さない、という食い違いが起きる。tests/pr-link.bats で押さえてある）。
+# 間違った Issue のリンクを出すより、何も出さないほうがよいので、拾えないときは今のブランチの Issue を使わない
+created_branch() {
+  local seg w prev="" name="" in_branch=false
+  seg="$(printf '%s\n' "$cmd" | grep -Eo "git([^;&|]* )?(switch|checkout|worktree add|branch)[^;&|]*" | head -n 1 || true)"
+  # shellcheck disable=SC2086 # 空白で語に分ける
+  set -f
+  for w in $seg; do
+    w="${w#[\"\']}"
+    w="${w%[\"\']}"
+    case "$prev" in
+      -c | -C | -b | -B | --create | --force-create)
+        name="$w"
+        break
+        ;;
+    esac
+    if $in_branch; then
+      case "$w" in -*) ;; *) name="$w"; break ;; esac
+    fi
+    [ "$w" != branch ] || in_branch=true
+    prev="$w"
+  done
+  set +f
+  printf '%s\n' "$name"
+}
+if $create_branch && ! has 'task-start\.sh'; then
+  name="$(created_branch)"
+  issue=""
+  [ -z "$name" ] || issue="$(issue_of "$name")"
+fi
+# task-start.sh は別のワークツリーを作るので、今のブランチではなく、出力の Issue の番号を使う。
+# 出力の JSON は標準出力にだけ出るので、標準エラーの警告（warn:）が混ざっても読める。取れなければ Issue は出さない
 if has 'task-start\.sh'; then
-  n="$(printf '%s\n' "$output" | jq -rs 'map(select(type == "object") | .issue // empty) | .[0] // empty' 2>/dev/null || true)"
-  case "$n" in '' | *[!0-9]*) ;; *) issue="$n" ;; esac
+  stdout="$(jq -r '.tool_response | if type == "object" then (.stdout // "") else (. // "" | tostring) end' <<<"$input" 2>/dev/null || true)"
+  n="$(jq -r 'objects | .issue // empty' <<<"$stdout" 2>/dev/null | head -n 1 || true)"
+  case "$n" in '' | *[!0-9]*) issue="" ;; *) issue="$n" ;; esac
 fi
 
 if [ -n "$issue" ]; then

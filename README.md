@@ -123,7 +123,7 @@ git の操作のあとに、関連する PR・Issue・CI のリンクを、使�
 | `git commit`（`commit.sh` を含む）、ブランチ・ワークツリーの作成（`git switch -c` など。`task-start.sh` を含む） | 紐付く Issue |
 | `gh pr create`・`gh issue create`（`pr-create.sh`・`issue-create.sh` を含む） | 作った PR・Issue（コマンドの出力から拾う） |
 
-- 紐付く Issue は、ブランチ名（`branch.pattern` の `{issue_number}`）から分かります。main など、Issue の番号が分からないブランチでは、ブランチから導くリンクは出しません。
+- 紐付く Issue は、ブランチ名（`branch.pattern` の `{issue_number}`）から分かります。ブランチを作るコマンドでは、作るブランチの Issue です（名前を拾えないときは出しません）。main など、Issue の番号が分からないブランチでは、ブランチから導くリンクは出しません。
 - 同じリンクも、連続で毎回出します。
 - `gh` が無い・失敗するなど、リンクを出せないときは、何も出さずに通します。操作は止まりません。
 - 使用者には `systemMessage`、Claude には `additionalContext` で伝え、Claude は返答でもリンクに触れます。
