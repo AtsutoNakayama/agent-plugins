@@ -235,7 +235,7 @@ if ! $abandon; then
       dw_warn "Issue ${repo:+${repo}}#${n} の状態を取得できませんでした"
       issues="$(jq -c --argjson n "$n" --arg r "$repo" '. + [{number: $n, repo: (if $r == "" then null else $r end), state: null}]' <<<"$issues")"
     fi
-  done < <(jq -r '.closingIssuesReferences // [] | .[] | "\(.number) \(.repository.nameWithOwner // "")"' <<<"$pr")
+  done < <(jq -r '.closingIssuesReferences // [] | .[] | "\(.number) \(if .repository then "\(.repository.owner.login)/\(.repository.name)" else "" end)"' <<<"$pr")
 fi
 
 jq -n --arg branch "$branch" --arg path "$path" --arg main "$main_root" --arg base "$base" \

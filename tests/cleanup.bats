@@ -533,7 +533,7 @@ run_cleanup() {
 @test "別のリポジトリの Issue は、そのリポジトリで状態を調べる" {
   setup_branch
   squash_merge
-  FAKE_CLOSING='[{"number": 17, "repository": {"nameWithOwner": "other/repo"}}]' fake_pr MERGED
+  FAKE_CLOSING='[{"number": 17, "repository": {"name": "repo", "owner": {"login": "other"}}}]' fake_pr MERGED
   echo '{"state": "CLOSED"}' >"$FIX/issue-17.json"
   run_cleanup --branch feat/17-x
   assert_success
