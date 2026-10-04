@@ -461,3 +461,12 @@ auto_branch() {
   run_script review-perspectives.sh --auto --type fix
   assert_failure 64
 }
+
+@test "--auto は、branch.pattern に {type} が無くても Issue の番号を読む" {
+  auto_branch 17-bug
+  echo '{"branch": {"pattern": "{issue_number}-{slug}"}}' >"$REPO/.claude/dev-workflow/config.json"
+  fake_issue 17 '["fix"]'
+  run_script review-perspectives.sh --auto
+  assert_success
+  assert_equal "$(jq -c '[.context.issue, .context.type, .context.type_from]' <<<"$output")" '[17,"fix","issue"]'
+}
