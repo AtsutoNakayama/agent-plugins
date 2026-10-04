@@ -33,16 +33,9 @@ jobs:
       - name: docs only
         id: docs-only
         env:
-          EVENT_NAME: ${{ github.event_name }}
           MERGE_GROUP_BASE_SHA: ${{ github.event.merge_group.base_sha }}
         run: |
-          base=""
-          if [ "$EVENT_NAME" = merge_group ]; then
-            base="$MERGE_GROUP_BASE_SHA"
-            # 取得できなくても止めない。比べられなければ docs-only.sh が false を返し、重いジョブを動かす側に倒れる
-            git fetch --no-tags --depth=1 origin "$base" || true
-          fi
-          echo "docs_only=$(.github/scripts/docs-only.sh ${base:+"$base"} | jq -r .docs_only)" >> "$GITHUB_OUTPUT"
+          echo "docs_only=$(.github/scripts/docs-only.sh | jq -r .docs_only)" >> "$GITHUB_OUTPUT"
 
   test:
     needs: changes
