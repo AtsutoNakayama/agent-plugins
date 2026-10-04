@@ -13,6 +13,8 @@ reviews:
     # 戻すと、`@coderabbitai review` は上限を消費し、以後の push でも再レビューされるので使わない。
     # ただし、PR を作ったときのレビューが障害などで付かなかったときに限り、1回だけ使う（CONTRIBUTING.md）。
     auto_incremental_review: true
+    # 既定ではレビュー済みのコミットが5件に達すると自動レビューが止まるので、止めない（0）。これも #160 で消す
+    auto_pause_after_reviewed_commits: 0
     # release-please のリリース PR（作成者は GitHub App のボット。名前は App の名前で決まる）はレビューしない
     ignore_usernames:
       - agent-plugins-release-nakayama[bot]
