@@ -152,7 +152,7 @@ project_number="$(jq -r '.number // empty' <<<"$project")"
 # オープンな Issue と、それぞれがこの Project に入っているか（Issue 側から調べる）。
 # gh にも REST にも、Issue から Project の項目を引く手段が無いので GraphQL で読む（設計書 §10）
 open_issues() {
-  local cursor="" page
+  local cursor="" next page
   while :; do
     page="$(dw_gql 'query OpenIssues($owner: String!, $name: String!, $after: String) {
       repository(owner: $owner, name: $name) {
@@ -167,7 +167,11 @@ open_issues() {
       item: ([.projectItems.nodes[] | select(.project.id == $p)][0] // null
         | if . then {id, status: (.fieldValueByName.name // null)} else null end)}' <<<"$page"
     [ "$(jq -r .pageInfo.hasNextPage <<<"$page")" = true ] || break
-    cursor="$(jq -r .pageInfo.endCursor <<<"$page")"
+    # カーソルが空か前回と同じなら、同じページを読み続けてしまう（無限ループ）ので止める
+    next="$(jq -r '.pageInfo.endCursor // empty' <<<"$page")"
+    { [ -n "$next" ] && [ "$next" != "$cursor" ]; } \
+      || dw_die "オープンな Issue のページ送りが進みません: ${repo_nwo}"
+    cursor="$next"
   done
 }
 
