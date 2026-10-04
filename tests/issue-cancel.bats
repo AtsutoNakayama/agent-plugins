@@ -112,8 +112,8 @@ writes() { grep -oE '^(issue-comment|issue-close|pr-comment|pr-close|api-delete)
   setup_cancel
   run_script issue-cancel.sh --issue 17 --reason "やらないことにしました"
   assert_success
-  # Project の操作（GraphQL）もラベルなどの変更（issue edit）も呼ばない
-  assert_equal "$(grep -vEc '^(issue-comment|issue-close) ' "$CALLS")" 0
+  # Project の操作（GraphQL）もラベルなどの変更（issue edit）も呼ばない（Issue の読み取り issue-view は数えない）
+  assert_equal "$(grep -vEc '^(issue-view|issue-comment|issue-close) ' "$CALLS")" 0
 }
 
 @test "理由が無い・空白だけなら閉じずに止まる" {

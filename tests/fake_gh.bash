@@ -2,7 +2,7 @@
 # branch-name・status-set・task-start・cleanup・pr-create・issue-cancel のテストで使う偽の gh。load fake_gh で読み込み、setup_fake_gh を呼ぶ。
 #
 # - gh repo view                    me/demo を返す
-# - gh issue view N --json ...      $FIX/issue-N.json を返す（-q があれば適用する）
+# - gh issue view N --json ...      $FIX/issue-N.json を返す（-q があれば適用する）。引数を「issue-view N ...」として $CALLS に記録する
 # - gh issue edit N ...             引数を「edit N ...」として $CALLS に記録する
 # - gh issue comment N --body-file -  「issue-comment N」を $CALLS に記録し、標準入力を $TMP/issue-comment-body に写す
 # - gh issue close N ...            引数を「issue-close N ...」として $CALLS に記録する
@@ -40,6 +40,7 @@ case "$1 $2" in
   "repo view") echo '{"nameWithOwner": "me/demo", "url": "https://github.com/me/demo"}' | jq -r "$q" ;;
   "--version "*) echo "gh version ${FAKE_GH_VERSION:-2.96.0} (2026-07-02)" ;;
   "issue view")
+    echo "issue-view $3 ${*:4}" >>"$CALLS"
     fail issue-view
     [ -f "$FIX/issue-$3.json" ] || { echo "GraphQL: Could not resolve to an issue (NOT_FOUND)" >&2; exit 1; }
     jq -r "$q" "$FIX/issue-$3.json"
