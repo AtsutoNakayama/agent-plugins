@@ -19,19 +19,20 @@ main が進んだ PR は、最新の main を取り込んで CI が通り直る�
 
 取り込むのは今のブランチ（HEAD）なので、取り込む作業用のブランチのワークツリーの中で `branch-status.sh` を実行する（調べるのは今のブランチだけ。別のブランチに取り込むときは、そのブランチのワークツリーに移ってから行う）。
 
-- `up_to_date` が true なら、何もせずに「すでに最新です」と伝えて終える。`pr.merge_state` が `BEHIND` でなければ、マージできない理由は別にある（`BLOCKED` ならチェックの失敗や承認待ち、`DIRTY` なら衝突）ので、その状態も伝える
+- `up_to_date` が true で、`pr.merge_state` が `BEHIND` でなければ、何もせずに「すでに最新です」と伝えて終える。マージできない理由は別にある（`BLOCKED` ならチェックの失敗や承認待ち、`DIRTY` なら衝突）ので、その状態も伝える
+- `up_to_date` が true なのに `pr.merge_state` が `BEHIND` のときは、調べている間に `base_branch` が進んだか、PR のマージ先が設定の `base_branch` と違う。もう一度 `branch-status.sh` を実行し、それでも `BEHIND` なら、「PR のマージ先と設定の `base_branch` が違う可能性がある」ことを伝えて、どちらに取り込むかユーザーに聞く
 - `dirty` が true なら（未追跡のファイルは数えない）、merge の前にコミットするか、ユーザーに片付けてもらう（取り込みの結果と混ざらないようにする）
 - `unpulled` が 1 以上なら、origin のブランチに手元に無いコミットがあり、push が拒否される。取り込む前に、そのコミットを取り込むか（`git pull --no-rebase`）ユーザーに確かめる
 
 ### 2. 取り込む
 
-先に `git rev-parse HEAD` で merge の前の sha を控えてから、`git merge origin/<base_branch>` を実行する（`base` は `branch-status.sh` の出力）。rebase と強制 push は使わない。メッセージは既定のままでよい。
+先に `git rev-parse HEAD` で merge の前の sha を控えてから、`git merge --no-edit origin/<base_branch>` を実行する（`base` は `branch-status.sh` の出力。`--no-edit` は、エディタを開かず既定のメッセージで merge するため）。rebase と強制 push は使わない。
 
 衝突したときは、衝突したファイルごとに、両側の変更の意図を読んで直す。`git log` と `git diff` で、base_branch 側で何が変わったか、自分のブランチで何をしたかを確かめる。
 
 - 両側の意図を両立できるなら、そのように直す
 - どちらを採るか、AI が判断できない衝突は、AskUserQuestion でユーザーに聞く。衝突の内容（ファイルと、両側の変更の要点）は、質問の中にも入れる（設計書 §8）。選択肢の説明には、選ぶと実際にどうなるか（「main 側の `foo()` の引数の追加を残し、こちらの呼び出しを合わせる」など）を書く
-- 直したら `git add` して `git commit --no-edit` で merge を完了する。衝突を直した内容は、merge コミットの本文に1〜2行で書く
+- 直したら `git add` して、`git commit -m "<件名>" -m "<衝突を直した内容を1〜2行>"` で merge を完了する（件名は `Merge remote-tracking branch 'origin/<base_branch>' into <ブランチ>` にそろえる。エディタが開く `--edit` は使わない）
 
 ### 3. テストとチェックを通す
 
@@ -41,10 +42,10 @@ main が進んだ PR は、最新の main を取り込んで CI が通り直る�
 
 ### 4. push の前に確認を取る
 
-AskUserQuestion で、「push する」「push しない」を選んでもらう。確認の内容は、質問の中（質問の文や選択肢の preview）に入れる（設計書 §8。別の端末から使うと、質問の直前の文章が見えないことがある）。
+確認の直前に `branch-status.sh` をもう一度実行して、`unpushed` を取り直す（手順1の値は、手順3で修正をコミットすると古くなる）。AskUserQuestion で、「push する」「push しない」を選んでもらう。確認の内容は、質問の中（質問の文や選択肢の preview）に入れる（設計書 §8。別の端末から使うと、質問の直前の文章が見えないことがある）。
 
-- 取り込んだコミット（`git log --oneline <控えた sha>..HEAD` など。取り込んだ数と主な内容）
-- `unpushed` が 1 以上なら、取り込みのほかに、まだ push していない自分のコミットも一緒に push されること（その数）
+- 取り込んだコミット（`git log --oneline <控えた sha>..HEAD` など。取り込んだ数と主な内容。手順3で直したコミットがあれば、それも含まれる）
+- 取り直した `unpushed` が 1 以上なら、取り込みのほかに、まだ push していない自分のコミットも一緒に push されること（その数）
 - 衝突を直したなら、そのファイルと直し方
 - テストとチェックの結果（実行したものと、通ったか）
 
