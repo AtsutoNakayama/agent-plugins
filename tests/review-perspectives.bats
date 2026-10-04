@@ -390,7 +390,7 @@ auto_branch() {
   run_script review-perspectives.sh --auto
   assert_success
   assert_equal "$(jq -c .context <<<"$output")" \
-    "{\"base\":\"$BASE\",\"target\":\"origin/main\",\"ahead\":0,\"issue\":17,\"type\":\"fix\",\"type_from\":\"issue\"}"
+    "{\"base\":\"$BASE\",\"target\":\"origin/main\",\"ahead\":0,\"issue\":17,\"type\":\"fix\",\"type_from\":\"issue\",\"max_rounds\":3}"
   used regression-test || fail "Issue の type（fix）で regression-test が使われていません: $output"
   used issue-requirements || fail "$output"
   [ -n "$(skipped_reason main-drift)" ] || fail "$output"
@@ -469,4 +469,24 @@ auto_branch() {
   run_script review-perspectives.sh --auto
   assert_success
   assert_equal "$(jq -c '[.context.issue, .context.type, .context.type_from]' <<<"$output")" '[17,"fix","issue"]'
+}
+
+@test "--auto は、設定の review.max_rounds を context に出す" {
+  auto_branch feat/17-add-thing
+  fake_issue 17 '["feat"]'
+  echo '{"review": {"max_rounds": 5}}' >.claude/dev-workflow/config.json
+  run_script review-perspectives.sh --auto
+  assert_success
+  assert_equal "$(jq -c .context.max_rounds <<<"$output")" 5
+}
+
+@test "--auto は、review.max_rounds が1以上の整数でなければ止まる" {
+  auto_branch feat/17-add-thing
+  fake_issue 17 '["feat"]'
+  for v in 0 -1 2.5 '"3"' null true '[]'; do
+    echo "{\"review\": {\"max_rounds\": $v}}" >.claude/dev-workflow/config.json
+    run_script review-perspectives.sh --auto
+    assert_failure 2
+    assert_output --partial "review.max_rounds は1以上の整数にしてください"
+  done
 }

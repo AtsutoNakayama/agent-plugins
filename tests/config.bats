@@ -133,3 +133,19 @@ load test_helper
   run_script config.sh '[.pr.template, .detected.issue_templates] | tojson'
   assert_output '[null,null]'
 }
+
+@test "review.max_rounds の既定は 3 で、上位の層で上書きできる" {
+  run_script config.sh .review.max_rounds
+  assert_success
+  assert_output "3"
+  echo '{"review": {"max_rounds": 5}}' >.claude/dev-workflow/config.json
+  run_script config.sh .review.max_rounds
+  assert_success
+  assert_output "5"
+}
+
+@test "review.max_rounds の既定は 1 以上の整数（review スキルが前提にしている）" {
+  run_script config.sh '.review.max_rounds | (type == "number" and . >= 1 and . == floor)'
+  assert_success
+  assert_output "true"
+}
