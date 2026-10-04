@@ -151,7 +151,7 @@ frontmatter() { awk 'NR == 1 && $0 == "---" { on = 1; next } on && $0 == "---" {
   # 同梱の code-review.md 自体には、除外の節を書かない（書くと全員の指摘が外れる）
   grep -q '^## 指摘しないこと' "$BATS_TEST_DIRNAME/../plugins/dev-workflow/review/code-review.md" \
     && fail "同梱の code-review.md に除外の節があります"
-  grep -q 'review の手順9' "$BATS_TEST_DIRNAME/../plugins/dev-workflow/defaults/task-flow.md" \
+  grep -q 'dev-workflow:review` の手順9（観点に残すか確かめる）' "$BATS_TEST_DIRNAME/../plugins/dev-workflow/defaults/task-flow.md" \
     || fail "SessionStart の流れ（defaults/task-flow.md）に、レビューの後の指摘を観点に残すことがありません"
   grep -q '「〜を指摘しない」ことだけを書いた観点は作らない' "$SKILLS/review-perspective-add/SKILL.md" \
     || fail "review-perspective-add に、指摘しないだけの観点を作らないことが書かれていません"
