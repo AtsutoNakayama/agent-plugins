@@ -11,6 +11,7 @@ load test_helper
 # $FIX/<メソッド>.json があれば返す。FAKE_FAIL に指定したメソッド（GET を含む）は 403 で失敗する。
 # gh repo view は、リポジトリを指定すれば repo-view.json、指定しなければ here.json を返す。
 # 別のリポジトリのファイル（gh api -H ... .../contents/<パス>）は $FIX/remote/<パス> を返し、無ければ 404 にする。
+# 組織（orgs/<名前>）は $FIX/org.json に -q を適用して返し、無ければ 404 にする（組織の所有者でないときはプランが返らない）。
 setup_fake_gh() {
   FIX="$TMP/fix"
   CALLS="$TMP/calls"
@@ -51,6 +52,10 @@ case "$1 $2" in
       */branches/*)
         if [ -f "$FIX/branches/${2##*/branches/}" ]; then echo '{}'
         else echo 'gh: Branch not found (HTTP 404)' >&2; exit 1; fi
+        ;;
+      orgs/*)
+        if [ -f "$FIX/org.json" ]; then jq -r "$q" "$FIX/org.json"
+        else echo 'gh: Not Found (HTTP 404)' >&2; exit 1; fi
         ;;
       */rulesets\?*) cat "$FIX/rulesets.json" ;;
       */rulesets/*) cat "$FIX/ruleset.json" ;;
@@ -425,4 +430,137 @@ checks_rule() {
   assert_equal "$(called PUT)" 1
   assert_equal "$(body PUT | jq -c '.rules[] | select(.type == "required_status_checks") | .parameters.required_status_checks')" \
     '[{"context":"lint-result","integration_id":15368},{"context":"test-result"}]'
+}
+
+# キューの規則。使い方: queue_rule [parameters に足す JSON]
+queue_rule() {
+  jq -nc --argjson p "${1:-"{}"}" '{type: "merge_queue", parameters: ({merge_method: "SQUASH",
+    max_entries_to_build: 5, min_entries_to_merge: 1, max_entries_to_merge: 5,
+    min_entries_to_merge_wait_minutes: 5, grouping_strategy: "ALLGREEN", check_response_timeout_minutes: 60} + $p)}'
+}
+
+# 所有者の種類と公開範囲。使い方: owned_by <User|Organization> <public|private|internal>
+owned_by() {
+  jq --arg t "$1" --arg v "$2" '. + {owner: {login: "me", type: $t}, visibility: $v}' "$FIX/repo.json" >"$FIX/r.json"
+  mv "$FIX/r.json" "$FIX/repo.json"
+}
+
+@test "--merge-queue で、キュー（スカッシュ）を設定し、必須のチェックの strict は外す" {
+  setup_fake_gh
+  settled_repo
+  owned_by Organization public
+  existing_ruleset
+  run_setup --merge-queue --required-check lint-result
+  assert_success
+  assert_equal "$(called PUT)" 1
+  req="$(body PUT)"
+  assert_equal "$(jq -c '.rules[] | select(.type == "merge_queue") | .parameters | [.merge_method, .grouping_strategy]' <<<"$req")" \
+    '["SQUASH","ALLGREEN"]'
+  assert_equal "$(jq -c '.rules[] | select(.type == "required_status_checks") | .parameters.strict_required_status_checks_policy' <<<"$req")" false
+  assert_equal "$(jq -c '[.merge_queue, .ruleset.strict]' <<<"$json")" '[{"available":true,"enabled":true},false]'
+  assert_output --partial "必須のチェック: lint-result、マージキュー（スカッシュ）"
+}
+
+@test "--merge-queue だけでも、既存の必須のチェックの strict を外す" {
+  setup_fake_gh
+  settled_repo
+  owned_by Organization public
+  existing_ruleset '{}' "[$(checks_rule true lint-result)]"
+  run_setup --merge-queue
+  assert_success
+  req="$(body PUT)"
+  assert_equal "$(jq -c '.rules[] | select(.type == "required_status_checks") | .parameters
+    | [.strict_required_status_checks_policy, [.required_status_checks[].context]]' <<<"$req")" '[false,["lint-result"]]'
+}
+
+@test "キューの既存の設定（同時に組む数など）は残し、マージ方法だけスカッシュに揃える" {
+  setup_fake_gh
+  settled_repo
+  owned_by Organization public
+  existing_ruleset '{}' "[$(queue_rule '{"merge_method": "MERGE", "max_entries_to_merge": 2}')]"
+  run_setup --merge-queue
+  assert_success
+  assert_equal "$(body PUT | jq -c '.rules[] | select(.type == "merge_queue") | .parameters | [.merge_method, .max_entries_to_merge]')" \
+    '["SQUASH",2]'
+}
+
+@test "キューが揃っていれば、何も付けなくても --merge-queue でも変更しない" {
+  setup_fake_gh
+  settled_repo
+  owned_by Organization public
+  existing_ruleset '{}' "[$(checks_rule false lint-result), $(queue_rule)]"
+  run_setup
+  assert_success
+  assert_no_calls
+  assert_equal "$(jq -c '[.merge_queue.enabled, .ruleset.strict]' <<<"$json")" '[true,false]'
+  run_setup --merge-queue --required-check lint-result
+  assert_success
+  assert_no_calls
+}
+
+@test "キューを使っていれば、--required-check で置き換えても strict は求めない" {
+  setup_fake_gh
+  settled_repo
+  owned_by Organization public
+  existing_ruleset '{}' "[$(checks_rule false lint-result), $(queue_rule)]"
+  run_setup --required-check test-result
+  assert_success
+  req="$(body PUT)"
+  assert_equal "$(jq -c '.rules[] | select(.type == "required_status_checks") | .parameters
+    | [.strict_required_status_checks_policy, [.required_status_checks[].context]]' <<<"$req")" '[false,["test-result"]]'
+  assert_equal "$(jq -c '[.rules[] | select(.type == "merge_queue")] | length' <<<"$req")" 1
+}
+
+@test "--no-merge-queue でキューを外し、必須のチェックの strict を求める" {
+  setup_fake_gh
+  settled_repo
+  owned_by Organization public
+  existing_ruleset '{}' "[$(checks_rule false lint-result), $(queue_rule)]"
+  run_setup --no-merge-queue
+  assert_success
+  req="$(body PUT)"
+  assert_equal "$(jq -c '[.rules[] | select(.type == "merge_queue")] | length' <<<"$req")" 0
+  assert_equal "$(jq -c '.rules[] | select(.type == "required_status_checks") | .parameters.strict_required_status_checks_policy' <<<"$req")" true
+  assert_equal "$(jq -c '[.merge_queue.enabled, .ruleset.strict]' <<<"$json")" '[false,true]'
+  assert_output --partial "最新の main の取り込み、マージキューを外す"
+}
+
+@test "個人のアカウントのリポジトリでは、--merge-queue は dry-run でも止まる" {
+  setup_fake_gh
+  settled_repo
+  owned_by User public
+  run_setup --merge-queue --dry-run
+  assert_failure 2
+  assert_output --partial "me/demo ではマージキューを使えません"
+}
+
+@test "キューを使えるかを出力する（個人は false、組織の公開は true、組織の非公開はプランで決める）" {
+  setup_fake_gh
+  settled_repo
+  existing_ruleset
+  owned_by User public
+  run_setup --dry-run
+  assert_equal "$(jq -c .merge_queue <<<"$json")" '{"available":false,"enabled":false}'
+  owned_by Organization public
+  run_setup --dry-run
+  assert_equal "$(jq -c .merge_queue.available <<<"$json")" true
+  owned_by Organization private
+  echo '{"plan": {"name": "enterprise"}}' >"$FIX/org.json"
+  run_setup --dry-run
+  assert_equal "$(jq -c .merge_queue.available <<<"$json")" true
+  echo '{"plan": {"name": "team"}}' >"$FIX/org.json"
+  run_setup --dry-run
+  assert_equal "$(jq -c .merge_queue.available <<<"$json")" false
+}
+
+@test "組織の非公開リポジトリでプランが分からなければ、警告して --merge-queue を続ける" {
+  setup_fake_gh
+  settled_repo
+  owned_by Organization private
+  existing_ruleset
+  run_setup --merge-queue
+  assert_success
+  assert_output --partial "マージキューを使えるか確かめられません"
+  assert_equal "$(jq -c .merge_queue.available <<<"$json")" null
+  assert_equal "$(called PUT)" 1
 }

@@ -19,7 +19,7 @@ plugins/dev-workflow/scripts/doctor.sh
 | スキル | 内容 |
 |---|---|
 | `/dev-workflow:repo-setup` | リポジトリの初期設定（下記） |
-| `/dev-workflow:task-create` | 依頼の内容から Issue を起票し、type ラベル（破壊的変更なら `breaking` ラベルも）を付けて Project に追加する。Story Point は見積もりを提案し、確認してから設定する。先に終わらせる Issue があれば、本文の「依存」に `#N` を書き、GitHub の依存関係（blocked by）にも登録する。大きな仕様を分けた一部なら、仕様の Issue を親にしてサブ Issue として紐付ける（親子は2層が目安で、必要なら3層まで。Story Point は子にだけ付ける）。親と子をまとめて下書きし、親子の木を見せて確認してから、親 → 子の順に起票できる。既にある Issue を親に指定して、その下に子を足すこともできる。触りそうなファイル・領域も本文の「変更するファイル・領域」に書く（`task-next` が並列にできるかを見るのに使う。分からなければ「不明」） |
+| `/dev-workflow:task-create` | 依頼の内容から Issue を起票し、type ラベル（破壊的変更なら `breaking` ラベルも）を付けて Project に追加する。下書きの前に、開いている Issue から重複と親の候補を探し、重なる Issue があれば、起票の前にどう扱うか（既にある Issue で進める、その Issue を親にする、など）を聞く。Story Point は見積もりを提案し、確認してから設定する。先に終わらせる Issue があれば、本文の「依存」に `#N` を書き、GitHub の依存関係（blocked by）にも登録する。大きな仕様を分けた一部なら、仕様の Issue を親にしてサブ Issue として紐付ける（親子は2層が目安で、必要なら3層まで。Story Point は子にだけ付ける）。親と子をまとめて下書きし、親子の木を見せて確認してから、親 → 子の順に起票できる。既にある Issue を親に指定して、その下に子を足すこともできる。触りそうなファイル・領域も本文の「変更するファイル・領域」に書く（`task-next` が並列にできるかを見るのに使う。分からなければ「不明」） |
 | `/dev-workflow:task-next` | Todo の Issue から、次に着手すべきものと、同時に進められる組を提案する。優先順位は Project の Todo の上から順で、依存（GitHub の blocked by と本文の「依存」）が終わっていないものは候補から外す。本文の「変更するファイル・領域」と、着手中（In Progress と、設定されていれば PR を出した後の列 `pr_opened`）の Issue の領域・PR のファイルが重なりそうなものは「並列にできない」と警告する（止めはしない）。何も変えない読み取り専用で、herdr などが無くても使える |
 | `/dev-workflow:task-start` | Issue の作業を始める。ブランチとワークツリー（`.claude/worktrees/<ブランチ名>`）を作り、自分に割り当てて In Progress に移す。確認を取らずに進め、結果を伝える |
 | `/dev-workflow:task-status` | Issue を Project の指定した列へ移す。`Blocked` など自分で足した列へも移せる。Project に入っていなければ追加してから移す。確認を取らずに進め、結果を伝える。Project に無い列を指定したときは、移さずに列の一覧を見せる |
@@ -191,18 +191,35 @@ plugins/dev-workflow/scripts/setup/setup-repo.sh --require-approval 1
 
 #### マージの前に CI を求める
 
-別の PR が先にマージされて main が進んでも、前の PR の CI の結果は古いままです。単独では通る2つの PR が組み合わさって main が壊れることがあるので、チェックの成功と、PR が最新の main を取り込んでいることを、ルールセットで求められます。
+別の PR が先にマージされて main が進んでも、前の PR の CI の結果は古いままです。単独では通る2つの PR が組み合わさって main が壊れることがあるので、チェックの成功と、PR が最新の main を取り込んでいること（マージキューを使うときは、キューを通すこと。下の「マージキューを使う」）を、ルールセットで求められます。
 
 ```bash
-# lint-result と test-result の成功と、最新の main の取り込みを、マージの条件にする
+# lint-result と test-result の成功と、最新の main の取り込みを、マージの条件にする（マージキューを使っていれば、取り込みは求めない）
 plugins/dev-workflow/scripts/setup/setup-repo.sh --required-check lint-result --required-check test-result
 ```
 
 - `--required-check` は、`setup-all.sh` にも渡せます。繰り返し指定できます。
-- 指定した名前の一覧で、必須のチェックを置き換えます。CI を足したり外したりしたときは、新しい一覧で実行し直します。付けなければ、ルールセットの必須のチェックには触れません。GitHub の設定画面で直した必須のチェックも、そのまま残ります。
+- 指定した名前の一覧で、必須のチェックを置き換えます。CI を足したり外したりしたときは、新しい一覧で実行し直します。付けなければ、ルールセットの必須のチェックの一覧には触れません。GitHub の設定画面で直した必須のチェックも、そのまま残ります。ただし、最新の main の取り込み（strict）は、マージキューの有無で決まります。キューを使っていれば、オプションが無くても外します。使っていなければ、`--required-check`・`--no-merge-queue` のときに求め、どちらも無ければ今のままです。
 - チェックの名前は、チームの CI で決まるので、プラグインは決めません。CI が無いリポジトリや、まだ報告されたことのない名前を指定すると、チェックが「待ち」のまま残ってマージできなくなります。名前は、そのチェックが一度動いてから指定してください。
 - 名前は、CI 全体の結果を1つにまとめる「門番のジョブ」にすることをおすすめします。ジョブを足しても、必須の名前は変わらずに済みます。ジョブごとに必須にすると、CI の変更のたびにこのコマンドを実行し直すことになります。
 - `paths-ignore` などでワークフローが動かない PR（ドキュメントだけの変更など）は、そのチェックが報告されず、「待ち」のままマージできなくなります。`paths-ignore` はやめ、変更の範囲を見て重いジョブを `if` で飛ばしたうえで、門番のジョブは必ず動かして成功にしてください（このリポジトリの `.github/workflows/lint.yml`・`test.yml` が例です）。
+
+#### マージキューを使う
+
+最新の main の取り込みを求めると、別の PR がマージされるたびに、残りの PR へ main を取り込み直して CI を通し直すことになります。マージキューを使うと、キューが最新の main と組み合わせた結果で CI を動かして順にマージするので、取り込み直しが要らなくなります。
+
+```bash
+# マージキュー（スカッシュ）を使い、必須のチェックの「最新の main の取り込み」を外す
+plugins/dev-workflow/scripts/setup/setup-repo.sh --merge-queue --required-check lint-result --required-check test-result
+
+# マージキューを外し、必須のチェックには最新の main の取り込みを求める
+plugins/dev-workflow/scripts/setup/setup-repo.sh --no-merge-queue
+```
+
+- マージキューは、Organization の公開リポジトリと、GitHub Enterprise Cloud の Organization の非公開リポジトリで使えます。個人のアカウントのリポジトリでは使えないので、`--merge-queue` は止まります。使えるかは、出力の `merge_queue.available` で分かります。
+- `--merge-queue`・`--no-merge-queue` は、`setup-all.sh` にも渡せます。どちらも付けなければ、キューを今のまま使う・使わないままにします。
+- 必須のチェックを求めるワークフローは、`merge_group` のイベントでも動くようにしてください（`on: merge_group`）。動かないと、キューのチェックが「待ち」のまま残ってマージされません。
+- `doctor.sh` は、main にマージキューと最新の main の取り込みのどちらが効いているかを表示します。
 
 ## 開発
 

@@ -58,6 +58,16 @@ args_of() { grep "^$1" "$CALLS" | tail -n 1 | sed "s/^$1 \{0,1\}//"; }
   assert_equal "$(args_of setup-repo)" "[--required-check] [lint-result] [--required-check] [test-result]"
 }
 
+@test "--merge-queue と --no-merge-queue を setup-repo.sh に渡す" {
+  setup_fake_plugin
+  run_all --merge-queue
+  assert_success
+  assert_equal "$(args_of setup-repo)" "[--merge-queue]"
+  run_all --no-merge-queue
+  assert_success
+  assert_equal "$(args_of setup-repo)" "[--no-merge-queue]"
+}
+
 @test "オプションが無くても実行できる（bash 3.2 の空の配列）" {
   setup_fake_plugin
   run_all
