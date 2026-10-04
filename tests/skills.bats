@@ -111,3 +111,11 @@ frontmatter() { awk 'NR == 1 && $0 == "---" { on = 1; next } on && $0 == "---" {
   grep -q '同じ原因の他の箇所' "$BATS_TEST_DIRNAME/../plugins/dev-workflow/defaults/task-flow.md" || fail "SessionStart の流れ（defaults/task-flow.md）にありません"
   grep -q '同じ原因の他の箇所を' "$BATS_TEST_DIRNAME/../docs/design.md" || fail "設計書にありません"
 }
+
+@test "task-finish は、別のリポジトリの Issue の確認・クローズに --repo を付けて案内する" {
+  f="$SKILLS/task-finish/SKILL.md"
+  grep -q 'gh issue view <番号>' "$f"
+  grep -q 'gh issue close <番号>' "$f"
+  # shellcheck disable=SC2016 # バッククォートはスキルの本文の文字で、展開させない
+  grep -q 'どちらのコマンドにも `--repo <owner/repo>` を付けて案内する' "$f"
+}

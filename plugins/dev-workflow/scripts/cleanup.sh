@@ -22,6 +22,9 @@
 #      （--abandon でも、メインのワークツリーに未コミットの変更があれば止まる。捨てずに残すため）
 #   3. ローカルのブランチを削除する（git branch -D）
 #   4. base_branch を最新にする（git pull --ff-only に当たる。fetch --prune の後、早送りだけで取り込む）
+#   5. PR が閉じる Issue（Closes #N）が閉じたかを調べて issues（number・repo・state）に出す（--abandon では調べない）。
+#      Issue のリポジトリ（owner/repo）は repo に出す（参照に無ければ null）。
+#      調べられなくても片付けは止めず、その Issue の state を null にして警告する
 #
 # 削除するワークツリーの中から実行すると、実行後にその場所が無くなる。メインのワークツリー（main_root）で実行する。
 set -euo pipefail
@@ -96,7 +99,7 @@ if $abandon; then
     lose commits "$(git -C "$main_root" log --format='%h %s' "refs/heads/$branch" --not $excludes)"
   fi
 else
-  prs="$(gh pr list --head "$branch" --state all --json number,url,state,mergedAt,headRefOid,baseRefName)" \
+  prs="$(gh pr list --head "$branch" --state all --json number,url,state,mergedAt,headRefOid,baseRefName,closingIssuesReferences)" \
     || dw_die "${branch} の PR を取得できませんでした"
   pr="$(jq -c 'map(select(.state == "MERGED")) | sort_by(.mergedAt) | last // empty' <<<"$prs")"
   if [ -z "$pr" ]; then
@@ -219,10 +222,26 @@ if ! $dry_run && ! $abandon; then
   to="$(git -C "$main_root" rev-parse "refs/heads/$base")"
 fi
 
+# --- 5. Issue の状態 -------------------------------------------------------------
+# PR の本文の Closes #N でマージ時に GitHub が閉じる。閉じたかを伝えるだけなので、調べられなくても止めない
+issues='[]'
+if ! $abandon; then
+  # 別のリポジトリの Issue（Closes owner/repo#N）も参照に入るので、その Issue のリポジトリで調べる（無ければ今のリポジトリ）
+  while read -r n repo; do
+    [ -n "$n" ] || continue
+    if state="$(gh issue view "$n" ${repo:+--repo "$repo"} --json state -q .state 2>/dev/null)" && [ -n "$state" ]; then
+      issues="$(jq -c --argjson n "$n" --arg r "$repo" --arg s "$state" '. + [{number: $n, repo: (if $r == "" then null else $r end), state: $s}]' <<<"$issues")"
+    else
+      dw_warn "Issue ${repo:+${repo}}#${n} の状態を取得できませんでした"
+      issues="$(jq -c --argjson n "$n" --arg r "$repo" '. + [{number: $n, repo: (if $r == "" then null else $r end), state: null}]' <<<"$issues")"
+    fi
+  done < <(jq -r '.closingIssuesReferences // [] | .[] | "\(.number) \(if .repository then "\(.repository.owner.login)/\(.repository.name)" else "" end)"' <<<"$pr")
+fi
+
 jq -n --arg branch "$branch" --arg path "$path" --arg main "$main_root" --arg base "$base" \
   --argjson pr "$pr" --argjson wr "$worktree_removed" --argjson sw "$switched" --argjson bd "$branch_deleted" \
   --arg from "$from" --arg to "$to" --argjson dry "$dry_run" --argjson actions "$actions" \
-  --argjson abandon "$abandon" --argjson lost "$lost" '{
+  --argjson abandon "$abandon" --argjson lost "$lost" --argjson issues "$issues" '{
     branch: $branch,
     dry_run: $dry,
     abandon: $abandon,
@@ -232,6 +251,7 @@ jq -n --arg branch "$branch" --arg path "$path" --arg main "$main_root" --arg ba
     removed: {worktree: $wr, branch: $bd},
     switched: $sw,
     base: {name: $base, from: (if $from == "" then null else $from end), to: (if $to == "" then null else $to end)},
+    issues: $issues,
     lost: (if $abandon then $lost else null end),
     actions: $actions
   }'
