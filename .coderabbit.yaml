@@ -9,7 +9,7 @@ reviews:
   auto_review:
     enabled: true
     # PR を作ったときだけレビューし、push のたびにはレビューしない（上限が1時間に1回ほどしかないため）。
-    # 指摘への対応は、スレッドへの返信で行う（`@coderabbitai review` は上限を消費し、以後の push でも再レビューされるので使わない。CONTRIBUTING.md）
+    # 指摘への対応は、スレッドへの返信で行う（`@coderabbitai review` は上限を消費し、以後の push でも再レビューされるので使わない。ただし、PR を作ったときのレビューが障害などで付かなかったときに限り、1回だけ使う。CONTRIBUTING.md）
     auto_incremental_review: false
     # release-please のリリース PR（作成者は GitHub App のボット。名前は App の名前で決まる）はレビューしない
     ignore_usernames:
