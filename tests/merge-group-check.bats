@@ -156,6 +156,23 @@ YML
   assert_equal "$(jq -c .unknown <<<"$output")" '["codecov/patch"]'
 }
 
+@test "name: が式だけのジョブは、関係の無いチェックに当てない" {
+  setup_fake_gh
+  workflow nightly.yml <<'YML'
+on: schedule
+jobs:
+  build:
+    name: ${{ matrix.target }}
+    runs-on: ubuntu-latest
+  pack:
+    name: "${{ matrix.os }} (${{ matrix.arch }})"
+    runs-on: ubuntu-latest
+YML
+  run_check --branch main --check "CodeRabbit" --check "linux (x64)"
+  assert_success
+  assert_equal "$(jq -c '[.not_running, .unknown]' <<<"$output")" '[[],["CodeRabbit","linux (x64)"]]'
+}
+
 @test "同じ名前のジョブが複数のワークフローにあれば、どれかが merge_group で動けば動くとみなす" {
   setup_fake_gh
   printf 'on: pull_request\njobs:\n  lint:\n    runs-on: x\n' | workflow a.yml
