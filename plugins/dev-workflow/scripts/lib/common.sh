@@ -243,7 +243,7 @@ dw_project_fields() {
 # その失敗のときだけ、待って最大3回まで試す（待つ秒数は DW_RETRY_SLEEP、既定 1）。
 # それでも「Content already exists」で失敗したときは、項目が既にあるので、項目の一覧（REST）から探して、その id を使う。
 # 見つからないとき、ほかのエラーのときは、エラーを出して止まる。
-# 使い方: dw_project_add_item <所有者> <番号> <Issue などの URL>
+# 使い方: dw_project_add_item <所有者> <番号> <Issue の URL>
 dw_project_add_item() {
   local out errfile tries=0 existing
   errfile="$(mktemp)"
