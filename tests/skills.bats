@@ -95,7 +95,7 @@ frontmatter() { awk 'NR == 1 && $0 == "---" { on = 1; next } on && $0 == "---" {
   grep -qF 'gh issue list --state open' <<<"$step2" || fail "開いている Issue を読む手順がありません"
   grep -qF 'subIssuesSummary' <<<"$step2" || fail "サブ Issue の数を、開いている Issue の一覧と一緒に読んでいません"
   grep -q 'AskUserQuestion' <<<"$step2" || fail "重複があるときにユーザーに聞く手順がありません"
-  for choice in '既にある Issue で進める' '重ならない部分だけを起票する' 'そのまま起票する'; do
+  for choice in '既にある Issue で進める' '重ならない部分だけを起票する' 'そのまま起票する' '既にある Issue を親にする'; do
     grep -q "$choice" <<<"$step2" || fail "重複があるときの選択肢「${choice}」がありません"
   done
   grep -q '親の候補は、重なりとして数えない' <<<"$step2" || fail "指定された親と親の候補を、重なりから外すことが書かれていません"
