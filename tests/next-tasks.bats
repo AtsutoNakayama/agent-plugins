@@ -276,6 +276,56 @@ JSON
   assert_equal "$(out_of '.todo[1] | [.parallel, .reason]')" '[false,"着手中のものと領域が重なる"]'
 }
 
+@test "PR を出した列（pr_opened）が設定されていれば、その列の Issue も着手中として、PR のファイルとの重なりを見る" {
+  setup_fake_gh
+  echo '{"project": {"owner": "me", "number": 4}, "status": {"pr_opened": "In Review"}}' >"$REPO/.claude/dev-workflow/config.json"
+  item 10 Todo $'## 変更するファイル・領域\n- tests/'
+  item 11 Todo $'## 変更するファイル・領域\n- docs/'
+  item 20 "In Progress" $'## 変更するファイル・領域\n- plugins/'
+  item 21 "In Review"
+  write_page
+  echo '[{"number": 50, "headRefName": "fix/21-something", "closingIssuesReferences": [], "files": [{"path": "docs/design.md"}]}]' >"$FIX/pr-list.json"
+  run_script next-tasks.sh
+  assert_success
+  assert_equal "$(out_of '[.in_progress[] | [.number, .pr_files]]')" '[[20,[]],[21,["docs/design.md"]]]'
+  assert_equal "$(out_of .parallel)" '[10]'
+  assert_equal "$(out_of '.todo[1] | [.parallel, .reason, .conflicts_with_active[0].issue]')" '[false,"着手中のものと領域が重なる",21]'
+}
+
+@test "依存先が PR を出した列（pr_opened）の Issue なら、状態を読まずに待ちにする" {
+  setup_fake_gh
+  echo '{"project": {"owner": "me", "number": 4}, "status": {"pr_opened": "In Review"}}' >"$REPO/.claude/dev-workflow/config.json"
+  item 10 Todo $'## 依存\n- #21'
+  item 21 "In Review" $'## 変更するファイル・領域\n- docs/'
+  write_page
+  run_script next-tasks.sh
+  assert_success
+  assert_equal "$(called GetIssue)" 0
+  assert_equal "$(out_of '.todo[0] | [.waiting, .blocked_by[0].state]')" '[true,"open"]'
+}
+
+@test "pr_opened が設定されていなければ、ほかの列の Issue は着手中に数えない" {
+  setup_fake_gh
+  item 10 Todo $'## 変更するファイル・領域\n- docs/'
+  item 21 "In Review" $'## 変更するファイル・領域\n- docs/'
+  write_page
+  run_script next-tasks.sh
+  assert_success
+  assert_equal "$(out_of '.in_progress')" '[]'
+  assert_equal "$(out_of '.todo[0].conflicts_with_active')" '[]'
+}
+
+@test "pr_opened が start と同じ列名でも、着手中の Issue を重ねて数えない" {
+  setup_fake_gh
+  echo '{"project": {"owner": "me", "number": 4}, "status": {"pr_opened": "In Progress"}}' >"$REPO/.claude/dev-workflow/config.json"
+  item 10 Todo
+  item 20 "In Progress" $'## 変更するファイル・領域\n- docs/'
+  write_page
+  run_script next-tasks.sh
+  assert_success
+  assert_equal "$(out_of '[.in_progress[].number]')" '[20]'
+}
+
 @test "PR は Closes で参照する Issue にも結び付ける" {
   setup_fake_gh
   item 10 Todo $'## 変更するファイル・領域\n- docs/'
