@@ -3,10 +3,11 @@
 # キューは必須のチェックを merge_group のイベントでもう一度動かしてからマージするので、動かないワークフローの
 # チェックは「待ち」のまま残り、PR がマージされない。setup-repo.sh と doctor.sh が使う。
 #
-# 使い方: merge-group-check.sh --branch NAME [--repo OWNER/NAME] [--check NAME]...
+# 使い方: merge-group-check.sh --branch NAME [--repo OWNER/NAME] [--check NAME]... [--checks-json JSON]
 #   --branch NAME    ワークフローを読むブランチ（base_branch。キューはこのブランチのワークフローを動かす）
 #   --repo OWNER/NAME  対象のリポジトリ（既定: 今いるリポジトリ）
 #   --check NAME     必須のチェックの名前（繰り返し指定できる。無ければ何も読まずに空の結果を出す）
+#   --checks-json JSON  必須のチェックの名前の JSON の配列（--check と合わせて使える）
 #
 # 確かめ方:
 #   ブランチの .github/workflows/*.yml・*.yaml を GitHub の API で読む（手元の作業中のファイルではなく、
@@ -25,6 +26,8 @@
 #   workflows     読んだワークフローのファイル
 #   not_running   merge_group で動かないチェック（check と、対応するジョブがあるワークフローの workflows）
 #   unknown       どのジョブとも対応せず、確かめられないチェックの名前
+#   messages      利用者に伝える文（not_running・unknown。それぞれ、当てはまるチェックが無ければ null）。
+#                 setup-repo.sh と doctor.sh が同じ文を出すよう、ここで作る
 set -euo pipefail
 
 # shellcheck source=lib/common.sh
@@ -43,20 +46,49 @@ need_value() {
 # gh api は {owner}/{repo} を今いるリポジトリに置き換える
 repo="{owner}/{repo}" branch=""
 checks=()
+extra='[]'
 while [ $# -gt 0 ]; do
   case "$1" in
     --repo) need_value "$@"; repo="$2"; shift 2 ;;
     --branch) need_value "$@"; branch="$2"; shift 2 ;;
     --check) need_value "$@"; checks+=("$2"); shift 2 ;;
+    --checks-json)
+      need_value "$@"
+      extra="$(jq -ce 'if type == "array" and all(.[]; type == "string") then . else error end' <<<"$2" 2>/dev/null)" \
+        || dw_die "--checks-json には文字列の JSON の配列を指定してください: $2" 64
+      shift 2
+      ;;
     -h | --help) usage; exit 0 ;;
     *) dw_die "不明な引数です: $1" 64 ;;
   esac
 done
 [ -n "$branch" ] || dw_die "--branch を指定してください" 64
 
-checks_json="$(printf '%s\n' ${checks[@]+"${checks[@]}"} | jq -R -s -c 'split("\n") | map(select(. != "")) | unique')"
+checks_json="$(printf '%s\n' ${checks[@]+"${checks[@]}"} \
+  | jq -R -s -c --argjson e "$extra" 'split("\n") + $e | map(select(. != "")) | unique')"
+
+# 結果に、利用者に伝える文（messages）を添えて出力する。使い方: output <ワークフローの JSON> <チェックごとの結果の JSON>
+output() {
+  jq -n --arg b "$branch" --argjson w "$1" --argjson r "$2" '
+    [$r | to_entries[] | select((.value.matched | length) > 0 and (.value.running | not))
+      | {check: .key, workflows: .value.matched}] as $not
+    | [$r | to_entries[] | select((.value.matched | length) == 0) | .key] as $unknown
+    | {
+        branch: $b,
+        workflows: $w,
+        not_running: $not,
+        unknown: $unknown,
+        messages: {
+          not_running: (if $not == [] then null else
+            "必須のチェックのうち \([$not[] | "\(.check)（\(.workflows | join("・"))）"] | join("、"))は、merge_group のイベントで動きません。マージキューのチェックが「待ち」のまま残り、PR がマージされません。ワークフローの on: に merge_group を足してください" end),
+          unknown: (if $unknown == [] then null else
+            "必須のチェック \($unknown | join("、")) は、\($b) のどのワークフローのジョブか分からないので、merge_group のイベントで動くか確かめられません" end)
+        }
+      }'
+}
+
 if [ "$checks_json" = "[]" ]; then
-  jq -n --arg b "$branch" '{branch: $b, workflows: [], not_running: [], unknown: []}'
+  output '[]' '{}'
   exit 0
 fi
 
@@ -173,10 +205,4 @@ EOF
   done < <(jq -r '.[]' <<<"$checks_json")
 done < <(jq -r '.[]' <<<"$workflows")
 
-jq -n --arg b "$branch" --argjson w "$workflows" --argjson r "$result" '{
-  branch: $b,
-  workflows: $w,
-  not_running: [$r | to_entries[] | select((.value.matched | length) > 0 and (.value.running | not))
-    | {check: .key, workflows: .value.matched}],
-  unknown: [$r | to_entries[] | select((.value.matched | length) == 0) | .key]
-}'
+output "$workflows" "$result"

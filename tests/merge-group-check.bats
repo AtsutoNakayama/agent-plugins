@@ -224,3 +224,26 @@ YML
   run_check --check lint
   assert_failure 64
 }
+
+@test "--checks-json の名前も合わせて確かめ、利用者に伝える文を messages に出す" {
+  setup_fake_gh
+  printf 'on: pull_request\njobs:\n  lint:\n    runs-on: x\n  test:\n    runs-on: x\n' | workflow ci.yml
+  run_check --branch main --check lint --checks-json '["test", "codecov", "lint"]'
+  assert_success
+  assert_equal "$(jq -c '[[.not_running[].check], .unknown]' <<<"$output")" '[["lint","test"],["codecov"]]'
+  assert_equal "$(jq -r .messages.not_running <<<"$output")" \
+    "必須のチェックのうち lint（.github/workflows/ci.yml）、test（.github/workflows/ci.yml）は、merge_group のイベントで動きません。マージキューのチェックが「待ち」のまま残り、PR がマージされません。ワークフローの on: に merge_group を足してください"
+  assert_equal "$(jq -r .messages.unknown <<<"$output")" \
+    "必須のチェック codecov は、main のどのワークフローのジョブか分からないので、merge_group のイベントで動くか確かめられません"
+  # 当てはまるチェックが無ければ null
+  run_check --branch main
+  assert_equal "$(jq -c .messages <<<"$output")" '{"not_running":null,"unknown":null}'
+}
+
+@test "--checks-json が文字列の配列でなければ使い方の誤りで止まる" {
+  setup_fake_gh
+  run_check --branch main --checks-json '{"a": 1}'
+  assert_failure 64
+  run_check --branch main --checks-json '[1]'
+  assert_failure 64
+}

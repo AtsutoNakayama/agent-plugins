@@ -294,17 +294,12 @@ all_checks="$(jq -c --argjson o "$other_checks" '[.rules[] | select(.type == "re
   | .parameters.required_status_checks[].context] + $o | unique' <<<"$desired")"
 merge_group=null
 if [ "$all_checks" != "[]" ]; then
-  mg_args=()
-  while IFS= read -r c; do mg_args+=(--check "$c"); done < <(jq -r '.[]' <<<"$all_checks")
-  if mg="$("$BASH" "$DW_SCRIPTS_DIR/merge-group-check.sh" --repo "$repo_nwo" --branch "$branch" "${mg_args[@]}" 2>&1)" \
+  if mg="$("$BASH" "$DW_SCRIPTS_DIR/merge-group-check.sh" --repo "$repo_nwo" --branch "$branch" --checks-json "$all_checks" 2>&1)" \
     && merge_group="$(jq -c '{not_running, unknown}' <<<"$mg" 2>/dev/null)"; then
     if $queue_enabled; then
-      if [ "$(jq '.not_running | length' <<<"$merge_group")" -gt 0 ]; then
-        dw_warn "必須のチェックのうち $(jq -r '[.not_running[] | "\(.check)（\(.workflows | join("・"))）"] | join("、")' <<<"$merge_group")は、merge_group のイベントで動きません。マージキューのチェックが「待ち」のまま残り、PR がマージされません。ワークフローの on: に merge_group を足してください"
-      fi
-      if [ "$(jq '.unknown | length' <<<"$merge_group")" -gt 0 ]; then
-        dw_warn "必須のチェック $(jq -r '.unknown | join("、")' <<<"$merge_group") は、${branch} のどのワークフローのジョブか分からないので、merge_group のイベントで動くか確かめられません"
-      fi
+      while IFS= read -r m; do
+        dw_warn "$m"
+      done < <(jq -r '.messages | .not_running, .unknown | values' <<<"$mg")
     fi
   else
     merge_group=null
