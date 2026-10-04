@@ -1,0 +1,34 @@
+# CodeRabbit の設定（このリポジトリ専用。プラグインとしては配布しない）。
+# ルールの正本は CONTRIBUTING.md と、レビューの観点（plugins/dev-workflow/review/*.md、
+# .claude/dev-workflow/review/*.md）の1か所だけにし、ここには書き写さない。
+# 上限に引っかかったときの代わりのレビューは .github/workflows/claude-review.yml。
+# yaml-language-server: $schema=https://coderabbit.ai/integrations/schema.v2.json
+language: ja-JP
+
+reviews:
+  auto_review:
+    enabled: true
+    # PR を作ったときだけレビューし、push のたびにはレビューしない（上限が1時間に1回ほどしかないため）。
+    # 要るときは PR で `@coderabbitai review` と書いて頼む
+    auto_incremental_review: false
+    # release-please のリリース PR（作成者は GitHub App のボット。名前は App の名前で決まる）はレビューしない
+    ignore_usernames:
+      - agent-plugins-release-nakayama[bot]
+  path_instructions:
+    - path: "**"
+      instructions: |
+        このリポジトリのルールは CONTRIBUTING.md にある。書き方のルール（bash 3.2 で動くこと、
+        shellcheck を通すこと、スキルから呼ぶファイルは plugins/dev-workflow/ に置くこと）と
+        テストのルール（スクリプトを変えたら bats を足す、不具合の修正には修正前に失敗するテストを足す）に
+        沿っているかを見る。
+        plugins/dev-workflow/review/*.md と .claude/dev-workflow/review/*.md は、このリポジトリの
+        レビューの観点。変更に当てはまるものを読んで、その観点で見る。
+        指摘は日本語で、ファイルと行、直し方を添えて書く。
+
+knowledge_base:
+  code_guidelines:
+    enabled: true
+    filePatterns:
+      - CONTRIBUTING.md
+      - plugins/dev-workflow/review/*.md
+      - .claude/dev-workflow/review/*.md
