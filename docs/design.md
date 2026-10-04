@@ -92,6 +92,7 @@ agent-plugins/
   - 親子の深さは「仕様 → 着手できる作業」の2層を目安にし、必要なら3層まで作れる。上限は設定の `sub_issues.max_depth`（既定 3、1〜3）で、3層目を作らせたくないリポジトリは 2 にする。GitHub は8層まで作れるが、深いと全体を見通せなくなるので、3層より深くはしない。目安（`common.sh` の `DW_SUB_ISSUE_DEPTH_GUIDE`）より深い Issue を作るときは、`issue-create.sh` が警告し、`task-create` は起票の前にユーザーに確認する。深さは、親から上へ `issues/{番号}/parent` をたどって数える（一番上の Issue が1層目）。上限を超える紐付けと、存在しない親（PR の番号を含む）は、起票の前に止める。
   - **Story Point は子にだけ付ける**。親（サブ Issue を持つ Issue）には付けない。親にも付けると、同じ作業を親と子とで二重に数えることになり、親の大きさは子の合計で分かるため。親にする Issue に Story Point が付いていたら、子を足すときに `issue-create.sh` が空欄にする（Issue から Project の項目を引く REST は無いので、REST の項目の一覧をリポジトリと Issue で絞って番号で探す。GraphQL は使わない）。起票の確認には、親の Story Point が入っていれば空欄にすることを書き、空欄にした値は結果で伝える。
   - **子が全部閉じても、親は自動では閉じない**。GitHub は親に子の進み具合（閉じた子の数）を表示するだけで、子が全部閉じても親を閉じない（[サブ Issue の説明](https://docs.github.com/ja/issues/tracking-your-work-with-issues/using-issues/adding-sub-issues)にも、自動で閉じる機能は書かれていない）。親は、最後の子を閉じた後に人が閉じる（completed）。親で別にやる作業が残っていれば、それを子の Issue として足し、親を PR で直接閉じることはしない。親を閉じたときも、Project の自動化（Item closed）が有効なら Done に移る。
+  - **親には着手しない**。親は作業の単位ではなく（親そのものの作業は無い）、作業は子の Issue で進めるので、ブランチも PR も作らない。親（`subIssuesSummary.total` が 1 以上）に `task-start` すると、`task-start.sh` はブランチ・割り当て・列の移動のどれも行わずに止まり（終了コード 2）、`task-start` は開いている子の一覧を見せて、どれに着手するかを選んでもらう。開いている子が無ければ、親を閉じるよう案内する。
 - **やらない Issue を閉じる**：誤って起票した Issue や、やらないことにした Issue は、`task-cancel` で not planned（重複なら duplicate）で閉じる。
   - Issue の終わり方は、完了（completed。PR のマージで閉じる）とやめた（not planned・duplicate）の2つに分ける。完了は PR が閉じ、やめたときは `task-cancel` が閉じる。`task-finish` は Issue を閉じたり変えたりせず、マージした後の手元を片付けて、PR が閉じる Issue が閉じたかを伝えるだけ（`cleanup.sh` の `issues`。調べられなくても片付けは止めない）。名前を `task-close` にしなかったのは、close は完了で閉じるときにも使う言葉で、`task-finish` と混同しやすいため。
   - 閉じる前に、理由と参照先（代わりに作業する Issue など）を `#N` でコメントする。理由が空（空白だけを含む）なら閉じない。
@@ -162,7 +163,7 @@ agent-plugins/
 | スキル | 内容 | 確認を取る操作 |
 |---|---|---|
 | `task-create` | Issue を起票し、Project に追加する。本文には、依存と、触りそうなファイル・領域（`task-next` が並列にできるかを見るのに使う）を書く | 起票（Project への追加を含む） |
-| `task-start` | 自分に割り当て、In Progress に移し、ワークツリーとブランチを作る | なし（依頼で結果が決まり、割り当てと列の移動は戻せる） |
+| `task-start` | 自分に割り当て、In Progress に移し、ワークツリーとブランチを作る。親の Issue には着手せず、開いている子を案内する | なし（依頼で結果が決まり、割り当てと列の移動は戻せる） |
 | `task-status` | 任意の列へ移す | なし（依頼で結果が決まり、列の移動は戻せる） |
 | `task-next` | Todo の Issue から、次に着手すべきものと、同時に進められる組を提案する | なし（読むだけで、何も変えない） |
 | `review` | ローカルのレビューと、反映するものの選択（各指摘の水平展開の判定を含む） | なし（反映する指摘と、上限の周でも指摘が出たときに続けるかは、ユーザーが選ぶ） |
@@ -272,7 +273,7 @@ Todo が増えたとき、どれから着手するか、同時に進めてよい
 | `status-set.sh` | 列を移す |
 | `next-tasks.sh` | Todo の Issue を Project の並び順で読み、依存（blocked by と本文の「依存」）・本文の「変更するファイル・領域」・着手中の PR のファイルを添えて JSON で返す。待ちと、領域の重なりも判定する。何も変えない |
 | `branch-name.sh` | ブランチ名を作り、検証する |
-| `task-start.sh` | ワークツリーの作成（サブモジュールの初期化を含む）、割り当て、In Progress への移動 |
+| `task-start.sh` | ワークツリーの作成（サブモジュールの初期化を含む）、割り当て、In Progress への移動。親の Issue では何もせずに止まる |
 | `review-perspectives.sh` | 観点ファイルを集める。`--auto`（または `--base` と `--target`）を渡すと、観点ごとの実行する条件（`types`・`paths`・`issue`・`base_ahead`）に当てはまらない観点を外し、理由つきで `skipped` に出す |
 | `review-perspective-add.sh` | 観点ファイルを作る。同じ層に同じ名前のファイルがあれば上書きせずに止まり、ほかの層にあれば `--override` が無いかぎり止まる（上位の層にあり、作っても使われないときは、下位の層にあるときと別の終了コードで知らせる）。リポジトリの層に作ったときは、そのブランチと、作業用のブランチの上か（`work_branch`）も出力する |
 | `adr-create.sh` | ADR をテンプレートから作る（ファイル名の決定、`date` と `issue` の記入）。`--supersedes` で置き換える ADR の `status` の行だけを書き換える。同じファイル名があれば上書きせずに止まる |
