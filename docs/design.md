@@ -93,7 +93,7 @@ agent-plugins/
   - **Story Point は子にだけ付ける**。親（サブ Issue を持つ Issue）には付けない。親にも付けると、同じ作業を親と子とで二重に数えることになり、親の大きさは子の合計で分かるため。親にする Issue に Story Point が付いていたら、子を足すときに `issue-create.sh` が空欄にする（Issue から Project の項目を引く REST は無いので、REST の項目の一覧をリポジトリと Issue で絞って番号で探す。GraphQL は使わない）。起票の確認には、親の Story Point が入っていれば空欄にすることを書き、空欄にした値は結果で伝える。
   - **子が全部閉じても、親は自動では閉じない**。GitHub は親に子の進み具合（閉じた子の数）を表示するだけで、子が全部閉じても親を閉じない（[サブ Issue の説明](https://docs.github.com/ja/issues/tracking-your-work-with-issues/using-issues/adding-sub-issues)にも、自動で閉じる機能は書かれていない）。親は、最後の子を閉じた後に人が閉じる（completed）。親で別にやる作業が残っていれば、それを子の Issue として足し、親を PR で直接閉じることはしない。親を閉じたときも、Project の自動化（Item closed）が有効なら Done に移る。
 - **やらない Issue を閉じる**：誤って起票した Issue や、やらないことにした Issue は、`task-cancel` で not planned（重複なら duplicate）で閉じる。
-  - Issue の終わり方は、完了（completed。PR のマージで閉じる）とやめた（not planned・duplicate）の2つに分ける。完了は PR が閉じ、やめたときは `task-cancel` が閉じる。`task-finish` は Issue には触れず、マージした後の手元を片付けるだけ。名前を `task-close` にしなかったのは、close は完了で閉じるときにも使う言葉で、`task-finish` と混同しやすいため。
+  - Issue の終わり方は、完了（completed。PR のマージで閉じる）とやめた（not planned・duplicate）の2つに分ける。完了は PR が閉じ、やめたときは `task-cancel` が閉じる。`task-finish` は Issue を閉じたり変えたりせず、マージした後の手元を片付けて、PR が閉じる Issue が閉じたかを伝えるだけ（`cleanup.sh` の `issues`。調べられなくても片付けは止めない）。名前を `task-close` にしなかったのは、close は完了で閉じるときにも使う言葉で、`task-finish` と混同しやすいため。
   - 閉じる前に、理由と参照先（代わりに作業する Issue など）を `#N` でコメントする。理由が空（空白だけを含む）なら閉じない。
   - duplicate は、重複の元の Issue の番号が分かるときだけ使い、元の Issue に紐付ける（`gh issue close --duplicate-of`。gh 2.88.0 以上。古ければ何もせずに止まって更新を促し、`doctor.sh` も更新を促す。`common.sh` の `DW_GH_MIN_VERSION`）。誤って紐付けると影響が大きいので、迷うときは not planned にする。
   - Project からは外さない。後からボードで経緯を参照できるように。
@@ -170,7 +170,7 @@ agent-plugins/
 | `adr-create` | 設計上の判断を、MADR 4.0.0 の書式の ADR として残す。判断に合うテンプレートを選び、中身まで書く | なし（作るのは手元のファイルだけ） |
 | `pr-create` | push と PR 作成 | push と PR の作成 |
 | `task-cancel` | やらない Issue を、理由と参照先をコメントして not planned か duplicate で閉じる。着手していれば、PR を閉じ、リモートと手元のブランチ・ワークツリーを削除する | 閉じる・削除する（理由のコメントと、失う作業を含めて1回で確認する） |
-| `task-finish` | ワークツリーとローカルブランチを削除し、main を最新にする（`git pull --ff-only`） | なし（作業が失われるときは `cleanup.sh` が何も消さずに止まる。git が無視するファイルを消すときだけ確認を取る） |
+| `task-finish` | ワークツリーとローカルブランチを削除し、main を最新にして（`git pull --ff-only`）、PR が閉じる Issue が閉じたかを伝える | なし（作業が失われるときは `cleanup.sh` が何も消さずに止まる。git が無視するファイルを消すときだけ確認を取る） |
 | `repo-setup` | 初期設定を対話的に実行し、設定ファイルを作る | ラベル・Project・リポジトリの設定の変更 |
 
 - 不具合の修正（type が `fix`）では、直す前に、同じ原因の他の箇所を、同じ書き方・同じ前提でリポジトリを検索して探し、見つかった分も同じ変更で直してテストを足す。この手順は CONTRIBUTING.md の「テストのルール」と、SessionStart フックが渡す流れ（`defaults/task-flow.md`）に書き、review の水平展開（§7）と同じ考え方を、レビューの前の実装の段階にも持ち込む。
@@ -243,7 +243,7 @@ agent-plugins/
 | `adr-create.sh` | ADR をテンプレートから作る（ファイル名の決定、`date` と `issue` の記入）。`--supersedes` で置き換える ADR の `status` の行だけを書き換える。同じファイル名があれば上書きせずに止まる |
 | `pr-create.sh` | PR を作る |
 | `issue-cancel.sh` | 理由をコメントし、Issue を not planned か duplicate で閉じる。`--branch` で、そのブランチの開いている PR を閉じ、リモートのブランチを削除する。理由が空、または違う理由で既に閉じていれば何もせずに止まる |
-| `cleanup.sh` | マージを確認し、ワークツリーとブランチを削除し、main を最新にする。未コミットの変更や git が無視するファイルがあれば、何も消さずに止まる（無視するファイルは `--remove-ignored` で消せる）。`--abandon` では、マージの確認と main の更新を飛ばし、失うものを一覧にして削除する |
+| `cleanup.sh` | マージを確認し、ワークツリーとブランチを削除し、main を最新にし、PR が閉じる Issue の状態（`issues`）を出す。未コミットの変更や git が無視するファイルがあれば、何も消さずに止まる（無視するファイルは `--remove-ignored` で消せる）。`--abandon` では、マージの確認・main の更新・Issue の状態の確認を飛ばし、失うものを一覧にして削除する |
 
 | 初期設定用（`plugins/dev-workflow/scripts/setup/`） | 役割 |
 |---|---|
