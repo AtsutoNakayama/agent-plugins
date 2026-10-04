@@ -7,13 +7,15 @@ load test_helper
 # 偽の gh を PATH の先頭に置く。FAKE_SCOPES でトークンのスコープを、FAKE_GH_VERSION で gh のバージョンを変えられる。
 # gh repo view は me/demo を返し、FAKE_NO_REPO があれば失敗する（GitHub のリポジトリでないとき）。
 # gh label list はリポジトリにある今のラベルとして FAKE_LABELS（既定: プラグインの定義のラベルすべて）を返す。
-# gh api repos/{owner}/{repo}/rules/branches/<ブランチ> は、パスを FAKE_RULES_LOG のファイル（あれば）に書き、FAKE_RULES（ブランチに効いているルール）を返す。
+# gh api --paginate repos/{owner}/{repo}/rules/branches/<ブランチ> は、パスを FAKE_RULES_LOG のファイル（あれば）に書き、FAKE_RULES（ブランチに効いているルール。ページごとの配列を並べる）を返す。
 # FAKE_RULES が無ければ失敗する（問い合わせられないとき）。
 # ほかの呼び出しは失敗する。
 fake_gh() {
   mkdir -p "$TMP/bin"
   cat >"$TMP/bin/gh" <<'SH'
 #!/usr/bin/env bash
+# --paginate は取り除き、ページをまとめて出力したものとして扱う
+if [ "$1" = api ] && [ "$2" = --paginate ]; then shift 2; set -- api "$@"; fi
 case "$1 $2" in
   "--version "*) echo "gh version ${FAKE_GH_VERSION:-2.96.0} (2026-07-02)" ;;
   "auth status") exit "${FAKE_AUTH_STATUS:-0}" ;;
@@ -246,6 +248,16 @@ merge_check() { jq -c '.checks[] | select(.name == "merge-queue") | [.ok, .level
   echo '{"base_branch": "user"}' >"$WORKFLOW_USER_DIR/config.json"
   run_script doctor.sh
   assert_equal "$(cat "$TMP/rules-path")" 'repos/{owner}/{repo}/rules/branches/main?per_page=100'
+}
+
+@test "マージキューの確認は、ルールの一覧を全ページまとめて見る" {
+  fake_gh
+  export FAKE_SCOPES="project"
+  FAKE_RULES="$(printf '%s\n' '[{"type": "required_status_checks", "parameters": {"strict_required_status_checks_policy": false}}]' \
+    '[{"type": "merge_queue", "parameters": {}}]')"
+  export FAKE_RULES
+  run_script doctor.sh
+  assert_equal "$(merge_check)" '[true,"warn","main へのマージはマージキューを通します"]'
 }
 
 @test "GitHub に問い合わせられないときは、マージキューの確認を飛ばす" {

@@ -137,9 +137,11 @@ if [ -n "$repo_root" ]; then
   base_branch="$(dw_team_base_branch "$repo_root/.claude/dev-workflow/config.json" || true)"
 fi
 if $gh_auth && [ -n "$repo_root" ] && [ -n "$base_branch" ] \
-  && rules="$(gh api "repos/{owner}/{repo}/rules/branches/$(jq -rn --arg b "$base_branch" '$b | @uri')?per_page=100" 2>/dev/null)" \
-  && merge="$(jq -er '
-    if any(.[]; .type == "merge_queue") then "queue"
+  && rules="$(gh api --paginate "repos/{owner}/{repo}/rules/branches/$(jq -rn --arg b "$base_branch" '$b | @uri')?per_page=100" 2>/dev/null)" \
+  && merge="$(jq -ser '
+    # --paginate はページごとに配列を出力するので、1つにまとめる
+    add // []
+    | if any(.[]; .type == "merge_queue") then "queue"
     elif any(.[]; .type == "required_status_checks" and .parameters.strict_required_status_checks_policy) then "strict"
     elif any(.[]; .type == "required_status_checks") then "none"
     else "no-checks" end' <<<"$rules" 2>/dev/null)"; then
