@@ -403,3 +403,21 @@ fake_issue_tasks() {
   assert_success
   assert_equal "$(jq -c '[.tasks[].text]' <<<"$json")" '["a","b","c"]'
 }
+
+@test "行頭がインラインのコード（3つのバッククォートで囲んだ語）の行は、コードブロックの始まりとみなさない" {
+  setup_branch
+  # shellcheck disable=SC2016 # ``` はインラインのコードで、展開させない
+  set_issue_body "$(printf -- '```npm test``` が通ること\n- [ ] a\n- [ ] b')"
+  run_pr --issue 17 --body-file "$TMP/body.md" --dry-run
+  assert_success
+  assert_equal "$(jq -c '[.tasks[].text]' <<<"$json")" '["a","b"]'
+}
+
+@test "リストの中で4つ以上字下げしたコードブロックの中の行は、項目とみなさない" {
+  setup_branch
+  # shellcheck disable=SC2016 # ``` はコードブロックの囲みで、展開させない
+  set_issue_body "$(printf -- '1. a\n   - [ ] b\n     ```\n     - [ ] 中\n     ```\n- [ ] c')"
+  run_pr --issue 17 --body-file "$TMP/body.md" --dry-run
+  assert_success
+  assert_equal "$(jq -c '[.tasks[].text]' <<<"$json")" '["b","c"]'
+}
