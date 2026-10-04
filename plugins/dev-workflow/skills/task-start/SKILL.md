@@ -1,6 +1,7 @@
 ---
 name: task-start
 description: Issue の作業を始める。ブランチとワークツリーを作り、Issue を自分に割り当て、GitHub Project の列を In Progress に移す。「#12 に着手して」のように Issue の作業を始めるときに使う。
+argument-hint: "[Issue番号]"
 ---
 
 # 作業の開始
@@ -18,7 +19,7 @@ Issue の作業を始められる状態にする。ブランチ名の短い説�
 
 ### 1. Issue を読む
 
-`gh issue view <番号> --json number,title,body,labels,state` で Issue を読む。番号が分からなければユーザーに聞く。閉じていれば止める。type ラベル（`labels.types` のどれか）が無い、または複数あるときは、どれにするかユーザーに聞いて Issue のラベルを直してから進める（ラベルの変更も確認を取ってから行う。選択肢の説明には「Issue #12 のラベルを fix だけにする」のように、選ぶと何が変わるかを書く）。
+引数があれば Issue の番号として使う（`12` でも `#12` でもよい）。引数が無ければ、依頼の文章から番号を読む。それでも分からなければユーザーに聞く。`gh issue view <番号> --json number,title,body,labels,state` で Issue を読む。閉じていれば止める。type ラベル（`labels.types` のどれか）が無い、または複数あるときは、どれにするかユーザーに聞いて Issue のラベルを直してから進める（ラベルの変更も確認を取ってから行う。選択肢の説明には「Issue #12 のラベルを fix だけにする」のように、選ぶと何が変わるかを書く）。
 
 ### 2. ブランチ名の短い説明を考える
 

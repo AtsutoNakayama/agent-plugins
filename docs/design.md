@@ -167,6 +167,7 @@ agent-plugins/
 | `repo-setup` | 初期設定を対話的に実行し、設定ファイルを作る | ラベル・Project・リポジトリの設定の変更 |
 
 - どのスキルも、依頼の内容から自動で呼ばれてよい（`disable-model-invocation` は付けない）。
+- Issue の番号を取るスキル（`task-start`・`task-status`・`task-finish`・`task-cancel`）は、`/dev-workflow:task-start 12` のように引数で番号を受け取れる。`12` でも `#12` でもよい。frontmatter の `argument-hint` に書く。引数が無ければ依頼の文章から読み、それでも分からなければ聞く。スクリプトの `--issue` も、先頭の `#` を外して受け取る。
 - その代わり、次の操作の前には、必ず AskUserQuestion で使用者の確認を取る。確認の前に、何が起きるか（下書きや dry-run の結果）を見せる。
   - AI が決めた内容（Issue や PR の文章、Story Point の見積もり）を GitHub に残す操作
   - 取り消しにくく、スクリプトが安全を確かめていない操作（push、リポジトリの設定の変更など）
