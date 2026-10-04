@@ -236,7 +236,7 @@ Todo が増えたとき、どれから着手するか、同時に進めてよい
    - PR・Issue の作成は、標準出力の JSON の `url`（`issue-create.sh`）・`pr.url`（`pr-create.sh`）と、URL だけの行（`gh pr create`）から拾う。`body` などに含まれる別の URL は拾わない。`--dry-run`（`git push -n` を含む。引用符の中は除く）のコマンドは、何もしていないので何も出さない。
    - 決まり：同じリンクは、連続でも毎回出す（常に見えるようにするため）。Issue の番号が分からないブランチ（main など）では、ブランチから導くリンクは出さない（作った PR・Issue の URL は、出力から拾うので出す）。`gh` が無い・失敗する・解析できないときは、そのリンクを出さずに通し（`gh pr list` が失敗したときは、PR が無いのか分からないので、PR を作る URL も CI のリンクも出さず、Issue のリンクだけを出す）、フックは作業を止めない（いつも終了コード 0。エラーの表示も出さない）。
    - 出力は、使用者に見せる `systemMessage` と、Claude に渡す `additionalContext`（返答でも触れてもらう）の両方（`guard-git.sh` の警告と同じ形）。
-   - `/remote-control` など別の端末の画面に `systemMessage` が出るかは、確かめられていない（未確認）。出ない場合でも、`additionalContext` を受け取った Claude が返答でリンクに触れるので、リンクは別の端末にも届く。`systemMessage` が出るなら二重になるが、常に見えることを優先する。
+   - `/remote-control` で別の端末から使ったとき、`systemMessage` は別の端末の画面にも出る（2026-10-04 に確認。複数行のメッセージは、行ごとに「PostToolUse:Bash says: …」と出る）。`additionalContext` を受け取った Claude も、返答でリンクに触れる。そのため、別の端末では同じリンクが二重に出るが、常に見えることを優先して、そのままにする。
    - git の操作ではない場面（CI や CodeRabbit の結果を伝えるとき、Issue を起票したときなど）はフックでは出せないので、Claude への決まりとして、SessionStart の案内（`defaults/task-flow.md`）に「PR・Issue・CI に触れるときは URL を添える」と書く。
 4. **SessionStart のフック**（`hooks/task-flow.sh`）：タスクの進め方（Issue から始める → 着手 → 実装（論理的な区切りごとにコミット）→ ローカルレビュー → PR → マージ（人間）→ 後片付け、と取りやめ）と、それぞれで使うスキルを、セッションの始まりに Claude に読み込ませる。
    - スキルは呼ばれたときにしか読み込まれないので、流れをスキルに書いても普段の作業中は効かない。プラグインはいつも読み込まれるルール（CLAUDE.md・`.claude/rules/`）を配れない（プラグインの直下の CLAUDE.md は読み込まれない）ので、フックの出力で渡す。SessionStart は起動・`/resume`・`/clear`・コンパクトのたびに動くので、会話が要約されても流れが抜けない。
