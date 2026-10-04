@@ -118,14 +118,6 @@ run_status() {
   assert_equal "$(jq -c .pr <<<"$output")" "null"
 }
 
-@test "--branch で別のブランチを調べられる" {
-  setup_branch
-  git switch -q main
-  run_status --branch feat/17-x
-  assert_success
-  assert_equal "$(jq -r .branch <<<"$output")" "feat/17-x"
-}
-
 @test "base_branch の上では止まる" {
   setup_branch
   git switch -q main
@@ -134,9 +126,33 @@ run_status() {
   assert_output --partial "main には取り込めません"
 }
 
-@test "存在しないブランチでは止まる" {
+@test "不明な引数（--branch など）は拒否する" {
   setup_branch
-  run_status --branch nope
+  run_status --branch feat/17-x
   assert_failure 64
-  assert_output --partial "ブランチ nope がありません"
+  assert_output --partial "不明な引数です: --branch"
+}
+
+@test "ブランチの上にいなければ止まる" {
+  setup_branch
+  git switch -q --detach
+  run_status
+  assert_failure 64
+  assert_output --partial "ブランチの上にいません"
+}
+
+@test "未追跡のファイルだけなら dirty は false" {
+  setup_branch
+  echo memo >memo.txt
+  run_status
+  assert_equal "$(jq -r .dirty <<<"$output")" "false"
+}
+
+@test "origin でブランチが削除されていたら、残っている追跡ブランチではなく null を出す" {
+  setup_branch
+  git push -q origin feat/17-x
+  git fetch -q origin
+  git push -q origin --delete feat/17-x
+  run_status
+  assert_equal "$(jq -c '[.unpushed, .unpulled]' <<<"$output")" "[null,null]"
 }
