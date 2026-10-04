@@ -12,6 +12,9 @@ load test_helper
 # gh repo view は、リポジトリを指定すれば repo-view.json、指定しなければ here.json を返す。
 # 別のリポジトリのファイル（gh api -H ... .../contents/<パス>）は $FIX/remote/<パス> を返し、無ければ 404 にする。
 # 組織（orgs/<名前>）は $FIX/org.json に -q を適用して返し、無ければ 404 にする（組織の所有者でないときはプランが返らない）。
+# ブランチのワークフロー（.../contents/.github/workflows?ref=...）は $FIX/workflows/ のファイルの一覧を返し、
+# ディレクトリが無ければ 404 にし、FAKE_WORKFLOWS_FAIL があれば 403 で失敗する。ファイル（gh api -H ... .../contents/.github/workflows/<名前>?ref=...）はそのファイルを返す。
+# ブランチに効いているルール（.../rules/branches/<名前>）は $FIX/branch-rules.json（無ければ []）を返す。
 setup_fake_gh() {
   FIX="$TMP/fix"
   CALLS="$TMP/calls"
@@ -43,12 +46,25 @@ case "$1 $2" in
     ;;
   "api -H")
     path="${4#repos/*/*/contents/}"
+    case "$path" in
+      .github/workflows/*) cat "$FIX/workflows/$(basename "${path%%\?*}")"; exit ;;
+    esac
     if [ -f "$FIX/remote/$path" ]; then cat "$FIX/remote/$path"
     else echo 'gh: Not Found (HTTP 404)' >&2; exit 1; fi
     ;;
   "api "*)
     if [ "${FAKE_FAIL:-}" = GET ]; then echo 'gh: Upgrade to GitHub Pro (HTTP 403)' >&2; exit 1; fi
     case "$2" in
+      */rules/branches/*)
+        if [ -f "$FIX/branch-rules.json" ]; then cat "$FIX/branch-rules.json"; else echo '[]'; fi
+        ;;
+      */contents/.github/workflows\?*)
+        if [ -n "${FAKE_WORKFLOWS_FAIL:-}" ]; then echo 'gh: Forbidden (HTTP 403)' >&2; exit 1; fi
+        [ -d "$FIX/workflows" ] || { echo 'gh: Not Found (HTTP 404)' >&2; exit 1; }
+        for f in "$FIX/workflows"/*; do
+          jq -n --arg n "$(basename "$f")" '{name: $n, path: (".github/workflows/" + $n), type: "file"}'
+        done | jq -s .
+        ;;
       */branches/*)
         if [ -f "$FIX/branches/${2##*/branches/}" ]; then echo '{}'
         else echo 'gh: Branch not found (HTTP 404)' >&2; exit 1; fi
@@ -457,7 +473,7 @@ owned_by() {
   assert_equal "$(jq -c '.rules[] | select(.type == "merge_queue") | .parameters | [.merge_method, .grouping_strategy]' <<<"$req")" \
     '["SQUASH","ALLGREEN"]'
   assert_equal "$(jq -c '.rules[] | select(.type == "required_status_checks") | .parameters.strict_required_status_checks_policy' <<<"$req")" false
-  assert_equal "$(jq -c '[.merge_queue, .ruleset.strict]' <<<"$json")" '[{"available":true,"enabled":true},false]'
+  assert_equal "$(jq -c '[.merge_queue.available, .merge_queue.enabled, .ruleset.strict]' <<<"$json")" '[true,true,false]'
   assert_output --partial "必須のチェック: lint-result、マージキュー（スカッシュ）"
 }
 
@@ -540,7 +556,7 @@ owned_by() {
   existing_ruleset
   owned_by User public
   run_setup --dry-run
-  assert_equal "$(jq -c .merge_queue <<<"$json")" '{"available":false,"enabled":false}'
+  assert_equal "$(jq -c .merge_queue <<<"$json")" '{"available":false,"enabled":false,"merge_group":null}'
   owned_by Organization public
   run_setup --dry-run
   assert_equal "$(jq -c .merge_queue.available <<<"$json")" true
@@ -562,5 +578,73 @@ owned_by() {
   assert_success
   assert_output --partial "マージキューを使えるか確かめられません"
   assert_equal "$(jq -c .merge_queue.available <<<"$json")" null
+  assert_equal "$(called PUT)" 1
+}
+
+# ワークフローを置く。使い方: workflow <ファイル名> <on: の値> <ジョブの ID>...
+workflow() {
+  local name="$1" on="$2"
+  shift 2
+  mkdir -p "$FIX/workflows"
+  { printf 'on: %s\njobs:\n' "$on"; printf '  %s:\n    runs-on: ubuntu-latest\n' "$@"; } >"$FIX/workflows/$name"
+}
+
+@test "キューを使うとき、必須のチェックのワークフローが merge_group で動かなければ、dry-run でも警告する" {
+  setup_fake_gh
+  settled_repo
+  owned_by Organization public
+  existing_ruleset
+  workflow ci.yml pull_request lint-result
+  workflow test.yml "[pull_request, merge_group]" test-result
+  run_setup --merge-queue --required-check lint-result --required-check test-result --required-check codecov --dry-run
+  assert_success
+  assert_no_calls
+  assert_output --partial "必須のチェックのうち lint-result（.github/workflows/ci.yml）は、merge_group のイベントで動きません"
+  assert_output --partial "必須のチェック codecov は、main のどのワークフローのジョブか分からないので"
+  assert_equal "$(jq -c .merge_queue.merge_group <<<"$json")" \
+    '{"not_running":[{"check":"lint-result","workflows":[".github/workflows/ci.yml"]}],"unknown":["codecov"]}'
+}
+
+@test "キューを使わないときも、既存の必須のチェックを確かめて出力する（警告はしない）" {
+  setup_fake_gh
+  settled_repo
+  owned_by Organization public
+  existing_ruleset '{}' "[$(checks_rule true lint-result)]"
+  workflow ci.yml pull_request lint-result
+  run_setup --dry-run
+  assert_success
+  refute_output --partial "warn:"
+  assert_equal "$(jq -c '[.merge_queue.enabled, .merge_queue.merge_group.not_running[].check]' <<<"$json")" '[false,"lint-result"]'
+}
+
+@test "ほかのルールセットが求める必須のチェックも確かめ、必須のチェックが無ければ確かめない" {
+  setup_fake_gh
+  settled_repo
+  owned_by Organization public
+  existing_ruleset
+  workflow ci.yml merge_group lint-result
+  workflow org.yml pull_request org-check
+  run_setup --merge-queue --dry-run
+  assert_success
+  assert_equal "$(jq -c .merge_queue.merge_group <<<"$json")" null
+  # 組織のルールセット（id 99）の必須のチェック。このルールセット（id 7）の古い一覧は、置き換えるので見ない
+  echo '[{"type": "required_status_checks", "ruleset_id": 99, "parameters": {"required_status_checks": [{"context": "org-check"}]}},
+    {"type": "required_status_checks", "ruleset_id": 7, "parameters": {"required_status_checks": [{"context": "old"}]}}]' >"$FIX/branch-rules.json"
+  run_setup --merge-queue --required-check lint-result --dry-run
+  assert_success
+  assert_equal "$(jq -c .merge_queue.merge_group <<<"$json")" \
+    '{"not_running":[{"check":"org-check","workflows":[".github/workflows/org.yml"]}],"unknown":[]}'
+}
+
+@test "ワークフローを読めなくても、キューを使うときは警告して設定は続ける" {
+  setup_fake_gh
+  settled_repo
+  owned_by Organization public
+  existing_ruleset
+  export FAKE_WORKFLOWS_FAIL=1
+  run_setup --merge-queue --required-check lint-result
+  assert_success
+  assert_output --partial "必須のチェックのワークフローが merge_group のイベントで動くか確かめられません: main のワークフローの一覧を読めません"
+  assert_equal "$(jq -c .merge_queue.merge_group <<<"$json")" null
   assert_equal "$(called PUT)" 1
 }
