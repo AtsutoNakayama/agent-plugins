@@ -71,3 +71,13 @@ docs_only() {
   docs_only
   assert_output '{"docs_only": false}'
 }
+
+@test "ファイルの移動は、移動元も見る（tests/ から docs/ へ移したら false）" {
+  commit_files tests/a.bats
+  # 内容が同じままの移動は、既定のリネーム検出では移動先だけが出る
+  mkdir -p docs
+  git mv tests/a.bats docs/a.bats
+  git -c user.name=t -c user.email=t@example.com commit -q -m move
+  docs_only
+  assert_output '{"docs_only": false}'
+}
