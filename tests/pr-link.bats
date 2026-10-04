@@ -114,6 +114,17 @@ silent() {
   shows "cd .. && git worktree add ../wt -b \"feat/23-x\"" "Issue #23: https://github.com/me/demo/issues/23"
 }
 
+@test "-b を付けない git worktree add <パス> <ブランチ> でも、そのブランチの Issue を出す" {
+  fake_issue 23 '["feat"]'
+  git switch -q main
+  shows "git worktree add ../wt feat/23-x" "Issue #23: https://github.com/me/demo/issues/23"
+  shows "git worktree add --reason 作業 ../wt feat/23-x" "Issue #23: https://github.com/me/demo/issues/23"
+  shows "git worktree add -f ../wt \"feat/23-x\"" "Issue #23: https://github.com/me/demo/issues/23"
+  # パスだけのときは、ブランチの名前を拾えないので、今のブランチの Issue も出さない
+  git switch -q feat/17-demo
+  silent "git worktree add ../wt"
+}
+
 @test "作るブランチの名前に Issue の番号が無い、または名前を拾えないときは、今のブランチの Issue を出さない" {
   # guard-git.sh が警告する書き方でも、拾えなければ何も出さない（間違った Issue を出さないため）
   silent "git branch scratch" "git switch -c scratch" "git switch -cfeat/23-x" "git branch --set-upstream-to origin/main feat/23-x"

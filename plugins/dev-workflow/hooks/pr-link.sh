@@ -69,7 +69,7 @@ name_after() {
 # 作るブランチの名前にする。-cname のようにオプションと名前をくっつけた書き方は、作ることだけが分かり、名前は拾えない
 # （guard-git.sh は警告するのに、ここは Issue のリンクを出さない、という食い違いが起きる。tests/pr-link.bats で押さえてある）
 scan_git() {
-  local line sub w name dry
+  local line sub w name dry pos skip
   while IFS= read -r line; do
     line="${line#*git}"
     # shellcheck disable=SC2086 # 空白で語に分ける（set -f で展開を止めてある）
@@ -115,7 +115,20 @@ scan_git() {
           for w in "$@"; do
             case "$w" in --*) ;; -*[bB]*) create_branch=true ;; esac
           done
-          # -b が無くても、ワークツリーを作るので、ブランチも作る（名前は拾わない）
+          # -b・-B が無いときは、2つ目の位置引数（git worktree add <パス> <ブランチ>）をブランチの名前にする。
+          # 値を取るオプション（--reason・-b・-B）の次の語は、位置引数に数えない
+          if [ -z "$name" ]; then
+            pos=0 skip=false
+            for w in "$@"; do
+              if $skip; then skip=false; continue; fi
+              case "$w" in
+                --reason | -b | -B) skip=true ;;
+                -*) ;;
+                *) pos=$((pos + 1)); [ "$pos" -ne 2 ] || name="$w" ;;
+              esac
+            done
+          fi
+          # -b が無くても、ワークツリーを作るので、ブランチも作る
           create_branch=true
         fi
         ;;
