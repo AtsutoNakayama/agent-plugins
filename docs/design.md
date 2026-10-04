@@ -234,7 +234,7 @@ Todo が増えたとき、どれから着手するか、同時に進めてよい
    - 紐付く Issue は、ブランチ名を `branch.pattern` に当てて求める（`lib/common.sh` の `dw_parse_branch`。`review-perspectives.sh` と共有する）。ブランチを作るコマンドは、今のブランチではなく、作るブランチの Issue を出す。名前はコマンドの文字列から拾い（`-c`・`-C`・`-b`・`-B`・`--create`・`--force-create` の次の語、`git branch <名前>` の最初の語、`-b`・`-B` が無い `git worktree add <パス> <ブランチ>` の 2 つ目の位置引数）、拾えない・Issue の番号が無いときは、間違った Issue を出さないよう何も出さない（`-cname` の書き方など、`guard-git.sh` が警告する書き方でも出さないことがある）。`task-start.sh` は別のワークツリーを作るので、標準出力の JSON の `issue` を使い、取れなければ出さない。それ以外は、コマンドの文字列の `cd` を追わず、フックの入力の `cwd` のブランチで判断する。
    - 毎回 `gh` を呼ぶ（Issue・PR・リポジトリ）ので、フックには 10 秒のタイムアウトを付け（`hooks.json`）、`gh` が詰まっても作業を止めない。
    - PR・Issue の作成は、標準出力の JSON の `url`（`issue-create.sh`）・`pr.url`（`pr-create.sh`）と、URL だけの行（`gh pr create`）から拾う。`body` などに含まれる別の URL は拾わない。`--dry-run`（`git push -n` を含む。引用符の中は除く）のコマンドは、何もしていないので何も出さない。
-   - 決まり：同じリンクは、連続でも毎回出す（常に見えるようにするため）。Issue の番号が分からないブランチ（main など）では、ブランチから導くリンクは出さない（作った PR・Issue の URL は、出力から拾うので出す）。`gh` が無い・失敗する・解析できないときは何も出さずに通し、フックは作業を止めない（いつも終了コード 0。エラーの表示も出さない）。
+   - 決まり：同じリンクは、連続でも毎回出す（常に見えるようにするため）。Issue の番号が分からないブランチ（main など）では、ブランチから導くリンクは出さない（作った PR・Issue の URL は、出力から拾うので出す）。`gh` が無い・失敗する・解析できないときは、そのリンクを出さずに通し（`gh pr list` が失敗したときは、PR が無いのか分からないので、PR を作る URL も CI のリンクも出さず、Issue のリンクだけを出す）、フックは作業を止めない（いつも終了コード 0。エラーの表示も出さない）。
    - 出力は、使用者に見せる `systemMessage` と、Claude に渡す `additionalContext`（返答でも触れてもらう）の両方（`guard-git.sh` の警告と同じ形）。
    - `/remote-control` など別の端末の画面に `systemMessage` が出るかは、確かめられていない（未確認）。出ない場合でも、`additionalContext` を受け取った Claude が返答でリンクに触れるので、リンクは別の端末にも届く。`systemMessage` が出るなら二重になるが、常に見えることを優先する。
    - git の操作ではない場面（CI や CodeRabbit の結果を伝えるとき、Issue を起票したときなど）はフックでは出せないので、Claude への決まりとして、SessionStart の案内（`defaults/task-flow.md`）に「PR・Issue・CI に触れるときは URL を添える」と書く。

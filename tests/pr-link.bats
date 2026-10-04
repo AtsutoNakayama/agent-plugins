@@ -7,15 +7,8 @@ load fake_gh
 HOOKS="$BATS_TEST_DIRNAME/../plugins/dev-workflow/hooks"
 
 setup() {
-  # test_helper の setup を呼んでから、作業用のブランチ（Issue 17）に移る
-  TMP="$(cd "$(mktemp -d)" && pwd -P)"
-  REPO="$TMP/repo"
-  export WORKFLOW_USER_DIR="$TMP/user"
-  export GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@example.com GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@example.com
-  mkdir -p "$REPO/.claude/dev-workflow" "$WORKFLOW_USER_DIR"
-  git -C "$REPO" init -q -b main
-  git -C "$REPO" -c user.name=t -c user.email=t@example.com commit -q --allow-empty -m init
-  cd "$REPO" || return 1
+  test_helper_setup
+  # 作業用のブランチ（Issue 17）に移る
   git switch -q -c feat/17-demo
   setup_fake_gh
 }
@@ -266,13 +259,16 @@ https://github.com/me/demo/pull/42"
   [ "$(called pr-list)" -eq 0 ]
 }
 
-@test "gh が失敗しても、何も出さずに通す" {
-  local op
-  for op in issue-view pr-list; do
-    FAKE_FAIL=$op run_hook "git push"
-    [ "$status" -eq 0 ] || fail "止めてしまった: $op"
-    [[ "$output" != *"{"*"pull/42"* ]]
-  done
+@test "gh が失敗しても止めず、失敗した分のリンクだけを出さない" {
+  # PR の一覧を取れないときは、PR が無いのか分からないので、PR・CI のリンクは出さず、Issue のリンクだけを出す
+  FAKE_FAIL=pr-list run_hook "git push"
+  [ "$status" -eq 0 ]
+  assert_equal "$(jq -r .systemMessage <<<"$output")" "$(printf '関連するリンク:\n- Issue #17: https://github.com/me/demo/issues/17')"
+  # Issue を取れないときは、Issue のリンクだけを出さない
+  echo '[{"url": "https://github.com/me/demo/pull/42", "isCrossRepository": false}]' >"$FIX/pr-list.json"
+  FAKE_FAIL=issue-view run_hook "git push"
+  [ "$status" -eq 0 ]
+  assert_equal "$(jq -r .systemMessage <<<"$output")" "$(printf '関連するリンク:\n- PR: https://github.com/me/demo/pull/42\n- CI: https://github.com/me/demo/pull/42/checks')"
   # Issue も PR も取れなければ、リンクは1つも無い
   echo 'exit 1' >"$TMP/bin/gh"
   silent "git push" "git commit -m x"

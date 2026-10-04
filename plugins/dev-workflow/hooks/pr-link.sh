@@ -217,16 +217,18 @@ done
 
 # push の PR・CI は、今のブランチのもの（Issue が分からないブランチでは出さない）
 if $push && [ -n "$cwd_issue" ] && [ -n "$branch" ]; then
-  pr="$( (cd "$dir" && gh pr list --head "$branch" --state open --json url,isCrossRepository \
-    -q 'map(select(.isCrossRepository | not)) | .[0].url // empty') 2>/dev/null || true)"
-  if [ -n "$pr" ]; then
-    add_link "$pr" "PR"
-    add_link "$pr/checks" "CI"
-  else
-    repo="$( (cd "$dir" && gh repo view --json url -q .url) 2>/dev/null || true)"
-    if [ -n "$repo" ]; then
-      add_link "$repo/pull/new/$branch" "PR を作る"
-      add_link "$repo/actions?query=branch%3A$(printf '%s' "$branch" | sed 's|/|%2F|g')" "CI"
+  # gh pr list が失敗したときは、PR が無いのか分からないので、PR・CI のリンクは出さない（Issue のリンクは出す）
+  if pr="$( (cd "$dir" && gh pr list --head "$branch" --state open --json url,isCrossRepository \
+    -q 'map(select(.isCrossRepository | not)) | .[0].url // empty') 2>/dev/null)"; then
+    if [ -n "$pr" ]; then
+      add_link "$pr" "PR"
+      add_link "$pr/checks" "CI"
+    else
+      repo="$( (cd "$dir" && gh repo view --json url -q .url) 2>/dev/null || true)"
+      if [ -n "$repo" ]; then
+        add_link "$repo/pull/new/$branch" "PR を作る"
+        add_link "$repo/actions?query=branch%3A$(printf '%s' "$branch" | sed 's|/|%2F|g')" "CI"
+      fi
     fi
   fi
 fi

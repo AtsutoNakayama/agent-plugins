@@ -10,7 +10,8 @@ export FAKE_GH_PROJECT="$BATS_TEST_DIRNAME/fake_gh_project.bash"
 load lib/bats-support/load
 load lib/bats-assert/load
 
-setup() {
+# 一時ディレクトリに git リポジトリを作って、そこに移る。独自の setup() から呼べるよう、名前を付けてある
+test_helper_setup() {
   # macOS の /var は /private/var へのシンボリックリンクなので、git が返すパスと揃えるため実体にする
   TMP="$(cd "$(mktemp -d)" && pwd -P)"
   REPO="$TMP/repo"
@@ -21,6 +22,10 @@ setup() {
   git -C "$REPO" init -q -b main
   git -C "$REPO" -c user.name=t -c user.email=t@example.com commit -q --allow-empty -m init
   cd "$REPO" || return 1
+}
+
+setup() {
+  test_helper_setup
 }
 
 teardown() {
