@@ -60,14 +60,9 @@ if [ "$checks_json" = "[]" ]; then
   exit 0
 fi
 
-# ワークフローの一覧。ディレクトリが無ければ（404）ワークフローは無い
+# ワークフローの一覧。ディレクトリが無ければ（404。dw_gh_find は null を出す）ワークフローは無い
 ref="$(jq -rn --arg b "$branch" '$b | @uri')"
-if ! listing="$(gh api "repos/$repo/contents/.github/workflows?ref=$ref" 2>&1)"; then
-  case "$listing" in
-    *"HTTP 404"*) listing='[]' ;;
-    *) dw_die "${branch} のワークフローの一覧を読めません: $listing" ;;
-  esac
-fi
+listing="$(dw_gh_find gh api "repos/$repo/contents/.github/workflows?ref=$ref")"
 workflows="$(jq -c '[if type == "array" then .[] else empty end
   | select(.type == "file" and (.name | test("\\.ya?ml$"))) | .path]' <<<"$listing" 2>/dev/null)" \
   || dw_die "${branch} のワークフローの一覧を JSON として読めません"

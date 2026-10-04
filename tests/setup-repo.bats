@@ -644,7 +644,7 @@ workflow() {
   export FAKE_WORKFLOWS_FAIL=1
   run_setup --merge-queue --required-check lint-result
   assert_success
-  assert_output --partial "必須のチェックのワークフローが merge_group のイベントで動くか確かめられません: main のワークフローの一覧を読めません"
+  assert_output --partial "必須のチェックのワークフローが merge_group のイベントで動くか確かめられません: GitHub の API に失敗しました: gh: Forbidden (HTTP 403)"
   assert_equal "$(jq -c .merge_queue.merge_group <<<"$json")" null
   assert_equal "$(called PUT)" 1
 }

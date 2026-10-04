@@ -216,7 +216,7 @@ YML
   export FAKE_FAIL=1
   run_check --branch main --check lint
   assert_failure 1
-  assert_output --partial "main のワークフローの一覧を読めません"
+  assert_output --partial "GitHub の API に失敗しました: gh: Forbidden (HTTP 403)"
 }
 
 @test "--branch が無ければ使い方の誤りで止まる" {
