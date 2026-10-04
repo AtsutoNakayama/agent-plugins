@@ -311,3 +311,82 @@ set_pr_opened() {
   json="$(json_of "$output")"
   assert_equal "$(jq -r .body <<<"$json" | tail -n 1)" "Closes #17"
 }
+
+# Issue #17 の本文を、チェックリストを含むものにする（改行は \r\n。最後の行の後にも改行を置く）
+fake_issue_tasks() {
+  fake_issue 17 '["feat"]'
+  # shellcheck disable=SC2016 # ``` はコードブロックの囲みで、展開させない
+  jq --arg b "$(printf '## やること\r\n- [ ] 一つ目 [ ] を含む\r\n- [x] 二つ目\r\n  * [ ] 三つ目（入れ子）\r\n1. [ ] 四つ目\r\n- [ ] ~~五つ目~~\r\n\r\n```md\r\n- [ ] コードブロックの中\r\n```\r\n- [ ]\r\n- [] 項目ではない')" \
+    '. + {body: ($b + "\r\n")}' "$FIX/issue-17.json" >"$TMP/i.json" && mv "$TMP/i.json" "$FIX/issue-17.json"
+}
+
+@test "Issue の本文のチェックリストの項目を、コードブロックの中を除いて番号付きで出す" {
+  setup_branch
+  fake_issue_tasks
+  run_pr --issue 17 --body-file "$TMP/body.md" --dry-run
+  assert_success
+  assert_equal "$(jq -c '[.tasks[] | [.index, .checked, .text]]' <<<"$json")" \
+    '[[1,false,"一つ目 [ ] を含む"],[2,true,"二つ目"],[3,false,"三つ目（入れ子）"],[4,false,"四つ目"],[5,false,"~~五つ目~~"],[6,false,""]]'
+  assert_equal "$(jq -c .checked <<<"$json")" '[]'
+}
+
+@test "--check で指定した項目だけにチェックを付け、ほかの行は変えない" {
+  setup_branch
+  fake_issue_tasks
+  run_pr --issue 17 --body-file "$TMP/body.md" --check 1 --check 3 --check 2 --check 4
+  assert_success
+  # 2 は既にチェックがあるので付けない
+  assert_equal "$(jq -c .checked <<<"$json")" '[1,3,4]'
+  assert_equal "$(args edit)" "17 --body-file -"
+  jq -j '.body' "$FIX/issue-17.json" \
+    | sed -e 's/^- \[ \] 一つ目/- [x] 一つ目/' -e 's/^  \* \[ \] 三つ目/  * [x] 三つ目/' -e 's/^1\. \[ \] 四つ目/1. [x] 四つ目/' >"$TMP/expected"
+  # 改行の \r\n と末尾の改行も含めて、バイト単位で同じか比べる
+  run cmp "$TMP/expected" "$TMP/issue-edit-body"
+  assert_success
+  run grep -c '一つ目 \[ \] を含む' "$TMP/issue-edit-body"
+  assert_output 1
+}
+
+@test "--check が無ければ Issue の本文を変えない" {
+  setup_branch
+  fake_issue_tasks
+  run_pr --issue 17 --body-file "$TMP/body.md"
+  assert_success
+  assert_equal "$(called edit)" 0
+}
+
+@test "既にある PR に push するときも、--check の項目にチェックを付ける" {
+  setup_branch
+  fake_issue_tasks
+  echo '[{"number": 7, "url": "https://github.com/me/demo/pull/7", "isCrossRepository": false}]' >"$FIX/pr-list.json"
+  run_pr --issue 17 --body-file "$TMP/body.md" --check 5 --dry-run
+  assert_success
+  assert_equal "$(jq -c '[.created, .checked, .actions[-1]]' <<<"$json")" '[false,[5],"Issue #17 のチェックリストの項目 5 にチェックを付ける"]'
+  assert_equal "$(called edit)" 0
+  run_pr --issue 17 --body-file "$TMP/body.md" --check 5
+  assert_success
+  assert_equal "$(called pr-create)" 0
+  run grep -c '^- \[x\] ~~五つ目~~' "$TMP/issue-edit-body"
+  assert_output 1
+}
+
+@test "--check の番号がチェックリストに無ければ、push せずに止まる" {
+  setup_branch
+  fake_issue_tasks
+  run_pr --issue 17 --body-file "$TMP/body.md" --check 7 --check 1
+  assert_failure 64
+  assert_output --partial "--check の番号が Issue #17 のチェックリストにありません: 7（項目は 6 個）"
+  run git rev-parse -q --verify origin/feat/17-x
+  assert_failure
+  run_pr --issue 17 --body-file "$TMP/body.md" --check 0
+  assert_failure 64
+  assert_output --partial "--check には 1 からの番号を指定してください: 0"
+}
+
+@test "チェックを付けられなければ、もう一度実行すれば付けられると伝えて止まる" {
+  setup_branch
+  fake_issue_tasks
+  FAKE_FAIL=edit run_pr --issue 17 --body-file "$TMP/body.md" --check 1
+  assert_failure 1
+  assert_output --partial "PR #42 はできていますが、Issue #17 にチェックを付けられませんでした（もう一度実行すれば付けます）"
+}
