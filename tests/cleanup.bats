@@ -47,9 +47,11 @@ squash_merge() {
 }
 
 # 使い方: fake_pr <状態> [PR の最後のコミット（既定: feat/17-x の今のコミット）]
+# PR が閉じる Issue は FAKE_CLOSING（JSON の配列。既定: []）で指定する
 fake_pr() {
   jq -n --arg s "$1" --arg oid "${2:-$(git rev-parse feat/17-x)}" '[{number: 5, url: "https://github.com/me/demo/pull/5",
-    state: $s, mergedAt: (if $s == "MERGED" then "2026-09-27T00:00:00Z" else null end), headRefOid: $oid, baseRefName: "main"}]' \
+    state: $s, mergedAt: (if $s == "MERGED" then "2026-09-27T00:00:00Z" else null end), headRefOid: $oid, baseRefName: "main",
+    closingIssuesReferences: $closing}]' --argjson closing "${FAKE_CLOSING:-[]}" \
     >"$FIX/pr-list.json"
 }
 
@@ -76,7 +78,7 @@ run_cleanup() {
   # 削除された origin/feat/17-x の追跡ブランチも片付ける
   run git show-ref --verify --quiet refs/remotes/origin/feat/17-x
   assert_failure
-  assert_equal "$(args pr-list)" "--head feat/17-x --state all --json number,url,state,mergedAt,headRefOid,baseRefName"
+  assert_equal "$(args pr-list)" "--head feat/17-x --state all --json number,url,state,mergedAt,headRefOid,baseRefName,closingIssuesReferences"
 }
 
 @test "--branch を省略すると、今のブランチを片付ける（ワークツリーの中から実行できる）" {
@@ -504,4 +506,44 @@ run_cleanup() {
   run_cleanup --branch feat/17-x --abandon
   assert_success
   assert_equal "$(jq -c '[.removed, .actions, .lost.commits]' <<<"$json")" '[{"worktree":false,"branch":false},[],[]]'
+}
+
+@test "PR が閉じる Issue が閉じたかを issues に出す" {
+  setup_branch
+  squash_merge
+  FAKE_CLOSING='[{"number": 17}, {"number": 18}]' fake_pr MERGED
+  echo '{"state": "CLOSED"}' >"$FIX/issue-17.json"
+  echo '{"state": "OPEN"}' >"$FIX/issue-18.json"
+  run_cleanup --branch feat/17-x
+  assert_success
+  assert_equal "$(jq -c .issues <<<"$json")" '[{"number":17,"state":"CLOSED"},{"number":18,"state":"OPEN"}]'
+}
+
+@test "Issue の状態を取得できなくても、片付けは続けて state を null にする" {
+  setup_branch
+  squash_merge
+  FAKE_CLOSING='[{"number": 17}]' fake_pr MERGED
+  FAKE_FAIL=issue-view run_cleanup --branch feat/17-x
+  assert_success
+  assert_output --partial "warn: Issue #17 の状態を取得できませんでした"
+  [ ! -e "$WT" ]
+  assert_equal "$(jq -c .issues <<<"$json")" '[{"number":17,"state":null}]'
+}
+
+@test "PR が閉じる Issue が無ければ、issues は空" {
+  setup_branch
+  squash_merge
+  fake_pr MERGED
+  run_cleanup --branch feat/17-x
+  assert_success
+  assert_equal "$(jq -c .issues <<<"$json")" '[]'
+}
+
+@test "--abandon では Issue の状態を調べない" {
+  setup_branch
+  run_cleanup --branch feat/17-x --abandon
+  assert_success
+  assert_equal "$(jq -c .issues <<<"$json")" '[]'
+  run grep '^issue-view' "$CALLS"
+  assert_failure
 }
