@@ -175,6 +175,28 @@ silent() {
   shows "git commit -m y" "Issue #17: https://github.com/me/demo/issues/17"
 }
 
+@test "git のオプションを飛ばして、サブコマンドで判定する" {
+  shows "git -C . push" "PR を作る:"
+  shows "git -c user.name=x commit -m x" "Issue #17: https://github.com/me/demo/issues/17"
+  shows "git --no-pager -C . commit -m x" "Issue #17: https://github.com/me/demo/issues/17"
+  shows "git add a && git commit -m x" "Issue #17: https://github.com/me/demo/issues/17"
+}
+
+@test "push・commit ではないサブコマンドでは、push・commit の語があっても出さない" {
+  silent "git stash push -m x" "git stash commit" "git log --grep commit" "git log --grep=push" "git-lfs push origin" \
+    "git config alias.push x" "echo digit push"
+}
+
+@test "push と、ブランチを作るコマンドを続けても、PR・CI は今のブランチ、Issue は両方のものを出す" {
+  fake_issue 23 '["feat"]'
+  echo '[{"url": "https://github.com/me/demo/pull/42", "isCrossRepository": false}]' >"$FIX/pr-list.json"
+  shows "git push && git switch -c feat/23-x" \
+    "Issue #17: https://github.com/me/demo/issues/17" \
+    "Issue #23: https://github.com/me/demo/issues/23" \
+    "PR: https://github.com/me/demo/pull/42"
+  assert_equal "$(args pr-list 1)" "--head feat/17-demo --state open --json url,isCrossRepository -q map(select(.isCrossRepository | not)) | .[0].url // empty"
+}
+
 @test "関係のないコマンドでは何も出さない" {
   silent "ls -la" "echo hello" "" "git status" "git log --oneline" "git diff" "git switch main" "git checkout main" \
     "git branch" "git branch -d x" "gh pr view 1" "gh issue list" "bash tests.sh"

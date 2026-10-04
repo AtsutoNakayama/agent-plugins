@@ -40,23 +40,89 @@ esac
 # コマンドの文字列が <正規表現> に当たるか
 has() { printf '%s' "$cmd" | grep -Eq -- "$1"; }
 
-# 区切り（; & |）を越えない範囲で、git の <サブコマンド> を探す
-git_sub() { has "(^|[^[:alnum:]_./-])git([^;&|]* )?$1([^[:alnum:]_-]|\$)"; }
+# ファイル名の展開（*・?）は要らないので止める。コマンドの文字列を空白で語に分けるときに、展開されないようにする
+set -f
 
 push=false commit=false create_branch=false created=false
-{ git_sub push || has 'pr-create\.sh'; } && push=true
-{ git_sub commit || has 'commit\.sh'; } && commit=true
-{
-  has "(^|[^[:alnum:]_./-])git([^;&|]* )?switch([^;&|]* )?(-[a-zA-Z]*[cC][a-zA-Z]*|--create|--force-create)( |\$)" \
-    || has "(^|[^[:alnum:]_./-])git([^;&|]* )?checkout([^;&|]* )?-[a-zA-Z]*[bB][a-zA-Z]*( |\$)" \
-    || git_sub 'worktree add' \
-    || has "(^|[^[:alnum:]_./-])git([^;&|]* )?branch [^-;&| ]" \
-    || has 'task-start\.sh'
-} && create_branch=true
-{
-  has "(^|[^[:alnum:]_./-])gh([^;&|]* )? (pr|issue) create([^[:alnum:]_-]|\$)" \
-    || has '(pr|issue)-create\.sh'
-} && created=true
+# ブランチを作るコマンドの、作るブランチの名前（拾えなければ空）
+created_name=""
+has 'pr-create\.sh' && push=true
+has 'commit\.sh' && commit=true
+has 'task-start\.sh' && create_branch=true
+{ has "(^|[^[:alnum:]_./-])gh( [^;&|]*)? (pr|issue) create([^[:alnum:]_-]|\$)" || has '(pr|issue)-create\.sh'; } && created=true
+
+# <オプション>のどれかの次の語を name に入れる。使い方: name_after "<オプション（空白区切り）>" <語>...
+name_after() {
+  local opts=" $1 " prev="" w
+  shift
+  for w in "$@"; do
+    case "$opts" in *" $prev "*) name="$w"; return 0 ;; esac
+    prev="$w"
+  done
+  return 1
+}
+
+# コマンドの文字列の git の呼び出しごとに、オプション（-C <dir>・-c <k=v> など）を飛ばした最初の語をサブコマンドとして、
+# push・commit・ブランチの作成を判定する。git stash push や git log --grep commit は、サブコマンドが違うので当たらない。
+# guard-git.sh（check_command）のようには解析しない。cd や git -C で移った先は追わず、引用符や $( ) の中も見ない。
+# ブランチを作るコマンドは、-c・-C・-b・-B・--create・--force-create の次の語と、git branch <名前> の最初の語を、
+# 作るブランチの名前にする。-cname のようにオプションと名前をくっつけた書き方は、作ることだけが分かり、名前は拾えない
+# （guard-git.sh は警告するのに、ここは Issue のリンクを出さない、という食い違いが起きる。tests/pr-link.bats で押さえてある）
+scan_git() {
+  local line sub w name
+  while IFS= read -r line; do
+    line="${line#*git}"
+    # shellcheck disable=SC2086 # 空白で語に分ける（set -f で展開を止めてある）
+    set -- $line
+    sub=""
+    while [ $# -gt 0 ]; do
+      case "$1" in
+        -C | -c | --git-dir | --work-tree | --namespace | --config-env)
+          if [ $# -ge 2 ]; then shift 2; else shift $#; fi
+          ;;
+        -*) shift ;;
+        *) sub="$1"; shift; break ;;
+      esac
+    done
+    name=""
+    case "$sub" in
+      push) push=true ;;
+      commit) commit=true ;;
+      switch)
+        name_after "-c -C --create --force-create" "$@" || true
+        for w in "$@"; do
+          case "$w" in --*) ;; -*[cC]*) create_branch=true ;; esac
+        done
+        [ -z "$name" ] || create_branch=true
+        ;;
+      checkout)
+        name_after "-b -B" "$@" || true
+        for w in "$@"; do
+          case "$w" in --*) ;; -*[bB]*) create_branch=true ;; esac
+        done
+        ;;
+      worktree)
+        if [ "${1:-}" = add ]; then
+          shift
+          name_after "-b -B" "$@" || true
+          for w in "$@"; do
+            case "$w" in --*) ;; -*[bB]*) create_branch=true ;; esac
+          done
+          # -b が無くても、ワークツリーを作るので、ブランチも作る（名前は拾わない）
+          create_branch=true
+        fi
+        ;;
+      branch)
+        # git branch <名前>（一覧・削除・名前の変更などのオプションが先にあるときは作らない）
+        case "${1:-}" in '' | -*) ;; *) name="$1"; create_branch=true ;; esac
+        ;;
+    esac
+    name="${name#[\"\']}"
+    name="${name%[\"\']}"
+    [ -z "$name" ] || [ -n "$created_name" ] || created_name="$name"
+  done < <(printf '%s\n' "$cmd" | grep -Eo '(^|[^[:alnum:]_./-])git( [^;&|]*)?' || true)
+}
+scan_git
 $push || $commit || $create_branch || $created || exit 0
 
 cwd="$(jq -r '.cwd // empty' <<<"$input")"
@@ -88,7 +154,6 @@ fi
 # --- ブランチから導くリンク ----------------------------------------------------------
 root="$(git -C "$dir" rev-parse --show-toplevel 2>/dev/null || true)"
 branch="$(git -C "$dir" symbolic-ref --short -q HEAD 2>/dev/null || true)"
-issue=""
 config=""
 if [ -n "$root" ]; then
   config="$( (cd "$dir" && WORKFLOW_REPO_ROOT="$root" "$BASH" "$DW_SCRIPTS_DIR/config.sh") 2>/dev/null || true)"
@@ -100,57 +165,33 @@ issue_of() {
   parsed="$(dw_parse_branch "$config" "$1" 2>/dev/null || true)"
   printf '%s\n' "${parsed#*|}"
 }
-[ -z "$branch" ] || issue="$(issue_of "$branch")"
+cwd_issue=""
+[ -z "$branch" ] || cwd_issue="$(issue_of "$branch")"
 
-# ブランチを作るコマンドは、今のブランチではなく、作るブランチの Issue を出す。
-# ブランチの名前はコマンドの文字列から拾う。guard-git.sh（check_create）のようには解析せず、
-# -c・-C・-b・-B・--create・--force-create の次の語と、git branch <名前> の最初の語だけを見る。
-# そのため、-cname のようにオプションと名前をくっつけた書き方や、git branch --set-upstream-to <上流> <名前> のように
-# 値を取るオプションを挟む書き方は、名前を取り違えるか拾えず、Issue のリンクを出さない
-# （guard-git.sh は警告するのに、ここは出さない、という食い違いが起きる。tests/pr-link.bats で押さえてある）。
-# 間違った Issue のリンクを出すより、何も出さないほうがよいので、拾えないときは今のブランチの Issue を使わない
-created_branch() {
-  local seg w prev="" name="" in_branch=false
-  seg="$(printf '%s\n' "$cmd" | grep -Eo "git([^;&|]* )?(switch|checkout|worktree add|branch)[^;&|]*" | head -n 1 || true)"
-  # shellcheck disable=SC2086 # 空白で語に分ける
-  set -f
-  for w in $seg; do
-    w="${w#[\"\']}"
-    w="${w%[\"\']}"
-    case "$prev" in
-      -c | -C | -b | -B | --create | --force-create)
-        name="$w"
-        break
-        ;;
-    esac
-    if $in_branch; then
-      case "$w" in -*) ;; *) name="$w"; break ;; esac
-    fi
-    [ "$w" != branch ] || in_branch=true
-    prev="$w"
-  done
-  set +f
-  printf '%s\n' "$name"
-}
-if $create_branch && ! has 'task-start\.sh'; then
-  name="$(created_branch)"
-  issue=""
-  [ -z "$name" ] || issue="$(issue_of "$name")"
+# 出す Issue のリンク。操作ごとに、対象の Issue が違う
+#   - push・commit・PR や Issue を作る操作：今のブランチの Issue
+#   - ブランチを作るコマンド：作るブランチの Issue（名前が拾えない・Issue の番号が無いときは出さない。間違った Issue より、何も出さないほうがよい）
+#   - task-start.sh：標準出力の JSON の issue（別のワークツリーを作るので。標準エラーの警告（warn:）が混ざっても読める。取れなければ出さない）
+issues=()
+if $push || $commit || $created; then
+  [ -z "$cwd_issue" ] || issues+=("$cwd_issue")
 fi
-# task-start.sh は別のワークツリーを作るので、今のブランチではなく、出力の Issue の番号を使う。
-# 出力の JSON は標準出力にだけ出るので、標準エラーの警告（warn:）が混ざっても読める。取れなければ Issue は出さない
 if has 'task-start\.sh'; then
   stdout="$(jq -r '.tool_response | if type == "object" then (.stdout // "") else (. // "" | tostring) end' <<<"$input" 2>/dev/null || true)"
   n="$(jq -r 'objects | .issue // empty' <<<"$stdout" 2>/dev/null | head -n 1 || true)"
-  case "$n" in '' | *[!0-9]*) issue="" ;; *) issue="$n" ;; esac
+  case "$n" in '' | *[!0-9]*) ;; *) issues+=("$n") ;; esac
+elif $create_branch && [ -n "$created_name" ]; then
+  n="$(issue_of "$created_name")"
+  [ -z "$n" ] || issues+=("$n")
 fi
 
-if [ -n "$issue" ]; then
-  url="$( (cd "$dir" && gh issue view "$issue" --json url -q .url) 2>/dev/null || true)"
-  [ -z "$url" ] || add_link "$url" "Issue #${issue}"
-fi
+for n in ${issues[@]+"${issues[@]}"}; do
+  url="$( (cd "$dir" && gh issue view "$n" --json url -q .url) 2>/dev/null || true)"
+  [ -z "$url" ] || add_link "$url" "Issue #${n}"
+done
 
-if $push && [ -n "$issue" ] && [ -n "$branch" ]; then
+# push の PR・CI は、今のブランチのもの（Issue が分からないブランチでは出さない）
+if $push && [ -n "$cwd_issue" ] && [ -n "$branch" ]; then
   pr="$( (cd "$dir" && gh pr list --head "$branch" --state open --json url,isCrossRepository \
     -q 'map(select(.isCrossRepository | not)) | .[0].url // empty') 2>/dev/null || true)"
   if [ -n "$pr" ]; then
