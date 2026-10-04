@@ -95,9 +95,7 @@ if [ -n "$repo" ]; then
 fi
 
 # --- 守るブランチ（設定の base_branch） ------------------------------------------
-# ルールセットはリポジトリ全体で共有するので、個人の層（config.local.json・~/.claude/dev-workflow）は使わず、
-# チームの設定（.claude/dev-workflow/config.json）とプラグインの既定だけで決める
-branch="$(jq -r '.base_branch' "$DW_PLUGIN_ROOT/defaults/workflow.json")"
+# チームの設定（.claude/dev-workflow/config.json）とプラグインの既定だけで決める（dw_team_base_branch）
 tmp="$(mktemp -d)"
 trap 'rm -rf "$tmp"' EXIT
 team=""
@@ -110,10 +108,8 @@ elif dw_fetch_repo_file "$repo_nwo" .claude/dev-workflow/config.json "$tmp/workf
   # 別のリポジトリでは、そのリポジトリの既定のブランチにある設定を読む
   team="$tmp/workflow.json"
 fi
-if [ -n "$team" ]; then
-  branch="$(jq -r --arg d "$branch" '.base_branch // $d' "$team" 2>/dev/null)" \
-    || dw_die "${repo_nwo} の .claude/dev-workflow/config.json を JSON として読めません" 2
-fi
+branch="$(dw_team_base_branch "$team")" \
+  || dw_die "${repo_nwo} の .claude/dev-workflow/config.json を JSON として読めません" 2
 [ -n "$branch" ] || dw_die "設定の base_branch が空です" 2
 
 actions='[]'

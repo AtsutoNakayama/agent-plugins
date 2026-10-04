@@ -130,8 +130,12 @@ fi
 
 # base_branch にマージキューと strict（最新の取り込みを求める）のどちらが効いているかを示す。どちらも無いと、
 # 古い base_branch で通った CI の結果のままマージして壊れることがある。組織のルールセットも含めて見るため、
-# ブランチに効いているルール（rules/branches）を読む。GitHub に問い合わせられないときは飛ばす
-base_branch="$(jq -r '.base_branch // empty' <<<"$config" 2>/dev/null || true)"
+# ブランチに効いているルール（rules/branches）を読む。ブランチは、setup-repo.sh がルールセットで守るものと同じく、
+# チームの設定で決める（個人の設定は使わない）。GitHub に問い合わせられないときは飛ばす
+base_branch=""
+if [ -n "$repo_root" ]; then
+  base_branch="$(dw_team_base_branch "$repo_root/.claude/dev-workflow/config.json" || true)"
+fi
 if $gh_auth && [ -n "$repo_root" ] && [ -n "$base_branch" ] \
   && rules="$(gh api "repos/{owner}/{repo}/rules/branches/$(jq -rn --arg b "$base_branch" '$b | @uri')?per_page=100" 2>/dev/null)" \
   && merge="$(jq -er '

@@ -239,6 +239,15 @@ merge_check() { jq -c '.checks[] | select(.name == "merge-queue") | [.ok, .level
   assert_output --partial "release/v1 へのマージはマージキューを通します"
 }
 
+@test "マージキューの確認は、個人の設定の base_branch ではなく、チームの設定のブランチを見る" {
+  fake_gh
+  export FAKE_SCOPES="project" FAKE_RULES='[{"type": "merge_queue", "parameters": {}}]' FAKE_RULES_LOG="$TMP/rules-path"
+  echo '{"base_branch": "mine"}' >.claude/dev-workflow/config.local.json
+  echo '{"base_branch": "user"}' >"$WORKFLOW_USER_DIR/config.json"
+  run_script doctor.sh
+  assert_equal "$(cat "$TMP/rules-path")" 'repos/{owner}/{repo}/rules/branches/main?per_page=100'
+}
+
 @test "GitHub に問い合わせられないときは、マージキューの確認を飛ばす" {
   fake_gh
   export FAKE_SCOPES="project"
