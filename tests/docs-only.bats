@@ -13,9 +13,10 @@ commit_files() {
   git -c user.name=t -c user.email=t@example.com commit -q -m change
 }
 
-# docs-only.sh を、今のコミット（HEAD^ から HEAD の変更）に対して実行する。結果は run の output に入る
+# docs-only.sh を実行する。引数なしなら今のコミット（HEAD^ から HEAD の変更）、引数があればそのコミットから HEAD の変更を見る。
+# 結果は run の output に入る
 docs_only() {
-  run "${TEST_BASH:-bash}" "$BATS_TEST_DIRNAME/../.github/scripts/docs-only.sh"
+  run "${TEST_BASH:-bash}" "$BATS_TEST_DIRNAME/../.github/scripts/docs-only.sh" "$@"
 }
 
 @test "README・docs・テンプレートだけの変更は true" {
@@ -80,5 +81,35 @@ docs_only() {
   git mv tests/a.bats docs/a.bats
   git -c user.name=t -c user.email=t@example.com commit -q -m move
   docs_only
+  assert_output '{"docs_only": false}'
+}
+
+# マージキュー（merge_group）では、キューの先頭側のコミット（merge_group.base_sha）を比較元に渡す。
+# PR が複数のコミットのとき、HEAD^ だと最後の1つだけを見てしまう
+
+@test "比較元を渡すと、複数のコミットにまたがる変更を見る（最後だけがドキュメントでも false）" {
+  base="$(git rev-parse HEAD)"
+  commit_files tests/a.bats
+  commit_files docs/a.md
+  # 引数なしでは最後のコミットだけを見るので、ドキュメントだけと誤って判断する
+  docs_only
+  assert_output '{"docs_only": true}'
+  docs_only "$base"
+  assert_output '{"docs_only": false}'
+}
+
+@test "比較元を渡しても、全部がドキュメントなら true" {
+  base="$(git rev-parse HEAD)"
+  commit_files README.md
+  commit_files docs/a.md
+  docs_only "$base"
+  assert_success
+  assert_output '{"docs_only": true}'
+}
+
+@test "比較元のコミットが無いとき（調べられないとき）は false にして CI を動かす" {
+  commit_files docs/a.md
+  docs_only 0000000000000000000000000000000000000000
+  assert_success
   assert_output '{"docs_only": false}'
 }
