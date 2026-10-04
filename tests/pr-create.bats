@@ -312,12 +312,16 @@ set_pr_opened() {
   assert_equal "$(jq -r .body <<<"$json" | tail -n 1)" "Closes #17"
 }
 
+# 使い方: set_issue_body <本文>  Issue #17（type は feat）の本文を、指定した文字列にそのまま置き換える
+set_issue_body() {
+  fake_issue 17 '["feat"]'
+  jq --arg b "$1" '. + {body: $b}' "$FIX/issue-17.json" >"$TMP/i.json" && mv "$TMP/i.json" "$FIX/issue-17.json"
+}
+
 # Issue #17 の本文を、チェックリストを含むものにする（改行は \r\n。最後の行の後にも改行を置く）
 fake_issue_tasks() {
-  fake_issue 17 '["feat"]'
   # shellcheck disable=SC2016 # ``` はコードブロックの囲みで、展開させない
-  jq --arg b "$(printf '## やること\r\n- [ ] 一つ目 [ ] を含む\r\n- [x] 二つ目\r\n  * [ ] 三つ目（入れ子）\r\n1. [ ] 四つ目\r\n- [ ] ~~五つ目~~\r\n\r\n```md\r\n- [ ] コードブロックの中\r\n```\r\n- [ ]\r\n- [] 項目ではない')" \
-    '. + {body: ($b + "\r\n")}' "$FIX/issue-17.json" >"$TMP/i.json" && mv "$TMP/i.json" "$FIX/issue-17.json"
+  set_issue_body "$(printf '## やること\r\n- [ ] 一つ目 [ ] を含む\r\n- [x] 二つ目\r\n  * [ ] 三つ目（入れ子）\r\n1. [ ] 四つ目\r\n- [ ] ~~五つ目~~\r\n\r\n```md\r\n- [ ] コードブロックの中\r\n```\r\n- [ ]\r\n- [] 項目ではない')"$'\r\n'
 }
 
 @test "Issue の本文のチェックリストの項目を、コードブロックの中を除いて番号付きで出す" {
@@ -393,10 +397,8 @@ fake_issue_tasks() {
 
 @test "長い囲みのコードブロックは、中の短い囲みや情報文字列付きの囲みでは閉じない" {
   setup_branch
-  fake_issue 17 '["feat"]'
   # shellcheck disable=SC2016 # ``` はコードブロックの囲みで、展開させない
-  jq --arg b "$(printf -- '- [ ] a\n````md\n```\n- [ ] 中1\n```\n````\n- [ ] b\n~~~~\n~~~ js\n- [ ] 中2\n~~~\n~~~~~\n- [ ] c')" \
-    '. + {body: $b}' "$FIX/issue-17.json" >"$TMP/i.json" && mv "$TMP/i.json" "$FIX/issue-17.json"
+  set_issue_body "$(printf -- '- [ ] a\n````md\n```\n- [ ] 中1\n```\n````\n- [ ] b\n~~~~\n~~~ js\n- [ ] 中2\n~~~\n~~~~~\n- [ ] c')"
   run_pr --issue 17 --body-file "$TMP/body.md" --dry-run
   assert_success
   assert_equal "$(jq -c '[.tasks[].text]' <<<"$json")" '["a","b","c"]'
