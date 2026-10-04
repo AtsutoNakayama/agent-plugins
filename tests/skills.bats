@@ -86,3 +86,20 @@ frontmatter() { awk 'NR == 1 && $0 == "---" { on = 1; next } on && $0 == "---" {
   grep -qF 'gh api --paginate repos/{owner}/{repo}/issues/<親の番号>/sub_issues' "$f" \
     || fail "サブ Issue を読み直す gh api に --paginate がありません（30件を超える子を取りこぼす）"
 }
+
+@test "review は、局所の指摘でも水平展開の要否を判定し、反映のときに同じ場所も直す（設計書 §7）" {
+  f="$SKILLS/review/SKILL.md"
+  grep -q '水平展開の要否' "$f" || fail "手順4に水平展開の要否の判定がありません"
+  grep -q '局所の指摘でも' "$f" || fail "局所の指摘でも水平展開を判定することが書かれていません"
+  grep -q '同じ誤りが残っていれば' "$f" || fail "同じ誤りが残る場所を一覧に加えることが書かれていません"
+  # 手順6（反映する）の中に、水平展開の場所を直すことと再検索がある
+  step6="$(awk '/^### 6\./ { on = 1; next } /^### 7\./ { on = 0 } on' "$f")"
+  grep -q '水平展開' <<<"$step6" || fail "手順6に、水平展開の場所を直すことがありません"
+  grep -q '同じ検索' <<<"$step6" || fail "手順6に、直した後の再検索がありません"
+}
+
+@test "不具合の修正の手順に、同じ原因の他の箇所を探すことがある（CONTRIBUTING・task-flow・設計書）" {
+  grep -q '同じ原因の他の箇所' "$BATS_TEST_DIRNAME/../CONTRIBUTING.md" || fail "CONTRIBUTING のテストのルールにありません"
+  grep -q '同じ原因の他の箇所' "$BATS_TEST_DIRNAME/../plugins/dev-workflow/defaults/task-flow.md" || fail "SessionStart の流れ（defaults/task-flow.md）にありません"
+  grep -q '同じ原因の他の箇所を' "$BATS_TEST_DIRNAME/../docs/design.md" || fail "設計書にありません"
+}
