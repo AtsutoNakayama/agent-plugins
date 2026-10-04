@@ -415,3 +415,14 @@ checks_rule() {
   assert_no_calls
   assert_output --partial "必須のチェック: lint-result"
 }
+
+@test "--required-check で置き換えても、同じ名前の既存の integration_id は引き継ぎ、新しい名前には付けない" {
+  setup_fake_gh
+  settled_repo
+  existing_ruleset '{}' "[$(checks_rule false lint-result)]"
+  run_setup --required-check lint-result --required-check test-result
+  assert_success
+  assert_equal "$(called PUT)" 1
+  assert_equal "$(body PUT | jq -c '.rules[] | select(.type == "required_status_checks") | .parameters.required_status_checks')" \
+    '[{"context":"lint-result","integration_id":15368},{"context":"test-result"}]'
+}

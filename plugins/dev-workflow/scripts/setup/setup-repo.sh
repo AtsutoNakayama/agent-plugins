@@ -174,6 +174,7 @@ fi
 desired="$(jq -n --argjson ex "$existing" --arg name "$RULESET_NAME" --arg ref "refs/heads/$branch" \
   --arg n "$approvals" --argjson checks "$checks_json" '
   ([($ex // {}).rules // [] | .[] | select(.type == "pull_request")][0].parameters // {}) as $old
+  | ([($ex // {}).rules // [] | .[] | select(.type == "required_status_checks")][0].parameters.required_status_checks // []) as $oldchecks
   | (["deletion", "non_fast_forward", "pull_request"]
     + (if ($checks | length) > 0 then ["required_status_checks"] else [] end)) as $managed
   | {
@@ -197,7 +198,10 @@ desired="$(jq -n --argjson ex "$existing" --arg name "$RULESET_NAME" --arg ref "
             [{type: "required_status_checks", parameters: {
               strict_required_status_checks_policy: true,
               do_not_enforce_on_create: false,
-              required_status_checks: ($checks | map({context: .}))}}]
+              # 同じ名前の既存のチェックが報告元のアプリ（integration_id）を指定していれば、引き継ぐ
+              required_status_checks: ($checks | map(. as $c
+                | ([$oldchecks[] | select(.context == $c and .integration_id != null)][0].integration_id) as $i
+                | {context: $c} + (if $i == null then {} else {integration_id: $i} end)))}}]
           else [] end)
       )
     }')"
