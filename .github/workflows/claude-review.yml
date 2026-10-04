@@ -111,7 +111,9 @@ jobs:
           else
             seen="$marker"
           fi
-          if gh api --paginate "repos/${GITHUB_REPOSITORY}/issues/${PR_NUMBER}/comments" --jq '.[].body' |
+          # 誰でも目印と同じ文字列をコメントできるので、このワークフローが投稿したコメントだけを数える
+          if gh api --paginate "repos/${GITHUB_REPOSITORY}/issues/${PR_NUMBER}/comments" \
+            --jq '.[] | select(.user.login == "github-actions[bot]") | .body' |
             grep -qF -- "$seen"; then
             echo "run=false" >> "$GITHUB_OUTPUT"
             exit 0
@@ -132,9 +134,17 @@ jobs:
         if: steps.pr.outputs.run == 'true'
         env:
           MARKER: ${{ steps.pr.outputs.marker }}
+          SHA: ${{ steps.pr.outputs.sha }}
         run: |
           set -euo pipefail
           mkdir -p "$REVIEW_DIR"
+          # チェックアウトした sha と、PR 番号から取る差分の head がずれる（間に push される）と、
+          # 古いファイルと新しい差分を同時に読んで、古い sha の目印でコメントしてしまう。
+          # 差分を取った後に head を確かめ直し、変わっていたらコメントせずに終わる。
+          # 目印が付かないので、次の見回りや上限のコメントでやり直せる
+          head_unchanged() {
+            [ "$(gh api "repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}" --jq '.head.sha')" = "$SHA" ]
+          }
           # 差分が大きすぎる（約2万行）と gh pr diff は HTTP 406 で失敗し、30分ごとに失敗を繰り返すので、
           # そのときだけ目印付きでコメントして、同じコミットには動かないようにする。
           # 一時的な API のエラーなどは、目印を付けずにジョブを失敗させ、次の機会に再試行する
@@ -144,6 +154,10 @@ jobs:
               cat "${REVIEW_DIR}/pr.diff.err" >&2
               exit 1
             fi
+            if ! head_unchanged; then
+              echo "ok=false" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
             printf '%s\n### Claude によるレビュー\n\n差分が大きすぎて取得できないため、レビューしませんでした。\n' "$MARKER" |
               gh pr comment "$PR_NUMBER" --repo "$GITHUB_REPOSITORY" --body-file -
             echo "ok=false" >> "$GITHUB_OUTPUT"
@@ -151,6 +165,10 @@ jobs:
           fi
           gh pr view "$PR_NUMBER" --repo "$GITHUB_REPOSITORY" --json title,body,baseRefName \
             > "${REVIEW_DIR}/pr.json"
+          if ! head_unchanged; then
+            echo "ok=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
           echo "ok=true" >> "$GITHUB_OUTPUT"
       - name: Claude でレビューする
         if: steps.diff.outputs.ok == 'true'
