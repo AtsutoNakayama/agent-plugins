@@ -155,13 +155,34 @@ TEMPLATES="$(cd "$BATS_TEST_DIRNAME/../plugins/dev-workflow/templates/adr" && pw
   assert_equal "$(sed -n 's/^issue: //p' docs/adr/0010-y.md)" 10
 }
 
-@test "置き換える ADR を書き換えられずに失敗しても、一時ファイルを残さない" {
+@test "10進数にすると桁があふれる極端に長い Issue 番号は、終了コード 64 で止まる" {
+  run_script adr-create.sh --issue 18446744073709551616 --name x --template full
+  assert_failure 64
+  run_script adr-create.sh --issue 00010000 --name x --template full
+  assert_failure 64
+  run_script adr-create.sh --issue 0000 --name x --template full
+  assert_success
+  assert_equal "$(jq -r .path <<<"$output")" "docs/adr/0000-x.md"
+}
+
+@test "置き換える ADR の front matter が閉じていなければ、何も作らず書き換えずに終了コード 4 で止まる" {
+  mkdir -p docs/adr
+  printf -- '---\ntitle: x\n\n# 本文\nstatus: accepted\n' >docs/adr/0001-open.md
+  cp docs/adr/0001-open.md "$TMP/before.md"
+  run_script adr-create.sh --issue 12 --name new --template full --supersedes 0001-open.md
+  assert_failure 4
+  [ ! -e docs/adr/0012-new.md ] || fail "ADR を作っています"
+  diff "$TMP/before.md" docs/adr/0001-open.md
+}
+
+@test "置き換える ADR に書き込めなければ、何も作らず、一時ファイルも残さずに終了コード 4 で止まる" {
+  [ "$(id -u)" -ne 0 ] || skip "root は読み取り専用のファイルにも書ける"
   run_script adr-create.sh --issue 10 --name old --template full
   mkdir "$TMP/tmpdir"
   chmod a-w docs/adr/0010-old.md
   TMPDIR="$TMP/tmpdir" run_script adr-create.sh --issue 11 --name new --template full --supersedes 0010-old.md
   chmod u+w docs/adr/0010-old.md
-  [ "$(id -u)" -eq 0 ] && skip "root は読み取り専用のファイルにも書ける"
-  assert_failure
+  assert_failure 4
+  [ ! -e docs/adr/0011-new.md ] || fail "ADR を作っています"
   assert_equal "$(ls -A "$TMP/tmpdir")" ""
 }

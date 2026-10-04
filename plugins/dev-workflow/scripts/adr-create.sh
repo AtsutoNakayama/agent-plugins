@@ -54,9 +54,10 @@ done
 case "$issue" in
   *[!0-9]*) dw_die "--issue には数字を指定してください: $issue" 64 ;;
 esac
-# 先頭の 0 を外して10進数にする（printf %04d は 08 を8進数として読んで落ちる）
-issue=$((10#$issue))
-[ "$issue" -le 9999 ] || dw_die "--issue は4桁までにしてください: $issue" 64
+# 先頭の 0 を外して10進数にする（printf %04d は 08 を8進数として読んで落ちる）。桁あふれを避けるため、数にする前に桁数を見る
+stripped="$(printf '%s' "$issue" | sed 's/^0*//')"
+[ "${#stripped}" -le 4 ] || dw_die "--issue は4桁までにしてください: $issue" 64
+issue=$((10#${stripped:-0}))
 [ -n "$name" ] || dw_die "--name は必須です" 64
 case "$template" in
   full) tpl="adr-template.md" ;;
@@ -98,9 +99,11 @@ for f in ${supersedes[@]+"${supersedes[@]}"}; do
   done
   [ -n "$p" ] || dw_die "置き換える ADR が見つかりません: ${f}" 4
   [ "$p" != "$path" ] || dw_die "自分自身は置き換えられません: ${f}" 4
-  # front matter の中の status の行を読めること
-  awk 'NR == 1 && $0 != "---" { exit 1 } NR > 1 && $0 == "---" { exit !found } /^status:/ { found = 1 }' "$p" \
-    || dw_die "置き換える ADR の front matter に status の行がありません: ${f}" 4
+  # front matter が閉じていて、その中に status の行があること
+  awk 'NR == 1 && $0 != "---" { exit 1 } NR > 1 && $0 == "---" { closed = 1; exit !found } /^status:/ { found = 1 } END { exit !closed }' "$p" \
+    || dw_die "置き換える ADR の front matter が閉じていない、または status の行がありません: ${f}" 4
+  # 書き込めないと、新しい ADR を作った後で書き換えに失敗するので、先に確かめる
+  [ -w "$p" ] || dw_die "置き換える ADR に書き込めません: ${f}" 4
   old_paths+=("$p")
 done
 
