@@ -178,16 +178,13 @@ if [ -n "$parent" ]; then
     dw_warn "#${parent} の子にすると ${depth} 層目になります（目安は ${DW_SUB_ISSUE_DEPTH_GUIDE} 層まで）"
   fi
 
-  # 親の Project の項目と、今の Story Point。Issue から項目を引く REST は無いので、項目の一覧をリポジトリで絞って番号で探す
-  # （番号で絞る検索は無く、文字列での検索は本文などにも当たるため）。Project に入っていなければ、外す値も無い
+  # 親の Project の項目と、今の Story Point。Project に入っていなければ、外す値も無い
   parent_item=null
   if [ -n "$sp_field_id" ]; then
     sp_db_id="$(jq -r .databaseId <<<"$sp_field")"
-    parent_item="$(gh api --paginate "$(jq -r .restPath <<<"$project")/items" -X GET \
-      -f q="repo:$repo_nwo is:issue" -f per_page=100 -f fields="$sp_db_id" \
-      | jq -sc --arg r "$repo_nwo" --argjson n "$parent" --argjson f "$sp_db_id" '
-          [add // [] | .[] | select(.content.number == $n and (.content.repository_url | endswith("/repos/" + $r)))][0]
-          | if . == null then null else {id: .node_id, story_point: ([.fields[]? | select(.id == $f)][0].value)} end')" \
+    parent_item="$(dw_project_item "$(jq -r .restPath <<<"$project")" "$repo_nwo" "$parent" "$sp_db_id" \
+      | jq -c --argjson f "$sp_db_id" '
+          if . == null then null else {id: .node_id, story_point: ([.fields[]? | select(.id == $f)][0].value)} end')" \
       || dw_die "親の Issue #${parent} の Story Point を読めませんでした"
   fi
 fi

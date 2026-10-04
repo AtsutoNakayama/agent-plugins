@@ -211,6 +211,15 @@ dw_find_nocase() {
 # --- GitHub Project（v2） -------------------------------------------------------
 # gh project と REST で操作する。REST の Project の API は所有者の種類（users / orgs）でパスが分かれる。
 
+# 所有者の種類（User / Organization）から、REST と URL に使う所有者のパス（users/<所有者> か orgs/<所有者>）を出力する。
+# 使い方: dw_owner_path <所有者の種類> <所有者>
+dw_owner_path() {
+  case "$1" in
+    Organization) printf 'orgs/%s\n' "$2" ;;
+    *) printf 'users/%s\n' "$2" ;;
+  esac
+}
+
 # Project の id（node id）・番号・URL・REST のパス（restPath。users/<所有者>/projectsV2/<番号> など）と
 # 項目（Status の選択肢を含む）を出力する。無ければ案内して止まる。
 # 項目は {id（node id）, databaseId（REST の数値の id）, name, dataType（REST の data_type。number・single_select など）,
@@ -222,10 +231,7 @@ dw_project_fields() {
   project="$(dw_gh_find gh project view "$2" --owner "$1" --format json)" || return 1
   # 無い Project は gh がエラー（Could not resolve to a ProjectV2）を返すので、dw_gh_find で null に揃えてから案内する
   [ "$project" != null ] || dw_die "Project が見つかりません: ${1}/${2}（setup-project.sh で設定してください）"
-  case "$(jq -r .owner.type <<<"$project")" in
-    Organization) path="orgs/$1" ;;
-    *) path="users/$1" ;;
-  esac
+  path="$(dw_owner_path "$(jq -r .owner.type <<<"$project")" "$1")"
   fields="$(gh api --paginate "$path/projectsV2/$2/fields?per_page=100" | jq -sc 'add // []')" || return 1
   jq -c --argjson f "$fields" --arg p "$path/projectsV2/$2" '{id, number, url, restPath: $p,
     fields: ($f | map({id: .node_id, databaseId: .id, name, dataType: .data_type,
@@ -235,9 +241,11 @@ dw_project_fields() {
 # Issue などを Project に追加し、項目の id（node id）を出力する。既に入っていれば既存の項目が返る。
 # Project の自動追加と同時に走ると、片方が「Content already exists」で失敗する。再試行すれば既存の項目が返るので、
 # その失敗のときだけ、待って最大3回まで試す（待つ秒数は DW_RETRY_SLEEP、既定 1）。
-# 使い方: dw_project_add_item <所有者> <番号> <Issue などの URL>
+# それでも「Content already exists」で失敗したときは、項目が既にあるので、項目の一覧（REST）から探して、その id を使う。
+# 見つからないとき、ほかのエラーのときは、エラーを出して止まる。
+# 使い方: dw_project_add_item <所有者> <番号> <Issue の URL>
 dw_project_add_item() {
-  local out errfile tries=0
+  local out errfile tries=0 existing
   errfile="$(mktemp)"
   while :; do
     if out="$(gh project item-add "$2" --owner "$1" --url "$3" --format json 2>"$errfile")"; then
@@ -246,14 +254,49 @@ dw_project_add_item() {
       return
     fi
     tries=$((tries + 1))
-    if [ "$tries" -lt 3 ] && grep -q 'Content already exists' "$errfile"; then
-      sleep "${DW_RETRY_SLEEP:-1}"
-      continue
+    if grep -q 'Content already exists' "$errfile"; then
+      if [ "$tries" -lt 3 ]; then
+        sleep "${DW_RETRY_SLEEP:-1}"
+        continue
+      fi
+      if existing="$(dw_project_find_item "$1" "$2" "$3")" && [ -n "$existing" ]; then
+        rm -f "$errfile"
+        printf '%s\n' "$existing"
+        return
+      fi
     fi
     cat "$errfile" >&2
     rm -f "$errfile"
     return 1
   done
+}
+
+# Project の項目のうち、リポジトリの Issue <番号> の項目（REST の項目。node_id が gh project で使う id）を出力する。無ければ null。
+# Issue から項目を引く REST は無いので、項目の一覧をリポジトリで絞り、ページを辿って、リポジトリと番号で探す
+# （番号で絞る検索は無く、文字列での検索は本文などにも当たるため）。値を読む項目の databaseId を渡すと、その値も fields に入る。
+# 使い方: dw_project_item <Project の REST のパス（restPath）> <所有者/名前> <Issue の番号> [<値を読む項目の databaseId>]
+dw_project_item() {
+  local args
+  args=(-f q="repo:$2 is:issue" -f per_page=100)
+  [ -z "${4:-}" ] || args+=(-f fields="$4")
+  gh api --paginate "$1/items" -X GET "${args[@]}" \
+    | jq -sc --arg r "$2" --argjson n "$3" '
+        [add // [] | .[] | select(.content.number == $n and (.content.repository_url | endswith("/repos/" + $r)))][0]'
+}
+
+# Project の項目から、<Issue の URL> の項目の id（node id）を探して出力する。無ければ何も出さずに失敗する。
+# 使い方: dw_project_find_item <所有者> <番号> <Issue の URL>
+dw_project_find_item() {
+  local project path repo n id
+  # URL は https://<ホスト>/<所有者>/<名前>/issues/<番号>
+  repo="$(sed -nE 's#^https://[^/]+/([^/]+/[^/]+)/issues/[0-9]+$#\1#p' <<<"$3")"
+  n="${3##*/}"
+  [ -n "$repo" ] || return 1
+  project="$(gh project view "$2" --owner "$1" --format json 2>/dev/null)" || return 1
+  path="$(dw_owner_path "$(jq -r .owner.type <<<"$project")" "$1")/projectsV2/$2"
+  id="$(dw_project_item "$path" "$repo" "$n" 2>/dev/null | jq -r '.node_id // empty')" || return 1
+  [ -n "$id" ] || return 1
+  printf '%s\n' "$id"
 }
 
 # 項目の値を設定する。値は gh project item-edit のオプションで渡す（--single-select-option-id <id> や --number <数>。
