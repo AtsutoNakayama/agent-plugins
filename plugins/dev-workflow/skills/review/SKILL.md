@@ -16,34 +16,34 @@ description: 作業中のブランチの変更を、組み込みの /code-review
 
 ## 手順
 
-### 1. レビューする変更を決める
+### 1. 観点を決める
 
 - コミットしていない変更があれば、先に commit スキルでコミットする（`/code-review` はコミットした変更だけを見るので、独自の観点と範囲を揃える）
-- `config.sh .base_branch` でマージ先のブランチを読み、`git fetch origin <base_branch>` の後に `git merge-base origin/<base_branch> HEAD` を基点にする
-- 基点からの差分（`git diff <基点>`）をレビューの対象にする
-- 差分が無ければ、レビューするものが無いと伝えて止める
-- Issue の番号はブランチ名から読む（`branch.pattern` の `{issue_number}` の位置）。読めなければ Issue は無いものとして進める
-- 変更の type を決める。Issue があれば `gh issue view <番号> --json labels` の type ラベル（`labels.types` のどれか）、Issue が無いか type ラベルが1つに決まらなければ、ブランチ名の type（`branch.pattern` の `{type}` の位置）。どちらでも分からなければ、type は無いものとして進める
-
-### 2. 観点を集める
-
-手順1で決めたものを渡して `review-perspectives.sh` を実行する。Issue や type が無ければ、その引数は省く。
+- `review-perspectives.sh --auto` を実行する。基点・マージ先・Issue の番号・type はスクリプトが決めるので、自分で組み立てたり、引数を足したりしない
 
 ```bash
-"${CLAUDE_PLUGIN_ROOT}/scripts/review-perspectives.sh" --base <基点> --target origin/<base_branch> --type <type> --issue <番号>
+"${CLAUDE_PLUGIN_ROOT}/scripts/review-perspectives.sh" --auto
 ```
 
-- `perspectives` の各観点を手順3でレビューする。0件なら、レビューする観点が無いと伝えて止める
+- 失敗したら（終了コードが 0 でない）、レビューを止め、標準エラーの1行のメッセージをそのまま伝える。絞り込まずに続けたり、自分で観点を選んだりしない
+- 標準エラーの警告（`warn:`。Issue を読めない・マージ先を最新にできないなど）は、そのままユーザーに伝える
+- 出力の `context` の `base` を基点、`issue` を Issue の番号（null なら Issue は無い）として、以下で使う
+- 基点からの差分（`git diff <基点>`）が無ければ、レビューするものが無いと伝えて止める
+
+### 2. 観点を伝える
+
+- 使う観点は `perspectives` にある観点だけ。`skipped`・`disabled`・`invalid` の観点は、手順3で起動しない
+- `perspectives` が0件なら、レビューする観点が無いと伝えて止める
 - `skipped` は、今の変更に当てはまらないので外した観点として、名前と理由（`reason`）をユーザーに伝える
 - `invalid` があれば、ファイルと理由をユーザーに伝える（レビューは続ける）
 - `disabled` は、止めている観点としてユーザーに伝える
 
 ### 3. 並行してレビューする
 
-次をまとめて並行して実行する。
+`perspectives` の観点ごとに、次のどちらかを、まとめて並行して実行する。
 
-- **独自の観点**：`perspectives` のうち `builtin` が null の観点ごとに、Agent ツールでサブエージェントを1つずつ、同じメッセージの中で起動する。サブエージェントには、観点ファイルのパス（`path`）・基点・Issue の番号を渡し、下の「サブエージェントへの指示」をそのまま含める
-- **組み込みのコマンド**：`builtin` が `code-review` の観点があれば、組み込みの `/code-review`（Skill ツールの `code-review`）を、今のブランチ名を引数にして実行する（基点の sha を渡すと、そのコミット1つだけをレビューしてしまう）。使えない環境では、その旨を最後に伝えて独自の観点だけで進める。`perspectives` に無ければ（止めた・外した）、`/code-review` は実行しない
+- **`builtin` が null の観点**：Agent ツールでサブエージェントを1つずつ、同じメッセージの中で起動する。サブエージェントには、観点ファイルのパス（`path`）・基点・Issue の番号を渡し、下の「サブエージェントへの指示」をそのまま含める
+- **`builtin` が `code-review` の観点**：組み込みの `/code-review`（Skill ツールの `code-review`）を、今のブランチ名を引数にして実行する（基点の sha を渡すと、そのコミット1つだけをレビューしてしまう）。使えない環境では、その旨を最後に伝えて、ほかの観点だけで進める
 
 サブエージェントへの指示:
 
