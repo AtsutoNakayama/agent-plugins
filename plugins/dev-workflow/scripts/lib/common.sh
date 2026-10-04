@@ -95,6 +95,21 @@ dw_check_json() {
     || dw_die "JSON のオブジェクトとして読めません: $1" 2
 }
 
+# ブランチ名を branch.pattern に当て、type と Issue の番号を「<type>|<番号>」で出力する（無いものは空）
+# 区切りを空白にすると、read が先頭の空白を外して、type が空のときに番号を type と取り違える
+# 使い方: dw_parse_branch <設定の JSON> <ブランチ名>
+dw_parse_branch() {
+  jq -r --arg b "$2" '
+    .labels.types as $t
+    | (.branch.pattern
+      | gsub("\\{type\\}"; "(?<type>" + ($t | join("|")) + ")")
+      | gsub("\\{issue_number\\}"; "(?<issue>[0-9]+)")
+      | gsub("\\{slug\\}"; "[a-z0-9]+(?:-[a-z0-9]+)*")
+      | "^" + . + "$") as $re
+    | (try ($b | capture($re)) catch null) // {}
+    | "\(.type // "")|\(.issue // "")"' <<<"$1"
+}
+
 # GitHub の GraphQL API を呼び、応答の JSON を出力する。GraphQL は、gh のサブコマンドにも REST にも手段が無いときだけ使う。
 # 速さのためではなく、読みやすさ・保守のしやすさ・テストのしやすさと、node id を引き回さないため（設計書 §10）。
 # テストの偽 gh が応答を切り替えられるよう、クエリには必ず操作名を付ける（query Foo(...)）。

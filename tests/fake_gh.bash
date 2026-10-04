@@ -37,7 +37,7 @@ for a in "$@"; do
 done
 fail() { if [ "${FAKE_FAIL:-}" = "$1" ]; then echo "${FAKE_FAIL_MSG:-gh: failed}" >&2; exit 1; fi; }
 case "$1 $2" in
-  "repo view") echo '{"nameWithOwner": "me/demo"}' | jq -r "$q" ;;
+  "repo view") echo '{"nameWithOwner": "me/demo", "url": "https://github.com/me/demo"}' | jq -r "$q" ;;
   "--version "*) echo "gh version ${FAKE_GH_VERSION:-2.96.0} (2026-07-02)" ;;
   "issue view")
     echo "issue-view $3 ${*:4}" >>"$CALLS"
@@ -83,7 +83,7 @@ case "$1 $2" in
     shift 2
     echo "pr-list $*" >>"$CALLS"
     fail pr-list
-    if [ -f "$FIX/pr-list.json" ]; then jq -r "$q" "$FIX/pr-list.json"; else echo '[]'; fi
+    if [ -f "$FIX/pr-list.json" ]; then jq -r "$q" "$FIX/pr-list.json"; else echo '[]' | jq -r "$q"; fi
     ;;
   "pr create")
     shift 2
@@ -122,7 +122,7 @@ SH
 # 使い方: fake_issue <番号> <ラベルの配列> [状態（既定 OPEN）] [割り当てられた login の配列]
 fake_issue() {
   jq -n --argjson n "$1" --argjson l "$2" --arg s "${3:-OPEN}" --argjson a "${4:-[]}" \
-    '{number: $n, title: "作業 \($n)", state: $s, labels: ($l | map({name: .})), assignees: ($a | map({login: .}))}' \
+    '{number: $n, url: "https://github.com/me/demo/issues/\($n)", title: "作業 \($n)", state: $s, labels: ($l | map({name: .})), assignees: ($a | map({login: .}))}' \
     >"$FIX/issue-$1.json"
 }
 
