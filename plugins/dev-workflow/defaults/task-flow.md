@@ -10,6 +10,7 @@
 6. **マージされたら後片付けをします**（`/dev-workflow:task-finish`）。ワークツリーとローカルのブランチを削除し、base_branch を最新にします。
 
 - Issue をやめることにしたとき（重複・不要・誤って起票した）は、取りやめます（`/dev-workflow:task-cancel`）。マージした後の片付けには使いません。
+- 次にどの Issue に着手するか、同時に進められるものはあるかを知りたいときは、`/dev-workflow:task-next` を使います（読むだけで、何も変えません）。
 - Issue を任意の列（Blocked など）へ移すときは、`/dev-workflow:task-status` を使います。
 - 質問への回答や調査だけで、ファイルを変えない依頼には、この流れは要りません。
 - PR・Issue・CI に触れるときは、URL を添えます。git の操作の後のリンクはフックが出しますが、CI や CodeRabbit の結果を伝えるとき、Issue を起票したとき、PR や Issue の状態を答えるときなど、フックで出せない場面では、自分で URL を書きます。
