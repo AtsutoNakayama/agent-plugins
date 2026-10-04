@@ -87,6 +87,14 @@ frontmatter() { awk 'NR == 1 && $0 == "---" { on = 1; next } on && $0 == "---" {
     || fail "サブ Issue を読み直す gh api に --paginate がありません（30件を超える子を取りこぼす）"
 }
 
+@test "task-next は読み取り専用（確認を取らず、Issue や列を変えるスクリプトを呼ばない。設計書 §8）" {
+  f="$SKILLS/task-next/SKILL.md"
+  grep -q 'next-tasks.sh' "$f" || fail "task-next が next-tasks.sh を使っていません"
+  if grep -n -e 'AskUserQuestion' -e 'status-set.sh' -e 'task-start.sh' -e 'issue-create.sh' -e 'issue-cancel.sh' "$f"; then
+    fail "task-next に、確認や書き込みのスクリプトがあります（何も変えない読み取り専用）"
+  fi
+}
+
 @test "review は、局所の指摘でも水平展開の要否を判定し、反映のときに同じ場所も直す（設計書 §7）" {
   f="$SKILLS/review/SKILL.md"
   grep -q '水平展開の要否' "$f" || fail "手順4に水平展開の要否の判定がありません"
