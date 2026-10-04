@@ -188,14 +188,22 @@ silent() {
   git checkout -q -b feat/21-x
   msg="$(head -c 50000 /dev/zero | tr '\0' a | fold -w 76)"
   words="$(printf 'w%d ' $(seq 1 10000))"
-  # 壁時計は、bats を並列に実行すると CPU の取り合いで延びる（#125）。
-  # 解析そのものの重さだけを見るために、子プロセスを含む CPU 時間（ユーザー + システム）で測る
-  local TIMEFORMAT='%U %S'
-  { time denied "強制 push" "git commit -m \"$msg\"; git push -f" "echo $words; git push -f" \
-    "$(printf 'git commit -F - <<EOF\n%s\nEOF\ngit push -f' "$msg")"; } 2>"$TMP/cpu"
+  # 壁時計の10秒は、bats を並列に実行すると CPU の取り合いで延びて落ちた（#125）。
+  # 解析そのものの重さを見るために、フックを動かす間の CPU 時間（ユーザー + システム。子プロセスを含む）で測る。
+  # CPU を使わない待ちや停止は見えないので、壁時計にも大きめの上限を置く
+  local TIMEFORMAT='%U %S' c
+  : >"$TMP/cpu"
+  SECONDS=0
+  for c in "git commit -m \"$msg\"; git push -f" "echo $words; git push -f" \
+    "$(printf 'git commit -F - <<EOF\n%s\nEOF\ngit push -f' "$msg")"; do
+    { time run_hook "$c"; } 2>>"$TMP/cpu"
+    [ "$status" -eq 2 ] || fail "止めなかった（$status）: ${c:0:80}"
+    assert_output --partial "強制 push"
+  done
   local cpu
-  cpu="$(awk '{ printf "%d", $1 + $2 }' "$TMP/cpu")"
-  [ "$cpu" -lt 10 ] || fail "CPU 時間で ${cpu} 秒かかった"
+  cpu="$(awk '{ t += $1 + $2 } END { printf "%.1f", t }' "$TMP/cpu")"
+  awk -v t="$cpu" 'BEGIN { exit !(t < 10) }' || fail "CPU 時間で ${cpu} 秒かかった"
+  [ "$SECONDS" -lt 120 ] || fail "壁時計で ${SECONDS} 秒かかった"
 }
 
 @test "ヒアドキュメントの後ろのコマンドは調べる" {
