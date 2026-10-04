@@ -38,7 +38,7 @@ Issue をやめることにしたときは、`/dev-workflow:task-cancel` を使�
 
 ## PR の自動レビュー
 
-PR は、CodeRabbit（`.coderabbit.yaml`）が作ったときに1回だけ自動でレビューします。push のたびにはレビューしないので、もう一度レビューしてほしいときは PR に `@coderabbitai review` とコメントします。CodeRabbit のレビューは1時間あたりの回数に上限があり、上限で失敗したレビューは自動では再試行されません。そこで、次のときは Claude が代わりにレビューして PR にコメントします（`.github/workflows/claude-review.yml`）。
+PR は、CodeRabbit（`.coderabbit.yaml`）が作ったときに1回だけ自動でレビューします。push のたびにはレビューしません。指摘への対応は、下の「指摘に手元の Claude Code で対応する」のとおり、返信で行います。CodeRabbit のレビューは1時間あたりの回数に上限があり、上限で失敗したレビューは自動では再試行されません。そこで、次のときは Claude が代わりにレビューして PR にコメントします（`.github/workflows/claude-review.yml`）。
 
 - CodeRabbit が上限に引っかかったとき（`coderabbitai[bot]` の `rate limited by coderabbit.ai` のコメントがきっかけです）
 - PR を作ってから1時間経っても CodeRabbit のレビューが無いとき（30分ごとに見回ります。障害など上限以外の理由で動かなかった場合も拾います）
