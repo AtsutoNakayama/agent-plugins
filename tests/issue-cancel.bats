@@ -454,3 +454,12 @@ writes() { grep -oE '^(issue-comment|issue-close|pr-comment|pr-close|api-delete)
   assert_output --partial "#17 のサブ Issue を読めませんでした"
   assert_equal "$(writes)" ""
 }
+
+@test "github.com 以外のホスト（GHES など）の子も、開いている子孫として数える" {
+  setup_cancel
+  jq -n '[{number: 50, title: "子 50", state: "open", html_url: "https://ghe.example.com/me/demo/issues/50",
+    url: "https://ghe.example.com/api/v3/repos/me/demo/issues/50", sub_issues_summary: {total: 0}}]' >"$FIX/sub-issues-17.json"
+  run_script issue-cancel.sh --issue 17 --reason "やめます"
+  assert_failure 2
+  assert_output --partial "開いている子の Issue（#50）があります"
+}
