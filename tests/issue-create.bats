@@ -680,14 +680,11 @@ assert_no_changes() {
   export FAKE_FAIL_MSG='GraphQL: Content already exists in this project (addProjectV2ItemById)'
   existing_issue 12
   # 別のリポジトリの同じ番号の項目は、この Issue ではない
-  echo '{"items": [
-    {"id": "ITX", "content": {"number": 30, "repository": "other/repo", "url": "https://github.com/other/repo/issues/30"}},
-    {"id": "IT30", "content": {"number": 30, "repository": "me/demo", "url": "https://github.com/me/demo/issues/30"}}]}' \
-    >"$FIX/ListItems.json"
+  project_items other/repo:30: me/demo:30:
   run_create --title t --type feat --story-point 3 --blocked-by 12
   assert_success
   assert_equal "$(called AddItem)" 3
-  assert_equal "$(called ListItems)" 1
+  assert_equal "$(args ProjectItems)" '{"path":"users/me/projectsV2/4/items","f":["q=repo:me/demo","per_page=100"]}'
   assert_equal "$(jq -c '[.project.item_id, .project.status]' <<<"$json")" '["IT30","Todo"]'
   # Status と Story Point を設定し、依存関係も登録する
   assert_equal "$(called SetField)" 2
@@ -699,7 +696,7 @@ assert_no_changes() {
   export DW_RETRY_SLEEP=0
   export FAKE_FAIL=AddItem
   export FAKE_FAIL_MSG='GraphQL: Content already exists in this project (addProjectV2ItemById)'
-  echo '{"items": []}' >"$FIX/ListItems.json"
+  project_items me/demo:99:
   run_create --title t --type feat
   assert_failure
   assert_output --partial "Project に追加できませんでした"

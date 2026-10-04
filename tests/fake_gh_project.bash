@@ -13,7 +13,6 @@
 #   gh project link                  LinkRepo
 #   gh project field-create          CreateNumberField
 #   gh project item-add              AddItem
-#   gh project item-list             ListItems
 #   gh project item-edit             SetField
 #   gh api users/<login>             Owner
 #   gh api .../projectsV2/N/fields   ProjectFields
@@ -29,7 +28,6 @@ fake_gh_project() {
     "project link") op=LinkRepo ;;
     "project field-create") op=CreateNumberField ;;
     "project item-add") op=AddItem ;;
-    "project item-list") op=ListItems ;;
     "project item-edit") op=SetField ;;
     "api "*)
       shift

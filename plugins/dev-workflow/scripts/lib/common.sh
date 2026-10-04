@@ -235,7 +235,7 @@ dw_project_fields() {
 # Issue などを Project に追加し、項目の id（node id）を出力する。既に入っていれば既存の項目が返る。
 # Project の自動追加と同時に走ると、片方が「Content already exists」で失敗する。再試行すれば既存の項目が返るので、
 # その失敗のときだけ、待って最大3回まで試す（待つ秒数は DW_RETRY_SLEEP、既定 1）。
-# それでも「Content already exists」で失敗したときは、項目が既にあるので、gh project item-list で探して、その id を使う。
+# それでも「Content already exists」で失敗したときは、項目が既にあるので、項目の一覧（REST）から探して、その id を使う。
 # 見つからないとき、ほかのエラーのときは、エラーを出して止まる。
 # 使い方: dw_project_add_item <所有者> <番号> <Issue などの URL>
 dw_project_add_item() {
@@ -265,16 +265,24 @@ dw_project_add_item() {
   done
 }
 
-# Project の項目から、URL が <Issue などの URL> の項目の id（node id）を探して出力する。無ければ何も出さずに失敗する。
-# URL が応答に無い古い gh のために、リポジトリと番号でも照合する。
+# Project の項目から、<Issue などの URL> の項目の id（node id）を探して出力する。無ければ何も出さずに失敗する。
+# Issue から項目を引く REST は無いので、項目の一覧をリポジトリで絞り、ページを辿って、リポジトリと番号で探す。
 # 使い方: dw_project_find_item <所有者> <番号> <Issue などの URL>
 dw_project_find_item() {
-  local list id
-  list="$(gh project item-list "$2" --owner "$1" --limit 1000 --format json 2>/dev/null)" || return 1
-  id="$(jq -r --arg u "$3" '
-    ($u | capture("^https://[^/]+/(?<repo>[^/]+/[^/]+)/(issues|pull)/(?<n>[0-9]+)$")? // {repo: "", n: "0"}) as $k
-    | [(.items // [])[] | select(.content.url == $u
-        or (.content.number == ($k.n | tonumber) and .content.repository == $k.repo))][0].id // empty' <<<"$list")" || return 1
+  local project path repo n id
+  # URL は https://<ホスト>/<所有者>/<名前>/(issues|pull)/<番号>
+  repo="$(sed -nE 's#^https://[^/]+/([^/]+/[^/]+)/(issues|pull)/[0-9]+$#\1#p' <<<"$3")"
+  n="$(sed -nE 's#^.*/([0-9]+)$#\1#p' <<<"$3")"
+  [ -n "$repo" ] && [ -n "$n" ] || return 1
+  project="$(gh project view "$2" --owner "$1" --format json 2>/dev/null)" || return 1
+  case "$(jq -r .owner.type <<<"$project")" in
+    Organization) path="orgs/$1" ;;
+    *) path="users/$1" ;;
+  esac
+  id="$(gh api --paginate "$path/projectsV2/$2/items" -X GET -f q="repo:$repo" -f per_page=100 2>/dev/null \
+    | jq -sr --arg r "$repo" --argjson n "$n" '
+        [add // [] | .[] | select(.content.number == $n and (.content.repository_url | endswith("/repos/" + $r)))][0].node_id // empty')" \
+    || return 1
   [ -n "$id" ] || return 1
   printf '%s\n' "$id"
 }
