@@ -218,7 +218,7 @@ plugins/dev-workflow/scripts/setup/setup-repo.sh --no-merge-queue
 
 - マージキューは、Organization の公開リポジトリと、GitHub Enterprise Cloud の Organization の非公開リポジトリで使えます。個人のアカウントのリポジトリでは使えないので、`--merge-queue` は止まります。使えるかは、出力の `merge_queue.available` で分かります。
 - `--merge-queue`・`--no-merge-queue` は、`setup-all.sh` にも渡せます。どちらも付けなければ、キューを今のまま使う・使わないままにします。
-- 必須のチェックを求めるワークフローは、`merge_group` のイベントでも動くようにしてください（`on: merge_group`）。動かないと、キューのチェックが「待ち」のまま残ってマージされません。`setup-repo.sh` は、base_branch の `.github/workflows/` を読んで、必須のチェックのジョブがあるワークフローが `merge_group` で動くかを確かめ、出力の `merge_queue.merge_group` に出します（`--dry-run` でも確かめます）。キューを使うのに動かないチェックがあれば警告しますが、止めはしません。チェックの名前は、ジョブの ID か `name:` と突き合わせるので、どのジョブとも対応しない名前（外部のアプリのチェックなど）は確かめられず、そのことを警告します。キューを使い始めた後は、`doctor.sh` が同じことを確かめます。
+- 必須のチェックを求めるワークフローは、`merge_group` のイベントでも動くようにしてください（`on: merge_group`）。動かないと、キューのチェックが「待ち」のまま残ってマージされません。`setup-repo.sh` は、base_branch の `.github/workflows/` を読んで、必須のチェックのジョブがあるワークフローが `merge_group` で動くかを確かめ、出力の `merge_queue.merge_group` に出します（`--dry-run` でも、キューを使わないときも確かめます）。チェックの名前は、ジョブの ID か `name:` と突き合わせるので、どのジョブとも対応しない名前（外部のアプリのチェックなど）は確かめられません。キューを使うときは、動かないチェックと、確かめられないチェックを警告しますが、止めはしません。キューを使わないときは、警告せずに結果を出力に出すだけです。キューを使い始めた後は、`doctor.sh` が同じことを確かめます。
 - `doctor.sh` は、main にマージキューと最新の main の取り込みのどちらが効いているかを表示します。
 
 ## 開発
