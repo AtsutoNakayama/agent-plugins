@@ -32,7 +32,7 @@ Issue をやめることにしたときは、`/dev-workflow:task-cancel` を使�
 
 - コミットメッセージは [Conventional Commits](https://www.conventionalcommits.org/ja/v1.0.0/)（`<type>(<scope>): <要約>`）で書きます。type は `plugins/dev-workflow/defaults/workflow.json` の `commit.types` のどれかです。
 - PR のタイトルは `<type>: <Issueのタイトル>` とし、本文に `Closes #<Issue番号>` を付けます。
-- マージの条件：main のルールセットは、マージキューを通すことと、`lint-result` と `test-result` の成功を求めます。PR の CI が通ったら、PR の「Merge when ready」か `gh pr merge <PR番号>` でキューに入れます。キューは、最新の main に、先に並んだ PR と自分の PR を重ねた一時的なブランチを作り、そこで CI（`merge_group` のイベント）を動かして、通った PR から順に main にマージします。そのため、別の PR が先にマージされて main が進んでも、PR に main を取り込み直す必要はありません。古い main で通った CI の結果のままマージすると、先にマージされた変更と組み合わさって main が壊れることがありますが（#108）、キューは組み合わせた後の結果で確かめるので、これを防げます。キューの CI が失敗した PR はキューから外れるので、直して push してから、もう一度キューに入れます。main との間でコンフリクトしたときだけ、PR に main を取り込んで直します（`/dev-workflow:branch-update`）。
+- マージの条件：main のルールセットは、マージキューを通すことと、`lint-result` と `test-result` の成功と、レビューのスレッドがすべて resolved になっていることを求めます。resolved でないスレッドが1つでも残っている PR は、キューに入れられません（指摘への対応は、下の「指摘に手元の Claude Code で対応する」）。対象は行ごとの指摘のスレッドだけで、diff の外の指摘や Claude のレビューのコメントは含みません。PR の CI が通ったら、PR の「Merge when ready」か `gh pr merge <PR番号>` でキューに入れます。キューは、最新の main に、先に並んだ PR と自分の PR を重ねた一時的なブランチを作り、そこで CI（`merge_group` のイベント）を動かして、通った PR から順に main にマージします。そのため、別の PR が先にマージされて main が進んでも、PR に main を取り込み直す必要はありません。古い main で通った CI の結果のままマージすると、先にマージされた変更と組み合わさって main が壊れることがありますが（#108）、キューは組み合わせた後の結果で確かめるので、これを防げます。キューの CI が失敗した PR はキューから外れるので、直して push してから、もう一度キューに入れます。main との間でコンフリクトしたときだけ、PR に main を取り込んで直します（`/dev-workflow:branch-update`）。
 - マージはスカッシュのみです（キューもスカッシュでマージします）。main への直接 push・強制 push はルールセットとフックで禁止されています。
 - プラグインのラベルの定義（`plugins/dev-workflow/defaults/labels.json`）を変えた PR では、このリポジトリでも `plugins/dev-workflow/scripts/setup/setup-labels.sh` を実行して、ラベルを定義に揃えます。定義を変えても、既にあるリポジトリのラベルは変わらず、足したラベルが無いと起票などで止まります（`doctor.sh` が足りないラベルを知らせます）。
 - プラグインのバージョンは release-please がリリース PR で上げます。`plugin.json` の `version` や `.release-please-manifest.json` を手で変えないでください。
@@ -65,7 +65,7 @@ Claude のレビューは、上限のコメントがきっかけのときは同�
 
 - 直した指摘は、そのスレッドに、直したコミットを添えて `@coderabbitai` 付きで返信します。CodeRabbit が現在のコードを読み、直っていれば resolved にします。チャットのメッセージは、PR のレビューとは別の上限です。
 - diff の外の指摘はスレッドが無いので、PR のコメントに `@coderabbitai` を付けて、同じように確認させます。
-- 直さない指摘は、理由を返信します。resolved にするのは、直したか、理由に合意できたものだけにします。
+- 直さない指摘は、理由を返信します。resolved にするのは、直したか、理由に合意できたものだけにします。resolved でないスレッドが残っていると、PR はマージできません（上の「コミットと PR の規約」のマージの条件）。
 - `@coderabbitai resolve` でまとめて resolved にしません。
 
 ## 書き方のルール
