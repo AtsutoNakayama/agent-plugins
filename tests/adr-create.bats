@@ -1,0 +1,145 @@
+#!/usr/bin/env bats
+
+load test_helper
+
+TEMPLATES="$(cd "$BATS_TEST_DIRNAME/../plugins/dev-workflow/templates/adr" && pwd)"
+
+@test "既定では docs/adr/<Issue 番号を4桁に0埋め>-<名前>.md に、テンプレートから ADR を作る" {
+  run_script adr-create.sh --issue 107 --name "Use MADR" --template full
+  assert_success
+  assert_equal "$(jq -c '[.path, .template, .issue, .date, .superseded, .dry_run]' <<<"$output")" \
+    "[\"docs/adr/0107-use-madr.md\",\"full\",107,\"$(date +%F)\",[],false]"
+  [ -f docs/adr/0107-use-madr.md ] || fail "ファイルがありません"
+}
+
+@test "front matter の date と issue だけを置き換え、残りはテンプレートのまま" {
+  run_script adr-create.sh --issue 7 --name x --template full
+  assert_success
+  assert_equal "$(sed -n 's/^date: //p;s/^issue: //p' docs/adr/0007-x.md)" "$(printf '%s\n7' "$(date +%F)")"
+  diff <(grep -v -e '^date:' -e '^issue:' "$TEMPLATES/adr-template.md") <(grep -v -e '^date:' -e '^issue:' docs/adr/0007-x.md)
+}
+
+@test "4つのテンプレートのどれでも作れ、date と issue が入る" {
+  for t in full minimal bare bare-minimal; do
+    run_script adr-create.sh --issue 1 --name "t-$t" --template "$t"
+    assert_success
+    assert_equal "$(sed -n '/^---$/,/^---$/{s/^issue: *//p;}' "docs/adr/0001-t-$t.md")" "1"
+    assert_equal "$(sed -n '/^---$/,/^---$/{s/^date: *//p;}' "docs/adr/0001-t-$t.md")" "$(date +%F)"
+  done
+}
+
+@test "1つの Issue から、名前を変えて2つ以上作れる" {
+  run_script adr-create.sh --issue 5 --name first --template minimal
+  assert_success
+  run_script adr-create.sh --issue 5 --name second --template minimal
+  assert_success
+  [ -f docs/adr/0005-first.md ] && [ -f docs/adr/0005-second.md ] || fail "2つ作れていません"
+}
+
+@test "名前は小文字の英数字と - に整える（日本語は消える）" {
+  run_script adr-create.sh --issue 3 --name "ADR を Use: MADR 4.0" --template bare
+  assert_success
+  assert_equal "$(jq -r .path <<<"$output")" "docs/adr/0003-adr-use-madr-4-0.md"
+}
+
+@test "名前に英数字が無ければ止まる" {
+  run_script adr-create.sh --issue 3 --name "判断" --template bare
+  assert_failure 64
+  assert_output --partial "英数字がありません"
+  [ ! -e docs/adr ] || fail "ディレクトリを作っています"
+}
+
+@test "同じファイル名があれば上書きせず終了コード 3 で止まる" {
+  mkdir -p docs/adr
+  echo keep >docs/adr/0002-dup.md
+  run_script adr-create.sh --issue 2 --name dup --template full
+  assert_failure 3
+  assert_equal "$(cat docs/adr/0002-dup.md)" keep
+}
+
+@test "置き場所を adr.dir で変えられる" {
+  echo '{"adr": {"dir": "doc/decisions/"}}' >.claude/dev-workflow/config.json
+  run_script adr-create.sh --issue 9 --name x --template minimal
+  assert_success
+  assert_equal "$(jq -r .path <<<"$output")" "doc/decisions/0009-x.md"
+  [ -f doc/decisions/0009-x.md ] || fail "ファイルがありません"
+}
+
+@test "adr.dir が絶対パスや .. を含むときは止まる" {
+  for d in /tmp/adr ../adr a/../../adr; do
+    echo "{\"adr\": {\"dir\": \"$d\"}}" >.claude/dev-workflow/config.json
+    run_script adr-create.sh --issue 9 --name x --template minimal
+    assert_failure 2
+    assert_output --partial "adr.dir"
+  done
+}
+
+@test "ワークツリーの中で実行すると、そのワークツリーに作る" {
+  git -C "$REPO" worktree add -q -b feat/1-x "$TMP/wt"
+  cd "$TMP/wt"
+  run_script adr-create.sh --issue 1 --name x --template full
+  assert_success
+  [ -f "$TMP/wt/docs/adr/0001-x.md" ] || fail "ワークツリーにありません"
+  [ ! -e "$REPO/docs/adr" ] || fail "メインのワークツリーに作っています"
+}
+
+@test "--dry-run は何も作らず、することを出力する" {
+  run_script adr-create.sh --issue 4 --name x --template full --dry-run
+  assert_success
+  assert_equal "$(jq -c '[.path, .dry_run]' <<<"$output")" '["docs/adr/0004-x.md",true]'
+  [ ! -e docs/adr ] || fail "ディレクトリを作っています"
+}
+
+@test "置き換える ADR は status の行だけを superseded by <新しい ADR> に書き換える" {
+  run_script adr-create.sh --issue 10 --name old --template full
+  assert_success
+  cp docs/adr/0010-old.md "$TMP/before.md"
+  run_script adr-create.sh --issue 11 --name new --template full --supersedes 0010-old.md
+  assert_success
+  assert_equal "$(jq -c .superseded <<<"$output")" '["docs/adr/0010-old.md"]'
+  assert_equal "$(sed -n 's/^status: //p' docs/adr/0010-old.md)" '"superseded by 0011-new"'
+  diff <(grep -v '^status:' "$TMP/before.md") <(grep -v '^status:' docs/adr/0010-old.md)
+}
+
+@test "置き換える ADR は、リポジトリのルートからのパスでも、複数でも指定できる" {
+  for n in 10 11; do run_script adr-create.sh --issue "$n" --name "o$n" --template minimal; done
+  run_script adr-create.sh --issue 12 --name new --template minimal --supersedes docs/adr/0010-o10.md --supersedes 0011-o11.md
+  assert_success
+  assert_equal "$(grep -c 'superseded by 0012-new' docs/adr/0010-o10.md docs/adr/0011-o11.md | tr '\n' ' ')" \
+    "docs/adr/0010-o10.md:1 docs/adr/0011-o11.md:1 "
+}
+
+@test "置き換える ADR が無い、または status が無いときは、何も作らず書き換えずに終了コード 4 で止まる" {
+  run_script adr-create.sh --issue 10 --name old --template full
+  printf '# no front matter\n' >docs/adr/0001-plain.md
+  cp docs/adr/0010-old.md "$TMP/before.md"
+  run_script adr-create.sh --issue 12 --name new --template full --supersedes 0010-old.md --supersedes 0001-plain.md
+  assert_failure 4
+  run_script adr-create.sh --issue 12 --name new --template full --supersedes 0010-old.md --supersedes missing.md
+  assert_failure 4
+  [ ! -e docs/adr/0012-new.md ] || fail "ADR を作っています"
+  diff "$TMP/before.md" docs/adr/0010-old.md
+}
+
+@test "--dry-run では置き換える ADR も書き換えない" {
+  run_script adr-create.sh --issue 10 --name old --template full
+  cp docs/adr/0010-old.md "$TMP/before.md"
+  run_script adr-create.sh --issue 11 --name new --template full --supersedes 0010-old.md --dry-run
+  assert_success
+  diff "$TMP/before.md" docs/adr/0010-old.md
+}
+
+@test "引数の誤りは終了コード 64" {
+  run_script adr-create.sh --name x --template full
+  assert_failure 64
+  run_script adr-create.sh --issue abc --name x --template full
+  assert_failure 64
+  run_script adr-create.sh --issue 12345 --name x --template full
+  assert_failure 64
+  run_script adr-create.sh --issue 1 --name x
+  assert_failure 64
+  run_script adr-create.sh --issue 1 --name x --template huge
+  assert_failure 64
+  run_script adr-create.sh --issue 1 --name x --template full --bogus
+  assert_failure 64
+}

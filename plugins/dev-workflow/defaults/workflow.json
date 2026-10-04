@@ -30,6 +30,9 @@
     "pattern": "^(feat|fix|refactor|perf|test|docs|build|ci|chore|style|revert)(\\([a-z0-9-]+\\))?!?: .+",
     "scope_required": false
   },
+  "adr": {
+    "dir": "docs/adr"
+  },
   "pr": {
     "title_pattern": "^(feat|fix|refactor|perf|test|docs|build|ci|chore|style|revert)(\\([a-z0-9-]+\\))?!?: .+",
     "draft": false,
