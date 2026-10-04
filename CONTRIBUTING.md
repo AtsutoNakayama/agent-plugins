@@ -21,7 +21,7 @@ git submodule update --init   # 初回だけ
 1. **Issue を起票します**（`/dev-workflow:task-create`）。作業はすべて Issue から始めます。
 2. **着手します**（`/dev-workflow:task-start`）。ブランチとワークツリー（`.claude/worktrees/<ブランチ名>`）ができるので、以後はその中で作業します。
 3. **コミットします**（`/dev-workflow:commit`）。全部を直し終えてから1回でコミットするのではなく、論理的な区切り（1つの変更を仕上げてテストが通ったところ）ごとにコミットします。
-4. **PR を出します**（`/dev-workflow:pr-create`）。出す前に、下の「テストとチェック」がすべて通ることを確かめます。main が先に進んだ PR は、最新の main を取り込んで CI が通り直すまでマージできません（下の「コミットと PR の規約」のマージの条件）。
+4. **PR を出します**（`/dev-workflow:pr-create`）。出す前に、下の「テストとチェック」がすべて通ることを確かめます。PR はマージキューに入れてマージします。main が先に進んでも、PR に main を取り込み直す必要はありません（下の「コミットと PR の規約」のマージの条件）。
 5. **後片付けをします**（`/dev-workflow:task-finish`）。PR がマージされたら、ワークツリーとローカルのブランチを削除し、main を最新にして、PR が閉じる Issue が閉じたかも伝えます。
 
 レビューの観点（`.claude/dev-workflow/review/`）の追加・修正は、そのきっかけになったタスクの PR に含め、別の Issue にはしません。`/dev-workflow:review-perspective-add` は、今のタスクのワークツリーで実行します。
@@ -32,8 +32,8 @@ Issue をやめることにしたときは、`/dev-workflow:task-cancel` を使�
 
 - コミットメッセージは [Conventional Commits](https://www.conventionalcommits.org/ja/v1.0.0/)（`<type>(<scope>): <要約>`）で書きます。type は `plugins/dev-workflow/defaults/workflow.json` の `commit.types` のどれかです。
 - PR のタイトルは `<type>: <Issueのタイトル>` とし、本文に `Closes #<Issue番号>` を付けます。
-- マージの条件：main のルールセットは、`lint-result` と `test-result` の成功と、PR が最新の main を取り込んでいることを求めます。別の PR が先にマージされて main が進んだら、PR に main を取り込み（PR の「ブランチを更新」か `git merge origin/main`）、CI が通り直すのを待ってからマージします。古い main で通った CI の結果のままだと、先にマージされた変更と組み合わさって main が壊れることがあるためです（#108）。
-- マージはスカッシュのみです。main への直接 push・強制 push はルールセットとフックで禁止されています。
+- マージの条件：main のルールセットは、マージキューを通すことと、`lint-result` と `test-result` の成功と、レビューのスレッドがすべて resolved になっていることを求めます。resolved でないスレッドが1つでも残っている PR は、キューに入れられません（指摘への対応は、下の「指摘に手元の Claude Code で対応する」）。対象は行ごとの指摘のスレッドだけで、diff の外の指摘や Claude のレビューのコメントは含みません。PR の CI が通ったら、PR の「Merge when ready」か `gh pr merge <PR番号>` でキューに入れます。キューは、最新の main に、先に並んだ PR と自分の PR を重ねた一時的なブランチを作り、そこで CI（`merge_group` のイベント）を動かして、通った PR から順に main にマージします。そのため、別の PR が先にマージされて main が進んでも、PR に main を取り込み直す必要はありません。古い main で通った CI の結果のままマージすると、先にマージされた変更と組み合わさって main が壊れることがありますが（#108）、キューは組み合わせた後の結果で確かめるので、これを防げます。キューの CI が失敗した PR はキューから外れるので、直して push してから、もう一度キューに入れます。main との間でコンフリクトしたときだけ、PR に main を取り込んで直します（`/dev-workflow:branch-update`）。
+- マージはスカッシュのみです（キューもスカッシュでマージします）。main への直接 push・強制 push はルールセットとフックで禁止されています。
 - プラグインのラベルの定義（`plugins/dev-workflow/defaults/labels.json`）を変えた PR では、このリポジトリでも `plugins/dev-workflow/scripts/setup/setup-labels.sh` を実行して、ラベルを定義に揃えます。定義を変えても、既にあるリポジトリのラベルは変わらず、足したラベルが無いと起票などで止まります（`doctor.sh` が足りないラベルを知らせます）。
 - プラグインのバージョンは release-please がリリース PR で上げます。`plugin.json` の `version` や `.release-please-manifest.json` を手で変えないでください。
 
@@ -65,7 +65,7 @@ Claude のレビューは、上限のコメントがきっかけのときは同�
 
 - 直した指摘は、そのスレッドに、直したコミットを添えて `@coderabbitai` 付きで返信します。CodeRabbit が現在のコードを読み、直っていれば resolved にします。チャットのメッセージは、PR のレビューとは別の上限です。
 - diff の外の指摘はスレッドが無いので、PR のコメントに `@coderabbitai` を付けて、同じように確認させます。
-- 直さない指摘は、理由を返信します。resolved にするのは、直したか、理由に合意できたものだけにします。
+- 直さない指摘は、理由を返信します。resolved にするのは、直したか、理由に合意できたものだけにします。resolved でないスレッドが残っていると、PR はマージできません（上の「コミットと PR の規約」のマージの条件）。
 - `@coderabbitai resolve` でまとめて resolved にしません。
 
 ## 書き方のルール
@@ -85,6 +85,8 @@ Claude のレビューは、上限のコメントがきっかけのときは同�
 ## テストとチェック
 
 PR を出す前に、次がすべて通ることを確かめます。どれも CI でも実行します（shellcheck・actionlint・`claude plugin validate` などは `.github/workflows/lint.yml`、bats は `.github/workflows/test.yml`）。ただし、`README.md`・`docs/`・Issue と PR のテンプレート（`.github/ISSUE_TEMPLATE/`・`.github/pull_request_template.md`）だけを変えた PR では、重いジョブ（lint・test）を飛ばします。ワークフローは動いて、必須のチェック（`lint-result`・`test-result`）は成功になるので、これまでどおりマージできます。
+
+マージキューに入れた PR では、`merge_group` のイベントで lint・test がもう一度動き、その `lint-result`・`test-result` でマージできるかが決まります。このときのドキュメントだけの変更かの判定（`.github/scripts/docs-only.sh`）は、PR の base との差ではなく、キューの一時的なブランチの元のコミット（`merge_group.base_sha`。main か、先に並んだ PR を重ねたコミット）との差で行います。PR が複数のコミットでも、その PR の変更全体で判定するためです。
 
 ```bash
 # tests/lib は外部のライブラリ（git submodule）なので対象にしない
