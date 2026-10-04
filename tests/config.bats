@@ -143,3 +143,9 @@ load test_helper
   assert_success
   assert_output "5"
 }
+
+@test "review.max_rounds の既定は 1 以上の整数（review スキルが前提にしている）" {
+  run_script config.sh '.review.max_rounds | (type == "number" and . >= 1 and . == floor)'
+  assert_success
+  assert_output "true"
+}
