@@ -151,6 +151,7 @@ if [ "$auto" = true ] || [ -n "$base" ] || [ -n "$target" ] || [ -n "$type" ] ||
   if [ -z "$base" ] || [ -z "$target" ]; then
     dw_die "条件で絞り込むには --base と --target の両方を渡してください" 64
   fi
+  issue="${issue#\#}" # スキルの引数の #12 も受ける
   case "$issue" in
     "" | *[!0-9]*) [ -z "$issue" ] || dw_die "--issue は Issue の番号にしてください: ${issue}" 64 ;;
   esac

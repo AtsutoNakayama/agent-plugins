@@ -84,6 +84,7 @@ if [ -n "$check" ]; then
 fi
 
 [ -n "$issue" ] || dw_die "--issue は必須です" 64
+issue="${issue#\#}" # スキルの引数の #12 も受ける
 case "$issue" in
   *[!0-9]*) dw_die "--issue には数字を指定してください: $issue" 64 ;;
 esac
