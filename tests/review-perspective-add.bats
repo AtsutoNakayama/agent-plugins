@@ -241,5 +241,9 @@ add() {
   assert_output --partial "--builtin は code-review にしてください"
   add "指示" --name ok --layer user --title "観点" --builtin
   assert_failure 64
+  # 別の名前では、/code-review が2回動き、除外の決まりも読まれない
+  add "指示" --name code-review-mine --layer user --title "観点" --builtin code-review
+  assert_failure 64
+  assert_output --partial "--builtin code-review は --name code-review のときだけ使えます"
   [ ! -e "$WORKFLOW_USER_DIR/review" ] || fail "何か作っています"
 }
