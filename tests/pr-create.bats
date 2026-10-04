@@ -444,3 +444,12 @@ fake_issue_tasks() {
   assert_equal "$(jq -c '[.tasks[].text]' <<<"$json")" '["テストを足す","b <!-- 1行のコメント -->","c"]'
   assert_equal "$(cat "$TMP/issue-edit-body")" "$(printf -- '<!-- 例:\n- [ ] テストを足す\n-->\n- [x] テストを足す\n- [ ] b <!-- 1行のコメント -->\n- [ ] c')"
 }
+
+@test "行の途中の <!-- は、コメントの始まりとみなさない" {
+  setup_branch
+  # shellcheck disable=SC2016 # ` はインラインのコードで、展開させない
+  set_issue_body "$(printf -- 'テンプレートの `<!--` を消す\n- [ ] a <!-- 補足\n- [ ] b')"
+  run_pr --issue 17 --body-file "$TMP/body.md" --dry-run
+  assert_success
+  assert_equal "$(jq -c '[.tasks[].text]' <<<"$json")" '["a <!-- 補足","b"]'
+}
