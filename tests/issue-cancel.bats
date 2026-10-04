@@ -463,3 +463,16 @@ writes() { grep -oE '^(issue-comment|issue-close|pr-comment|pr-close|api-delete)
   assert_failure 2
   assert_output --partial "開いている子の Issue（#50）があります"
 }
+
+@test "理由の末尾が改行でも、同じ理由をコメント済みの子にはコメントし直さない" {
+  setup_cancel
+  set_subs 17 "$(sub_issue 30 open)"
+  jq -n '{url: "https://github.com/me/demo/issues/30", number: 30, title: "作業 30", state: "OPEN", stateReason: "",
+    comments: [{body: "やめます\n"}]}' >"$FIX/issue-30.json"
+  run_script issue-cancel.sh --issue 17 --reason "$(printf 'やめます\nx')" --sub-issues close --dry-run
+  assert_equal "$(jq -c '.sub_issues.open | map(.commented)' <<<"$output")" '[true]'
+  run_script issue-cancel.sh --issue 17 --reason $'やめます\n' --sub-issues close
+  assert_success
+  assert_equal "$(jq -c '.sub_issues.open | map(.commented)' <<<"$output")" '[false]'
+  assert_equal "$(writes | cut -d, -f1)" "issue-close https://github.com/me/demo/issues/30"
+}

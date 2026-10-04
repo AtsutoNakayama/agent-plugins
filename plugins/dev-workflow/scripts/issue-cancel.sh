@@ -165,10 +165,11 @@ if [ "$sub_issues" = close ]; then
   # 閉じるのに失敗して再実行したときに、同じ理由を二重にコメントしないよう、子ごとに最後のコメントを見る
   with_comment='[]'
   for url in $(jq -r '.[].url' <<<"$open_subs"); do
-    last="$(gh issue view "$url" --json comments -q '.comments[-1].body // ""')" \
-      || dw_die "子の Issue ${url} を読めませんでした"
-    with_comment="$(jq -c --arg u "$url" --arg last "$last" --arg r "$reason" \
-      '. + [{url: $u, commented: ($last != $r)}]' <<<"$with_comment")"
+    # $( ) は末尾の改行を落とすので、最後のコメントは取り出さずに jq の中で理由と比べる（親や PR と同じ）
+    child="$(gh issue view "$url" --json comments)" || dw_die "子の Issue ${url} を読めませんでした"
+    child_commented="$(jq -r --arg r "$reason" '.comments[-1].body != $r' <<<"$child")"
+    with_comment="$(jq -c --arg u "$url" --argjson c "$child_commented" \
+      '. + [{url: $u, commented: $c}]' <<<"$with_comment")"
   done
   open_subs="$(jq -c --argjson w "$with_comment" 'map(. as $s | . + ($w[] | select(.url == $s.url) | {commented}))' <<<"$open_subs")"
 fi
