@@ -83,4 +83,6 @@ frontmatter() { awk 'NR == 1 && $0 == "---" { on = 1; next } on && $0 == "---" {
   grep -q '新しい親なら、先に' "$f" || fail "親から先に起票する手順がありません"
   grep -q '親が閉じていれば' "$f" || fail "閉じた親の扱いが書かれていません"
   grep -q 'サブ Issue を読み直し' "$f" || fail "失敗後の再開で読み直す手順が書かれていません"
+  grep -qF 'gh api --paginate repos/{owner}/{repo}/issues/<親の番号>/sub_issues' "$f" \
+    || fail "サブ Issue を読み直す gh api に --paginate がありません（30件を超える子を取りこぼす）"
 }
