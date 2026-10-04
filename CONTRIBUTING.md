@@ -39,7 +39,7 @@ Issue をやめることにしたときは、`/dev-workflow:task-cancel` を使�
 
 ## PR の自動レビュー
 
-PR は、CodeRabbit（`.coderabbit.yaml`）が作ったときに1回だけ自動でレビューします。push のたびにはレビューしません。指摘への対応は、下の「指摘に手元の Claude Code で対応する」のとおり、返信で行います。CodeRabbit のレビューは1時間あたりの回数に上限があり、上限で失敗したレビューは自動では再試行されません。そこで、次のときは Claude が代わりにレビューして PR にコメントします（`.github/workflows/claude-review.yml`）。
+PR は、CodeRabbit（`.coderabbit.yaml`）が作ったときと、push のたびに（増分で）自動でレビューします。これは CodeRabbit の試用期間中だけの暫定の運用で、試用期間が終わったら、作ったときに1回だけレビューする運用に戻します（#160）。指摘への対応は、下の「指摘に手元の Claude Code で対応する」のとおり、返信で行います。CodeRabbit のレビューは1時間あたりの回数に上限があり、上限で失敗したレビューは自動では再試行されません。そこで、次のときは Claude が代わりにレビューして PR にコメントします（`.github/workflows/claude-review.yml`）。
 
 - CodeRabbit が上限に引っかかったとき（`coderabbitai[bot]` の `rate limited by coderabbit.ai` のコメントがきっかけです）
 - PR を作ってから1時間経っても CodeRabbit のレビューが無いとき（30分ごとに見回ります。障害など上限以外の理由で動かなかった場合も拾います）
@@ -53,9 +53,9 @@ Claude のレビューは、上限のコメントがきっかけのときは同�
 
 ### 指摘に手元の Claude Code で対応する
 
-CodeRabbit の全体のレビューは、PR を作ったときの1回だけです。あとは、指摘に返信して resolved にしていきます。この流れは、このリポジトリ専用の skill `.claude/skills/coderabbit-respond/`（プラグインには同梱しません）で行えます。
+試用期間中は、push のたびに CodeRabbit が増分でレビューします（試用期間が終わったら、PR を作ったときの1回だけに戻します。#160）。指摘には返信して resolved にしていきます。この流れは、このリポジトリ専用の skill `.claude/skills/coderabbit-respond/`（プラグインには同梱しません）で行えます。
 
-- `@coderabbitai review` は使いません。1回ごとにレビューの上限を消費し、使った後の PR では、push のたびに増分のレビューが走って上限を消費するためです。ただし、PR を作ったときのレビューが、障害などで付かなかったときだけ、1回使ってかまいません（Claude の見回りが拾うのを待たなくて済みます）。
+- 試用期間中は、push のたびに自動でレビューされるので、`@coderabbitai review` は要りません。試用期間が終わったら、`@coderabbitai review` は使いません（1回ごとにレビューの上限を消費し、使った後の PR では、push のたびに増分のレビューが走って上限を消費するためです）。ただし、PR を作ったときのレビューが、障害などで付かなかったときだけ、1回使ってかまいません（Claude の見回りが拾うのを待たなくて済みます）。
 - 指摘は `gh` で読みます。行ごとの指摘はスレッドで、diff の外の指摘はレビュー本文にあります。
 
   ```bash
