@@ -373,14 +373,13 @@ writes() { grep -oE '^(issue-comment|issue-close|pr-comment|pr-close|api-delete)
   sub_tree
   run_script issue-cancel.sh --issue 17 --reason "方針が変わったのでやめます" --sub-issues close
   assert_success
-  u=https://github.com/me/demo/issues
-  assert_equal "$(writes)" "issue-comment $u/31,issue-close $u/31,issue-comment $u/30,issue-close $u/30,issue-comment 17,issue-close 17,"
-  assert_equal "$(grep -c "^issue-close $u/3[01] --reason not planned$" "$CALLS")" 2
+  assert_equal "$(writes)" "issue-comment 31,issue-close 31,issue-comment 30,issue-close 30,issue-comment 17,issue-close 17,"
+  assert_equal "$(grep -c "^issue-close 3[01] --reason not planned$" "$CALLS")" 2
   # 閉じた子 32 の下は読まず、孫を持つ子 30 の下だけを読む
   assert_equal "$(grep '^api-sub-issues ' "$CALLS" | tr '\n' ,)" \
     "api-sub-issues repos/me/demo/issues/17/sub_issues,api-sub-issues repos/me/demo/issues/30/sub_issues,"
-  assert_equal "$(jq -c '.sub_issues | [.action, (.open | map([.ref, .commented]))]' <<<"$output")" \
-    '["close",[["#30",true],["#31",true]]]'
+  assert_equal "$(jq -c '.sub_issues | [.action, (.open | map([.number, .commented]))]' <<<"$output")" \
+    '["close",[[30,true],[31,true]]]'
 }
 
 @test "--sub-issues keep なら、子孫には触れずに親だけを閉じる" {
@@ -389,7 +388,7 @@ writes() { grep -oE '^(issue-comment|issue-close|pr-comment|pr-close|api-delete)
   run_script issue-cancel.sh --issue 17 --reason "親だけやめます" --sub-issues keep
   assert_success
   assert_equal "$(writes)" "issue-comment 17,issue-close 17,"
-  assert_equal "$(jq -c '.sub_issues | [.action, (.open | map(.ref))]' <<<"$output")" '["keep",["#30","#31"]]'
+  assert_equal "$(jq -c '.sub_issues | [.action, (.open | map(.number))]' <<<"$output")" '["keep",[30,31]]'
 }
 
 @test "子がすべて閉じていれば、--sub-issues が無くても親を閉じる" {
@@ -401,19 +400,17 @@ writes() { grep -oE '^(issue-comment|issue-close|pr-comment|pr-close|api-delete)
   assert_equal "$(jq -c .sub_issues <<<"$output")" '{"action":null,"open":[]}'
 }
 
-@test "別のリポジトリの子は、所有者/名前#番号 で示し、その URL で閉じる" {
+@test "開いている子孫に別のリポジトリの Issue があれば、--sub-issues を付けても何もせずに止まる" {
   setup_cancel
-  set_subs 17 "$(sub_issue 40 open 1 other/repo)"
-  set_subs 40 "$(sub_issue 41 open 0 other/repo)"
-  cancel_issue 40
-  cancel_issue 41
-  run_script issue-cancel.sh --issue 17 --reason "やめます" --dry-run
-  assert_failure 2
-  assert_output --partial "開いている子の Issue（other/repo#40, other/repo#41）"
-  run_script issue-cancel.sh --issue 17 --reason "やめます" --sub-issues close
-  assert_success
-  assert_equal "$(grep '^api-sub-issues ' "$CALLS" | tail -n 1)" "api-sub-issues repos/other/repo/issues/40/sub_issues"
-  assert_equal "$(grep '^issue-close ' "$CALLS" | head -n 1)" "issue-close https://github.com/other/repo/issues/41 --reason not planned"
+  set_subs 17 "$(sub_issue 30 open 1)" "$(sub_issue 39 closed 0 other/repo)"
+  set_subs 30 "$(sub_issue 40 open 0 other/repo)"
+  cancel_issue 30
+  for mode in close keep; do
+    run_script issue-cancel.sh --issue 17 --reason "やめます" --sub-issues "$mode"
+    assert_failure 2
+    assert_output "error: Issue #17 の開いている子孫に、別のリポジトリの Issue（other/repo#40）があります。その Issue を親から外すか、そのリポジトリで取りやめてから、もう一度実行してください"
+  done
+  assert_equal "$(writes)" ""
 }
 
 @test "子を閉じるのに失敗したら、親には触れずに止まる。再実行では、同じ理由をコメント済みの子にはコメントし直さない" {
@@ -422,12 +419,12 @@ writes() { grep -oE '^(issue-comment|issue-close|pr-comment|pr-close|api-delete)
   FAKE_FAIL=issue-close run_script issue-cancel.sh --issue 17 --reason "やめます" --sub-issues close
   assert_failure 1
   assert_output --partial "子の Issue #31 を閉じられませんでした（もう一度実行すると続きから進みます）"
-  assert_equal "$(writes)" "issue-comment https://github.com/me/demo/issues/31,issue-close https://github.com/me/demo/issues/31,"
+  assert_equal "$(writes)" "issue-comment 31,issue-close 31,"
   cancel_issue 31 OPEN "" "やめます"
   : >"$CALLS"
   run_script issue-cancel.sh --issue 17 --reason "やめます" --sub-issues close
   assert_success
-  assert_equal "$(writes | cut -d, -f1)" "issue-close https://github.com/me/demo/issues/31"
+  assert_equal "$(writes | cut -d, -f1)" "issue-close 31"
   assert_equal "$(jq -c '.sub_issues.open | map(.commented)' <<<"$output")" '[true,false]'
 }
 
@@ -476,7 +473,7 @@ writes() { grep -oE '^(issue-comment|issue-close|pr-comment|pr-close|api-delete)
   run_script issue-cancel.sh --issue 17 --reason $'やめます\n' --sub-issues close
   assert_success
   assert_equal "$(jq -c '.sub_issues.open | map(.commented)' <<<"$output")" '[false]'
-  assert_equal "$(writes | cut -d, -f1)" "issue-close https://github.com/me/demo/issues/30"
+  assert_equal "$(writes | cut -d, -f1)" "issue-close 30"
 }
 
 @test "子の応答に孫の数（sub_issues_summary）が無くても、その子の下を読む" {
