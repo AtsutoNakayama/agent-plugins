@@ -188,10 +188,14 @@ silent() {
   git checkout -q -b feat/21-x
   msg="$(head -c 50000 /dev/zero | tr '\0' a | fold -w 76)"
   words="$(printf 'w%d ' $(seq 1 10000))"
-  SECONDS=0
-  denied "強制 push" "git commit -m \"$msg\"; git push -f" "echo $words; git push -f" \
-    "$(printf 'git commit -F - <<EOF\n%s\nEOF\ngit push -f' "$msg")"
-  [ "$SECONDS" -lt 10 ] || fail "${SECONDS} 秒かかった"
+  # 壁時計は、bats を並列に実行すると CPU の取り合いで延びる（#125）。
+  # 解析そのものの重さだけを見るために、子プロセスを含む CPU 時間（ユーザー + システム）で測る
+  local TIMEFORMAT='%U %S'
+  { time denied "強制 push" "git commit -m \"$msg\"; git push -f" "echo $words; git push -f" \
+    "$(printf 'git commit -F - <<EOF\n%s\nEOF\ngit push -f' "$msg")"; } 2>"$TMP/cpu"
+  local cpu
+  cpu="$(awk '{ printf "%d", $1 + $2 }' "$TMP/cpu")"
+  [ "$cpu" -lt 10 ] || fail "CPU 時間で ${cpu} 秒かかった"
 }
 
 @test "ヒアドキュメントの後ろのコマンドは調べる" {
