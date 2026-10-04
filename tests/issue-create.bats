@@ -661,3 +661,24 @@ assert_no_changes() {
   assert_output --partial "--parent"
   refute_output --partial "set -euo"
 }
+
+@test "Project の自動追加と重なって「Content already exists」で失敗しても、再試行して続ける" {
+  setup_fake_gh
+  export DW_RETRY_SLEEP=0
+  export FAKE_FAIL=AddItem.1
+  export FAKE_FAIL_MSG='GraphQL: Content already exists in this project (addProjectV2ItemById)'
+  run_create --title t --type feat
+  assert_success
+  assert_equal "$(called AddItem)" 2
+  assert_equal "$(jq -c '[.project.item_id, .project.status]' <<<"$json")" '["IT30","Todo"]'
+}
+
+@test "Project への追加が別の理由で失敗したときは、再試行せずに止まる" {
+  setup_fake_gh
+  export DW_RETRY_SLEEP=0
+  export FAKE_FAIL=AddItem
+  run_create --title t --type feat
+  assert_failure
+  assert_equal "$(called AddItem)" 1
+  assert_output --partial "Project に追加できませんでした"
+}

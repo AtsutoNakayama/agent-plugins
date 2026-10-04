@@ -233,9 +233,27 @@ dw_project_fields() {
 }
 
 # Issue などを Project に追加し、項目の id（node id）を出力する。既に入っていれば既存の項目が返る。
+# Project の自動追加と同時に走ると、片方が「Content already exists」で失敗する。再試行すれば既存の項目が返るので、
+# その失敗のときだけ、待って最大3回まで試す（待つ秒数は DW_RETRY_SLEEP、既定 1）。
 # 使い方: dw_project_add_item <所有者> <番号> <Issue などの URL>
 dw_project_add_item() {
-  gh project item-add "$2" --owner "$1" --url "$3" --format json | jq -er '.id'
+  local out errfile tries=0
+  errfile="$(mktemp)"
+  while :; do
+    if out="$(gh project item-add "$2" --owner "$1" --url "$3" --format json 2>"$errfile")"; then
+      rm -f "$errfile"
+      jq -er '.id' <<<"$out"
+      return
+    fi
+    tries=$((tries + 1))
+    if [ "$tries" -lt 3 ] && grep -q 'Content already exists' "$errfile"; then
+      sleep "${DW_RETRY_SLEEP:-1}"
+      continue
+    fi
+    cat "$errfile" >&2
+    rm -f "$errfile"
+    return 1
+  done
 }
 
 # 項目の値を設定する。値は gh project item-edit のオプションで渡す（--single-select-option-id <id> や --number <数>。

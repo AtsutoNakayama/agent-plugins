@@ -71,3 +71,18 @@ frontmatter() { awk 'NR == 1 && $0 == "---" { on = 1; next } on && $0 == "---" {
     grep -qF "\`#12\`" "$f" || fail "${name} に、12 と #12 のどちらも受けることが書かれていません"
   done
 }
+
+@test "task-create は、親と子をまとめて起票する手順（木の preview・親は Story Point なし・親から先に起票）を持つ" {
+  f="$SKILLS/task-create/SKILL.md"
+  grep -q '親と子をまとめて起票するとき' "$f" || fail "親と子をまとめて起票する手順がありません"
+  grep -q '親子の木と各 Issue の本文の全文' "$f" || fail "確認の preview に親子の木と本文を入れることが書かれていません"
+  grep -q '親には Story Point を付けず、子にだけ付ける' "$f" || fail "親に Story Point を付けないことが書かれていません"
+  grep -q '既にある Issue を親にする' "$f" || fail "既存の Issue を親にする場合が書かれていません"
+  grep -q '大きな依頼を、詰めたり縦に切ったりして子に分けるところは、この手順の範囲外' "$f" || fail "大きな依頼の分割が範囲外であることが書かれていません"
+  grep -q -e '--parent <親の番号>' "$f" || fail "子を --parent で起票する手順がありません"
+  grep -q '新しい親なら、先に' "$f" || fail "親から先に起票する手順がありません"
+  grep -q '親が閉じていれば' "$f" || fail "閉じた親の扱いが書かれていません"
+  grep -q 'サブ Issue を読み直し' "$f" || fail "失敗後の再開で読み直す手順が書かれていません"
+  grep -qF 'gh api --paginate repos/{owner}/{repo}/issues/<親の番号>/sub_issues' "$f" \
+    || fail "サブ Issue を読み直す gh api に --paginate がありません（30件を超える子を取りこぼす）"
+}
