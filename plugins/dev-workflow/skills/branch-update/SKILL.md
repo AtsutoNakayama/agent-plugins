@@ -1,11 +1,11 @@
 ---
 name: branch-update
-description: PR のブランチに、最新の base_branch（main など）を取り込む。遅れを調べ、origin/<base_branch> を merge し、衝突を直し、リポジトリのテストとチェックを通してから、確認を取って push し、CI が通り直るのを待つ。「main を取り込んで」「PR のブランチを最新にして」のように、main が進んで PR がマージできないときに使う。
+description: PR のブランチに、最新の base_branch（main など）を取り込む。遅れを調べ、origin/<base_branch> を merge し、衝突を直し、リポジトリのテストとチェックを通してから、確認を取って push し、CI が通り直るのを待つ。「main を取り込んで」「PR のブランチを最新にして」のように、main が進んで PR がマージできないとき（マージキューを使うリポジトリでは、main とコンフリクトしたとき）に使う。
 ---
 
 # 最新の main の取り込み
 
-main が進んだ PR は、最新の main を取り込んで CI が通り直るまでマージできない（ルールセットの「最新の main の取り込み」。設計書 §9）。このスキルは、作業用のブランチに `origin/<base_branch>` を merge して、テストとチェックを通し、push して CI の結果まで見る。取り込み先は設定の `base_branch`。
+main が進んだ PR は、最新の main を取り込んで CI が通り直るまでマージできない（ルールセットの「最新の main の取り込み」。設計書 §9）。ただし、マージキューを使うリポジトリでは、キューが最新の main と組み合わせて確かめるので、取り込むのは main とコンフリクトしたときだけでよい。このスキルは、作業用のブランチに `origin/<base_branch>` を merge して、テストとチェックを通し、push して CI の結果まで見る。取り込み先は設定の `base_branch`。
 
 強制 push は使えない（フックで禁止）ので、rebase はせず merge で取り込む。
 

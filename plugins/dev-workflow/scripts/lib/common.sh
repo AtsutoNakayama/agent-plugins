@@ -153,6 +153,20 @@ dw_fetch_repo_file() {
   esac
 }
 
+# ルールセットで守るブランチ（チームの base_branch）を出力する。ルールセットはリポジトリ全体で共有するので、
+# 個人の層（config.local.json・~/.claude/dev-workflow）は使わず、チームの設定とプラグインの既定だけで決める。
+# チームの設定のファイルが無ければプラグインの既定を使い、JSON として読めなければ 1 を返す。
+# 使い方: dw_team_base_branch <チームの設定のファイル（空なら無い）>
+dw_team_base_branch() {
+  local d
+  d="$(jq -r '.base_branch' "$DW_PLUGIN_ROOT/defaults/workflow.json")"
+  if [ -n "$1" ] && [ -f "$1" ]; then
+    jq -r --arg d "$d" '.base_branch // $d' "$1" 2>/dev/null
+  else
+    printf '%s\n' "$d"
+  fi
+}
+
 # Story Point に使える値（フィボナッチ数）。設定では変えられない。
 # 21 と 34 は受け付けるが、見積もりの精度が低いので分割を勧める。34 より大きい作業は分割する。source した側で使う
 # shellcheck disable=SC2034

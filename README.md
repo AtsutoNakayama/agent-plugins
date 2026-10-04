@@ -191,18 +191,35 @@ plugins/dev-workflow/scripts/setup/setup-repo.sh --require-approval 1
 
 #### マージの前に CI を求める
 
-別の PR が先にマージされて main が進んでも、前の PR の CI の結果は古いままです。単独では通る2つの PR が組み合わさって main が壊れることがあるので、チェックの成功と、PR が最新の main を取り込んでいることを、ルールセットで求められます。
+別の PR が先にマージされて main が進んでも、前の PR の CI の結果は古いままです。単独では通る2つの PR が組み合わさって main が壊れることがあるので、チェックの成功と、PR が最新の main を取り込んでいること（マージキューを使うときは、キューを通すこと。下の「マージキューを使う」）を、ルールセットで求められます。
 
 ```bash
-# lint-result と test-result の成功と、最新の main の取り込みを、マージの条件にする
+# lint-result と test-result の成功と、最新の main の取り込みを、マージの条件にする（マージキューを使っていれば、取り込みは求めない）
 plugins/dev-workflow/scripts/setup/setup-repo.sh --required-check lint-result --required-check test-result
 ```
 
 - `--required-check` は、`setup-all.sh` にも渡せます。繰り返し指定できます。
-- 指定した名前の一覧で、必須のチェックを置き換えます。CI を足したり外したりしたときは、新しい一覧で実行し直します。付けなければ、ルールセットの必須のチェックには触れません。GitHub の設定画面で直した必須のチェックも、そのまま残ります。
+- 指定した名前の一覧で、必須のチェックを置き換えます。CI を足したり外したりしたときは、新しい一覧で実行し直します。付けなければ、ルールセットの必須のチェックの一覧には触れません。GitHub の設定画面で直した必須のチェックも、そのまま残ります。ただし、最新の main の取り込み（strict）は、マージキューの有無で決まります。キューを使っていれば、オプションが無くても外します。使っていなければ、`--required-check`・`--no-merge-queue` のときに求め、どちらも無ければ今のままです。
 - チェックの名前は、チームの CI で決まるので、プラグインは決めません。CI が無いリポジトリや、まだ報告されたことのない名前を指定すると、チェックが「待ち」のまま残ってマージできなくなります。名前は、そのチェックが一度動いてから指定してください。
 - 名前は、CI 全体の結果を1つにまとめる「門番のジョブ」にすることをおすすめします。ジョブを足しても、必須の名前は変わらずに済みます。ジョブごとに必須にすると、CI の変更のたびにこのコマンドを実行し直すことになります。
 - `paths-ignore` などでワークフローが動かない PR（ドキュメントだけの変更など）は、そのチェックが報告されず、「待ち」のままマージできなくなります。`paths-ignore` はやめ、変更の範囲を見て重いジョブを `if` で飛ばしたうえで、門番のジョブは必ず動かして成功にしてください（このリポジトリの `.github/workflows/lint.yml`・`test.yml` が例です）。
+
+#### マージキューを使う
+
+最新の main の取り込みを求めると、別の PR がマージされるたびに、残りの PR へ main を取り込み直して CI を通し直すことになります。マージキューを使うと、キューが最新の main と組み合わせた結果で CI を動かして順にマージするので、取り込み直しが要らなくなります。
+
+```bash
+# マージキュー（スカッシュ）を使い、必須のチェックの「最新の main の取り込み」を外す
+plugins/dev-workflow/scripts/setup/setup-repo.sh --merge-queue --required-check lint-result --required-check test-result
+
+# マージキューを外し、必須のチェックには最新の main の取り込みを求める
+plugins/dev-workflow/scripts/setup/setup-repo.sh --no-merge-queue
+```
+
+- マージキューは、Organization の公開リポジトリと、GitHub Enterprise Cloud の Organization の非公開リポジトリで使えます。個人のアカウントのリポジトリでは使えないので、`--merge-queue` は止まります。使えるかは、出力の `merge_queue.available` で分かります。
+- `--merge-queue`・`--no-merge-queue` は、`setup-all.sh` にも渡せます。どちらも付けなければ、キューを今のまま使う・使わないままにします。
+- 必須のチェックを求めるワークフローは、`merge_group` のイベントでも動くようにしてください（`on: merge_group`）。動かないと、キューのチェックが「待ち」のまま残ってマージされません。
+- `doctor.sh` は、main にマージキューと最新の main の取り込みのどちらが効いているかを表示します。
 
 ## 開発
 

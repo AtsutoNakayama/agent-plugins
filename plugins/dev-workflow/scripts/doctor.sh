@@ -128,6 +128,31 @@ if $gh_auth && [ -n "$repo_root" ]; then
   rm -f "$labels_err"
 fi
 
+# base_branch にマージキューと strict（最新の取り込みを求める）のどちらが効いているかを示す。どちらも無いと、
+# 古い base_branch で通った CI の結果のままマージして壊れることがある。組織のルールセットも含めて見るため、
+# ブランチに効いているルール（rules/branches）を読む。ブランチは、setup-repo.sh がルールセットで守るものと同じく、
+# チームの設定で決める（個人の設定は使わない）。GitHub に問い合わせられないときは飛ばす
+base_branch=""
+if [ -n "$repo_root" ]; then
+  base_branch="$(dw_team_base_branch "$repo_root/.claude/dev-workflow/config.json" || true)"
+fi
+if $gh_auth && [ -n "$repo_root" ] && [ -n "$base_branch" ] \
+  && rules="$(gh api --paginate "repos/{owner}/{repo}/rules/branches/$(jq -rn --arg b "$base_branch" '$b | @uri')?per_page=100" 2>/dev/null)" \
+  && merge="$(jq -ser '
+    # --paginate はページごとに配列を出力するので、1つにまとめる
+    add // []
+    | if any(.[]; .type == "merge_queue") then "queue"
+    elif any(.[]; .type == "required_status_checks" and .parameters.strict_required_status_checks_policy) then "strict"
+    elif any(.[]; .type == "required_status_checks") then "none"
+    else "no-checks" end' <<<"$rules" 2>/dev/null)"; then
+  case "$merge" in
+    queue) check merge-queue true warn "${base_branch} へのマージはマージキューを通します" ;;
+    strict) check merge-queue true warn "${base_branch} へのマージは、PR が最新の ${base_branch} を取り込んでいることを求めます（strict）" ;;
+    none) check merge-queue false warn "${base_branch} へのマージに、マージキューも最新の ${base_branch} の取り込み（strict）も求めていません。古い ${base_branch} で通った CI のままマージすると壊れることがあります。/dev-workflow:repo-setup で設定してください" ;;
+    *) check merge-queue true warn "${base_branch} へのマージに必須のチェックが無いので、マージキューも strict も使っていません" ;;
+  esac
+fi
+
 result="$(printf '%s' "$checks" | jq -s '{ok: (map(select(.level == "error" and (.ok | not))) | length == 0), checks: .}')"
 printf '%s\n' "$result"
 [ "$(jq -r .ok <<<"$result")" = true ]
