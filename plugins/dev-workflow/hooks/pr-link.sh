@@ -7,7 +7,7 @@
 #   - ブランチ・ワークツリーの作成
 #     （git switch -c など、task-start.sh を含む）  紐付く Issue
 #   - gh pr create・gh issue create
-#     （pr-create.sh・issue-create.sh を含む）      作った PR・Issue（コマンドの出力から拾う）
+#     （pr-create.sh・issue-create.sh を含む）      作った PR・Issue（標準出力から拾う）
 #
 # 決まり（設計書 §9）:
 #   - 同じリンクも、連続で毎回出す（常に見えるようにするため）
@@ -132,7 +132,8 @@ scan_git() {
 scan_git
 $push || $commit || $create_branch || $created || exit 0
 # --dry-run のコマンドは、push も commit も PR・Issue の作成もしない（スクリプトの --dry-run を含む）ので、何も出さない
-has '(^|[[:space:]])--dry-run([[:space:]=]|$)' && exit 0
+# 引用符の中（コミットメッセージなど）の --dry-run は、取り除いてから調べる
+printf '%s' "$cmd" | sed -E "s/\"[^\"]*\"//g; s/'[^']*'//g" | grep -Eq '(^|[[:space:]])--dry-run([[:space:]=]|$)' && exit 0
 
 cwd="$(jq -r '.cwd // empty' <<<"$input")"
 dir="$( (cd "${cwd:-.}" && pwd -P) 2>/dev/null || true)"
@@ -151,10 +152,10 @@ add_link() {
 }
 
 # --- 作った PR・Issue（標準出力から拾う）-------------------------------------------
-# スクリプトの出力の JSON は url に作ったものの URL を持つ（body などの別の URL は拾わない）。
+# スクリプトの出力の JSON は、作ったものの URL を url（issue-create.sh）か pr.url（pr-create.sh）に持つ（body などの別の URL は拾わない）。
 # gh pr create・gh issue create は、URL だけの行を出す
 if $created; then
-  for u in $( { jq -r 'objects | .url // empty' <<<"$stdout" 2>/dev/null || true
+  for u in $( { jq -r 'objects | (.url // .pr.url // empty)' <<<"$stdout" 2>/dev/null || true
     printf '%s\n' "$stdout" | grep -E '^https://[^[:space:]]+/(pull|issues)/[0-9]+[[:space:]]*$' || true; } | awk '!seen[$0]++'); do
     case "$u" in
       */pull/*) add_link "$u" "PR" ;;

@@ -171,7 +171,7 @@ silent() {
 
 @test "作った PR・Issue は、出力の url から拾い、body の中の別の URL は拾わない" {
   run_hook "bash \"\${CLAUDE_PLUGIN_ROOT}/scripts/pr-create.sh\"" \
-    '{"url": "https://github.com/me/demo/pull/42", "body": "Closes https://github.com/me/demo/issues/99 と https://github.com/me/demo/pull/7"}'
+    '{"created": true, "pr": {"number": 42, "url": "https://github.com/me/demo/pull/42"}, "body": "Closes https://github.com/me/demo/issues/99 と https://github.com/me/demo/pull/7"}'
   [ "$status" -eq 0 ]
   [[ "$(jq -r .systemMessage <<<"$output")" == *"pull/42"* ]]
   [[ "$output" != *"issues/99"* && "$output" != *"pull/7"* ]]
@@ -186,6 +186,32 @@ https://github.com/me/demo/pull/42"
     "bash \"\${CLAUDE_PLUGIN_ROOT}/scripts/commit.sh\" --message x --dry-run" \
     "git push --dry-run" "git push -n origin feat/17-demo" "git commit --dry-run -m x" \
     "bash \"\${CLAUDE_PLUGIN_ROOT}/scripts/task-start.sh\" --issue 17 --slug x --dry-run"
+}
+
+@test "pr-create.sh の実際の出力から、作った PR の URL を拾う（body の別の URL は拾わない）" {
+  git add .claude/dev-workflow/config.json
+  git commit -q -m config
+  git init -q --bare -b main "$TMP/origin.git"
+  git remote add origin "$TMP/origin.git"
+  git push -q origin main
+  echo work >work.txt
+  git add work.txt
+  git commit -q -m "feat: work"
+  printf '## 概要\n詳しくは https://github.com/me/demo/issues/99\n\n## 変更点\n- work.txt\n\n## 確認方法\n- 見た\n' >"$TMP/body.md"
+  run_script pr-create.sh --issue 17 --body-file "$TMP/body.md"
+  assert_success
+  out="$(json_of "$output")"
+  # 出力の形が変わって、PR の URL を読めなくなったら、ここで気づく
+  assert_equal "$(jq -r .pr.url <<<"$out")" "https://github.com/me/demo/pull/42"
+  run_hook "bash \"\${CLAUDE_PLUGIN_ROOT}/scripts/pr-create.sh\" --issue 17 --body-file b.md" "$out"
+  [ "$status" -eq 0 ]
+  [[ "$(jq -r .systemMessage <<<"$output")" == *"PR: https://github.com/me/demo/pull/42"* ]]
+  [[ "$output" != *"issues/99"* ]]
+}
+
+@test "引用符の中の --dry-run には反応せず、リンクを出す" {
+  shows "git commit -m \"--dry-run を説明する\"" "Issue #17: https://github.com/me/demo/issues/17"
+  shows "git commit -m 'document --dry-run'" "Issue #17: https://github.com/me/demo/issues/17"
 }
 
 @test "同じリンクも、連続で毎回出す" {
