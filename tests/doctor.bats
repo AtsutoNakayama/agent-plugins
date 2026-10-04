@@ -9,6 +9,8 @@ load test_helper
 # gh label list はリポジトリにある今のラベルとして FAKE_LABELS（既定: プラグインの定義のラベルすべて）を返す。
 # gh api --paginate repos/{owner}/{repo}/rules/branches/<ブランチ> は、パスを FAKE_RULES_LOG のファイル（あれば）に書き、FAKE_RULES（ブランチに効いているルール。ページごとの配列を並べる）を返す。
 # FAKE_RULES が無ければ失敗する（問い合わせられないとき）。
+# base_branch のワークフロー（gh api repos/{owner}/{repo}/contents/.github/workflows?ref=...）は、$TMP/workflows/ の
+# ファイルの一覧を返し、ディレクトリが無ければ 404、FAKE_WORKFLOWS_FAIL があれば 403 で失敗する。ファイル（gh api -H ... .../contents/<パス>?ref=...）はそのファイルを返す。
 # ほかの呼び出しは失敗する。
 fake_gh() {
   mkdir -p "$TMP/bin"
@@ -30,11 +32,22 @@ case "$1 $2" in
     if [ -n "${FAKE_RULES_LOG:-}" ]; then printf '%s\n' "$2" >"$FAKE_RULES_LOG"; fi
     printf '%s\n' "$FAKE_RULES"
     ;;
+  "api repos/{owner}/{repo}/contents/.github/workflows?"*)
+    if [ -n "${FAKE_WORKFLOWS_FAIL:-}" ]; then echo 'gh: Forbidden (HTTP 403)' >&2; exit 1; fi
+    [ -d "$FAKE_WORKFLOWS" ] || { echo 'gh: Not Found (HTTP 404)' >&2; exit 1; }
+    for f in "$FAKE_WORKFLOWS"/*; do
+      jq -n --arg n "$(basename "$f")" '{name: $n, path: (".github/workflows/" + $n), type: "file"}'
+    done | jq -s .
+    ;;
+  "api -H")
+    f="${4%%\?*}"
+    cat "$FAKE_WORKFLOWS/$(basename "$f")"
+    ;;
   *) exit 1 ;;
 esac
 SH
   chmod +x "$TMP/bin/gh"
-  export PATH="$TMP/bin:$PATH"
+  export PATH="$TMP/bin:$PATH" FAKE_WORKFLOWS="$TMP/workflows"
   FAKE_LABELS="$(cat "$SCRIPTS/../defaults/labels.json")"
   export FAKE_LABELS
 }
@@ -266,4 +279,57 @@ merge_check() { jq -c '.checks[] | select(.name == "merge-queue") | [.ok, .level
   run_script doctor.sh
   assert_success
   assert_equal "$(merge_check)" ""
+}
+
+# 使い方: merge_group_check → merge-group の確認の [ok, level, detail]。確認が無ければ空
+merge_group_check() { jq -c '.checks[] | select(.name == "merge-group") | [.ok, .level, .detail]' <<<"$output"; }
+
+# ワークフローを置く。使い方: workflow <ファイル名> <on: の値> <ジョブの ID>
+workflow() {
+  mkdir -p "$FAKE_WORKFLOWS"
+  printf 'on: %s\njobs:\n  %s:\n    runs-on: ubuntu-latest\n' "$2" "$3" >"$FAKE_WORKFLOWS/$1"
+}
+
+# 必須のチェック（lint-result と test-result）とマージキューのルール
+QUEUE_RULES='[{"type": "required_status_checks", "parameters": {"strict_required_status_checks_policy": false,
+  "required_status_checks": [{"context": "lint-result"}, {"context": "test-result"}]}}, {"type": "merge_queue", "parameters": {}}]'
+
+@test "キューを使っていて、必須のチェックのワークフローが merge_group で動かなければ知らせる" {
+  fake_gh
+  export FAKE_SCOPES="project" FAKE_RULES="$QUEUE_RULES"
+  workflow lint.yml "[pull_request, merge_group]" lint-result
+  workflow test.yml pull_request test-result
+  run_script doctor.sh
+  assert_success
+  assert_equal "$(merge_group_check)" '[false,"warn","必須のチェックのうち test-result（.github/workflows/test.yml）は、merge_group のイベントで動きません。マージキューのチェックが「待ち」のまま残り、PR がマージされません。ワークフローの on: に merge_group を足してください"]'
+}
+
+@test "キューの必須のチェックのワークフローがどれも merge_group で動けば ok、ジョブが分からなければその名前を示す" {
+  fake_gh
+  export FAKE_SCOPES="project" FAKE_RULES="$QUEUE_RULES"
+  workflow lint.yml merge_group lint-result
+  workflow test.yml merge_group test-result
+  run_script doctor.sh
+  assert_equal "$(merge_group_check)" '[true,"warn","必須のチェックのワークフローは、merge_group のイベントでも動きます"]'
+  rm "$FAKE_WORKFLOWS/test.yml"
+  run_script doctor.sh
+  assert_equal "$(merge_group_check)" '[true,"warn","必須のチェック test-result は、main のどのワークフローのジョブか分からないので、merge_group のイベントで動くか確かめられません"]'
+}
+
+@test "キューを使っていない・必須のチェックが無い・ワークフローを読めないときは、merge_group を確かめない" {
+  fake_gh
+  export FAKE_SCOPES="project"
+  workflow lint.yml pull_request lint-result
+  export FAKE_RULES='[{"type": "required_status_checks", "parameters": {"strict_required_status_checks_policy": true,
+    "required_status_checks": [{"context": "lint-result"}]}}]'
+  run_script doctor.sh
+  assert_equal "$(merge_group_check)" ""
+  export FAKE_RULES='[{"type": "merge_queue", "parameters": {}}]'
+  run_script doctor.sh
+  assert_equal "$(merge_group_check)" ""
+  # ワークフローの一覧を読めない
+  export FAKE_RULES="$QUEUE_RULES" FAKE_WORKFLOWS_FAIL=1
+  run_script doctor.sh
+  assert_success
+  assert_equal "$(merge_group_check)" ""
 }
