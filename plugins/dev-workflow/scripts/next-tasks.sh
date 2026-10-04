@@ -4,7 +4,7 @@
 # 使い方: next-tasks.sh
 #
 # 並び順は Project 上の並び（手動で並べ替えた順）。依存（GitHub の blocked by と、本文の「依存」の #N）に
-# 閉じていない Issue があれば waiting にする。コンフリクトの見込みは、本文の「変更するファイル・領域」と、
+# 閉じていない Issue（開いている・見つからない）があれば waiting にする。コンフリクトの見込みは、本文の「変更するファイル・領域」と、
 # 着手中（start の列）の Issue の開いている PR が変えているファイルで見る（パスの一方がもう一方の接頭辞なら重なる）。
 # 領域が分からない Issue は、並列にできる組に入れない。「.」「*」「**」はリポジトリ全体として、全部と重なる。
 # パスと判断できない行（日本語の文・途中のグロブ）は areas_ignored に出す。着手中の Issue に領域も PR も無いときは、
@@ -71,7 +71,11 @@ while :; do
       | select(.status == $todo or (.status == $start and $start != ""))]' <<<"$page")"
   issues="$(jq -c --argjson p "$picked" '. + $p' <<<"$issues")"
   [ "$(jq -r '.data.repositoryOwner.projectV2.items.pageInfo.hasNextPage' <<<"$page")" = true ] || break
-  after="$(jq -r '.data.repositoryOwner.projectV2.items.pageInfo.endCursor' <<<"$page")"
+  # カーソルが空か前回と同じなら、同じページを読み続けてしまう（無限ループ）ので止める
+  next_after="$(jq -r '.data.repositoryOwner.projectV2.items.pageInfo.endCursor // empty' <<<"$page")"
+  { [ -n "$next_after" ] && [ "$next_after" != "$after" ]; } \
+    || dw_die "Project の項目のページ送りが進みません: ${owner}/${number}"
+  after="$next_after"
 done
 
 # 本文の見出し（## <見出し>）の次の行から、次の見出しまでを行の配列にする
@@ -127,12 +131,15 @@ open_in_project="$(jq -c --argjson a "$active" '[.[].number] + [$a[].number]' <<
 fetched='{}'
 for d in $(jq -r --argjson o "$open_in_project" --arg repo "$repo_nwo" \
   '[.[].blockers[] | select(.state == null and .repo == $repo and (.number as $x | $o | index($x) | not)) | .number] | unique | .[]' <<<"$deps"); do
-  s="$(gh api "$repo_issue_dir/$d" -q .state)" || dw_die "Issue #${d} を読めませんでした"
+  # 本文の「依存」は手で書くので、無い Issue（404・410）の番号もありうる。止まらず、閉じたと分からないので待ちのままにする
+  # （状態は not_found）。認証・通信などほかの失敗は、dw_gh_find が理由を伝えて止まる
+  s="$(dw_gh_find gh api "$repo_issue_dir/$d" -q .state)"
+  [ "$s" != null ] || s=not_found
   fetched="$(jq -c --arg d "$d" --arg s "$s" '. + {($d): ($s | ascii_downcase)}' <<<"$fetched")"
 done
 
 # 着手中の Issue の開いている PR が変えているファイル。PR の Issue は、ブランチ名（<type>/<番号>-…）か Closes で決める
-prs="$(gh pr list --state open --limit 100 --json number,headRefName,files,closingIssuesReferences)" \
+prs="$(gh pr list --state open --limit 1000 --json number,headRefName,files,closingIssuesReferences)" \
   || dw_die "開いている PR を読めませんでした"
 
 jq -n --argjson todo "$todo" --argjson active "$active" --argjson deps "$deps" --argjson fetched "$fetched" \
@@ -150,7 +157,7 @@ jq -n --argjson todo "$todo" --argjson active "$active" --argjson deps "$deps" -
       | ($deps[] | select(.number == $t.number).blockers) as $bl
       | . + {blocked_by: ($bl | map(. + {state: (.state // (if .repo == $repo and (.number | IN($in_project[])) then "open"
                                                           else ($fetched[.number | tostring] // "open") end))})
-          | map(select(.state == "open")))}
+          | map(select(.state != "closed")))}
       | .waiting = (.blocked_by | length > 0)
       | .area_known = (.areas | length > 0)
       | .warnings = ($active_unknown | map("着手中の #\(.) は PR も領域も無く、重なるか分からない"))

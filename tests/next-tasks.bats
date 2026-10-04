@@ -9,7 +9,7 @@ load test_helper
 # - gh api graphql                                 「TodoItems <変数>」を $CALLS に記録し、$FIX/TodoItems.<n>.json（n 回目。無ければ TodoItems.json）を返す
 # - gh api --paginate .../issues/<番号>/dependencies/blocked_by...  $FIX/blocked-<番号>.json（無ければ []）を返す
 # - gh api repos/me/demo/issues/<番号> -q .state   $FIX/state-<番号>（無ければ closed）を返す。「GetIssue <番号>」を記録する
-# - gh pr list ...                                 $FIX/pr-list.json（無ければ []）を返す
+# - gh pr list ...                                 $FIX/pr-list.json（無ければ []）を返す。「PrList <引数>」を記録する
 # FAKE_FAIL に指定した操作名（TodoItems・GetIssue・PrList）は、FAKE_FAIL_MSG（既定: gh: failed）を出して失敗する。
 setup_fake_gh() {
   FIX="$TMP/fix"
@@ -43,6 +43,7 @@ case "$1 $2" in
     if [ -f "$FIX/state-$n" ]; then cat "$FIX/state-$n"; else echo closed; fi
     ;;
   "pr list")
+    echo "PrList ${*:3}" >>"$CALLS"
     fail PrList
     if [ -f "$FIX/pr-list.json" ]; then cat "$FIX/pr-list.json"; else echo '[]'; fi
     ;;
@@ -64,10 +65,10 @@ item() {
     status: {name: $s}, sp: (if $sp == "" then null else {number: ($sp | tonumber)} end)}' >>"$FIX/nodes"
 }
 
-# 足した項目を、1ページ分の応答にする。使い方: write_page [ファイル名（既定 TodoItems.json）] [次のページがあるか]
+# 足した項目を、1ページ分の応答にする。使い方: write_page [ファイル名（既定 TodoItems.json）] [次のページがあるか] [次のカーソル（既定 C1。null も指定できる）]
 write_page() {
-  jq -sc --argjson next "${2:-false}" '{data: {repositoryOwner: {projectV2: {items: {
-    pageInfo: {hasNextPage: $next, endCursor: "C1"}, nodes: .}}}}}' "$FIX/nodes" >"$FIX/${1:-TodoItems.json}"
+  jq -sc --argjson next "${2:-false}" --argjson cursor "\"${3:-C1}\"" '{data: {repositoryOwner: {projectV2: {items: {
+    pageInfo: {hasNextPage: $next, endCursor: (if $cursor == "null" then null else $cursor end)}, nodes: .}}}}}' "$FIX/nodes" >"$FIX/${1:-TodoItems.json}"
   : >"$FIX/nodes"
 }
 
@@ -372,6 +373,60 @@ JSON
   assert_equal "$(out_of '.todo[2].overlaps | length')" 1
 }
 
+@test "ページ送りのカーソルが null なら、同じページを読み続けずに止まる" {
+  setup_fake_gh
+  item 10 Todo
+  write_page TodoItems.json true null
+  run_script next-tasks.sh
+  assert_failure 1
+  assert_output --partial "Project の項目のページ送りが進みません: me/4"
+  assert_equal "$(called TodoItems)" 1
+}
+
+@test "ページ送りのカーソルが前回と同じなら、同じページを読み続けずに止まる" {
+  setup_fake_gh
+  item 10 Todo
+  write_page TodoItems.1.json true C1
+  item 11 Todo
+  write_page TodoItems.2.json true C1
+  run_script next-tasks.sh
+  assert_failure 1
+  assert_output --partial "Project の項目のページ送りが進みません: me/4"
+  assert_equal "$(called TodoItems)" 2
+}
+
+@test "本文の「依存」に存在しない Issue 番号があっても止まらず、待ちのまま（not_found）にして、ほかの提案は出す" {
+  setup_fake_gh
+  item 10 Todo $'## 依存\n- #99'
+  item 11 Todo
+  write_page
+  FAKE_FAIL=GetIssue FAKE_FAIL_MSG="gh: Not Found (HTTP 404)" run_script next-tasks.sh
+  assert_success
+  assert_equal "$(out_of '.todo[0] | [.waiting, [.blocked_by[] | [.number, .state]]]')" '[true,[[99,"not_found"]]]'
+  assert_equal "$(out_of .next)" 11
+}
+
+@test "削除された Issue（410）を依存に書いても同じ。認証や通信などほかの失敗では、止まる" {
+  setup_fake_gh
+  item 10 Todo $'## 依存\n- #99'
+  write_page
+  FAKE_FAIL=GetIssue FAKE_FAIL_MSG="gh: This issue was deleted (HTTP 410)" run_script next-tasks.sh
+  assert_success
+  assert_equal "$(out_of '.todo[0].blocked_by[0].state')" '"not_found"'
+  FAKE_FAIL=GetIssue FAKE_FAIL_MSG="gh: Server Error (HTTP 500)" run_script next-tasks.sh
+  assert_failure 1
+  assert_output --partial "GitHub の API に失敗しました: gh: Server Error (HTTP 500)"
+}
+
+@test "開いている PR は、100 件を超えても取りこぼさないよう、大きな上限（1000）で読む" {
+  setup_fake_gh
+  item 10 Todo
+  write_page
+  run_script next-tasks.sh
+  assert_success
+  assert_equal "$(args PrList)" "--state open --limit 1000 --json number,headRefName,files,closingIssuesReferences"
+}
+
 @test "Todo が無ければ next は null" {
   setup_fake_gh
   item 1 Done
@@ -387,7 +442,7 @@ JSON
   write_page
   run_script next-tasks.sh
   assert_success
-  assert_equal "$(grep -vcE '^(TodoItems|GetIssue) ' "$CALLS")" 0
+  assert_equal "$(grep -vcE '^(TodoItems|GetIssue|PrList) ' "$CALLS")" 0
 }
 
 @test "project.number が未設定ならエラーになる" {
