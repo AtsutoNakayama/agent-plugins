@@ -141,7 +141,7 @@ if [ "$dry_run" = false ]; then
       { print }' "$p" >"$tmp"
     # 元のファイルの権限を保つため、mv ではなく中身を書き戻す。途中で失敗したときは、何が変わったかを知らせる
     cat "$tmp" >"$p" || dw_die "置き換える ADR を書き換えられません: ${p#"$repo_root"/}（一部だけ書き換わっているかもしれません。作った ADR ${rel} は残っています。すでに書き換えた ADR: ${rewritten:-なし}）" 1
-    rewritten="${rewritten:+$rewritten、}${p#"$repo_root"/}"
+    rewritten="${rewritten:+${rewritten}、}${p#"$repo_root"/}"
     rm -f "$tmp"
   done
 fi
