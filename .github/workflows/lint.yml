@@ -4,13 +4,16 @@ name: Lint
 # 止めず、いつも動かす。ルールセットの必須のチェックにしているので、ワークフローが動かないとチェックが
 # 「待ち」のまま残ってマージできないため。必須のチェックは、最後に必ず動く lint-result ジョブ。
 # 何をドキュメントとするかは、.github/scripts/docs-only.sh にある。
+# マージキューに入れた PR は、merge_group のイベントでも動かす（キューの結果で必須のチェックが決まる）。
 on:
   pull_request:
   push:
     branches: [main]
+  merge_group:
 
 # 同じ PR に続けて push したら、古い実行を取り消す。main への push は PR のときとの差を
-# 確かめるために残すので、コミットごとに別のグループにして取り消さない
+# 確かめるために残すので、コミットごとに別のグループにして取り消さない。
+# merge_group も、キューの1件ごとのコミット（github.sha）で別のグループになり、取り消さない
 concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.sha }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
@@ -18,7 +21,8 @@ concurrency:
 jobs:
   changes:
     # ドキュメントだけの変更かを調べる。pull_request ではマージコミット（HEAD^ が main の先端）、push では
-    # main に入ったコミットを見るので、直前の1つ前まで取得する
+    # main に入ったコミットを見るので、直前の1つ前まで取得する。
+    # merge_group では、キューの先頭側のコミット（merge_group.base_sha）から HEAD までを見る
     runs-on: ubuntu-latest
     outputs:
       docs_only: ${{ steps.docs-only.outputs.docs_only }}
@@ -28,6 +32,8 @@ jobs:
           fetch-depth: 2
       - name: docs only
         id: docs-only
+        env:
+          MERGE_GROUP_BASE_SHA: ${{ github.event.merge_group.base_sha }}
         run: |
           echo "docs_only=$(.github/scripts/docs-only.sh | jq -r .docs_only)" >> "$GITHUB_OUTPUT"
 

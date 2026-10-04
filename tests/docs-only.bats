@@ -18,6 +18,11 @@ docs_only() {
   run "${TEST_BASH:-bash}" "$BATS_TEST_DIRNAME/../.github/scripts/docs-only.sh"
 }
 
+# マージキューのとき（GITHUB_EVENT_NAME=merge_group）として、比較元のコミットを MERGE_GROUP_BASE_SHA で渡して実行する
+docs_only_merge_group() {
+  GITHUB_EVENT_NAME=merge_group MERGE_GROUP_BASE_SHA="$1" run "${TEST_BASH:-bash}" "$BATS_TEST_DIRNAME/../.github/scripts/docs-only.sh"
+}
+
 @test "README・docs・テンプレートだけの変更は true" {
   commit_files README.md docs/design.md .github/ISSUE_TEMPLATE/bug.yml .github/pull_request_template.md
   docs_only
@@ -81,4 +86,42 @@ docs_only() {
   git -c user.name=t -c user.email=t@example.com commit -q -m move
   docs_only
   assert_output '{"docs_only": false}'
+}
+
+# マージキュー（merge_group）では、キューの先頭側のコミット（merge_group.base_sha）を環境変数で渡す。
+# PR が複数のコミットのとき、HEAD^ だと最後の1つだけを見てしまう
+
+@test "マージキューでは比較元を渡すと、複数のコミットにまたがる変更を見る（最後だけがドキュメントでも false）" {
+  base="$(git rev-parse HEAD)"
+  commit_files tests/a.bats
+  commit_files docs/a.md
+  # 引数なしでは最後のコミットだけを見るので、ドキュメントだけと誤って判断する
+  docs_only
+  assert_output '{"docs_only": true}'
+  docs_only_merge_group "$base"
+  assert_output '{"docs_only": false}'
+}
+
+@test "マージキューでも、全部がドキュメントなら true" {
+  base="$(git rev-parse HEAD)"
+  commit_files README.md
+  commit_files docs/a.md
+  docs_only_merge_group "$base"
+  assert_success
+  assert_output '{"docs_only": true}'
+}
+
+@test "マージキューで比較元のコミットが無いとき（調べられないとき）は false にして CI を動かす" {
+  commit_files docs/a.md
+  docs_only_merge_group 0000000000000000000000000000000000000000
+  assert_success
+  assert_output '{"docs_only": false}'
+}
+
+@test "merge_group でなければ、MERGE_GROUP_BASE_SHA があっても HEAD^ から見る" {
+  base="$(git rev-parse HEAD)"
+  commit_files tests/a.bats
+  commit_files docs/a.md
+  GITHUB_EVENT_NAME=pull_request MERGE_GROUP_BASE_SHA="$base" run "${TEST_BASH:-bash}" "$BATS_TEST_DIRNAME/../.github/scripts/docs-only.sh"
+  assert_output '{"docs_only": true}'
 }
