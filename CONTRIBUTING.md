@@ -43,7 +43,7 @@ PR は、CodeRabbit（`.coderabbit.yaml`）が作ったときに1回だけ自動
 - CodeRabbit が上限に引っかかったとき（`coderabbitai[bot]` の `rate limited by coderabbit.ai` のコメントがきっかけです）
 - PR を作ってから1時間経っても CodeRabbit のレビューが無いとき（30分ごとに見回ります。障害など上限以外の理由で動かなかった場合も拾います）
 
-Claude のレビューは、同じコミットには1回しか付きません。head が同じリポジトリの PR だけが対象で、フォークからの PR は対象外です。どちらのレビューも、この CONTRIBUTING.md と `plugins/dev-workflow/review/*.md`・`.claude/dev-workflow/review/*.md` のレビューの観点に沿って行います。ワークフローは必須のチェックではないので、失敗しても PR のマージは妨げません。
+Claude のレビューは、上限のコメントがきっかけのときは同じコミットに1回しか付きません。見回りは、その PR に Claude のレビューが1件でもあれば動かないので、CodeRabbit が動かない状況でも、レビューが際限なく付くことはありません。head が同じリポジトリの PR だけが対象で、フォークからの PR は対象外です。どちらのレビューも、この CONTRIBUTING.md と `plugins/dev-workflow/review/*.md`・`.claude/dev-workflow/review/*.md` のレビューの観点に沿って行います。ワークフローは必須のチェックではないので、失敗しても PR のマージは妨げません。
 
 ### 設定の手順
 
