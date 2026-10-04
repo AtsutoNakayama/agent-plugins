@@ -7,6 +7,8 @@
 #   --slug TEXT    ブランチ名の短い説明（英語）。branch-name.sh で整える
 #   --dry-run      変更せず、行う予定の操作だけを出力する
 #
+# 親の Issue（サブ Issue を持つ Issue）は作業の単位ではないので、何もせずに止まる（終了コード 2）。作業は子の Issue で進める。
+#
 # 行うこと:
 #   1. ブランチ名を決める（branch.pattern に従う。既定は {type}/{issue_number}-{slug}）
 #   2. <branch.worktree_dir>/<ブランチ名> にワークツリーを作る（相対パスはメインのワークツリーから）。
@@ -66,8 +68,12 @@ actions='[]'
 note() { actions="$(jq -c --arg a "$1" '. + [$a]' <<<"$actions")"; }
 
 # --- Issue ----------------------------------------------------------------------
-issue_json="$(gh issue view "$issue" --json number,title,state,assignees)"
+issue_json="$(gh issue view "$issue" --json number,title,state,assignees,subIssuesSummary)"
 [ "$(jq -r .state <<<"$issue_json")" = OPEN ] || dw_die "Issue #${issue} は閉じています" 2
+# 親の Issue は子をまとめるだけで、親そのものの作業は無い（設計書 §4）。ブランチ・割り当て・列の移動のどれも行わない
+sub_total="$(jq -r '.subIssuesSummary.total // 0' <<<"$issue_json")"
+[ "$sub_total" -eq 0 ] \
+  || dw_die "Issue #${issue} は親の Issue（子の Issue が ${sub_total} 件）なので、着手しません。子の Issue に着手してください" 2
 title="$(jq -r .title <<<"$issue_json")"
 
 # --- 1. ブランチ名 --------------------------------------------------------------

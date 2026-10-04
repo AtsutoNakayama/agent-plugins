@@ -191,6 +191,32 @@ run_start() {
   assert_output --partial "Issue #17 は閉じています"
 }
 
+@test "親の Issue（サブ Issue を持つ）では、何も作らず、割り当ても列の移動もせずに止まる（dry-run も同じ）" {
+  setup_fake_gh
+  setup_origin
+  jq '. + {subIssuesSummary: {total: 3, completed: 1, percentCompleted: 33}}' "$FIX/issue-17.json" >"$FIX/i" \
+    && mv "$FIX/i" "$FIX/issue-17.json"
+  for mode in --dry-run ""; do
+    run_start --issue 17 --slug x ${mode:+"$mode"}
+    assert_failure 2
+    assert_output "error: Issue #17 は親の Issue（子の Issue が 3 件）なので、着手しません。子の Issue に着手してください"
+  done
+  [ ! -e .claude/worktrees ]
+  assert_equal "$(git branch --list 'feat/*')" ""
+  assert_equal "$(called edit)" 0
+  assert_equal "$(called SetField)" 0
+}
+
+@test "サブ Issue が無い Issue（subIssuesSummary の total が 0）には着手する" {
+  setup_fake_gh
+  setup_origin
+  jq '. + {subIssuesSummary: {total: 0, completed: 0, percentCompleted: 0}}' "$FIX/issue-17.json" >"$FIX/i" \
+    && mv "$FIX/i" "$FIX/issue-17.json"
+  run_start --issue 17 --slug x
+  assert_success
+  assert_equal "$(jq -r .branch <<<"$json")" feat/17-x
+}
+
 @test "割り当てに失敗したら止まる" {
   setup_fake_gh
   setup_origin

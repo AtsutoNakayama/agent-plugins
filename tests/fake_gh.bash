@@ -13,11 +13,13 @@
 # - gh pr close N                   「pr-close N」を $CALLS に記録する
 # - gh --version                    gh version $FAKE_GH_VERSION（既定: 2.96.0）を返す
 # - gh api user                     login: me を返す
+# - gh api --paginate repos/.../issues/N/sub_issues?...
+#                                   「api-sub-issues <パス（? より前）>」を $CALLS に記録し、$FIX/sub-issues-N.json（無ければ []）を返す
 # - gh api repos/...                「api-get <パス>」を $CALLS に記録する。$FIX/remote-ref があれば {} を、無ければ HTTP 404 で失敗する
 # - gh api -X DELETE <パス>          「api-delete <パス>」を $CALLS に記録する
 # - gh api graphql                  操作名ごとに $FIX/<操作名>.json を返し、「<操作名> <変数>」を $CALLS に記録する
 # - gh project ・Project の REST     fake_gh_project.bash が受け持つ（ProjectView・ProjectFields・AddItem・SetField など）
-# FAKE_FAIL に指定した操作名（issue-view・edit・issue-comment・issue-close・pr-list・pr-create・pr-comment・pr-close・api-get・api-delete を含む）は、FAKE_FAIL_MSG（既定: gh: failed）を出して失敗する。
+# FAKE_FAIL に指定した操作名（issue-view・edit・issue-comment・issue-close・pr-list・pr-create・pr-comment・pr-close・api-get・api-delete・api-sub-issues を含む）は、FAKE_FAIL_MSG（既定: gh: failed）を出して失敗する。
 
 setup_fake_gh() {
   FIX="$TMP/fix"
@@ -73,6 +75,18 @@ case "$1 $2" in
   "api -X")
     echo "api-delete $4" >>"$CALLS"
     fail api-delete
+    ;;
+  "api --paginate")
+    case "$3" in
+      repos/*/issues/*/sub_issues*)
+        path="${3%%\?*}"
+        echo "api-sub-issues $path" >>"$CALLS"
+        fail api-sub-issues
+        n="${path%/sub_issues}"
+        n="${n##*/}"
+        if [ -f "$FIX/sub-issues-$n.json" ]; then cat "$FIX/sub-issues-$n.json"; else echo '[]'; fi
+        ;;
+    esac
     ;;
   "api repos/"*)
     echo "api-get $2" >>"$CALLS"
