@@ -22,7 +22,7 @@ Todo の Issue を読み、次に着手すべきものと、同時に進めら�
 - `next`：次に着手すべき Issue の番号（待ちを除いた先頭）。無ければ null
 - `parallel`：`next` と同時に進められる Issue の組（`next` を含む）
 - `todo`：Todo の Issue を Project の並び順（`position`）に並べたもの。`waiting`（待ち）、`blocked_by`（まだ閉じていない依存先。`repo` と `number`、出どころ `sources`。`dependency` は GitHub の依存関係、`body` は本文の「依存」。別のリポジトリの Issue のこともある）、`areas`・`area_known`・`areas_ignored`（本文の「変更するファイル・領域」。`areas_ignored` はパスと判断できず使わなかった行）、`warnings`（着手中の Issue の領域が分からないときの警告）、`parallel` と `reason`（並列にできるか、その理由）、`overlaps`（選んだものと重なるパス）、`conflicts_with_active`（着手中の Issue と重なるパス）
-- `in_progress`：着手中の Issue。`areas`（本文の領域）と `pr_files`（開いている PR が変えているファイル）、`area_known`（どちらかがあるか）。`active_unknown` は、どちらも無い着手中の Issue の番号
+- `in_progress`：着手中の Issue（`status.start` の列と、設定されていれば `status.pr_opened` の列にあるもの）。`areas`（本文の領域）と `pr_files`（開いている PR が変えているファイル）、`area_known`（どちらかがあるか）。`active_unknown` は、どちらも無い着手中の Issue の番号
 
 ### 2. 提案する
 

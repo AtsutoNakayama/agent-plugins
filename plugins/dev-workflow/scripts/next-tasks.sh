@@ -5,7 +5,8 @@
 #
 # 並び順は Project 上の並び（手動で並べ替えた順）。依存（GitHub の blocked by と、本文の「依存」の #N）に
 # 閉じていない Issue（開いている・見つからない）があれば waiting にする。コンフリクトの見込みは、本文の「変更するファイル・領域」と、
-# 着手中（start の列）の Issue の開いている PR が変えているファイルで見る（パスの一方がもう一方の接頭辞なら重なる）。
+# 着手中（start の列と、設定されていれば pr_opened の列）の Issue の開いている PR が変えているファイルで見る
+# （パスの一方がもう一方の接頭辞なら重なる）。
 # 領域が分からない Issue は、並列にできる組に入れない。「.」「*」「**」はリポジトリ全体として、全部と重なる。
 # パスと判断できない行（日本語の文・途中のグロブ）は areas_ignored に出す。着手中の Issue に領域も PR も無いときは、
 # 重なるか分からないので、Todo の各 Issue に warnings を付け、その番号を active_unknown に出す。
@@ -31,7 +32,8 @@ owner="$(jq -r '.project.owner // empty' <<<"$config")"
 number="$(jq -r '.project.number // empty' <<<"$config")"
 [ -n "$number" ] || dw_die "project.number が未設定です（setup-project.sh --write-config で設定できます）" 2
 todo_col="$(jq -r '.status.todo // empty' <<<"$config")"
-start_col="$(jq -r '.status.start // empty' <<<"$config")"
+# 着手中として数える列。PR を作ると pr_opened の列へ移すリポジトリでは、レビュー中の Issue もそこにあるので含める
+active_cols="$(jq -c '[.status.start, .status.pr_opened] | map(select(. != null and . != "")) | unique' <<<"$config")"
 [ -n "$todo_col" ] || dw_die "status.todo が設定されていません" 2
 sp_name="$(jq -r '.story_point.field' <<<"$config")"
 repo_nwo="$(gh repo view --json nameWithOwner -q .nameWithOwner)"
@@ -53,7 +55,7 @@ query='query TodoItems($owner: String!, $number: Int!, $sp: String!, $after: Str
     }
   } } }
 }'
-# このリポジトリの開いている Issue を、Todo（todo）と着手中（start）だけに絞って持つ（Done の項目が多くても引数が長くならない）。
+# このリポジトリの開いている Issue を、Todo（todo）と着手中（start・pr_opened）だけに絞って持つ（Done の項目が多くても引数が長くならない）。
 # 並びは Project の並びのまま
 issues='[]' after=""
 while :; do
@@ -63,12 +65,12 @@ while :; do
   page="$(dw_gh_find dw_gql "$query" "$vars")"
   jq -e '.data.repositoryOwner.projectV2.items' >/dev/null 2>&1 <<<"$page" \
     || dw_die "Project が見つかりません: ${owner}/${number}（setup-project.sh で設定してください）"
-  picked="$(jq -c --arg r "$repo_nwo" --arg todo "$todo_col" --arg start "$start_col" '
+  picked="$(jq -c --arg r "$repo_nwo" --arg todo "$todo_col" --argjson active "$active_cols" '
     [.data.repositoryOwner.projectV2.items.nodes[]
       | select(.content.__typename == "Issue" and .content.repository.nameWithOwner == $r and .content.state == "OPEN")
       | {number: .content.number, title: .content.title, url: .content.url, body: (.content.body // ""),
          status: (.status.name // ""), story_point: (.sp.number // null)}
-      | select(.status == $todo or (.status == $start and $start != ""))]' <<<"$page")"
+      | select(.status == $todo or (.status | IN($active[])))]' <<<"$page")"
   issues="$(jq -c --argjson p "$picked" '. + $p' <<<"$issues")"
   [ "$(jq -r '.data.repositoryOwner.projectV2.items.pageInfo.hasNextPage' <<<"$page")" = true ] || break
   # カーソルが空か前回と同じなら、同じページを読み続けてしまう（無限ループ）ので止める
@@ -106,8 +108,8 @@ defs='
 repo_issue_dir="repos/$repo_nwo/issues"
 todo="$(jq -c "$defs"'[.[] | select(.status == $todo) | . + {areas: areas, areas_ignored: areas_ignored, body_deps: deps} | del(.body)]' \
   --arg todo "$todo_col" <<<"$issues")"
-active="$(jq -c "$defs"'[.[] | select(.status == $start and $start != "") | {number, title, areas: areas} ]' \
-  --arg start "$start_col" <<<"$issues")"
+active="$(jq -c "$defs"'[.[] | select(.status | IN($active[])) | {number, title, areas: areas} ]' \
+  --argjson active "$active_cols" <<<"$issues")"
 
 # 各 Todo の Issue の依存関係（blocked by）を読み、本文の依存と合わせて、閉じているかを調べる
 # 依存先は別のリポジトリの Issue でもありうるので、リポジトリと番号の組で区別する（本文の #N は、このリポジトリの Issue）

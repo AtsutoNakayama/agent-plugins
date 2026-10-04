@@ -81,12 +81,14 @@ detail() {
     >"$FIX/ProjectDetail.json"
 }
 
-# 使い方: issues <[{number, items: [{id, project, status}]}]>（1ページ）
+# 使い方: issues <[{number, items: [{id, project, status}]}]> [ファイル名] [次のページがあるか] [カーソル]
+# 既定は1ページだけ（OpenIssues.json、次のページなし）。ページ送りのテストでは OpenIssues.<n>.json に書く
 issues() {
-  jq -n --argjson is "$1" '{data: {repository: {issues: {pageInfo: {hasNextPage: false, endCursor: null},
+  jq -n --argjson is "$1" --argjson next "${3:-false}" --argjson cursor "${4:-null}" \
+    '{data: {repository: {issues: {pageInfo: {hasNextPage: $next, endCursor: $cursor},
     nodes: ($is | map({url: "https://github.com/me/demo/issues/\(.number)", number, projectItems: {nodes: (.items | map({id, project: {id: .project},
       fieldValueByName: (if .status then {name: .status} else null end)}))}}))}}}}' \
-    >"$FIX/OpenIssues.json"
+    >"$FIX/${2:-OpenIssues.json}"
 }
 
 run_setup() {
@@ -184,14 +186,34 @@ called() { grep -c "^$1 " "$CALLS" || true; }
   assert_equal "$(grep '^ProjectView ' "$CALLS" | cut -d' ' -f2- | jq -c '[._[0], .owner]')" '["12","team"]'
 }
 
-@test "足りない Status の列は、既存の選択肢の id を残したまま追加する" {
+@test "足りない Status の列は、既存の選択肢の id を残したまま、設定の順で前にある列の後ろに追加する" {
   setup_fake_gh
   detail '["R1"]' '[{"id": "O1", "name": "Todo"}, {"id": "O3", "name": "Done"}]' true
   run_setup
   assert_success
   assert_equal "$(called UpdateStatus)" 1
   opts="$(grep '^UpdateStatus ' "$CALLS" | cut -d' ' -f2- | jq -c '[.opts[] | [.id, .name]]')"
-  assert_equal "$opts" '[["O1","Todo"],["O3","Done"],[null,"In Progress"]]'
+  assert_equal "$opts" '[["O1","Todo"],[null,"In Progress"],["O3","Done"]]'
+}
+
+@test "pr_opened の列は、start の列の後ろ（done の列の前）に追加し、利用者が足した列の位置は変えない" {
+  setup_fake_gh
+  echo '{"status": {"pr_opened": "In Review"}}' >.claude/dev-workflow/config.json
+  detail '["R1"]' '[{"id": "O1", "name": "Todo"}, {"id": "OB", "name": "Blocked"}, {"id": "O2", "name": "In Progress"},
+    {"id": "O3", "name": "Done"}, {"id": "OX", "name": "Archive"}]' true
+  run_setup
+  assert_success
+  opts="$(grep '^UpdateStatus ' "$CALLS" | cut -d' ' -f2- | jq -c '[.opts[] | [.id, .name]]')"
+  assert_equal "$opts" '[["O1","Todo"],["OB","Blocked"],["O2","In Progress"],[null,"In Review"],["O3","Done"],["OX","Archive"]]'
+}
+
+@test "設定の順で前にある列が1つも無ければ、後ろにある列の前に追加する" {
+  setup_fake_gh
+  detail '["R1"]' '[{"id": "OX", "name": "Archive"}, {"id": "O3", "name": "Done"}]' true
+  run_setup
+  assert_success
+  opts="$(grep '^UpdateStatus ' "$CALLS" | cut -d' ' -f2- | jq -c '[.opts[] | [.id, .name]]')"
+  assert_equal "$opts" '[["OX","Archive"],[null,"Todo"],[null,"In Progress"],["O3","Done"]]'
 }
 
 @test "Project に入っている Issue は追加せず、Status が入っていれば変更もしない" {
@@ -207,6 +229,44 @@ called() { grep -c "^$1 " "$CALLS" || true; }
   assert_equal "$(called SetField)" 2
   grep '^SetField ' "$CALLS" | grep -q '"id":"IT2"'
   assert_equal "$(jq -r '[.items.added, .items.set_todo] | join(",")' <<<"$json")" "1,2"
+}
+
+@test "オープンな Issue は、カーソルで次のページを読み、全ページの Issue を Project に入れる" {
+  setup_fake_gh
+  projects '[{"id": "P1", "number": 7, "title": "demo", "url": "u", "closed": false}]'
+  issues '[{"number": 1, "items": []}]' OpenIssues.1.json true '"C1"'
+  issues '[{"number": 2, "items": []}]' OpenIssues.2.json
+  run_setup
+  assert_success
+  assert_equal "$(called OpenIssues)" 2
+  assert_equal "$(grep '^OpenIssues ' "$CALLS" | sed -n 2p | cut -d' ' -f2- | jq -r .after)" C1
+  assert_equal "$(called AddItem)" 2
+}
+
+@test "オープンな Issue のページ送りのカーソルが null なら、同じページを読み続けずに止まる" {
+  setup_fake_gh
+  projects '[{"id": "P1", "number": 7, "title": "demo", "url": "u", "closed": false}]'
+  issues '[{"number": 1, "items": []}]' OpenIssues.1.json true null
+  # 止まらずに次を読んだときに、テストが終わらなくならないよう、最後のページを置く
+  issues '[{"number": 2, "items": []}]' OpenIssues.2.json
+  run_setup
+  assert_failure 1
+  assert_output --partial "オープンな Issue のページ送りが進みません: me/demo"
+  assert_equal "$(called OpenIssues)" 1
+  assert_equal "$(called AddItem)" 0
+}
+
+@test "オープンな Issue のページ送りのカーソルが前回と同じなら、同じページを読み続けずに止まる" {
+  setup_fake_gh
+  projects '[{"id": "P1", "number": 7, "title": "demo", "url": "u", "closed": false}]'
+  issues '[{"number": 1, "items": []}]' OpenIssues.1.json true '"C1"'
+  issues '[{"number": 2, "items": []}]' OpenIssues.2.json true '"C1"'
+  issues '[{"number": 3, "items": []}]' OpenIssues.3.json
+  run_setup
+  assert_failure 1
+  assert_output --partial "オープンな Issue のページ送りが進みません: me/demo"
+  assert_equal "$(called OpenIssues)" 2
+  assert_equal "$(called AddItem)" 0
 }
 
 @test "todo の列が無ければ警告し、Status を設定しない" {

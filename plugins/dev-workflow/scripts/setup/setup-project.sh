@@ -13,7 +13,7 @@
 # 行うこと:
 #   1. Project の特定（--number → 設定の project.number → 名前の完全一致）、無ければ作成
 #   2. リポジトリとの紐付け
-#   3. Status 列に設定の status の列名を揃える（既存の選択肢と値は残す）
+#   3. Status 列に設定の status の列名を揃える（既存の選択肢と値は残す。足す列は、設定の順で前にある列の後ろに入れる）
 #   4. Story Point（数値の項目）の追加
 #   5. Project に入っていないオープンな Issue を追加し、Status が空なら todo の列にする
 #   6. 組み込みの自動追加（Auto-add to project）が有効か確認する（API では有効にできない）
@@ -152,7 +152,7 @@ project_number="$(jq -r '.number // empty' <<<"$project")"
 # オープンな Issue と、それぞれがこの Project に入っているか（Issue 側から調べる）。
 # gh にも REST にも、Issue から Project の項目を引く手段が無いので GraphQL で読む（設計書 §10）
 open_issues() {
-  local cursor="" page
+  local cursor="" next page
   while :; do
     page="$(dw_gql 'query OpenIssues($owner: String!, $name: String!, $after: String) {
       repository(owner: $owner, name: $name) {
@@ -167,7 +167,11 @@ open_issues() {
       item: ([.projectItems.nodes[] | select(.project.id == $p)][0] // null
         | if . then {id, status: (.fieldValueByName.name // null)} else null end)}' <<<"$page"
     [ "$(jq -r .pageInfo.hasNextPage <<<"$page")" = true ] || break
-    cursor="$(jq -r .pageInfo.endCursor <<<"$page")"
+    # カーソルが空か前回と同じなら、同じページを読み続けてしまう（無限ループ）ので止める
+    next="$(jq -r '.pageInfo.endCursor // empty' <<<"$page")"
+    { [ -n "$next" ] && [ "$next" != "$cursor" ]; } \
+      || dw_die "オープンな Issue のページ送りが進みません: ${repo_nwo}"
+    cursor="$next"
   done
 }
 
@@ -211,10 +215,20 @@ else
   if [ "$missing" != "[]" ]; then
     note "$(msg_status "$missing")"
     # 既存の選択肢は id を付けて渡し、Issue に付いている値を残す。
+    # 足す列は、設定の順（todo・start・pr_opened・done）でそれより前にある列のうち最後のものの後ろに入れる
+    # （無ければ、後ろにある列のうち最初のものの前。どちらも無ければ末尾）。
+    # 末尾に足すと、pr_opened の列が done の列より後ろに並んでしまう。利用者が足した列の位置は変えない
     # gh にも REST にも既存の項目を変える操作が無いので GraphQL を使う（設計書 §10）
+    opts="$(jq -c --argjson m "$missing" --argjson want "$status_names" '
+      reduce $m[] as $n (.options;
+        ($want | index($n)) as $i | $want[:$i] as $pre | $want[$i + 1:] as $post
+        | ([to_entries[] | select(.value.name | IN($pre[])) | .key] | last) as $after
+        | ([to_entries[] | select(.value.name | IN($post[])) | .key] | first) as $before
+        | (if $after != null then $after + 1 elif $before != null then $before else length end) as $at
+        | .[:$at] + [{name: $n, color: "GRAY", description: ""}] + .[$at:])' <<<"$status_field")"
     mutate dw_gql 'mutation UpdateStatus($f: ID!, $opts: [ProjectV2SingleSelectFieldOptionInput!]!) {
       updateProjectV2Field(input: {fieldId: $f, singleSelectOptions: $opts}) { projectV2Field { ... on ProjectV2FieldCommon { id } } }
-    }' "$(jq -c --argjson m "$missing" '{f: .id, opts: (.options + ($m | map({name: ., color: "GRAY", description: ""})))}' <<<"$status_field")" >/dev/null
+    }' "$(jq -c --argjson o "$opts" '{f: .id, opts: $o}' <<<"$status_field")" >/dev/null
     if ! $dry_run; then
       project_detail="$(detail)"
       status_field="$(jq -c '[.fields.nodes[] | select(.name == "Status")][0]' <<<"$project_detail")"

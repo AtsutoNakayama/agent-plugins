@@ -1,14 +1,18 @@
 #!/usr/bin/env bash
 # 今のブランチを push し、Issue に紐付けた PR を作る。
-# 何度実行しても同じ結果になる（そのブランチの開いた PR が既にあれば、push だけする。
+# 何度実行しても同じ結果になる（そのブランチの開いた PR が既にあれば、push と（--check があれば）Issue のチェックだけを行い、
 # その PR のタイトル・本文・ラベル・Project の列は変えない）。
 #
-# 使い方: pr-create.sh --issue N --body-file PATH [--title TEXT] [--dry-run]
+# 使い方: pr-create.sh --issue N --body-file PATH [--title TEXT] [--check TEXT]... [--dry-run]
 #   --issue N         紐付ける Issue の番号（#N でもよい）
 #   --body-file PATH  PR の本文のファイル。- なら標準入力
 #   --title TEXT      PR のタイトル。省略すると <Issue の type ラベル>: <Issue のタイトル>
 #                     （Issue に breaking ラベルがあれば <type>!: <Issue のタイトル>）
-#   --dry-run         push も PR の作成もせず、行う予定の操作と PR のタイトル・本文だけを出力する
+#   --check TEXT      Issue の本文のチェックリストの、文が TEXT（出力の tasks の text）の項目にチェックを付ける。
+#                     繰り返し指定できる。既にチェックがある項目は変えない。番号ではなく文で指すので、
+#                     確かめた後に項目が増減しても、別の項目には付かない（その文の項目がちょうど1つでなければ止まる）
+#   --dry-run         push も PR の作成も Issue のチェックもせず、行う予定の操作と PR のタイトル・本文、
+#                     Issue のチェックリストの項目（tasks）を出力する
 #
 # 行うこと:
 #   1. タイトルを設定の pr.title_pattern で検証する。type は Issue の type ラベルと同じにする。
@@ -21,6 +25,8 @@
 #   4. base_branch に向けた PR を作り、Issue のラベルを引き継ぐ。pr.draft が true なら下書きにする
 #   5. PR を新しく作ったときだけ、status.pr_opened が設定されていれば Issue をその列に移す（status-set.sh）。
 #      既にある PR では移さない（手で先の列に移した Issue を戻さないため）
+#   6. --check があれば、Issue の本文を読み直し、指定した文の項目だけにチェックを付ける（既にある PR のときも付ける）。
+#      ほかの行は変えない。コードブロックと、行頭（字下げは問わない）の <!-- から --> までの HTML のコメントの中の行は、項目とみなさない
 set -euo pipefail
 
 # shellcheck source=lib/common.sh
@@ -37,15 +43,16 @@ need_value() {
   fi
 }
 
-issue="" body_file="" title="" dry_run=false
+issue="" body_file="" title="" dry_run=false checks='[]'
 while [ $# -gt 0 ]; do
   case "$1" in
-    --issue | --body-file | --title)
+    --issue | --body-file | --title | --check)
       need_value "$@"
       case "$1" in
         --issue) issue="$2" ;;
         --body-file) body_file="$2" ;;
         --title) title="$2" ;;
+        --check) checks="$(jq -c --arg t "$2" '. + [$t] | unique' <<<"$checks")" ;;
       esac
       shift 2
       ;;
@@ -83,7 +90,7 @@ branch="$(git -C "$repo_root" symbolic-ref --short -q HEAD || true)"
   || dw_die "未コミットの変更があります。コミットしてから実行してください（commit）" 2
 
 # --- Issue ----------------------------------------------------------------------
-issue_json="$(gh issue view "$issue" --json number,title,state,labels)" || dw_die "Issue #${issue} を読めません"
+issue_json="$(gh issue view "$issue" --json number,title,state,labels,body)" || dw_die "Issue #${issue} を読めません"
 labels="$(jq -c '[.labels[].name]' <<<"$issue_json")"
 types="$(jq -c --argjson t "$(jq -c '.labels.types' <<<"$config")" 'map(select(. as $n | $t | index($n)))' <<<"$labels")"
 [ "$(jq length <<<"$types")" = 1 ] \
@@ -96,6 +103,40 @@ breaking="$(jq --arg b "$DW_BREAKING_LABEL" 'any(.[]; ascii_downcase == $b)' <<<
 has_bang() { jq -e --arg s "$1" '$s | test("^[^:]*!:")' <<<null >/dev/null; }
 # スカッシュマージでは PR の本文がコミットの本文になるので、移行のしかたを本文に残す
 has_breaking_note() { jq -e --arg b "$1" '$b | test("(^|\n)BREAKING[ -]CHANGE: *\\S")' <<<null >/dev/null; }
+
+# --- Issue のチェックリスト -----------------------------------------------------
+# 本文のチェックリストの項目を、上から順に {line（0 からの行番号）, checked, text} で出す。
+# GitHub と同じく、コードブロック（3つ以上の ` か ~ で囲む）の中の行は項目とみなさない。
+# 閉じるのは、開いたときと同じ文字が同じ数以上並び、後ろが空白だけの行（中の短い囲みや ```js では閉じない）。
+# ` の囲みの後ろに ` がある行（```x``` のようなインラインのコード）は囲みとみなさない。
+# リストの中のコードブロックも拾うため、囲みの字下げは問わない。
+# 複数行の HTML のコメント（行頭の <!-- から --> まで。囲みと同じく字下げは問わない）の中の行も、GitHub に表示されないので項目とみなさない。
+# GitHub と同じく、行の途中の <!--（インラインのコードや項目の補足）はコメントの始まりとみなさない
+# shellcheck disable=SC2016 # jq のプログラムなので、$ は展開しない
+tasks_jq='
+  def item: "^\\s*(?:[-*+]|[0-9]+[.)])\\s+\\[(?<c>[ xX])\\](?:\\s+(?<t>.*))?$";
+  reduce (split("\n") | to_entries[]) as $e ({fence: null, comment: false, out: []};
+    ($e.value | sub("\r$"; "")) as $l | .fence as $f
+    | if .comment then
+        (if $l | test("-->") then .comment = false else . end)
+      elif $f != null then
+        (if $l | test("^\\s*" + $f + "+\\s*$") then .fence = null else . end)
+      elif $l | test("^\\s*(`{3,}[^`]*|~{3,}.*)$") then .fence = ($l | capture("^\\s*(?<f>`{3,}|~{3,})").f)
+      elif $l | test("^\\s*<!--(?!.*-->)") then .comment = true
+      elif $l | test(item) then
+        ($l | capture(item)) as $m
+        | .out += [{line: $e.key, checked: ($m.c != " "), text: ($m.t // "" | sub("\\s+$"; ""))}]
+      else . end)
+  | .out'
+tasks="$(jq -c ".body // \"\" | $tasks_jq" <<<"$issue_json")"
+# 文が1つの項目にだけ当たらない --check の文を出す（無い・複数ある）
+# shellcheck disable=SC2016 # jq のプログラムなので、$ は展開しない
+unmatched_jq='map(. as $s | select([$t[] | select(.text == $s)] | length != 1))'
+unmatched="$(jq -c --argjson t "$tasks" "$unmatched_jq" <<<"$checks")"
+[ "$unmatched" = '[]' ] \
+  || dw_die "--check の文の項目が Issue #${issue} のチェックリストに1つだけではありません（無いか、同じ文が複数あります）: $(jq -r 'join(" / ")' <<<"$unmatched")" 64
+# まだチェックの無い項目だけに付ける
+to_check="$(jq -c --argjson t "$tasks" 'map(. as $s | select(any($t[]; .text == $s and (.checked | not))))' <<<"$checks")"
 
 # --- 既にある PR ----------------------------------------------------------------
 # --head はブランチ名だけで探すので、fork の同じ名前のブランチからの PR を除く
@@ -203,9 +244,34 @@ while IFS= read -r a; do
   [ -n "$a" ] && note "$a"
 done <<<"$(jq -r '.actions[]?' <<<"$status")"
 
+# --- 6. Issue のチェックリストにチェックを付ける --------------------------------
+if [ "$(jq length <<<"$to_check")" -gt 0 ]; then
+  note "Issue #${issue} のチェックリストの項目「$(jq -r 'join("」「")' <<<"$to_check")」にチェックを付ける"
+  if ! $dry_run; then
+    # 確かめた後に本文が変わっていてもよいよう、読み直した本文で、文が同じ項目を探して付ける
+    # $( ) は末尾の改行を落とすので、本文は JSON のまま扱う
+    now_json="$(gh issue view "$issue" --json body)" \
+      || dw_die "PR #${pr_number} はできていますが、Issue #${issue} を読めず、チェックを付けられませんでした（もう一度実行すれば付けます）"
+    now_tasks="$(jq -c ".body // \"\" | $tasks_jq" <<<"$now_json")"
+    [ "$(jq -c --argjson t "$now_tasks" "$unmatched_jq" <<<"$to_check")" = '[]' ] \
+      || dw_die "PR #${pr_number} はできていますが、Issue #${issue} の本文のチェックリストが途中で変わり、指定した文の項目が1つだけではなくなったので、チェックを付けませんでした（項目を確かめ直してから、もう一度実行してください）" 2
+    # 指定した行の行頭のチェックボックスだけを [x] にし、項目の文の中の [ ] や、ほかの行（改行の \r を含む）はそのまま残す
+    jq -j --argjson t "$now_tasks" --argjson c "$to_check" '
+      ($t | map(select(.text as $s | $c | index($s))) | map(.line)) as $lines
+      | .body // "" | split("\n") | to_entries
+      | map(if .key as $k | $lines | index($k)
+          then .value | sub("^(?<p>\\s*(?:[-*+]|[0-9]+[.)])\\s+)\\[ \\]"; "\(.p)[x]")
+          else .value end)
+      | join("\n")' <<<"$now_json" \
+      | gh issue edit "$issue" --body-file - >/dev/null \
+      || dw_die "PR #${pr_number} はできていますが、Issue #${issue} にチェックを付けられませんでした（もう一度実行すれば付けます）"
+  fi
+fi
+
 jq -n --argjson i "$issue" --arg branch "$branch" --arg base "$base" --arg title "$title" --arg body "$body" \
   --argjson labels "$labels" --argjson breaking "$breaking" --argjson draft "$draft" --argjson created "$created" \
   --arg number "$pr_number" --arg url "$pr_url" --argjson status "$status" \
+  --argjson tasks "$tasks" --argjson checked "$to_check" \
   --argjson dry "$dry_run" --argjson actions "$actions" '{
     issue: $i,
     dry_run: $dry,
@@ -220,5 +286,8 @@ jq -n --argjson i "$issue" --arg branch "$branch" --arg base "$base" --arg title
     created: $created,
     pr: (if $number == "" then null else {number: ($number | tonumber), url: $url} end),
     status: {from: ($status.from // null), to: ($status.to // null), skipped: ($status.skipped // false)},
+    # Issue の本文のチェックリストの項目と、この実行でチェックを付ける項目の文
+    tasks: ($tasks | map(del(.line))),
+    checked: $checked,
     actions: $actions
   }'

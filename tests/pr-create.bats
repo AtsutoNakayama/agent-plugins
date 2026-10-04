@@ -311,3 +311,153 @@ set_pr_opened() {
   json="$(json_of "$output")"
   assert_equal "$(jq -r .body <<<"$json" | tail -n 1)" "Closes #17"
 }
+
+# 使い方: set_issue_body <本文>  Issue #17（type は feat）の本文を、指定した文字列にそのまま置き換える
+set_issue_body() {
+  fake_issue 17 '["feat"]'
+  jq --arg b "$1" '. + {body: $b}' "$FIX/issue-17.json" >"$TMP/i.json" && mv "$TMP/i.json" "$FIX/issue-17.json"
+}
+
+# Issue #17 の本文を、チェックリストを含むものにする（改行は \r\n。最後の行の後にも改行を置く）
+fake_issue_tasks() {
+  # shellcheck disable=SC2016 # ``` はコードブロックの囲みで、展開させない
+  set_issue_body "$(printf '## やること\r\n- [ ] 一つ目 [ ] を含む\r\n- [x] 二つ目\r\n  * [ ] 三つ目（入れ子）\r\n1. [ ] 四つ目\r\n- [ ] ~~五つ目~~\r\n\r\n```md\r\n- [ ] コードブロックの中\r\n```\r\n- [ ]\r\n- [] 項目ではない')"$'\r\n'
+}
+
+@test "Issue の本文のチェックリストの項目を、コードブロックの中を除いて出す" {
+  setup_branch
+  fake_issue_tasks
+  run_pr --issue 17 --body-file "$TMP/body.md" --dry-run
+  assert_success
+  assert_equal "$(jq -c '[.tasks[] | [.checked, .text]]' <<<"$json")" \
+    '[[false,"一つ目 [ ] を含む"],[true,"二つ目"],[false,"三つ目（入れ子）"],[false,"四つ目"],[false,"~~五つ目~~"],[false,""]]'
+  assert_equal "$(jq -c .checked <<<"$json")" '[]'
+}
+
+@test "--check で指定した文の項目だけにチェックを付け、ほかの行は変えない" {
+  setup_branch
+  fake_issue_tasks
+  run_pr --issue 17 --body-file "$TMP/body.md" --check "一つ目 [ ] を含む" --check "三つ目（入れ子）" --check 二つ目 --check 四つ目
+  assert_success
+  # 二つ目は既にチェックがあるので付けない
+  assert_equal "$(jq -c .checked <<<"$json")" '["一つ目 [ ] を含む","三つ目（入れ子）","四つ目"]'
+  assert_equal "$(args edit)" "17 --body-file -"
+  jq -j '.body' "$FIX/issue-17.json" \
+    | sed -e 's/^- \[ \] 一つ目/- [x] 一つ目/' -e 's/^  \* \[ \] 三つ目/  * [x] 三つ目/' -e 's/^1\. \[ \] 四つ目/1. [x] 四つ目/' >"$TMP/expected"
+  # 改行の \r\n と末尾の改行も含めて、バイト単位で同じか比べる
+  run cmp "$TMP/expected" "$TMP/issue-edit-body"
+  assert_success
+  run grep -c '一つ目 \[ \] を含む' "$TMP/issue-edit-body"
+  assert_output 1
+}
+
+@test "--check が無ければ Issue の本文を変えない" {
+  setup_branch
+  fake_issue_tasks
+  run_pr --issue 17 --body-file "$TMP/body.md"
+  assert_success
+  assert_equal "$(called edit)" 0
+}
+
+@test "既にある PR に push するときも、--check の項目にチェックを付ける" {
+  setup_branch
+  fake_issue_tasks
+  echo '[{"number": 7, "url": "https://github.com/me/demo/pull/7", "isCrossRepository": false}]' >"$FIX/pr-list.json"
+  run_pr --issue 17 --body-file "$TMP/body.md" --check "~~五つ目~~" --dry-run
+  assert_success
+  assert_equal "$(jq -c '[.created, .checked, .actions[-1]]' <<<"$json")" '[false,["~~五つ目~~"],"Issue #17 のチェックリストの項目「~~五つ目~~」にチェックを付ける"]'
+  assert_equal "$(called edit)" 0
+  run_pr --issue 17 --body-file "$TMP/body.md" --check "~~五つ目~~"
+  assert_success
+  assert_equal "$(called pr-create)" 0
+  run grep -c '^- \[x\] ~~五つ目~~' "$TMP/issue-edit-body"
+  assert_output 1
+}
+
+@test "--check の文の項目が無いか複数あれば、push せずに止まる" {
+  setup_branch
+  fake_issue_tasks
+  run_pr --issue 17 --body-file "$TMP/body.md" --check 無い項目 --check 二つ目 --check コードブロックの中
+  assert_failure 64
+  assert_output --partial "--check の文の項目が Issue #17 のチェックリストに1つだけではありません（無いか、同じ文が複数あります）: コードブロックの中 / 無い項目"
+  run git rev-parse -q --verify origin/feat/17-x
+  assert_failure
+  set_issue_body "$(printf -- '- [ ] 同じ\n- [ ] 同じ\n- [ ] 別')"
+  run_pr --issue 17 --body-file "$TMP/body.md" --check 同じ
+  assert_failure 64
+  assert_output --partial "1つだけではありません（無いか、同じ文が複数あります）: 同じ"
+}
+
+@test "確かめた後に上に項目が足されても、--check は同じ文の項目に付ける" {
+  setup_branch
+  # dry-run で確かめたときの本文
+  set_issue_body "$(printf -- '- [ ] a\n- [ ] b')"
+  run_pr --issue 17 --body-file "$TMP/body.md" --check b --dry-run
+  assert_success
+  # 承認を待つ間に、上に項目が足された
+  set_issue_body "$(printf -- '- [ ] 新しい項目\n- [ ] a\n- [ ] b')"
+  run_pr --issue 17 --body-file "$TMP/body.md" --check b
+  assert_success
+  assert_equal "$(cat "$TMP/issue-edit-body")" "$(printf -- '- [ ] 新しい項目\n- [ ] a\n- [x] b')"
+}
+
+@test "チェックを付けられなければ、もう一度実行すれば付けられると伝えて止まる" {
+  setup_branch
+  fake_issue_tasks
+  FAKE_FAIL=edit run_pr --issue 17 --body-file "$TMP/body.md" --check 四つ目
+  assert_failure 1
+  assert_output --partial "PR #42 はできていますが、Issue #17 にチェックを付けられませんでした（もう一度実行すれば付けます）"
+}
+
+@test "長い囲みのコードブロックは、中の短い囲みや情報文字列付きの囲みでは閉じない" {
+  setup_branch
+  # shellcheck disable=SC2016 # ``` はコードブロックの囲みで、展開させない
+  set_issue_body "$(printf -- '- [ ] a\n````md\n```\n- [ ] 中1\n```\n````\n- [ ] b\n~~~~\n~~~ js\n- [ ] 中2\n~~~\n~~~~~\n- [ ] c')"
+  run_pr --issue 17 --body-file "$TMP/body.md" --dry-run
+  assert_success
+  assert_equal "$(jq -c '[.tasks[].text]' <<<"$json")" '["a","b","c"]'
+}
+
+@test "行頭がインラインのコード（3つのバッククォートで囲んだ語）の行は、コードブロックの始まりとみなさない" {
+  setup_branch
+  # shellcheck disable=SC2016 # ``` はインラインのコードで、展開させない
+  set_issue_body "$(printf -- '```npm test``` が通ること\n- [ ] a\n- [ ] b')"
+  run_pr --issue 17 --body-file "$TMP/body.md" --dry-run
+  assert_success
+  assert_equal "$(jq -c '[.tasks[].text]' <<<"$json")" '["a","b"]'
+}
+
+@test "リストの中で4つ以上字下げしたコードブロックの中の行は、項目とみなさない" {
+  setup_branch
+  # shellcheck disable=SC2016 # ``` はコードブロックの囲みで、展開させない
+  set_issue_body "$(printf -- '1. a\n   - [ ] b\n     ```\n     - [ ] 中\n     ```\n- [ ] c')"
+  run_pr --issue 17 --body-file "$TMP/body.md" --dry-run
+  assert_success
+  assert_equal "$(jq -c '[.tasks[].text]' <<<"$json")" '["b","c"]'
+}
+
+@test "複数行の HTML のコメントの中の行は、項目とみなさない" {
+  setup_branch
+  set_issue_body "$(printf -- '<!-- 例:\n- [ ] テストを足す\n-->\n- [ ] テストを足す\n- [ ] b <!-- 1行のコメント -->\n- [ ] c')"
+  run_pr --issue 17 --body-file "$TMP/body.md" --check テストを足す
+  assert_success
+  assert_equal "$(jq -c '[.tasks[].text]' <<<"$json")" '["テストを足す","b <!-- 1行のコメント -->","c"]'
+  assert_equal "$(cat "$TMP/issue-edit-body")" "$(printf -- '<!-- 例:\n- [ ] テストを足す\n-->\n- [x] テストを足す\n- [ ] b <!-- 1行のコメント -->\n- [ ] c')"
+}
+
+@test "行の途中の <!-- は、コメントの始まりとみなさない" {
+  setup_branch
+  # shellcheck disable=SC2016 # ` はインラインのコードで、展開させない
+  set_issue_body "$(printf -- 'テンプレートの `<!--` を消す\n- [ ] a <!-- 補足\n- [ ] b')"
+  run_pr --issue 17 --body-file "$TMP/body.md" --dry-run
+  assert_success
+  assert_equal "$(jq -c '[.tasks[].text]' <<<"$json")" '["a <!-- 補足","b"]'
+}
+
+@test "入れ子のリストの中で字下げした複数行の HTML のコメントの中の行も、項目とみなさない" {
+  setup_branch
+  set_issue_body "$(printf -- '- [ ] a\n  - [ ] b\n    <!--\n    - [ ] 隠れた項目\n    -->\n- [ ] c')"
+  run_pr --issue 17 --body-file "$TMP/body.md" --dry-run
+  assert_success
+  assert_equal "$(jq -c '[.tasks[].text]' <<<"$json")" '["a","b","c"]'
+}
