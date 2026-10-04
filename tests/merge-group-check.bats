@@ -1,0 +1,209 @@
+#!/usr/bin/env bats
+# bats はテストごとにサブシェルで動くので、export がテスト内に閉じるのは意図どおり
+# shellcheck disable=SC2030,SC2031
+
+load test_helper
+
+# 偽の gh。ワークフローは $FIX/workflows/ に置いたファイルを、GitHub 上のブランチにあるものとして返す。
+# gh api repos/<リポジトリ>/contents/.github/workflows?ref=<ブランチ> は、$FIX/workflows のファイルの一覧を返し、
+# ディレクトリが無ければ 404 にする。gh api -H ... repos/<リポジトリ>/contents/<パス>?ref=<ブランチ> は、そのファイルを返す。
+# どちらも、パスを $CALLS に1行ずつ記録する。FAKE_FAIL があれば、一覧を 403 で失敗させる。
+setup_fake_gh() {
+  FIX="$TMP/fix"
+  CALLS="$TMP/calls"
+  export FIX CALLS
+  mkdir -p "$TMP/bin" "$FIX"
+  : >"$CALLS"
+  cat >"$TMP/bin/gh" <<'SH'
+#!/usr/bin/env bash
+case "$1 $2" in
+  "api -H")
+    printf '%s\n' "$4" >>"$CALLS"
+    f="${4#repos/*/*/contents/.github/workflows/}"
+    cat "$FIX/workflows/${f%%\?*}"
+    ;;
+  "api "*)
+    printf '%s\n' "$2" >>"$CALLS"
+    if [ -n "${FAKE_FAIL:-}" ]; then echo 'gh: Forbidden (HTTP 403)' >&2; exit 1; fi
+    [ -d "$FIX/workflows" ] || { echo 'gh: Not Found (HTTP 404)' >&2; exit 1; }
+    for f in "$FIX/workflows"/*; do
+      [ -e "$f" ] || continue
+      n="$(basename "$f")"
+      jq -n --arg n "$n" '{name: $n, path: (".github/workflows/" + $n), type: "file"}'
+    done | jq -s .
+    ;;
+  *) exit 1 ;;
+esac
+SH
+  chmod +x "$TMP/bin/gh"
+  export PATH="$TMP/bin:$PATH"
+}
+
+# 使い方: workflow <ファイル名>（本文は標準入力）
+workflow() {
+  mkdir -p "$FIX/workflows"
+  cat >"$FIX/workflows/$1"
+}
+
+run_check() {
+  run_script merge-group-check.sh "$@"
+  printf '%s\n' "$output"
+}
+
+@test "必須のチェックのジョブがあるワークフローが merge_group で動かなければ not_running に入れる" {
+  setup_fake_gh
+  workflow ci.yml <<'YML'
+name: CI
+on:
+  pull_request:
+  push:
+    branches: [main]
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - name: merge_group
+        run: echo merge_group
+  test-result:
+    runs-on: ubuntu-latest
+YML
+  workflow queue.yaml <<'YML'
+on:
+  merge_group:
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+YML
+  run_check --branch main --check test-result --check lint
+  assert_success
+  assert_equal "$(jq -c .not_running <<<"$output")" '[{"check":"test-result","workflows":[".github/workflows/ci.yml"]}]'
+  assert_equal "$(jq -c .unknown <<<"$output")" '[]'
+  assert_equal "$(jq -c .workflows <<<"$output")" '[".github/workflows/ci.yml",".github/workflows/queue.yaml"]'
+}
+
+@test "on: の書き方（1行・配列・引用符・コメント）を読み分ける" {
+  setup_fake_gh
+  workflow a.yml <<'YML'
+on: merge_group
+jobs:
+  a:
+    runs-on: ubuntu-latest
+YML
+  workflow b.yml <<'YML'
+"on": [pull_request, merge_group]
+jobs:
+  b:
+    runs-on: ubuntu-latest
+YML
+  workflow c.yml <<'YML'
+on:
+  pull_request:
+  # merge_group:
+jobs:
+  c:
+    if: github.event_name == 'merge_group'
+    runs-on: ubuntu-latest
+YML
+  workflow d.yml <<'YML'
+on:
+  pull_request: {}
+  merge_group:
+    types: [checks_requested]
+env:
+  merge_group: x
+jobs:
+  d:
+    runs-on: ubuntu-latest
+YML
+  workflow e.yml <<'YML'
+on:
+  pull_request:
+env:
+  merge_group: x
+jobs:
+  e:
+    runs-on: ubuntu-latest
+YML
+  run_check --branch main --check a --check b --check c --check d --check e
+  assert_success
+  assert_equal "$(jq -c '[.not_running[].check]' <<<"$output")" '["c","e"]'
+}
+
+@test "チェックの名前を、ジョブの name・matrix・再利用するワークフロー・式と突き合わせる" {
+  setup_fake_gh
+  workflow ci.yml <<'YML'
+on: pull_request
+jobs:
+  build:
+    name: "Build app"   # 表示名
+    runs-on: ubuntu-latest
+  test:
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+  e2e:
+    name: E2E (${{ matrix.browser }})
+    runs-on: ubuntu-latest
+  call:
+    uses: ./.github/workflows/reusable.yml
+YML
+  run_check --branch main --check "Build app" --check "test (macos-latest)" --check "E2E (firefox)" \
+    --check "call / inner" --check build --check "codecov/patch"
+  assert_success
+  assert_equal "$(jq -c '[.not_running[].check]' <<<"$output")" \
+    '["Build app","E2E (firefox)","build","call / inner","test (macos-latest)"]'
+  assert_equal "$(jq -c .unknown <<<"$output")" '["codecov/patch"]'
+}
+
+@test "同じ名前のジョブが複数のワークフローにあれば、どれかが merge_group で動けば動くとみなす" {
+  setup_fake_gh
+  printf 'on: pull_request\njobs:\n  lint:\n    runs-on: x\n' | workflow a.yml
+  printf 'on:\r\n  merge_group:\r\njobs:\r\n  lint:\r\n    runs-on: x\r\n' | workflow b.yml
+  run_check --branch main --check lint
+  assert_success
+  assert_equal "$(jq -c '[.not_running, .unknown]' <<<"$output")" '[[],[]]'
+}
+
+@test "指定したブランチのワークフローを読む（/ を含む名前はエンコードする）" {
+  setup_fake_gh
+  printf 'on: pull_request\njobs:\n  lint:\n    runs-on: x\n' | workflow ci.yml
+  run_check --branch release/v1 --repo org/app --check lint
+  assert_success
+  assert_equal "$(cat "$CALLS")" "$(printf '%s\n' 'repos/org/app/contents/.github/workflows?ref=release%2Fv1' \
+    'repos/org/app/contents/.github/workflows/ci.yml?ref=release%2Fv1')"
+  assert_equal "$(jq -r .branch <<<"$output")" release/v1
+}
+
+@test "--repo が無ければ今いるリポジトリを読み、チェックが無ければ何も読まない" {
+  setup_fake_gh
+  printf 'on: pull_request\njobs:\n  lint:\n    runs-on: x\n' | workflow ci.yml
+  run_check --branch main --check lint
+  assert_equal "$(head -n 1 "$CALLS")" 'repos/{owner}/{repo}/contents/.github/workflows?ref=main'
+  : >"$CALLS"
+  run_check --branch main
+  assert_success
+  assert_equal "$(jq -c '[.workflows, .not_running, .unknown]' <<<"$output")" '[[],[],[]]'
+  assert_equal "$(cat "$CALLS")" ""
+}
+
+@test "ワークフローが無ければ、すべてのチェックを unknown にする" {
+  setup_fake_gh
+  run_check --branch main --check lint
+  assert_success
+  assert_equal "$(jq -c '[.workflows, .not_running, .unknown]' <<<"$output")" '[[],[],["lint"]]'
+}
+
+@test "ワークフローの一覧を読めなければ、理由を伝えて止まる" {
+  setup_fake_gh
+  export FAKE_FAIL=1
+  run_check --branch main --check lint
+  assert_failure 1
+  assert_output --partial "main のワークフローの一覧を読めません"
+}
+
+@test "--branch が無ければ使い方の誤りで止まる" {
+  setup_fake_gh
+  run_check --check lint
+  assert_failure 64
+}

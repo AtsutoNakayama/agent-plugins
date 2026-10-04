@@ -139,12 +139,15 @@ dw_gh_find() {
   esac
 }
 
-# リポジトリの既定のブランチにあるファイルを取り出して <出力先> に書く。
+# リポジトリの既定のブランチ（<ブランチ> を指定すればそのブランチ）にあるファイルを取り出して <出力先> に書く。
 # 無ければ（404）1 を返す。それ以外の失敗は、違う内容で進めないよう終了する。
-# 使い方: dw_fetch_repo_file <OWNER/NAME> <パス> <出力先>
+# 使い方: dw_fetch_repo_file <OWNER/NAME> <パス> <出力先> [ブランチ]
 dw_fetch_repo_file() {
-  local err
-  if err="$(gh api -H 'Accept: application/vnd.github.raw' "repos/$1/contents/$2" 2>&1 >"$3")"; then
+  local err query=""
+  if [ -n "${4:-}" ]; then
+    query="?ref=$(jq -rn --arg b "$4" '$b | @uri')"
+  fi
+  if err="$(gh api -H 'Accept: application/vnd.github.raw' "repos/$1/contents/$2$query" 2>&1 >"$3")"; then
     return 0
   fi
   case "$err" in
