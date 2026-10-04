@@ -56,7 +56,7 @@ while [ $# -gt 0 ]; do
   case "$1" in
     -h | --help) usage; exit 0 ;;
     --base | --target | --type | --issue)
-      [ $# -ge 2 ] && [ -n "$2" ] || dw_die "$1 に値がありません" 64
+      if [ $# -lt 2 ] || [ -z "$2" ]; then dw_die "$1 に値がありません" 64; fi
       case "$1" in
         --base) base="$2" ;;
         --target) target="$2" ;;
@@ -72,7 +72,9 @@ done
 # 条件で絞り込むのは --base を渡したときだけ（--type・--issue が無いことを「type も Issue も無い」と読むため）
 filter=false
 if [ -n "$base" ] || [ -n "$target" ] || [ -n "$type" ] || [ -n "$issue" ]; then
-  [ -n "$base" ] && [ -n "$target" ] || dw_die "条件で絞り込むには --base と --target の両方を渡してください" 64
+  if [ -z "$base" ] || [ -z "$target" ]; then
+    dw_die "条件で絞り込むには --base と --target の両方を渡してください" 64
+  fi
   case "$issue" in
     "" | *[!0-9]*) [ -z "$issue" ] || dw_die "--issue は Issue の番号にしてください: ${issue}" 64 ;;
   esac
