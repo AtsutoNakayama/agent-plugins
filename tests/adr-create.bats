@@ -192,3 +192,28 @@ TEMPLATES="$(cd "$BATS_TEST_DIRNAME/../plugins/dev-workflow/templates/adr" && pw
   [ ! -e docs/adr/000011-new.md ] || fail "ADR を作っています"
   assert_equal "$(ls -A "$TMP/tmpdir")" ""
 }
+
+@test "置き換える ADR の書き換えが途中で失敗したら、書き換え済みの ADR と、新しい ADR が残ることを知らせる" {
+  for n in 10 11; do run_script adr-create.sh --issue "$n" --name "o$n" --template minimal; done
+  # 2つ目の書き戻し（mktemp のファイルを cat する）だけを失敗させる偽の cat
+  mkdir "$TMP/bin" "$TMP/tmpdir"
+  cat >"$TMP/bin/cat" <<FAKE
+#!/bin/sh
+case "\$1" in
+  "$TMP"/tmpdir/tmp.*)
+    echo x >>"$TMP/cat-calls"
+    [ "\$(wc -l <"$TMP/cat-calls")" -ge 2 ] && exit 1
+    ;;
+esac
+exec /bin/cat "\$@"
+FAKE
+  chmod +x "$TMP/bin/cat"
+  PATH="$TMP/bin:$PATH" TMPDIR="$TMP/tmpdir" run_script adr-create.sh --issue 12 --name new --template minimal \
+    --supersedes 000010-o10.md --supersedes 000011-o11.md
+  assert_failure 1
+  assert_output --partial "000011-o11.md"
+  assert_output --partial "docs/adr/000012-new.md は残っています"
+  assert_output --partial "すでに書き換えた ADR: docs/adr/000010-o10.md"
+  assert_equal "$(sed -n 's/^status: //p' docs/adr/000010-o10.md)" '"superseded by 000012-new"'
+  assert_equal "$(ls -A "$TMP/tmpdir")" ""
+}
