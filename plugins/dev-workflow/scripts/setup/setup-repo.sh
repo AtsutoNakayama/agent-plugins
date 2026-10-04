@@ -19,10 +19,9 @@
 #   2. ルールセット「dev-workflow」：設定の base_branch への直接 push を禁止して PR を必須にし、
 #      強制 push と削除を禁止する。管理者も例外にしない
 #      --required-check を指定したときだけ、必須のステータスチェックの一覧を揃える
-#      「最新の base_branch の取り込み」（strict）は、--required-check・--merge-queue・--no-merge-queue のどれかを
-#      指定したときに揃える（キューのオプションだけなら、既存の必須のチェックの strict だけを変える）
-#      マージキューを使うときは、キューが最新の base_branch と組み合わせた結果で CI を動かすので、strict は外す
-#      （今キューを使っていれば、オプションを指定しなくても外す）
+#      strict（PR が最新の base_branch を取り込んでいること）は、キューの有無で決める。キューを使っていれば
+#      （オプションが無くても）外す。キューが最新の base_branch と組み合わせた結果で CI を動かすためである。
+#      使っていなければ、--required-check・--no-merge-queue のときに求め、どちらも無ければ今のまま
 #      このスクリプトが扱わないルール（オプションを指定しないときの必須のステータスチェックなど）は残す
 # リポジトリの管理者権限が必要（dry-run でも確かめる）。守るブランチがリポジトリに無ければ止める。
 # 守るブランチは、チームの設定（.claude/dev-workflow/config.json）の base_branch で決める（個人の設定は使わない）。
@@ -203,8 +202,8 @@ if [ -n "$ruleset_id" ]; then
 fi
 
 # 既存の pull_request の設定は残し、承認の数（指定されたときだけ）とマージ方法を揃える
-# マージキューは、--merge-queue・--no-merge-queue が無ければ今のまま。使うなら strict を外し、
-# 外すときと --required-check を指定したときは strict を求める。どれでもなければ、既存の strict に触れない
+# マージキューは、--merge-queue・--no-merge-queue が無ければ今のまま。strict はキューの有無で決める（先頭のコメント）。
+# キューを使っていれば外し、使っていなければ --required-check・--no-merge-queue のときに求め、どちらも無ければ今のまま
 desired="$(jq -n --argjson ex "$existing" --arg name "$RULESET_NAME" --arg ref "refs/heads/$branch" \
   --arg n "$approvals" --argjson checks "$checks_json" --arg queue "$queue" '
   ([($ex // {}).rules // [] | .[] | select(.type == "pull_request")][0].parameters // {}) as $old
