@@ -209,6 +209,7 @@ agent-plugins/
    - 出すリンク：push は、開いた PR の URL（無ければ `<リポジトリ>/pull/new/<ブランチ>`）、紐付く Issue、CI（PR があれば `<PR>/checks`、無ければ `<リポジトリ>/actions?query=branch:<ブランチ>`）。commit とブランチの作成は紐付く Issue。PR・Issue の作成は、コマンドの出力に含まれる URL。
    - 紐付く Issue は、ブランチ名を `branch.pattern` に当てて求める（`lib/common.sh` の `dw_parse_branch`。`review-perspectives.sh` と共有する）。ブランチを作るコマンドは、今のブランチではなく、作るブランチの Issue を出す。名前はコマンドの文字列から拾い（`-c`・`-C`・`-b`・`-B`・`--create`・`--force-create` の次の語、`git branch <名前>` の最初の語）、拾えない・Issue の番号が無いときは、間違った Issue を出さないよう何も出さない（`-cname` の書き方など、`guard-git.sh` が警告する書き方でも出さないことがある）。`task-start.sh` は別のワークツリーを作るので、標準出力の JSON の `issue` を使い、取れなければ出さない。それ以外は、コマンドの文字列の `cd` を追わず、フックの入力の `cwd` のブランチで判断する。
    - 毎回 `gh` を呼ぶ（Issue・PR・リポジトリ）ので、フックには 10 秒のタイムアウトを付け（`hooks.json`）、`gh` が詰まっても作業を止めない。
+   - PR・Issue の作成は、標準出力の JSON の `url`（スクリプト）と、URL だけの行（`gh pr create`）から拾う。`body` などに含まれる別の URL は拾わない。`--dry-run`（`git push -n` を含む）のコマンドは、何もしていないので何も出さない。
    - 決まり：同じリンクは、連続でも毎回出す（常に見えるようにするため）。Issue の番号が分からないブランチ（main など）では、ブランチから導くリンクは出さない（作った PR・Issue の URL は、出力から拾うので出す）。`gh` が無い・失敗する・解析できないときは何も出さずに通し、フックは作業を止めない（いつも終了コード 0。エラーの表示も出さない）。
    - 出力は、使用者に見せる `systemMessage` と、Claude に渡す `additionalContext`（返答でも触れてもらう）の両方（`guard-git.sh` の警告と同じ形）。
    - `/remote-control` など別の端末の画面に `systemMessage` が出るかは、確かめられていない（未確認）。出ない場合でも、`additionalContext` を受け取った Claude が返答でリンクに触れるので、リンクは別の端末にも届く。`systemMessage` が出るなら二重になるが、常に見えることを優先する。

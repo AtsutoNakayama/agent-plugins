@@ -169,6 +169,25 @@ silent() {
   [[ "$(jq -r .systemMessage <<<"$output")" == *"Issue: https://github.com/me/demo/issues/50"* ]]
 }
 
+@test "作った PR・Issue は、出力の url から拾い、body の中の別の URL は拾わない" {
+  run_hook "bash \"\${CLAUDE_PLUGIN_ROOT}/scripts/pr-create.sh\"" \
+    '{"url": "https://github.com/me/demo/pull/42", "body": "Closes https://github.com/me/demo/issues/99 と https://github.com/me/demo/pull/7"}'
+  [ "$status" -eq 0 ]
+  [[ "$(jq -r .systemMessage <<<"$output")" == *"pull/42"* ]]
+  [[ "$output" != *"issues/99"* && "$output" != *"pull/7"* ]]
+  run_hook "gh pr create --body x" "Creating pull request for feat/17-demo into main
+https://github.com/me/demo/pull/42"
+  [ "$status" -eq 0 ]
+  [[ "$(jq -r .systemMessage <<<"$output")" == *"PR: https://github.com/me/demo/pull/42"* ]]
+}
+
+@test "--dry-run や git push -n では、何もしていないので何も出さない" {
+  silent "bash \"\${CLAUDE_PLUGIN_ROOT}/scripts/pr-create.sh\" --issue 17 --dry-run" \
+    "bash \"\${CLAUDE_PLUGIN_ROOT}/scripts/commit.sh\" --message x --dry-run" \
+    "git push --dry-run" "git push -n origin feat/17-demo" "git commit --dry-run -m x" \
+    "bash \"\${CLAUDE_PLUGIN_ROOT}/scripts/task-start.sh\" --issue 17 --slug x --dry-run"
+}
+
 @test "同じリンクも、連続で毎回出す" {
   shows "git commit -m x" "Issue #17: https://github.com/me/demo/issues/17"
   shows "git commit -m x" "Issue #17: https://github.com/me/demo/issues/17"

@@ -64,12 +64,12 @@ name_after() {
 
 # コマンドの文字列の git の呼び出しごとに、オプション（-C <dir>・-c <k=v> など）を飛ばした最初の語をサブコマンドとして、
 # push・commit・ブランチの作成を判定する。git stash push や git log --grep commit は、サブコマンドが違うので当たらない。
-# guard-git.sh（check_command）のようには解析しない。cd や git -C で移った先は追わず、引用符や $( ) の中も見ない。
+# guard-git.sh（check_command）のようには解析しない。cd や git -C で移った先は追わず、引用符や $( ) の中の git も区別せずに拾う。
 # ブランチを作るコマンドは、-c・-C・-b・-B・--create・--force-create の次の語と、git branch <名前> の最初の語を、
 # 作るブランチの名前にする。-cname のようにオプションと名前をくっつけた書き方は、作ることだけが分かり、名前は拾えない
 # （guard-git.sh は警告するのに、ここは Issue のリンクを出さない、という食い違いが起きる。tests/pr-link.bats で押さえてある）
 scan_git() {
-  local line sub w name
+  local line sub w name dry
   while IFS= read -r line; do
     line="${line#*git}"
     # shellcheck disable=SC2086 # 空白で語に分ける（set -f で展開を止めてある）
@@ -86,7 +86,14 @@ scan_git() {
     done
     name=""
     case "$sub" in
-      push) push=true ;;
+      push)
+        # git push -n（--dry-run）は push しない
+        dry=false
+        for w in "$@"; do
+          case "$w" in -n | --dry-run) dry=true ;; esac
+        done
+        $dry || push=true
+        ;;
       commit) commit=true ;;
       switch)
         name_after "-c -C --create --force-create" "$@" || true
@@ -124,13 +131,15 @@ scan_git() {
 }
 scan_git
 $push || $commit || $create_branch || $created || exit 0
+# --dry-run のコマンドは、push も commit も PR・Issue の作成もしない（スクリプトの --dry-run を含む）ので、何も出さない
+has '(^|[[:space:]])--dry-run([[:space:]=]|$)' && exit 0
 
 cwd="$(jq -r '.cwd // empty' <<<"$input")"
 dir="$( (cd "${cwd:-.}" && pwd -P) 2>/dev/null || true)"
 [ -n "$dir" ] || exit 0
 
-# コマンドの出力（標準出力と標準エラー）
-output="$(jq -r '.tool_response | if type == "object" then ((.stdout // "") + "\n" + (.stderr // "")) else (. // "" | tostring) end' <<<"$input" 2>/dev/null || true)"
+# コマンドの標準出力（標準エラーは見ない。警告などが混ざるので）
+stdout="$(jq -r '.tool_response | if type == "object" then (.stdout // "") else (. // "" | tostring) end' <<<"$input" 2>/dev/null || true)"
 
 links=()
 add_link() {
@@ -141,12 +150,15 @@ add_link() {
   links+=("$2: $1")
 }
 
-# --- 作った PR・Issue（出力から拾う）-------------------------------------------------
+# --- 作った PR・Issue（標準出力から拾う）-------------------------------------------
+# スクリプトの出力の JSON は url に作ったものの URL を持つ（body などの別の URL は拾わない）。
+# gh pr create・gh issue create は、URL だけの行を出す
 if $created; then
-  for u in $(printf '%s\n' "$output" | grep -Eo 'https://[^"[:space:]\\]+/(pull|issues)/[0-9]+' | awk '!seen[$0]++' || true); do
+  for u in $( { jq -r 'objects | .url // empty' <<<"$stdout" 2>/dev/null || true
+    printf '%s\n' "$stdout" | grep -E '^https://[^[:space:]]+/(pull|issues)/[0-9]+[[:space:]]*$' || true; } | awk '!seen[$0]++'); do
     case "$u" in
       */pull/*) add_link "$u" "PR" ;;
-      *) add_link "$u" "Issue" ;;
+      */issues/*) add_link "$u" "Issue" ;;
     esac
   done
 fi
@@ -177,7 +189,6 @@ if $push || $commit || $created; then
   [ -z "$cwd_issue" ] || issues+=("$cwd_issue")
 fi
 if has 'task-start\.sh'; then
-  stdout="$(jq -r '.tool_response | if type == "object" then (.stdout // "") else (. // "" | tostring) end' <<<"$input" 2>/dev/null || true)"
   n="$(jq -r 'objects | .issue // empty' <<<"$stdout" 2>/dev/null | head -n 1 || true)"
   case "$n" in '' | *[!0-9]*) ;; *) issues+=("$n") ;; esac
 elif $create_branch && [ -n "$created_name" ]; then
