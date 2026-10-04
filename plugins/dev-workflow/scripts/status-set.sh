@@ -45,7 +45,8 @@ while [ $# -gt 0 ]; do
 done
 [ -n "$issue" ] || dw_die "--issue は必須です" 64
 [ -n "$to" ] || dw_die "--to は必須です" 64
-issue="${issue#\#}" # スキルの引数の #12 も受ける
+# スキルの引数の #12 も受ける。# だけは番号が無いので、そのまま残して数字以外として拒否する
+case "$issue" in "#"?*) issue="${issue#\#}" ;; esac
 case "$issue" in
   *[!0-9]*) dw_die "--issue には数字を指定してください: $issue" 64 ;;
 esac

@@ -52,11 +52,11 @@ while [ $# -gt 0 ]; do
   esac
 done
 [ -n "$issue" ] || dw_die "--issue は必須です" 64
-issue="${issue#\#}" # スキルの引数の #12 も受ける
+# スキルの引数の #12 も受ける。# だけは番号が無いので、そのまま残して数字以外として拒否する
+case "$issue" in "#"?*) issue="${issue#\#}" ;; esac
 case "$issue" in
   *[!0-9]*) dw_die "--issue には数字を指定してください: $issue" 64 ;;
 esac
-duplicate_of="${duplicate_of#\#}"
 case "$duplicate_of" in
   *[!0-9]*) dw_die "--duplicate-of には数字を指定してください: $duplicate_of" 64 ;;
 esac
