@@ -87,6 +87,21 @@ frontmatter() { awk 'NR == 1 && $0 == "---" { on = 1; next } on && $0 == "---" {
     || fail "サブ Issue を読み直す gh api に --paginate がありません（30件を超える子を取りこぼす）"
 }
 
+@test "task-create は、下書きの前に開いている Issue から重複と親の候補を探し、重複があれば起票の前に聞く" {
+  f="$SKILLS/task-create/SKILL.md"
+  # 手順2（下書きを作る）の中で、下書きの項目より前に探す
+  step2="$(awk '/^### 2\./ { on = 1; next } /^#### 下書きの項目/ { on = 0 } on' "$f")"
+  grep -q '重複と親の候補を探す' <<<"$step2" || fail "手順2の最初に、重複と親の候補を探す手順がありません"
+  grep -qF 'gh issue list --state open' <<<"$step2" || fail "開いている Issue を読む手順がありません"
+  grep -q 'AskUserQuestion' <<<"$step2" || fail "重複があるときにユーザーに聞く手順がありません"
+  for choice in '既にある Issue に足す' '重ならない部分だけを起票する' 'そのまま起票する'; do
+    grep -q "$choice" <<<"$step2" || fail "重複があるときの選択肢「${choice}」がありません"
+  done
+  grep -q '明らかな親' "$f" && fail "親の候補が、探した結果ではなく「明らかな親」のままです"
+  step3="$(awk '/^### 3\./ { on = 1; next } /^### 4\./ { on = 0 } on' "$f")"
+  grep -q '手順2で探した結果' <<<"$step3" || fail "手順3の確認に、探した結果がありません"
+}
+
 @test "task-next は読み取り専用（確認を取らず、Issue や列を変えるスクリプトを呼ばない。設計書 §8）" {
   f="$SKILLS/task-next/SKILL.md"
   grep -q 'next-tasks.sh' "$f" || fail "task-next が next-tasks.sh を使っていません"
