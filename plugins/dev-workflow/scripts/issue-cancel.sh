@@ -152,7 +152,8 @@ while [ "$(jq length <<<"$level")" -gt 0 ] && [ "$depth" -lt 8 ]; do
     ref: ((.repository_url | sub("^.*/repos/"; "")) as $r
       | if $r == $nwo then "#\(.number)" else "\($r)#\(.number)" end)}))' <<<"$open_subs")"
   next='[]'
-  for path in $(jq -r '.[] | select((.sub_issues_summary.total // 0) > 0) | .url | sub("^.*?/repos/"; "repos/")' <<<"$level"); do
+  # 孫の数（sub_issues_summary）が応答に無ければ、孫を見落とさないよう読みにいく
+  for path in $(jq -r '.[] | select((.sub_issues_summary.total // 1) > 0) | .url | sub("^.*?/repos/"; "repos/")' <<<"$level"); do
     children="$(sub_issues_of "$path")"
     next="$(jq -c --argjson c "$children" '. + $c' <<<"$next")"
   done

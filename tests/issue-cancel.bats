@@ -478,3 +478,12 @@ writes() { grep -oE '^(issue-comment|issue-close|pr-comment|pr-close|api-delete)
   assert_equal "$(jq -c '.sub_issues.open | map(.commented)' <<<"$output")" '[false]'
   assert_equal "$(writes | cut -d, -f1)" "issue-close https://github.com/me/demo/issues/30"
 }
+
+@test "子の応答に孫の数（sub_issues_summary）が無くても、その子の下を読む" {
+  setup_cancel
+  set_subs 17 "$(sub_issue 30 open | jq -c 'del(.sub_issues_summary)')"
+  set_subs 30 "$(sub_issue 31 open)"
+  run_script issue-cancel.sh --issue 17 --reason "やめます"
+  assert_failure 2
+  assert_output --partial "開いている子の Issue（#30, #31）があります"
+}
