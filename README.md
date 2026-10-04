@@ -25,6 +25,7 @@ plugins/dev-workflow/scripts/doctor.sh
 | `/dev-workflow:commit` | 変更を Conventional Commits の規約に沿ってコミットする。メッセージを検証してからコミットし、main の上ではコミットしない |
 | `/dev-workflow:review` | 作業中のブランチの変更を、組み込みの `/code-review` と独自のレビューの観点（下記）で並行してレビューし、指摘を1つの一覧にまとめる。反映する指摘を選ぶと、それだけを直してコミットする |
 | `/dev-workflow:review-perspective-add` | レビューの観点を聞き取り、形式に沿った観点ファイル（下記）を自分の層（`~/.claude/dev-workflow/review/`）かリポジトリの層（`<repo>/.claude/dev-workflow/review/`）に作る。同じ層に同じ名前の観点があれば上書きせずに知らせ、ほかの層の観点を置き換えるときは確認する |
+| `/dev-workflow:adr-create` | 設計上の判断を、MADR 4.0.0 の書式の ADR として `docs/adr/<Issue 番号を4桁に0埋め>-<名前>.md` に残す（[ADR](#adr)）。判断の内容を聞き取り、判断に合うテンプレートを選んで中身まで書く。古い ADR を置き換えるときは、古い方の status だけを superseded にする。確認は取らない（作るのは手元のファイルだけ） |
 | `/dev-workflow:pr-create` | 作業用のブランチを push し、Issue に紐付けた PR を作る。タイトルは `<type>: <Issueのタイトル>`、本文は PR テンプレートに沿って書き、`Closes #N` を付けてラベルを引き継ぐ。Issue に `breaking` ラベルがあれば、タイトルを `<type>!:` にし、本文に `BREAKING CHANGE:`（移行のしかた）を書く。確認してから push する |
 | `/dev-workflow:task-finish` | PR がマージされた後の後片付け。マージを確かめ、ワークツリーとローカルのブランチを削除し、main を最新にする（`git pull --ff-only`）。確認を取らずに進め、作業が失われるとき（マージされていない、PR に入っていないコミット・未コミットの変更・サブモジュールの push していないコミットがある）は、何も消さずに止まる。`.env` など git が無視するファイルが残っているときは、一覧を見せて消してよいか確認する |
 | `/dev-workflow:task-cancel` | やらないことにした Issue や誤って起票した Issue を取りやめる。理由と参照先（代わりに作業する Issue など）をコメントに書き、not planned（重複なら元の Issue に紐付けて duplicate）で閉じる。着手していれば、PR を閉じ、リモートと手元のブランチ・ワークツリーも削除する。失う作業（マージしていないコミット・未コミットの変更・`.env` など）を見せて確認してから行う。Project からは外さず、Story Point も残す（後からボードで経緯を参照できるように）。マージした後の片付けは `task-finish` を使う |
@@ -66,6 +67,21 @@ base_ahead: required
 | `regression-test` | 不具合の修正に、その不具合がもう一度起きないことを確かめるテストがあるか（type が `fix` のときだけ） |
 | `main-drift` | ブランチを作った後にマージ先に入った変更と、このブランチの変更が食い違っていないか（マージ先が進んでいるときだけ） |
 | `code-review` | 一般的なバグ。サブエージェントの代わりに、組み込みの `/code-review` を実行する |
+
+## ADR
+
+`/dev-workflow:adr-create` は、設計上の判断の「なぜ」を ADR（Architecture Decision Record）として残します。
+
+- 書式は [MADR](https://github.com/adr/madr) 4.0.0 です。公式の4つのテンプレートを日本語に訳して、プラグインに同梱しています（`plugins/dev-workflow/templates/adr/`。元にした版とライセンスは同じ場所の `README.md`）。
+- ADR は Issue ごとではなく、判断ごとに作ります。判断をした Issue でだけ作り、1つの Issue から2つ以上の ADR ができてもかまいません。
+- ファイル名は `docs/adr/<Issue 番号を4桁に0埋め>-<短い名前>.md` です（例：`docs/adr/0107-use-madr.md`）。連番ではなく Issue 番号なので、ワークツリーで並行して作業しても名前がぶつかりません。
+- テンプレートは判断に合わせて選びます。他の案と比べて選んだ判断・破壊的変更・元に戻しにくい判断は全部の節がある `adr-template.md`、記録しておけば足りる判断は `adr-template-minimal.md` です。説明のない2つ（`bare`）は、手で書く人向けです。
+- 置き換えた ADR は書き換えません。古い方の `status` の行だけを `superseded by <新しい ADR>` にします。
+- 置き場所は、設定（`.claude/dev-workflow/config.json`）の `adr.dir` で変えられます（既定は `docs/adr`。リポジトリのルートからの相対パス）。
+
+```json
+{ "adr": { "dir": "doc/decisions" } }
+```
 
 ## フック
 
