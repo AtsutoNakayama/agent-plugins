@@ -169,7 +169,7 @@ agent-plugins/
 | `adr-create` | 設計上の判断を、MADR 4.0.0 の書式の ADR として残す。判断に合うテンプレートを選び、中身まで書く | なし（作るのは手元のファイルだけ） |
 | `pr-create` | push と PR 作成 | push と PR の作成 |
 | `task-cancel` | やらない Issue を、理由と参照先をコメントして not planned か duplicate で閉じる。着手していれば、PR を閉じ、リモートと手元のブランチ・ワークツリーを削除する | 閉じる・削除する（理由のコメントと、失う作業を含めて1回で確認する） |
-| `task-finish` | ワークツリーとローカルブランチを削除し、main を最新にする（`git pull --ff-only`） | なし（作業が失われるときは `cleanup.sh` が何も消さずに止まる。git が無視するファイルを消すときだけ確認を取る） |
+| `task-finish` | ワークツリーとローカルブランチを削除し、main を最新にして（`git pull --ff-only`）、PR が閉じる Issue が閉じたかを伝える | なし（作業が失われるときは `cleanup.sh` が何も消さずに止まる。git が無視するファイルを消すときだけ確認を取る） |
 | `repo-setup` | 初期設定を対話的に実行し、設定ファイルを作る | ラベル・Project・リポジトリの設定の変更 |
 
 - どのスキルも、依頼の内容から自動で呼ばれてよい（`disable-model-invocation` は付けない）。
