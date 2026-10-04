@@ -109,5 +109,5 @@ frontmatter() { awk 'NR == 1 && $0 == "---" { on = 1; next } on && $0 == "---" {
   grep -q 'gh issue view <番号>' "$f"
   grep -q 'gh issue close <番号>' "$f"
   # shellcheck disable=SC2016 # バッククォートはスキルの本文の文字で、展開させない
-  grep -q '`--repo <owner/repo>`' "$f"
+  grep -q 'どちらのコマンドにも `--repo <owner/repo>` を付けて案内する' "$f"
 }
