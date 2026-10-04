@@ -684,7 +684,7 @@ assert_no_changes() {
   run_create --title t --type feat --story-point 3 --blocked-by 12
   assert_success
   assert_equal "$(called AddItem)" 3
-  assert_equal "$(args ProjectItems)" '{"path":"users/me/projectsV2/4/items","f":["q=repo:me/demo","per_page=100"]}'
+  assert_equal "$(args ProjectItems)" '{"path":"users/me/projectsV2/4/items","f":["q=repo:me/demo is:issue","per_page=100"]}'
   assert_equal "$(jq -c '[.project.item_id, .project.status]' <<<"$json")" '["IT30","Todo"]'
   # Status と Story Point を設定し、依存関係も登録する
   assert_equal "$(called SetField)" 2

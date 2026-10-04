@@ -107,10 +107,7 @@ fi
 # 所有者の種類（User / Organization）。REST の users/<login> は組織にも答える
 owner_type="$(dw_gh_find gh api "users/$owner" | jq -r '.type // empty')"
 [ -n "$owner_type" ] || dw_die "所有者が見つかりません: $owner"
-case "$owner_type" in
-  Organization) owner_path="orgs/$owner" ;;
-  *) owner_path="users/$owner" ;;
-esac
+owner_path="$(dw_owner_path "$owner_type" "$owner")"
 
 # --- 1. Project を見つける・作る ------------------------------------------------
 # 名前の完全一致で探す。検索は曖昧一致なので使わず、全件を見る。
