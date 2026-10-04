@@ -324,23 +324,23 @@ fake_issue_tasks() {
   set_issue_body "$(printf '## やること\r\n- [ ] 一つ目 [ ] を含む\r\n- [x] 二つ目\r\n  * [ ] 三つ目（入れ子）\r\n1. [ ] 四つ目\r\n- [ ] ~~五つ目~~\r\n\r\n```md\r\n- [ ] コードブロックの中\r\n```\r\n- [ ]\r\n- [] 項目ではない')"$'\r\n'
 }
 
-@test "Issue の本文のチェックリストの項目を、コードブロックの中を除いて番号付きで出す" {
+@test "Issue の本文のチェックリストの項目を、コードブロックの中を除いて出す" {
   setup_branch
   fake_issue_tasks
   run_pr --issue 17 --body-file "$TMP/body.md" --dry-run
   assert_success
-  assert_equal "$(jq -c '[.tasks[] | [.index, .checked, .text]]' <<<"$json")" \
-    '[[1,false,"一つ目 [ ] を含む"],[2,true,"二つ目"],[3,false,"三つ目（入れ子）"],[4,false,"四つ目"],[5,false,"~~五つ目~~"],[6,false,""]]'
+  assert_equal "$(jq -c '[.tasks[] | [.checked, .text]]' <<<"$json")" \
+    '[[false,"一つ目 [ ] を含む"],[true,"二つ目"],[false,"三つ目（入れ子）"],[false,"四つ目"],[false,"~~五つ目~~"],[false,""]]'
   assert_equal "$(jq -c .checked <<<"$json")" '[]'
 }
 
-@test "--check で指定した項目だけにチェックを付け、ほかの行は変えない" {
+@test "--check で指定した文の項目だけにチェックを付け、ほかの行は変えない" {
   setup_branch
   fake_issue_tasks
-  run_pr --issue 17 --body-file "$TMP/body.md" --check 1 --check 3 --check 2 --check 4
+  run_pr --issue 17 --body-file "$TMP/body.md" --check "一つ目 [ ] を含む" --check "三つ目（入れ子）" --check 二つ目 --check 四つ目
   assert_success
-  # 2 は既にチェックがあるので付けない
-  assert_equal "$(jq -c .checked <<<"$json")" '[1,3,4]'
+  # 二つ目は既にチェックがあるので付けない
+  assert_equal "$(jq -c .checked <<<"$json")" '["一つ目 [ ] を含む","三つ目（入れ子）","四つ目"]'
   assert_equal "$(args edit)" "17 --body-file -"
   jq -j '.body' "$FIX/issue-17.json" \
     | sed -e 's/^- \[ \] 一つ目/- [x] 一つ目/' -e 's/^  \* \[ \] 三つ目/  * [x] 三つ目/' -e 's/^1\. \[ \] 四つ目/1. [x] 四つ目/' >"$TMP/expected"
@@ -363,34 +363,48 @@ fake_issue_tasks() {
   setup_branch
   fake_issue_tasks
   echo '[{"number": 7, "url": "https://github.com/me/demo/pull/7", "isCrossRepository": false}]' >"$FIX/pr-list.json"
-  run_pr --issue 17 --body-file "$TMP/body.md" --check 5 --dry-run
+  run_pr --issue 17 --body-file "$TMP/body.md" --check "~~五つ目~~" --dry-run
   assert_success
-  assert_equal "$(jq -c '[.created, .checked, .actions[-1]]' <<<"$json")" '[false,[5],"Issue #17 のチェックリストの項目 5 にチェックを付ける"]'
+  assert_equal "$(jq -c '[.created, .checked, .actions[-1]]' <<<"$json")" '[false,["~~五つ目~~"],"Issue #17 のチェックリストの項目「~~五つ目~~」にチェックを付ける"]'
   assert_equal "$(called edit)" 0
-  run_pr --issue 17 --body-file "$TMP/body.md" --check 5
+  run_pr --issue 17 --body-file "$TMP/body.md" --check "~~五つ目~~"
   assert_success
   assert_equal "$(called pr-create)" 0
   run grep -c '^- \[x\] ~~五つ目~~' "$TMP/issue-edit-body"
   assert_output 1
 }
 
-@test "--check の番号がチェックリストに無ければ、push せずに止まる" {
+@test "--check の文の項目が無いか複数あれば、push せずに止まる" {
   setup_branch
   fake_issue_tasks
-  run_pr --issue 17 --body-file "$TMP/body.md" --check 7 --check 1
+  run_pr --issue 17 --body-file "$TMP/body.md" --check 無い項目 --check 二つ目 --check コードブロックの中
   assert_failure 64
-  assert_output --partial "--check の番号が Issue #17 のチェックリストにありません: 7（項目は 6 個）"
+  assert_output --partial "--check の文の項目が Issue #17 のチェックリストに1つだけではありません（無いか、同じ文が複数あります）: コードブロックの中 / 無い項目"
   run git rev-parse -q --verify origin/feat/17-x
   assert_failure
-  run_pr --issue 17 --body-file "$TMP/body.md" --check 0
+  set_issue_body "$(printf -- '- [ ] 同じ\n- [ ] 同じ\n- [ ] 別')"
+  run_pr --issue 17 --body-file "$TMP/body.md" --check 同じ
   assert_failure 64
-  assert_output --partial "--check には 1 からの番号を指定してください: 0"
+  assert_output --partial "1つだけではありません（無いか、同じ文が複数あります）: 同じ"
+}
+
+@test "確かめた後に上に項目が足されても、--check は同じ文の項目に付ける" {
+  setup_branch
+  # dry-run で確かめたときの本文
+  set_issue_body "$(printf -- '- [ ] a\n- [ ] b')"
+  run_pr --issue 17 --body-file "$TMP/body.md" --check b --dry-run
+  assert_success
+  # 承認を待つ間に、上に項目が足された
+  set_issue_body "$(printf -- '- [ ] 新しい項目\n- [ ] a\n- [ ] b')"
+  run_pr --issue 17 --body-file "$TMP/body.md" --check b
+  assert_success
+  assert_equal "$(cat "$TMP/issue-edit-body")" "$(printf -- '- [ ] 新しい項目\n- [ ] a\n- [x] b')"
 }
 
 @test "チェックを付けられなければ、もう一度実行すれば付けられると伝えて止まる" {
   setup_branch
   fake_issue_tasks
-  FAKE_FAIL=edit run_pr --issue 17 --body-file "$TMP/body.md" --check 1
+  FAKE_FAIL=edit run_pr --issue 17 --body-file "$TMP/body.md" --check 四つ目
   assert_failure 1
   assert_output --partial "PR #42 はできていますが、Issue #17 にチェックを付けられませんでした（もう一度実行すれば付けます）"
 }
