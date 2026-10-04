@@ -2,7 +2,7 @@
 # やらないことにした Issue を、理由のコメントを付けて not planned（重複なら duplicate）で閉じる。
 #
 # 使い方: issue-cancel.sh --issue N --reason TEXT [--duplicate-of M] [--branch NAME] [--dry-run]
-#   --issue N           Issue の番号
+#   --issue N           Issue の番号（#N でもよい）
 #   --reason TEXT       閉じる理由（コメントとして残す。代わりに作業する Issue などの参照先も書く）。空白だけなら止まる
 #   --duplicate-of M    重複の元の Issue の番号。付けると duplicate で閉じ、元の Issue に紐付ける（gh 2.88.0 以上）
 #   --branch NAME       やめた作業のブランチ。そのブランチの開いている PR を同じ理由のコメントを付けて閉じ、

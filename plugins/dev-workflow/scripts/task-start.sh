@@ -3,7 +3,7 @@
 # 何度実行しても同じ結果になる（既にあるワークツリー・ブランチ・割り当ては使い回す）。
 #
 # 使い方: task-start.sh --issue N --slug TEXT [--dry-run]
-#   --issue N      Issue の番号
+#   --issue N      Issue の番号（#N でもよい）
 #   --slug TEXT    ブランチ名の短い説明（英語）。branch-name.sh で整える
 #   --dry-run      変更せず、行う予定の操作だけを出力する
 #

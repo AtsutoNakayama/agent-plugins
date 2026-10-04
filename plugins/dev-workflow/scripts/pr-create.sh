@@ -4,7 +4,7 @@
 # その PR のタイトル・本文・ラベル・Project の列は変えない）。
 #
 # 使い方: pr-create.sh --issue N --body-file PATH [--title TEXT] [--dry-run]
-#   --issue N         紐付ける Issue の番号
+#   --issue N         紐付ける Issue の番号（#N でもよい）
 #   --body-file PATH  PR の本文のファイル。- なら標準入力
 #   --title TEXT      PR のタイトル。省略すると <Issue の type ラベル>: <Issue のタイトル>
 #                     （Issue に breaking ラベルがあれば <type>!: <Issue のタイトル>）

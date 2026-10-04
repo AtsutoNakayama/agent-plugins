@@ -19,7 +19,7 @@
 #   --base    基点のコミット。差分のファイルは git diff <基点> で読む
 #   --target  マージ先の ref（例: origin/main）。base_ahead の条件で、基点より進んでいるかを見る
 #   --type    変更の type。分からなければ省く
-#   --issue   作業中の Issue の番号。Issue が無ければ省く
+#   --issue   作業中の Issue の番号（#N でもよい）。Issue が無ければ省く
 #
 # 層（下ほど優先。同じ名前の観点は上位の層のファイルが使われる）:
 #   3. プラグインに同梱する共通の観点   review/*.md

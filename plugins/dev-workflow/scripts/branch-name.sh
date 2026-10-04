@@ -5,7 +5,7 @@
 #   branch-name.sh --issue N --slug TEXT [--type TYPE]   ブランチ名を作る
 #   branch-name.sh --check NAME                          ブランチ名が規約（文字と branch.pattern の形）に合うか確かめる
 #
-#   --issue N      Issue の番号
+#   --issue N      Issue の番号（#N でもよい）
 #   --slug TEXT    短い説明（英語）。小文字にし、英数字以外は - にして 40 文字までに整える
 #   --type TYPE    type（既定: Issue の type ラベル。labels.types のどれか1つが付いている必要がある）
 #
