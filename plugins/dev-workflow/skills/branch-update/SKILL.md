@@ -11,7 +11,7 @@ main が進んだ PR は、最新の main を取り込んで CI が通り直る�
 
 スクリプト（JSON を出力する）:
 
-- `${CLAUDE_PLUGIN_ROOT}/scripts/branch-status.sh`：origin から `base_branch` を取得し、ブランチの遅れ（`behind`）・先行（`ahead`）、未コミットの変更（`dirty`）、origin のブランチとのずれ（`unpushed`・`unpulled`）、開いている PR のマージ状態（`pr.merge_state`）を調べる。何も変更しない（`--help` で使い方）
+- `${CLAUDE_PLUGIN_ROOT}/scripts/branch-status.sh`：origin から `base_branch` を取得し、ブランチの遅れ（`behind`）・先行（`ahead`）、追跡しているファイルの未コミットの変更（`dirty`。未追跡のファイルは除く）、origin のブランチとのずれ（`unpushed`・`unpulled`）、開いている PR のマージ状態（`pr.merge_state`）を調べる。何も変更しない（`--help` で使い方）
 
 ## 手順
 
@@ -20,7 +20,7 @@ main が進んだ PR は、最新の main を取り込んで CI が通り直る�
 取り込むのは今のブランチ（HEAD）なので、取り込む作業用のブランチのワークツリーの中で `branch-status.sh` を実行する（調べるのは今のブランチだけ。別のブランチに取り込むときは、そのブランチのワークツリーに移ってから行う）。
 
 - `up_to_date` が true なら、何もせずに「すでに最新です」と伝えて終える。`pr.merge_state` が `BEHIND` でなければ、マージできない理由は別にある（`BLOCKED` ならチェックの失敗や承認待ち、`DIRTY` なら衝突）ので、その状態も伝える
-- `dirty` が true なら、merge の前にコミットするか、ユーザーに片付けてもらう（取り込みの結果と混ざらないようにする）
+- `dirty` が true なら（未追跡のファイルは数えない）、merge の前にコミットするか、ユーザーに片付けてもらう（取り込みの結果と混ざらないようにする）
 - `unpulled` が 1 以上なら、origin のブランチに手元に無いコミットがあり、push が拒否される。取り込む前に、そのコミットを取り込むか（`git pull --no-rebase`）ユーザーに確かめる
 
 ### 2. 取り込む

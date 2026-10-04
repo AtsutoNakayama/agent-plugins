@@ -242,7 +242,7 @@ agent-plugins/
 | `adr-create.sh` | ADR をテンプレートから作る（ファイル名の決定、`date` と `issue` の記入）。`--supersedes` で置き換える ADR の `status` の行だけを書き換える。同じファイル名があれば上書きせずに止まる |
 | `pr-create.sh` | PR を作る |
 | `issue-cancel.sh` | 理由をコメントし、Issue を not planned か duplicate で閉じる。`--branch` で、そのブランチの開いている PR を閉じ、リモートのブランチを削除する。理由が空、または違う理由で既に閉じていれば何もせずに止まる |
-| `branch-status.sh` | 作業用のブランチの、base_branch に対する遅れ・先行、未コミットの変更、origin のブランチとのずれ、開いている PR のマージ状態（`merge_state`）を調べる。変更はしない（origin からの取得だけ行う） |
+| `branch-status.sh` | 作業用のブランチの、base_branch に対する遅れ・先行、追跡しているファイルの未コミットの変更（未追跡のファイルは除く）、origin のブランチとのずれ、開いている PR のマージ状態（`merge_state`）を調べる。変更はしない（origin からの取得だけ行う） |
 | `cleanup.sh` | マージを確認し、ワークツリーとブランチを削除し、main を最新にする。未コミットの変更や git が無視するファイルがあれば、何も消さずに止まる（無視するファイルは `--remove-ignored` で消せる）。`--abandon` では、マージの確認と main の更新を飛ばし、失うものを一覧にして削除する |
 
 | 初期設定用（`plugins/dev-workflow/scripts/setup/`） | 役割 |
