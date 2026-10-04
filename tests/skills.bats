@@ -94,9 +94,10 @@ frontmatter() { awk 'NR == 1 && $0 == "---" { on = 1; next } on && $0 == "---" {
   grep -q '重複と親の候補を探す' <<<"$step2" || fail "手順2の最初に、重複と親の候補を探す手順がありません"
   grep -qF 'gh issue list --state open' <<<"$step2" || fail "開いている Issue を読む手順がありません"
   grep -q 'AskUserQuestion' <<<"$step2" || fail "重複があるときにユーザーに聞く手順がありません"
-  for choice in '既にある Issue に足す' '重ならない部分だけを起票する' 'そのまま起票する'; do
+  for choice in '既にある Issue で進める' '重ならない部分だけを起票する' 'そのまま起票する'; do
     grep -q "$choice" <<<"$step2" || fail "重複があるときの選択肢「${choice}」がありません"
   done
+  grep -q '親の候補は、重なりとして数えない' <<<"$step2" || fail "指定された親と親の候補を、重なりから外すことが書かれていません"
   grep -q '明らかな親' "$f" && fail "親の候補が、探した結果ではなく「明らかな親」のままです"
   step3="$(awk '/^### 3\./ { on = 1; next } /^### 4\./ { on = 0 } on' "$f")"
   grep -q '手順2で探した結果' <<<"$step3" || fail "手順3の確認に、探した結果がありません"
