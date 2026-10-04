@@ -1,24 +1,13 @@
 name: Test
 
-# プラグインの外にあるドキュメントだけの変更では動かさない。**.md でまとめて除外しないのは、
-# plugins/ の SKILL.md やテンプレートの .md をテストで使っているため。
-# 将来ルールセットで CI の成功を必須にするときは、paths-ignore で動かなかった PR のチェックが
-# 「待ち」のまま残ってマージできなくなるので、paths-ignore をやめるなどの対応が要る。
-# paths-ignore は lint.yml と同じリストにそろえず、test が何を検査するかで決める。
+# ドキュメントだけの変更では、重いジョブを飛ばす（changes ジョブが判定する）。ワークフロー自体は paths-ignore で
+# 止めず、いつも動かす。ルールセットの必須のチェックにしているので、ワークフローが動かないとチェックが
+# 「待ち」のまま残ってマージできないため。必須のチェックは、最後に必ず動く test-result ジョブ。
+# 何をドキュメントとするかは、.github/scripts/docs-only.sh にある。
 on:
   pull_request:
-    paths-ignore:
-      - README.md
-      - docs/**
-      - .github/ISSUE_TEMPLATE/**
-      - .github/pull_request_template.md
   push:
     branches: [main]
-    paths-ignore:
-      - README.md
-      - docs/**
-      - .github/ISSUE_TEMPLATE/**
-      - .github/pull_request_template.md
 
 # 同じ PR に続けて push したら、古い実行を取り消す。main への push は PR のときとの差を
 # 確かめるために残すので、コミットごとに別のグループにして取り消さない
@@ -27,7 +16,24 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
+  changes:
+    # ドキュメントだけの変更かを調べる。pull_request ではマージコミット（HEAD^ が main の先端）、push では
+    # main に入ったコミットを見るので、直前の1つ前まで取得する
+    runs-on: ubuntu-latest
+    outputs:
+      docs_only: ${{ steps.docs-only.outputs.docs_only }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 2
+      - name: docs only
+        id: docs-only
+        run: |
+          echo "docs_only=$(.github/scripts/docs-only.sh | jq -r .docs_only)" >> "$GITHUB_OUTPUT"
+
   test:
+    needs: changes
+    if: needs.changes.outputs.docs_only != 'true'
     strategy:
       fail-fast: false
       matrix:
@@ -60,3 +66,21 @@ jobs:
           jobs=$(( $(getconf _NPROCESSORS_ONLN) * 2 ))
           echo "jobs: $jobs"
           bats --jobs "$jobs" tests/
+
+  test-result:
+    # ルールセットの必須のチェック。ドキュメントだけで test を飛ばしたときも成功にし、
+    # changes か test が失敗・取り消しになったときは失敗にする
+    if: always()
+    needs: [changes, test]
+    runs-on: ubuntu-latest
+    steps:
+      - name: result
+        env:
+          CHANGES: ${{ needs.changes.result }}
+          DOCS_ONLY: ${{ needs.changes.outputs.docs_only }}
+          JOB: ${{ needs.test.result }}
+        run: |
+          echo "changes: ${CHANGES}, docs_only: ${DOCS_ONLY}, test: ${JOB}"
+          [ "$CHANGES" = success ] || exit 1
+          [ "$JOB" = success ] && exit 0
+          [ "$JOB" = skipped ] && [ "$DOCS_ONLY" = true ]

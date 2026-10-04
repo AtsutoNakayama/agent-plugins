@@ -4,6 +4,8 @@
 # 使い方: setup-repo.sh [オプション]
 #   --repo OWNER/NAME       対象のリポジトリ（既定: 今いるリポジトリ）
 #   --require-approval N    マージに必要な承認の数（0〜10。既定: 今の値のまま。新しく作るときは 0）
+#   --required-check NAME   マージの前に成功を求めるチェックの名前（繰り返し指定できる。既定: ルールセットの必須のチェックに触れない）
+#                           指定すると、指定した名前の一覧で必須のチェックを置き換え、PR が最新の base_branch を取り込んでいることも求める
 #   --dry-run               変更せず、行う予定の操作だけを出力する
 #
 # 行うこと:
@@ -11,7 +13,8 @@
 #      マージしたブランチを自動で削除する
 #   2. ルールセット「dev-workflow」：設定の base_branch への直接 push を禁止して PR を必須にし、
 #      強制 push と削除を禁止する。管理者も例外にしない
-#      このスクリプトが扱わないルール（必須のステータスチェックなど）は残す
+#      --required-check を指定したときだけ、必須のステータスチェックと「最新の base_branch の取り込み」も揃える
+#      このスクリプトが扱わないルール（--required-check を指定しないときの必須のステータスチェックなど）は残す
 # リポジトリの管理者権限が必要（dry-run でも確かめる）。守るブランチがリポジトリに無ければ止める。
 # 守るブランチは、チームの設定（.claude/dev-workflow/config.json）の base_branch で決める（個人の設定は使わない）。
 # --repo が今いるリポジトリと違うときは、対象のリポジトリの .claude/dev-workflow/config.json を API で読む。
@@ -43,6 +46,7 @@ SETTINGS='{
 }'
 
 repo="" approvals="" dry_run=false
+checks=()
 while [ $# -gt 0 ]; do
   case "$1" in
     --repo | --require-approval)
@@ -51,6 +55,11 @@ while [ $# -gt 0 ]; do
         --repo) repo="$2" ;;
         --require-approval) approvals="$2" ;;
       esac
+      shift 2
+      ;;
+    --required-check)
+      need_value "$@"
+      checks+=("$2")
       shift 2
       ;;
     --dry-run) dry_run=true; shift ;;
@@ -65,6 +74,9 @@ esac
 if [ -n "$approvals" ] && [ "$approvals" -gt 10 ]; then
   dw_die "--require-approval は 0〜10 で指定してください: $approvals" 64
 fi
+
+# 必須のチェックの名前（指定が無ければ []）。重複は1つにまとめる
+checks_json="$(printf '%s\n' ${checks[@]+"${checks[@]}"} | jq -R -s -c 'split("\n") | map(select(. != "")) | unique')"
 
 repo_nwo="$(gh repo view ${repo:+"$repo"} --json nameWithOwner -q .nameWithOwner)"
 here_nwo=""
@@ -160,9 +172,11 @@ fi
 
 # 既存の pull_request の設定は残し、承認の数（指定されたときだけ）とマージ方法を揃える
 desired="$(jq -n --argjson ex "$existing" --arg name "$RULESET_NAME" --arg ref "refs/heads/$branch" \
-  --arg n "$approvals" '
+  --arg n "$approvals" --argjson checks "$checks_json" '
   ([($ex // {}).rules // [] | .[] | select(.type == "pull_request")][0].parameters // {}) as $old
-  | ["deletion", "non_fast_forward", "pull_request"] as $managed
+  | ([($ex // {}).rules // [] | .[] | select(.type == "required_status_checks")][0].parameters.required_status_checks // []) as $oldchecks
+  | (["deletion", "non_fast_forward", "pull_request"]
+    + (if ($checks | length) > 0 then ["required_status_checks"] else [] end)) as $managed
   | {
       name: $name,
       target: "branch",
@@ -180,36 +194,55 @@ desired="$(jq -n --argjson ex "$existing" --arg name "$RULESET_NAME" --arg ref "
               required_review_thread_resolution: false
             } + $old + {allowed_merge_methods: ["squash"]}
               + (if $n == "" then {} else {required_approving_review_count: ($n | tonumber)} end))}]
+        + (if ($checks | length) > 0 then
+            [{type: "required_status_checks", parameters: {
+              strict_required_status_checks_policy: true,
+              do_not_enforce_on_create: false,
+              # 同じ名前の既存のチェックが報告元のアプリ（integration_id）を指定していれば、引き継ぐ
+              required_status_checks: ($checks | map(. as $c
+                | ([$oldchecks[] | select(.context == $c and .integration_id != null)][0].integration_id) as $i
+                | {context: $c} + (if $i == null then {} else {integration_id: $i} end)))}}]
+          else [] end)
       )
     }')"
+checks_note=""
+if [ "$checks_json" != "[]" ]; then
+  checks_note="、必須のチェック: $(jq -r 'join(", ")' <<<"$checks_json")・最新の ${branch} の取り込み"
+fi
 approvals_now="$(jq '.rules[] | select(.type == "pull_request") | .parameters.required_approving_review_count' <<<"$desired")"
 
 # 比べる形に揃える（ルールは種類の順、GitHub が付け足す項目は除く）
 normalize() {
   jq -S '{enforcement, target, bypass_actors: (.bypass_actors // []),
     conditions: {ref_name: {include: (.conditions.ref_name.include // []), exclude: (.conditions.ref_name.exclude // [])}},
-    rules: ((.rules // []) | map({type} + (if .parameters then {parameters} else {} end)) | sort_by(.type))}'
+    rules: ((.rules // []) | map({type} + (if .parameters then {parameters} else {} end))
+      # 必須のチェックは、GitHub が付け足す項目（integration_id など）と並び順の違いを無視して、名前と厳密さだけを比べる
+      | map(if .type == "required_status_checks" then
+          .parameters |= {strict: (.strict_required_status_checks_policy // false),
+                          checks: ([.required_status_checks[]?.context] | sort)}
+        else . end)
+      | sort_by(.type))}'
 }
 
 created=false updated=false
 if [ "$existing" = null ]; then
-  note "ルールセット「${RULESET_NAME}」を作成し、${branch} への直接 push・強制 push・削除を禁止する（必要な承認: ${approvals_now}）"
+  note "ルールセット「${RULESET_NAME}」を作成し、${branch} への直接 push・強制 push・削除を禁止する（必要な承認: ${approvals_now}${checks_note}）"
   created=true
   ruleset_id="$(mutate POST "repos/$repo_nwo/rulesets" "$desired" | jq -r '.id // empty')"
 elif [ "$(normalize <<<"$existing")" != "$(normalize <<<"$desired")" ]; then
-  note "ルールセット「${RULESET_NAME}」を揃える（${branch} を保護、必要な承認: ${approvals_now}）"
+  note "ルールセット「${RULESET_NAME}」を揃える（${branch} を保護、必要な承認: ${approvals_now}${checks_note}）"
   updated=true
   mutate PUT "repos/$repo_nwo/rulesets/$ruleset_id" "$desired" >/dev/null
 fi
 
 jq -n --argjson dry "$dry_run" --arg repo "$repo_nwo" --arg branch "$branch" --argjson changed "$changed" \
   --arg id "$ruleset_id" --argjson created "$created" --argjson updated "$updated" \
-  --argjson approvals "$approvals_now" --argjson actions "$actions" '{
+  --argjson approvals "$approvals_now" --argjson checks "$checks_json" --argjson actions "$actions" '{
     dry_run: $dry,
     repo: $repo,
     branch: $branch,
     settings: {changed: $changed},
     ruleset: {id: (if $id == "" then null else ($id | tonumber) end), created: $created, updated: $updated,
-      required_approvals: $approvals},
+      required_approvals: $approvals, required_checks: $checks},
     actions: $actions
   }'
