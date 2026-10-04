@@ -93,6 +93,7 @@ frontmatter() { awk 'NR == 1 && $0 == "---" { on = 1; next } on && $0 == "---" {
   step2="$(awk '/^### 2\./ { on = 1; next } /^#### 下書きの項目/ { on = 0 } on' "$f")"
   grep -q '重複と親の候補を探す' <<<"$step2" || fail "手順2の最初に、重複と親の候補を探す手順がありません"
   grep -qF 'gh issue list --state open' <<<"$step2" || fail "開いている Issue を読む手順がありません"
+  grep -qF 'subIssuesSummary' <<<"$step2" || fail "サブ Issue の数を、開いている Issue の一覧と一緒に読んでいません"
   grep -q 'AskUserQuestion' <<<"$step2" || fail "重複があるときにユーザーに聞く手順がありません"
   for choice in '既にある Issue で進める' '重ならない部分だけを起票する' 'そのまま起票する'; do
     grep -q "$choice" <<<"$step2" || fail "重複があるときの選択肢「${choice}」がありません"
