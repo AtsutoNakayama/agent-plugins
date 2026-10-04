@@ -186,14 +186,34 @@ called() { grep -c "^$1 " "$CALLS" || true; }
   assert_equal "$(grep '^ProjectView ' "$CALLS" | cut -d' ' -f2- | jq -c '[._[0], .owner]')" '["12","team"]'
 }
 
-@test "足りない Status の列は、既存の選択肢の id を残したまま追加する" {
+@test "足りない Status の列は、既存の選択肢の id を残したまま、設定の順で前にある列の後ろに追加する" {
   setup_fake_gh
   detail '["R1"]' '[{"id": "O1", "name": "Todo"}, {"id": "O3", "name": "Done"}]' true
   run_setup
   assert_success
   assert_equal "$(called UpdateStatus)" 1
   opts="$(grep '^UpdateStatus ' "$CALLS" | cut -d' ' -f2- | jq -c '[.opts[] | [.id, .name]]')"
-  assert_equal "$opts" '[["O1","Todo"],["O3","Done"],[null,"In Progress"]]'
+  assert_equal "$opts" '[["O1","Todo"],[null,"In Progress"],["O3","Done"]]'
+}
+
+@test "pr_opened の列は、start の列の後ろ（done の列の前）に追加し、利用者が足した列の位置は変えない" {
+  setup_fake_gh
+  echo '{"status": {"pr_opened": "In Review"}}' >.claude/dev-workflow/config.json
+  detail '["R1"]' '[{"id": "O1", "name": "Todo"}, {"id": "OB", "name": "Blocked"}, {"id": "O2", "name": "In Progress"},
+    {"id": "O3", "name": "Done"}, {"id": "OX", "name": "Archive"}]' true
+  run_setup
+  assert_success
+  opts="$(grep '^UpdateStatus ' "$CALLS" | cut -d' ' -f2- | jq -c '[.opts[] | [.id, .name]]')"
+  assert_equal "$opts" '[["O1","Todo"],["OB","Blocked"],["O2","In Progress"],[null,"In Review"],["O3","Done"],["OX","Archive"]]'
+}
+
+@test "設定の順で前にある列が1つも無ければ、後ろにある列の前に追加する" {
+  setup_fake_gh
+  detail '["R1"]' '[{"id": "OX", "name": "Archive"}, {"id": "O3", "name": "Done"}]' true
+  run_setup
+  assert_success
+  opts="$(grep '^UpdateStatus ' "$CALLS" | cut -d' ' -f2- | jq -c '[.opts[] | [.id, .name]]')"
+  assert_equal "$opts" '[["OX","Archive"],[null,"Todo"],[null,"In Progress"],["O3","Done"]]'
 }
 
 @test "Project に入っている Issue は追加せず、Status が入っていれば変更もしない" {

@@ -74,6 +74,7 @@ agent-plugins/
 - 基本はリポジトリごとに Project を1つ持つ。関連する複数のリポジトリで1つの Project を共有してもよい。
 - 既定の列：`Todo / In Progress / Done`。
 - 役割（どの場面で移すか）と列名の対応を設定ファイルに書く。スキルが自動で移すのは、役割が決まっている列だけ。利用者が追加した列（例：`Blocked`）へは、指示されたときに `task-status` で移す。
+- `setup-project.sh` は、設定の列が Project に無ければ足す。足す列は、設定の順（`todo`・`start`・`pr_opened`・`done`）でそれより前にある列の後ろに入れる（例：`pr_opened` の `In Review` は `In Progress` の後ろ、`Done` の前）。既存の列と、利用者が足した列の位置は変えない。
 
 ```jsonc
 "status": {
