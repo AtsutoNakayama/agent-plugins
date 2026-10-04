@@ -21,8 +21,8 @@ Todo の Issue を読み、次に着手すべきものと、同時に進めら�
 
 - `next`：次に着手すべき Issue の番号（待ちを除いた先頭）。無ければ null
 - `parallel`：`next` と同時に進められる Issue の組（`next` を含む）
-- `todo`：Todo の Issue を Project の並び順（`position`）に並べたもの。`waiting`（待ち）、`blocked_by`（まだ閉じていない依存先と、その出どころ `sources`。`dependency` は GitHub の依存関係、`body` は本文の「依存」）、`areas`・`area_known`（本文の「変更するファイル・領域」）、`parallel` と `reason`（並列にできるか、その理由）、`overlaps`（選んだものと重なるパス）、`conflicts_with_active`（着手中の Issue と重なるパス）
-- `in_progress`：着手中の Issue。`areas`（本文の領域）と `pr_files`（開いている PR が変えているファイル）
+- `todo`：Todo の Issue を Project の並び順（`position`）に並べたもの。`waiting`（待ち）、`blocked_by`（まだ閉じていない依存先。`repo` と `number`、出どころ `sources`。`dependency` は GitHub の依存関係、`body` は本文の「依存」。別のリポジトリの Issue のこともある）、`areas`・`area_known`・`areas_ignored`（本文の「変更するファイル・領域」。`areas_ignored` はパスと判断できず使わなかった行）、`warnings`（着手中の Issue の領域が分からないときの警告）、`parallel` と `reason`（並列にできるか、その理由）、`overlaps`（選んだものと重なるパス）、`conflicts_with_active`（着手中の Issue と重なるパス）
+- `in_progress`：着手中の Issue。`areas`（本文の領域）と `pr_files`（開いている PR が変えているファイル）、`area_known`（どちらかがあるか）。`active_unknown` は、どちらも無い着手中の Issue の番号
 
 ### 2. 提案する
 
@@ -32,6 +32,12 @@ Todo の Issue を読み、次に着手すべきものと、同時に進めら�
 - **同時に進められる組**：`parallel` が2つ以上あれば、その組。それぞれがどのパスを触る見込みかを添える。`next` だけなら「並列にできる組は見つからなかった」と伝え、理由（領域が不明・重なる）を添える
 - **並列にできないもの**：`reason` が「領域が重なる」ものは、重なる相手とパス（`overlaps`・`conflicts_with_active`）を添える。「領域が不明」のものは、Issue に「変更するファイル・領域」を書けば並列の候補にできると伝える
 - **待ちのもの**：`waiting` の Issue と、待っている Issue の番号（`blocked_by`）。候補には入れない
+
+次の注意も、該当すれば伝える。
+
+- `warnings` がある：着手中の Issue に領域も PR も無いので、その Issue と重なるか分からない（並列にしてよいかは、その Issue の領域を確かめてから決める）
+- `areas_ignored` がある：その Issue の「変更するファイル・領域」に、パスと判断できない行がある。Issue の欄をパスで書き直せば、並列の候補にできる
+- 着手中の Issue の PR は、ブランチ名（`<type>/<番号>-…`）か `Closes` で結び付ける。どちらでもない PR は結び付けられず、重なりを見逃すことがある
 
 領域の重なりは、本文のパスから見た見込みで、実際のコンフリクトとは限らない。警告として伝え、並列にしてよいかは使う人が決める。
 
