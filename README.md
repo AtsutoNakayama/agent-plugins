@@ -113,6 +113,21 @@ base_ahead: required
 
 `cd` や `git -C` で移った先のリポジトリ・ブランチで判断します。コマンドの文字列を簡易に解析するだけなので、`sh -c` や git の別名を通すと見逃します。最後の守りは GitHub のルールセット（下記）です。
 
+### PR や Issue のリンクを出す
+
+git の操作のあとに、関連する PR・Issue・CI のリンクを、使用者の画面に出します（`hooks/pr-link.sh`）。PR や Issue の画面を探さなくても、すぐ開けます。
+
+| 操作 | 出すリンク |
+| --- | --- |
+| `git push`（`pr-create.sh` を含む） | 開いた PR（無ければ PR を作る URL）、紐付く Issue、PR の CI（checks。PR が無ければブランチの CI の実行ページ） |
+| `git commit`（`commit.sh` を含む）、ブランチ・ワークツリーの作成（`git switch -c` など。`task-start.sh` を含む） | 紐付く Issue |
+| `gh pr create`・`gh issue create`（`pr-create.sh`・`issue-create.sh` を含む） | 作った PR・Issue（コマンドの出力から拾う） |
+
+- 紐付く Issue は、ブランチ名（`branch.pattern` の `{issue_number}`）から分かります。main など、Issue の番号が分からないブランチでは、ブランチから導くリンクは出しません。
+- 同じリンクも、連続で毎回出します。
+- `gh` が無い・失敗するなど、リンクを出せないときは、何も出さずに通します。操作は止まりません。
+- 使用者には `systemMessage`、Claude には `additionalContext` で伝え、Claude は返答でもリンクに触れます。
+
 ## リポジトリの初期設定
 
 Claude Code で `/dev-workflow:repo-setup` を実行すると、選択肢を聞き、予定を見せてから、以下をまとめて行います。スクリプトを直接実行することもできます。

@@ -1,5 +1,5 @@
 {
-  "description": "base_branch（既定は main）を守る。main の上での commit、main への push、強制 push を止める。規約（branch.pattern）に合わない名前でブランチを作るときは、止めずに警告する。セッションの始まり（起動・/resume・/clear・コンパクト）に、タスクの進め方を Claude に渡す",
+  "description": "base_branch（既定は main）を守る。main の上での commit、main への push、強制 push を止める。規約（branch.pattern）に合わない名前でブランチを作るときは、止めずに警告する。git の操作のあと（push・commit・ブランチの作成・PR や Issue の作成）に、関連する PR・Issue・CI のリンクを出す。セッションの始まり（起動・/resume・/clear・コンパクト）に、タスクの進め方を Claude に渡す",
   "hooks": {
     "PreToolUse": [
       {
@@ -18,6 +18,17 @@
           {
             "type": "command",
             "command": "bash \"${CLAUDE_PLUGIN_ROOT}/hooks/task-flow.sh\""
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"${CLAUDE_PLUGIN_ROOT}/hooks/pr-link.sh\""
           }
         ]
       }

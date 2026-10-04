@@ -203,8 +203,16 @@ agent-plugins/
    - 方式は、ルールセットの必須のチェックにした。マージキューは、組織のリポジトリでしか使えないと考えられ（GitHub のドキュメントの記憶による。未確認）、個人のリポジトリでも使える方式にするため選ばなかった。
    - チェックの名前はチームの CI で決まるので、プラグインは決めず、既定でも入れない（CI が無い、または名前が違うと、チェックが「待ち」のまま残ってマージできなくなる）。指定した名前の一覧で必須のチェックを置き換え、指定しなければ、ルールセットの必須のチェックには触れない。
    - CI にジョブを足しても必須の名前が変わらないよう、CI 全体の結果をまとめる門番のジョブを必須にする使い方を、README で勧める。`paths-ignore` で動かないワークフローのチェックは「待ち」のまま残るので、使わない。
-2. **Claude Code のフック**（`hooks/guard-git.sh`）：main 上での commit と、main への push をブロックする。強制 push（`--force` / `-f` / `+<refspec>` / `--mirror`）をブロックする（`--force-with-lease` は許可）。ブランチを作るコマンド（`git switch -c` / `git checkout -b` / `git branch <名前>` / `git worktree add -b`）で、名前が規約（`branch-name.sh --check`。文字と `branch.pattern` の形）に合わないときは、コマンドは止めずに警告する。警告はフックの JSON の出力で、使用者には `systemMessage`、Claude には `additionalContext` で伝える。解析できないときや設定を読めないときは何もせずに通す。
-3. **SessionStart のフック**（`hooks/task-flow.sh`）：タスクの進め方（Issue から始める → 着手 → 実装（論理的な区切りごとにコミット）→ ローカルレビュー → PR → マージ（人間）→ 後片付け、と取りやめ）と、それぞれで使うスキルを、セッションの始まりに Claude に読み込ませる。
+2. **Claude Code のフック（PreToolUse）**（`hooks/guard-git.sh`）：main 上での commit と、main への push をブロックする。強制 push（`--force` / `-f` / `+<refspec>` / `--mirror`）をブロックする（`--force-with-lease` は許可）。ブランチを作るコマンド（`git switch -c` / `git checkout -b` / `git branch <名前>` / `git worktree add -b`）で、名前が規約（`branch-name.sh --check`。文字と `branch.pattern` の形）に合わないときは、コマンドは止めずに警告する。警告はフックの JSON の出力で、使用者には `systemMessage`、Claude には `additionalContext` で伝える。解析できないときや設定を読めないときは何もせずに通す。
+3. **PostToolUse のフック**（`hooks/pr-link.sh`）：git の操作のあとに、関連する PR・Issue・CI のリンクを出す。Claude が返答に書いたときにしかリンクが見えないと、PR や Issue の画面を毎回探すことになるので、操作のたびに使用者の画面へ出す。
+   - 対象は、`git push`、`git commit`、ブランチ・ワークツリーの作成、`gh pr create`・`gh issue create`。スクリプトの中で git や gh が呼ばれるとコマンド文字列に現れないので、`commit.sh`・`task-start.sh`・`pr-create.sh`・`issue-create.sh` の名前でも発火する。コマンドの文字列を簡易に判定するだけなので、`sh -c` や別名を通すと見逃し、引用符の中の文字にも反応する。
+   - 出すリンク：push は、開いた PR の URL（無ければ `<リポジトリ>/pull/new/<ブランチ>`）、紐付く Issue、CI（PR があれば `<PR>/checks`、無ければ `<リポジトリ>/actions?query=branch:<ブランチ>`）。commit とブランチの作成は紐付く Issue。PR・Issue の作成は、コマンドの出力に含まれる URL。
+   - 紐付く Issue は、ブランチ名を `branch.pattern` に当てて求める。`task-start.sh` は別のワークツリーを作るので、出力の Issue の番号を使う。コマンドの文字列の `cd` は追わず、フックの入力の `cwd` のブランチで判断する。
+   - 決まり：同じリンクは、連続でも毎回出す（常に見えるようにするため）。Issue の番号が分からないブランチ（main など）では、ブランチから導くリンクは出さない（作った PR・Issue の URL は、出力から拾うので出す）。`gh` が無い・失敗する・解析できないときは何も出さずに通し、フックは作業を止めない（いつも終了コード 0。エラーの表示も出さない）。
+   - 出力は、使用者に見せる `systemMessage` と、Claude に渡す `additionalContext`（返答でも触れてもらう）の両方（`guard-git.sh` の警告と同じ形）。
+   - `/remote-control` など別の端末の画面に `systemMessage` が出るかは、確かめられていない（未確認）。出ない場合でも、`additionalContext` を受け取った Claude が返答でリンクに触れるので、リンクは別の端末にも届く。`systemMessage` が出るなら二重になるが、常に見えることを優先する。
+   - git の操作ではない場面（CI や CodeRabbit の結果を伝えるとき、Issue を起票したときなど）はフックでは出せないので、Claude への決まりとして、SessionStart の案内（`defaults/task-flow.md`）に「PR・Issue・CI に触れるときは URL を添える」と書く。
+4. **SessionStart のフック**（`hooks/task-flow.sh`）：タスクの進め方（Issue から始める → 着手 → 実装（論理的な区切りごとにコミット）→ ローカルレビュー → PR → マージ（人間）→ 後片付け、と取りやめ）と、それぞれで使うスキルを、セッションの始まりに Claude に読み込ませる。
    - スキルは呼ばれたときにしか読み込まれないので、流れをスキルに書いても普段の作業中は効かない。プラグインはいつも読み込まれるルール（CLAUDE.md・`.claude/rules/`）を配れない（プラグインの直下の CLAUDE.md は読み込まれない）ので、フックの出力で渡す。SessionStart は起動・`/resume`・`/clear`・コンパクトのたびに動くので、会話が要約されても流れが抜けない。
    - 既定の流れ（`defaults/task-flow.md`）のあとに、個人の追記（`~/.claude/dev-workflow/task-flow.md`）、チームの追記（`<repo>/.claude/dev-workflow/task-flow.md`）の順に出力する（後ろほど優先。`guides.task-flow` と同じ順）。
    - 毎セッション動くので、`config.sh` を呼ばずにファイルを直接読んで速く終える。出力は Claude Code がそのまま渡す上限（1 万文字）に収め、超えたら切って、読み直すファイルを知らせる。
