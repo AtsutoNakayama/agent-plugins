@@ -167,7 +167,7 @@ out_of() { jq -c "$1" <<<"$output"; }
   echo open >"$FIX/state-5"
   run_script next-tasks.sh
   assert_success
-  assert_equal "$(out_of '.todo[0].blocked_by')" '[{"number":5,"sources":["body","dependency"],"state":"open"}]'
+  assert_equal "$(out_of '.todo[0].blocked_by')" '[{"repo":"me/demo","number":5,"sources":["body","dependency"],"state":"open"}]'
   # 状態は依存関係の API が返すので、REST で読み直さない
   assert_equal "$(called GetIssue)" 0
 }
@@ -299,6 +299,79 @@ JSON
   assert_equal "$(args TodoItems 2)" '{"owner":"me","number":4,"sp":"Story Point","after":"C1"}'
 }
 
+@test "別のリポジトリの依存先と番号が同じでも、状態を取り違えない（リポジトリと番号で区別する）" {
+  setup_fake_gh
+  item 10 Todo $'## 依存\n- #5'
+  write_page
+  # 別のリポジトリの #5 は閉じている。このリポジトリの #5（本文の依存）は開いている
+  echo '[{"number": 5, "state": "closed", "repository_url": "https://api.github.com/repos/me/other"}]' >"$FIX/blocked-10.json"
+  echo open >"$FIX/state-5"
+  run_script next-tasks.sh
+  assert_success
+  assert_equal "$(out_of '.todo[0] | [.waiting, [.blocked_by[] | [.repo, .number]]]')" '[true,[["me/demo",5]]]'
+  # 別のリポジトリの依存先が開いていれば、それも待ちの理由になる
+  echo '[{"number": 5, "state": "open", "repository_url": "https://api.github.com/repos/me/other"}]' >"$FIX/blocked-10.json"
+  echo closed >"$FIX/state-5"
+  run_script next-tasks.sh
+  assert_success
+  assert_equal "$(out_of '.todo[0] | [.waiting, [.blocked_by[] | [.repo, .number]]]')" '[true,[["me/other",5]]]'
+}
+
+@test "着手中の Issue に PR も領域も無ければ、Todo の各 Issue に、重なるか分からないと警告を付ける" {
+  setup_fake_gh
+  item 10 Todo $'## 変更するファイル・領域\n- docs/'
+  item 20 "In Progress"
+  item 21 "In Progress" $'## 変更するファイル・領域\n- tests/'
+  write_page
+  run_script next-tasks.sh
+  assert_success
+  assert_equal "$(out_of .active_unknown)" '[20]'
+  assert_equal "$(out_of '.todo[0].warnings')" '["着手中の #20 は PR も領域も無く、重なるか分からない"]'
+  assert_equal "$(out_of '[.in_progress[] | [.number, .area_known]]')" '[[20,false],[21,true]]'
+}
+
+@test "着手中の Issue に領域か PR があれば、警告は付かない" {
+  setup_fake_gh
+  item 10 Todo $'## 変更するファイル・領域\n- docs/'
+  item 20 "In Progress"
+  write_page
+  echo '[{"number": 50, "headRefName": "feat/20-x", "closingIssuesReferences": [], "files": [{"path": "tests/a.bats"}]}]' >"$FIX/pr-list.json"
+  run_script next-tasks.sh
+  assert_success
+  assert_equal "$(out_of '[.active_unknown, .todo[0].warnings]')" '[[],[]]'
+}
+
+@test "「不明（理由）」のように不明・なしで始まる行は、領域として数えない" {
+  setup_fake_gh
+  item 10 Todo $'## 変更するファイル・領域\n- 不明（まだ決まっていません）\n- なし'
+  write_page
+  run_script next-tasks.sh
+  assert_success
+  assert_equal "$(out_of '.todo[0] | [.areas, .areas_ignored, .area_known]')" '[[],[],false]'
+}
+
+@test "パスと判断できない行（日本語の文・途中のグロブ）は領域に入れず、areas_ignored に出す" {
+  setup_fake_gh
+  item 10 Todo $'## 変更するファイル・領域\n- docs/\n- 以下のファイル、全部\n- plugins/*/scripts/a.sh'
+  write_page
+  run_script next-tasks.sh
+  assert_success
+  assert_equal "$(out_of '.todo[0] | [.areas, .areas_ignored]')" '[["docs"],["plugins/*/scripts/a.sh","以下のファイル、全部"]]'
+}
+
+@test "末尾の /** と /* は外してディレクトリとして扱い、「.」はリポジトリ全体と重なる" {
+  setup_fake_gh
+  item 10 Todo $'## 変更するファイル・領域\n- plugins/**\n- docs/*'
+  item 11 Todo $'## 変更するファイル・領域\n- plugins/dev-workflow/scripts/status-set.sh'
+  item 12 Todo $'## 変更するファイル・領域\n- `.`'
+  write_page
+  run_script next-tasks.sh
+  assert_success
+  assert_equal "$(out_of '.todo[0].areas')" '["docs","plugins"]'
+  assert_equal "$(out_of '[.todo[1:][] | [.number, .parallel]]')" '[[11,false],[12,false]]'
+  assert_equal "$(out_of '.todo[2].overlaps | length')" 1
+}
+
 @test "Todo が無ければ next は null" {
   setup_fake_gh
   item 1 Done
@@ -333,11 +406,18 @@ JSON
   assert_output --partial "Project が見つかりません: me/4"
 }
 
-@test "Project を読めないときは、止まる" {
+@test "Project を読めないとき（認証・スコープ不足など）は、GitHub の理由を伝えて止まる" {
   setup_fake_gh
   FAKE_FAIL=TodoItems run_script next-tasks.sh
   assert_failure 1
-  assert_output --partial "Project の項目を読めませんでした"
+  assert_output --partial "GitHub の API に失敗しました: gh: failed"
+}
+
+@test "所有者が無い（GraphQL が NOT_FOUND を返す）ときも、Project が見つからないと案内する" {
+  setup_fake_gh
+  FAKE_FAIL=TodoItems FAKE_FAIL_MSG="GraphQL: Could not resolve to a User with the login 'me'. (repositoryOwner)" run_script next-tasks.sh
+  assert_failure 1
+  assert_output --partial "Project が見つかりません: me/4"
 }
 
 @test "不明な引数は使い方の誤り（64）で止まる" {

@@ -56,8 +56,9 @@ issues='[]' after=""
 while :; do
   vars="$(jq -nc --arg o "$owner" --argjson n "$number" --arg s "$sp_name" --arg a "$after" \
     '{owner: $o, number: $n, sp: $s} + (if $a == "" then {} else {after: $a} end)')"
-  page="$(dw_gql "$query" "$vars")" || dw_die "Project の項目を読めませんでした"
-  jq -e '.data.repositoryOwner.projectV2.items' >/dev/null <<<"$page" \
+  # 所有者や Project が無いときは null になる。認証・スコープ不足・通信などの失敗は、dw_gh_find が理由を伝えて止まる
+  page="$(dw_gh_find dw_gql "$query" "$vars")"
+  jq -e '.data.repositoryOwner.projectV2.items' >/dev/null 2>&1 <<<"$page" \
     || dw_die "Project が見つかりません: ${owner}/${number}（setup-project.sh で設定してください）"
   picked="$(jq -c --arg r "$repo_nwo" --arg todo "$todo_col" --arg start "$start_col" '
     [.data.repositoryOwner.projectV2.items.nodes[]
@@ -72,6 +73,10 @@ done
 
 # 本文の見出し（## <見出し>）の次の行から、次の見出しまでを行の配列にする
 # 領域は、箇条書きの1行から、バッククォートで囲んだ最初の語（無ければ最初の空白までの語）をパスとして取る
+#   - 「不明」「なし」で始まる行は、領域が無いものとして数えない
+#   - 末尾の /** や /* は外す（ディレクトリ全体）。「.」「*」「**」はリポジトリ全体
+#   - 日本語の句読点・括弧を含む語や、途中にグロブ（* ? [）がある語は、パスとして判断できないので areas に入れず
+#     areas_ignored に出す（スキルが使う人に伝える）
 # jq の変数（$h など）を bash に展開させないため、シングルクォートで書く
 # shellcheck disable=SC2016
 defs='
@@ -80,60 +85,72 @@ defs='
         if ($l | test("^## ")) then .on = ($l | test("^##[ \t]*" + $h + "[ \t]*$"))
         elif .on then .out += [$l] else . end) | .out;
   def deps: [section("依存")[] | scan("#([0-9]+)") | .[0] | tonumber] | unique;
-  def areas: [section("変更するファイル・領域")[] | select(test("^[ \t]*[-*][ \t]+"))
+  def area_tokens: [section("変更するファイル・領域")[] | select(test("^[ \t]*[-*][ \t]+"))
       | sub("^[ \t]*[-*][ \t]+(\\[[ xX]\\][ \t]+)?"; "")
-      | (capture("`(?<p>[^`]+)`").p // split(" ")[0] // "")
-      | sub("^\\./"; "") | sub("/+$"; "")
-      | select(. != "" and . != "なし" and . != "不明")] | unique;
+      | (capture("`(?<p>[^`]+)`").p // split("[ \t\u3000]"; null)[0] // "")
+      | sub("^\\./(?=.)"; "") | sub("(/\\*+)+/?$"; "") | sub("/+$"; "")
+      | if test("^(\\.|\\*+)$") then "." else . end
+      | select(. != "" and (test("^(不明|なし)") | not))];
+  def unjudgeable: test("[（）、。：]|[*?\\[]");
+  def areas: [area_tokens[] | select(unjudgeable | not)] | unique;
+  def areas_ignored: [area_tokens[] | select(unjudgeable)] | unique;
 '
 
 repo_issue_dir="repos/$repo_nwo/issues"
-todo="$(jq -c "$defs"'[.[] | select(.status == $todo) | . + {areas: areas, body_deps: deps} | del(.body)]' \
+todo="$(jq -c "$defs"'[.[] | select(.status == $todo) | . + {areas: areas, areas_ignored: areas_ignored, body_deps: deps} | del(.body)]' \
   --arg todo "$todo_col" <<<"$issues")"
 active="$(jq -c "$defs"'[.[] | select(.status == $start and $start != "") | {number, title, areas: areas} ]' \
   --arg start "$start_col" <<<"$issues")"
 
 # 各 Todo の Issue の依存関係（blocked by）を読み、本文の依存と合わせて、閉じているかを調べる
-# 状態は、Project にある Issue（Todo・着手中）なら開いている。依存関係の API は状態も返す。それ以外の番号だけ REST で読む
-open_in_project="$(jq -c --argjson a "$active" '[.[].number] + [$a[].number]' <<<"$todo")"
-states='{}'
+# 依存先は別のリポジトリの Issue でもありうるので、リポジトリと番号の組で区別する（本文の #N は、このリポジトリの Issue）
+# 状態は、依存関係の API が返す（open・closed）。本文だけにある依存は、Project にある Issue（Todo・着手中）なら開いている。
+# それ以外は REST で読む
 deps='[]'
 for n in $(jq -r '.[].number' <<<"$todo"); do
   api_all="$(gh api --paginate "$repo_issue_dir/$n/dependencies/blocked_by?per_page=100" | jq -sc 'add // []')" \
     || dw_die "Issue #${n} の依存関係を読めませんでした"
-  api_deps="$(jq -c 'map(.number)' <<<"$api_all")"
-  # 依存関係の API は、相手の状態（open・closed）も返す
-  states="$(jq -c --argjson a "$api_all" '. + ($a | map({(.number | tostring): (.state | ascii_downcase)}) | add // {})' <<<"$states")"
   body_deps="$(jq -c --argjson n "$n" '.[] | select(.number == $n) | .body_deps' <<<"$todo")"
-  deps="$(jq -c --argjson n "$n" --argjson a "$api_deps" --argjson b "$body_deps" \
-    '. + [{number: $n, blockers: ((($a | map({number: ., source: "dependency"})) + ($b | map({number: ., source: "body"}))) | group_by(.number)
-      | map({number: .[0].number, sources: (map(.source) | unique)}))}]' <<<"$deps")"
+  deps="$(jq -c --argjson n "$n" --argjson a "$api_all" --argjson b "$body_deps" --arg repo "$repo_nwo" '
+    . + [{number: $n, blockers: (
+      (($a | map({repo: ((.repository_url // "") | sub("^.*/repos/"; "") | if . == "" then $repo else . end),
+                  number, source: "dependency", state: (.state | ascii_downcase)}))
+       + ($b | map({repo: $repo, number: ., source: "body", state: null})))
+      | group_by([.repo, .number])
+      | map({repo: .[0].repo, number: .[0].number, sources: (map(.source) | unique), state: (map(.state // empty) | first // null)}))}]' <<<"$deps")"
 done
-# 本文だけにある依存のうち、状態がまだ分からないもの（Project にあるものと、依存関係の API で分かったものを除く）を REST で読む
-for d in $(jq -r --argjson o "$open_in_project" --argjson s "$states" \
-  '[.[].blockers[].number] | unique | map(select(. as $x | ($o | index($x) | not) and ($s | has($x | tostring) | not))) | .[]' <<<"$deps"); do
+open_in_project="$(jq -c --argjson a "$active" '[.[].number] + [$a[].number]' <<<"$todo")"
+# 状態がまだ分からないもの（このリポジトリの本文の依存で、Project に無いもの）を REST で読む
+fetched='{}'
+for d in $(jq -r --argjson o "$open_in_project" --arg repo "$repo_nwo" \
+  '[.[].blockers[] | select(.state == null and .repo == $repo and (.number as $x | $o | index($x) | not)) | .number] | unique | .[]' <<<"$deps"); do
   s="$(gh api "$repo_issue_dir/$d" -q .state)" || dw_die "Issue #${d} を読めませんでした"
-  states="$(jq -c --arg d "$d" --arg s "$s" '. + {($d): ($s | ascii_downcase)}' <<<"$states")"
+  fetched="$(jq -c --arg d "$d" --arg s "$s" '. + {($d): ($s | ascii_downcase)}' <<<"$fetched")"
 done
 
 # 着手中の Issue の開いている PR が変えているファイル。PR の Issue は、ブランチ名（<type>/<番号>-…）か Closes で決める
 prs="$(gh pr list --state open --limit 100 --json number,headRefName,files,closingIssuesReferences)" \
   || dw_die "開いている PR を読めませんでした"
 
-jq -n --argjson todo "$todo" --argjson active "$active" --argjson deps "$deps" --argjson states "$states" \
+jq -n --argjson todo "$todo" --argjson active "$active" --argjson deps "$deps" --argjson fetched "$fetched" \
+  --argjson in_project "$open_in_project" \
   --argjson prs "$prs" --arg repo "$repo_nwo" --arg owner "$owner" --argjson number "$number" '
   def ov($a; $b): [$a[] as $x | $b[] as $y
-      | select($x == $y or ($x | startswith($y + "/")) or ($y | startswith($x + "/"))) | {a: $x, b: $y}];
+      | select($x == "." or $y == "." or $x == $y or ($x | startswith($y + "/")) or ($y | startswith($x + "/"))) | {a: $x, b: $y}];
   def pr_issues: ([.closingIssuesReferences[]?.number]
       + [.headRefName | capture("^[^/]+/(?<n>[0-9]+)-") | .n | tonumber]) | unique;
   ($active | map(. as $i | . + {pr_files: ([$prs[] | select(pr_issues | index($i.number)) | .files[]?.path] | unique)}
-    | .paths = ((.areas + .pr_files) | unique))) as $act
+    | .paths = ((.areas + .pr_files) | unique)
+    | .area_known = (.paths | length > 0))) as $act
+  | ([$act[] | select(.area_known | not) | .number]) as $active_unknown
   | ($todo | map(. as $t
       | ($deps[] | select(.number == $t.number).blockers) as $bl
-      | . + {blocked_by: ($bl | map(. + {state: (if (.number | tostring) | in($states) then $states[.number | tostring] else "open" end)})
+      | . + {blocked_by: ($bl | map(. + {state: (.state // (if .repo == $repo and (.number | IN($in_project[])) then "open"
+                                                          else ($fetched[.number | tostring] // "open") end))})
           | map(select(.state == "open")))}
       | .waiting = (.blocked_by | length > 0)
       | .area_known = (.areas | length > 0)
+      | .warnings = ($active_unknown | map("着手中の #\(.) は PR も領域も無く、重なるか分からない"))
       | .conflicts_with_active = [$act[] | select(ov($t.areas; .paths) | length > 0) | {issue: .number, paths: ov($t.areas; .paths)}])) as $items
   | ([$items[] | select(.waiting | not)]) as $ready
   | (reduce $ready[] as $r ({sel: [], out: []};
@@ -149,4 +166,5 @@ jq -n --argjson todo "$todo" --argjson active "$active" --argjson deps "$deps" -
      parallel: [$plan.sel[].number],
      todo: ($items | to_entries | map(.value + {position: (.key + 1)} | . as $i
         | . + ((($plan.out[] | select(.number == $i.number)) // {parallel: false, reason: "待ち（依存が終わっていない）"}) | del(.number)))),
+     active_unknown: $active_unknown,
      in_progress: $act}'
