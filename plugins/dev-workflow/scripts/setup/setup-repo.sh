@@ -5,7 +5,12 @@
 #   --repo OWNER/NAME       対象のリポジトリ（既定: 今いるリポジトリ）
 #   --require-approval N    マージに必要な承認の数（0〜10。既定: 今の値のまま。新しく作るときは 0）
 #   --required-check NAME   マージの前に成功を求めるチェックの名前（繰り返し指定できる。既定: ルールセットの必須のチェックに触れない）
-#                           指定すると、指定した名前の一覧で必須のチェックを置き換え、PR が最新の base_branch を取り込んでいることも求める
+#                           指定すると、指定した名前の一覧で必須のチェックを置き換え、マージキューを使わないなら、
+#                           PR が最新の base_branch を取り込んでいること（strict）も求める
+#   --merge-queue           マージキューを使う（スカッシュでマージする）。必須のチェックの strict は外す
+#                           キューを使えないリポジトリ（個人のアカウントのリポジトリなど）では止まる
+#   --no-merge-queue        マージキューを外す。必須のチェックがあれば strict を求める
+#                           （どちらも付けなければ、キューを今のまま使う・使わない）
 #   --dry-run               変更せず、行う予定の操作だけを出力する
 #
 # 行うこと:
@@ -14,6 +19,7 @@
 #   2. ルールセット「dev-workflow」：設定の base_branch への直接 push を禁止して PR を必須にし、
 #      強制 push と削除を禁止する。管理者も例外にしない
 #      --required-check を指定したときだけ、必須のステータスチェックと「最新の base_branch の取り込み」も揃える
+#      マージキューを使うときは、キューが最新の base_branch と組み合わせた結果で CI を動かすので、strict は外す
 #      このスクリプトが扱わないルール（--required-check を指定しないときの必須のステータスチェックなど）は残す
 # リポジトリの管理者権限が必要（dry-run でも確かめる）。守るブランチがリポジトリに無ければ止める。
 # 守るブランチは、チームの設定（.claude/dev-workflow/config.json）の base_branch で決める（個人の設定は使わない）。
@@ -46,6 +52,8 @@ SETTINGS='{
 }'
 
 repo="" approvals="" dry_run=false
+# マージキュー：on は使う、off は外す、空は今のまま
+queue=""
 checks=()
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -62,6 +70,8 @@ while [ $# -gt 0 ]; do
       checks+=("$2")
       shift 2
       ;;
+    --merge-queue) queue=on; shift ;;
+    --no-merge-queue) queue=off; shift ;;
     --dry-run) dry_run=true; shift ;;
     -h | --help) usage; exit 0 ;;
     *) dw_die "不明な引数です: $1" 64 ;;
@@ -148,6 +158,29 @@ if [ "$branch" != "$default_branch" ]; then
   dw_warn "守るブランチ ${branch} は、リポジトリの既定のブランチ（${default_branch}）と違います"
 fi
 
+# マージキューを使えるか（true・false、確かめられなければ null）。GitHub では、Organization の公開リポジトリと、
+# GitHub Enterprise Cloud の Organization の非公開リポジトリで使える。個人のアカウントのリポジトリでは使えない
+queue_available=null
+case "$(jq -r '.owner.type // empty' <<<"$current")/$(jq -r '.visibility // empty' <<<"$current")" in
+  User/*) queue_available=false ;;
+  Organization/public) queue_available=true ;;
+  Organization/*)
+    # 組織のプランは組織の所有者にしか返らない。返らなければ確かめられないので null のままにする
+    plan="$(gh api "orgs/$(jq -r .owner.login <<<"$current")" -q '.plan.name // empty' 2>/dev/null || true)"
+    case "$plan" in
+      "") ;;
+      enterprise) queue_available=true ;;
+      *) queue_available=false ;;
+    esac
+    ;;
+esac
+if [ "$queue" = on ]; then
+  case "$queue_available" in
+    false) dw_die "${repo_nwo} ではマージキューを使えません（Organization の公開リポジトリか、GitHub Enterprise Cloud の Organization の非公開リポジトリで使えます）" 2 ;;
+    null) dw_warn "${repo_nwo} でマージキューを使えるか確かめられません（GitHub Enterprise Cloud の Organization の非公開リポジトリで使えます）" ;;
+  esac
+fi
+
 # --- 1. マージ方法 --------------------------------------------------------------
 changed="$(jq -nc --argjson want "$SETTINGS" --argjson cur "$current" \
   '[$want | to_entries[] | select(.value != $cur[.key]) | .key]')"
@@ -171,11 +204,16 @@ if [ -n "$ruleset_id" ]; then
 fi
 
 # 既存の pull_request の設定は残し、承認の数（指定されたときだけ）とマージ方法を揃える
+# マージキューは、--merge-queue・--no-merge-queue が無ければ今のまま。使うなら strict を外し、
+# 外すときと --required-check を指定したときは strict を求める。どれでもなければ、既存の strict に触れない
 desired="$(jq -n --argjson ex "$existing" --arg name "$RULESET_NAME" --arg ref "refs/heads/$branch" \
-  --arg n "$approvals" --argjson checks "$checks_json" '
+  --arg n "$approvals" --argjson checks "$checks_json" --arg queue "$queue" '
   ([($ex // {}).rules // [] | .[] | select(.type == "pull_request")][0].parameters // {}) as $old
   | ([($ex // {}).rules // [] | .[] | select(.type == "required_status_checks")][0].parameters.required_status_checks // []) as $oldchecks
-  | (["deletion", "non_fast_forward", "pull_request"]
+  | ([($ex // {}).rules // [] | .[] | select(.type == "merge_queue")][0].parameters) as $oldqueue
+  | (if $queue == "" then $oldqueue != null else $queue == "on" end) as $useq
+  | (if $useq then false elif ($checks | length) > 0 or $queue == "off" then true else null end) as $strict
+  | (["deletion", "non_fast_forward", "pull_request", "merge_queue"]
     + (if ($checks | length) > 0 then ["required_status_checks"] else [] end)) as $managed
   | {
       name: $name,
@@ -196,18 +234,49 @@ desired="$(jq -n --argjson ex "$existing" --arg name "$RULESET_NAME" --arg ref "
               + (if $n == "" then {} else {required_approving_review_count: ($n | tonumber)} end))}]
         + (if ($checks | length) > 0 then
             [{type: "required_status_checks", parameters: {
-              strict_required_status_checks_policy: true,
+              strict_required_status_checks_policy: $strict,
               do_not_enforce_on_create: false,
               # 同じ名前の既存のチェックが報告元のアプリ（integration_id）を指定していれば、引き継ぐ
               required_status_checks: ($checks | map(. as $c
                 | ([$oldchecks[] | select(.context == $c and .integration_id != null)][0].integration_id) as $i
                 | {context: $c} + (if $i == null then {} else {integration_id: $i} end)))}}]
           else [] end)
+        # 既存の設定（同時に組む数など）は残し、マージ方法だけスカッシュに揃える
+        + (if $useq then
+            [{type: "merge_queue", parameters: ({
+              max_entries_to_build: 5,
+              min_entries_to_merge: 1,
+              max_entries_to_merge: 5,
+              min_entries_to_merge_wait_minutes: 5,
+              grouping_strategy: "ALLGREEN",
+              check_response_timeout_minutes: 60
+            } + ($oldqueue // {}) + {merge_method: "SQUASH"})}]
+          else [] end)
       )
+      | if $strict == null then . else
+          map(if .type == "required_status_checks"
+            then .parameters.strict_required_status_checks_policy = $strict else . end)
+        end
     }')"
+# 必須のチェックの規則（無ければ null）と、キューを使うか
+checks_rule="$(jq -c '[.rules[] | select(.type == "required_status_checks")][0]' <<<"$desired")"
+queue_enabled="$(jq '[.rules[] | select(.type == "merge_queue")] | length > 0' <<<"$desired")"
 checks_note=""
 if [ "$checks_json" != "[]" ]; then
-  checks_note="、必須のチェック: $(jq -r 'join(", ")' <<<"$checks_json")・最新の ${branch} の取り込み"
+  checks_note="、必須のチェック: $(jq -r 'join(", ")' <<<"$checks_json")"
+fi
+if [ "$(jq -r '.parameters.strict_required_status_checks_policy // false' <<<"$checks_rule")" = true ] \
+  && { [ "$checks_json" != "[]" ] || [ "$queue" = off ]; }; then
+  if [ -n "$checks_note" ]; then
+    checks_note="${checks_note}・最新の ${branch} の取り込み"
+  else
+    checks_note="、最新の ${branch} の取り込み"
+  fi
+fi
+if $queue_enabled; then
+  checks_note="${checks_note}、マージキュー（スカッシュ）"
+elif [ "$queue" = off ] && [ "$(jq '[(.rules // [])[] | select(.type == "merge_queue")] | length > 0' <<<"$existing")" = true ]; then
+  checks_note="${checks_note}、マージキューを外す"
 fi
 approvals_now="$(jq '.rules[] | select(.type == "pull_request") | .parameters.required_approving_review_count' <<<"$desired")"
 
@@ -237,12 +306,16 @@ fi
 
 jq -n --argjson dry "$dry_run" --arg repo "$repo_nwo" --arg branch "$branch" --argjson changed "$changed" \
   --arg id "$ruleset_id" --argjson created "$created" --argjson updated "$updated" \
-  --argjson approvals "$approvals_now" --argjson checks "$checks_json" --argjson actions "$actions" '{
+  --argjson approvals "$approvals_now" --argjson checks "$checks_json" --argjson actions "$actions" \
+  --argjson qa "$queue_available" --argjson qe "$queue_enabled" --argjson rule "$checks_rule" '{
     dry_run: $dry,
     repo: $repo,
     branch: $branch,
     settings: {changed: $changed},
     ruleset: {id: (if $id == "" then null else ($id | tonumber) end), created: $created, updated: $updated,
-      required_approvals: $approvals, required_checks: $checks},
+      required_approvals: $approvals, required_checks: $checks,
+      # 必須のチェックが無ければ null
+      strict: (if $rule == null then null else ($rule.parameters.strict_required_status_checks_policy // false) end)},
+    merge_queue: {available: $qa, enabled: $qe},
     actions: $actions
   }'
