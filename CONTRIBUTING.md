@@ -36,6 +36,29 @@ Issue をやめることにしたときは、`/dev-workflow:task-cancel` を使�
 - プラグインのラベルの定義（`plugins/dev-workflow/defaults/labels.json`）を変えた PR では、このリポジトリでも `plugins/dev-workflow/scripts/setup/setup-labels.sh` を実行して、ラベルを定義に揃えます。定義を変えても、既にあるリポジトリのラベルは変わらず、足したラベルが無いと起票などで止まります（`doctor.sh` が足りないラベルを知らせます）。
 - プラグインのバージョンは release-please がリリース PR で上げます。`plugin.json` の `version` や `.release-please-manifest.json` を手で変えないでください。
 
+## PR の自動レビュー
+
+PR は、CodeRabbit（`.coderabbit.yaml`）が作ったときに1回だけ自動でレビューします。push のたびにはレビューしないので、もう一度レビューしてほしいときは PR に `@coderabbitai review` とコメントします。CodeRabbit のレビューは1時間あたりの回数に上限があり、上限で失敗したレビューは自動では再試行されません。そこで、次のときは Claude が代わりにレビューして PR にコメントします（`.github/workflows/claude-review.yml`）。
+
+- CodeRabbit が上限に引っかかったとき（`coderabbitai[bot]` の `rate limited by coderabbit.ai` のコメントがきっかけです）
+- PR を作ってから1時間経っても CodeRabbit のレビューが無いとき（30分ごとに見回ります。障害など上限以外の理由で動かなかった場合も拾います）
+
+Claude のレビューは、同じコミットには1回しか付きません。head が同じリポジトリの PR だけが対象で、フォークからの PR は対象外です。どちらのレビューも、この CONTRIBUTING.md と `plugins/dev-workflow/review/*.md`・`.claude/dev-workflow/review/*.md` のレビューの観点に沿って行います。ワークフローは必須のチェックではないので、失敗しても PR のマージは妨げません。
+
+### 設定の手順
+
+1. CodeRabbit の GitHub App をこのリポジトリに入れます（公開リポジトリは OSS プランで無料です）。
+2. 手元で `claude setup-token` を実行して OAuth トークンを作り、リポジトリのシークレット `CLAUDE_CODE_OAUTH_TOKEN` に登録します。
+
+### 指摘に手元の Claude Code で対応する
+
+PR のレビューの指摘は `gh` で読めるので、そのまま Claude Code に渡して直します。
+
+```bash
+gh pr view <PR番号> --comments                                  # Claude のレビューと CodeRabbit の要約
+gh api repos/{owner}/{repo}/pulls/<PR番号>/comments             # CodeRabbit の行ごとの指摘
+```
+
 ## 書き方のルール
 
 - **macOS 標準の bash 3.2 で動くように書きます**。連想配列（`declare -A`）、`mapfile` / `readarray`、`${var,,}` などの bash 4 以降の機能は使いません。スクリプトの先頭には `set -euo pipefail` を書きます。
