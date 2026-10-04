@@ -51,6 +51,13 @@ args_of() { grep "^$1" "$CALLS" | tail -n 1 | sed "s/^$1 \{0,1\}//"; }
   assert_equal "$(args_of setup-repo)" "[--require-approval] [1]"
 }
 
+@test "--required-check は何度でも指定でき、setup-repo.sh に渡す" {
+  setup_fake_plugin
+  run_all --required-check lint-result --required-check test-result
+  assert_success
+  assert_equal "$(args_of setup-repo)" "[--required-check] [lint-result] [--required-check] [test-result]"
+}
+
 @test "オプションが無くても実行できる（bash 3.2 の空の配列）" {
   setup_fake_plugin
   run_all

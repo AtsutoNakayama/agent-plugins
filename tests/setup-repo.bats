@@ -337,3 +337,81 @@ assert_no_calls() {
   assert_output --partial "--require-approval"
   refute_output --partial "set -euo"
 }
+
+# 必須のチェックの規則。使い方: checks_rule <最新の取り込みを求めるか true|false> <名前>...
+checks_rule() {
+  local strict="$1"
+  shift
+  jq -nc --argjson s "$strict" '$ARGS.positional as $n | {type: "required_status_checks", parameters: {
+    strict_required_status_checks_policy: $s, do_not_enforce_on_create: false,
+    required_status_checks: ($n | map({context: ., integration_id: 15368}))}}' --args "$@"
+}
+
+@test "--required-check で、必須のチェックと最新の main の取り込みを求めるルールセットを作る" {
+  setup_fake_gh
+  run_setup --required-check lint-result --required-check test-result
+  assert_success
+  rule="$(body POST | jq -c '.rules[] | select(.type == "required_status_checks")')"
+  assert_equal "$(jq -c '.parameters | [.strict_required_status_checks_policy, [.required_status_checks[].context]]' <<<"$rule")" \
+    '[true,["lint-result","test-result"]]'
+  assert_equal "$(jq -c '.ruleset.required_checks' <<<"$json")" '["lint-result","test-result"]'
+}
+
+@test "--required-check を付けなければ、既存の必須のチェックに触れない" {
+  setup_fake_gh
+  settled_repo
+  existing_ruleset '{}' "[$(checks_rule false old-check)]"
+  run_setup
+  assert_success
+  assert_no_calls
+  assert_equal "$(jq -c .ruleset.required_checks <<<"$json")" '[]'
+}
+
+@test "--required-check は、既存の必須のチェックを指定した一覧に置き換える（足りない名前を足し、余る名前を外す）" {
+  setup_fake_gh
+  settled_repo
+  existing_ruleset '{}' "[$(checks_rule false old-check)]"
+  run_setup --required-check new-check
+  assert_success
+  assert_equal "$(called PUT)" 1
+  req="$(body PUT)"
+  assert_equal "$(jq -c '[.rules[] | select(.type == "required_status_checks")] | length' <<<"$req")" 1
+  assert_equal "$(jq -c '.rules[] | select(.type == "required_status_checks") | .parameters
+    | [.strict_required_status_checks_policy, [.required_status_checks[].context]]' <<<"$req")" '[true,["new-check"]]'
+}
+
+@test "必須のチェックが指定どおりなら変更しない（GitHub が付ける項目と並び順は無視する）" {
+  setup_fake_gh
+  settled_repo
+  existing_ruleset '{}' "[$(checks_rule true test-result lint-result)]"
+  run_setup --required-check lint-result --required-check test-result --required-check lint-result
+  assert_success
+  assert_no_calls
+}
+
+@test "最新の取り込みを求めていない既存の必須のチェックは、名前が同じでも揃える" {
+  setup_fake_gh
+  settled_repo
+  existing_ruleset '{}' "[$(checks_rule false lint-result)]"
+  run_setup --required-check lint-result
+  assert_success
+  assert_equal "$(called PUT)" 1
+  assert_equal "$(body PUT | jq -c '.rules[] | select(.type == "required_status_checks") | .parameters.strict_required_status_checks_policy')" true
+}
+
+@test "--required-check に値が無ければ使い方の誤り（64）" {
+  setup_fake_gh
+  run_setup --required-check
+  assert_failure 64
+  assert_output --partial "--required-check に値がありません"
+}
+
+@test "dry-run では、必須のチェックを揃える予定を出すだけで変更しない" {
+  setup_fake_gh
+  settled_repo
+  existing_ruleset
+  run_setup --dry-run --required-check lint-result
+  assert_success
+  assert_no_calls
+  assert_output --partial "必須のチェック: lint-result"
+}

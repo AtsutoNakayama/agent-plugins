@@ -176,7 +176,10 @@ agent-plugins/
 
 ## 9. ガードレール
 
-1. **GitHub のルールセット**（`setup-repo.sh`）：main への直接 push の禁止と PR の必須化、強制 push と main の削除の禁止。承認の必須化はオプション（既定は無効）。
+1. **GitHub のルールセット**（`setup-repo.sh`）：main への直接 push の禁止と PR の必須化、強制 push と main の削除の禁止。承認の必須化はオプション（既定は無効）。必須のチェックと「最新の main の取り込み」もオプション（`--required-check <名前>`、既定は無効）。
+   - 古い main で通った CI の結果のままマージすると、先にマージされた変更と組み合わさって main が壊れる（#108）。ルールセットで、チェックの成功と最新の main の取り込みを求めて防ぐ。
+   - チェックの名前はチームの CI で決まるので、プラグインは決めず、既定でも入れない（CI が無い、または名前が違うと、チェックが「待ち」のまま残ってマージできなくなる）。指定した名前の一覧で必須のチェックを置き換え、指定しなければ、ルールセットの必須のチェックには触れない。
+   - CI にジョブを足しても必須の名前が変わらないよう、CI 全体の結果をまとめる門番のジョブを必須にする使い方を、README で勧める。`paths-ignore` で動かないワークフローのチェックは「待ち」のまま残るので、使わない。
 2. **Claude Code のフック**（`hooks/guard-git.sh`）：main 上での commit と、main への push をブロックする。強制 push（`--force` / `-f` / `+<refspec>` / `--mirror`）をブロックする（`--force-with-lease` は許可）。ブランチを作るコマンド（`git switch -c` / `git checkout -b` / `git branch <名前>` / `git worktree add -b`）で、名前が規約（`branch-name.sh --check`。文字と `branch.pattern` の形）に合わないときは、コマンドは止めずに警告する。警告はフックの JSON の出力で、使用者には `systemMessage`、Claude には `additionalContext` で伝える。解析できないときや設定を読めないときは何もせずに通す。
 3. **SessionStart のフック**（`hooks/task-flow.sh`）：タスクの進め方（Issue から始める → 着手 → 実装（論理的な区切りごとにコミット）→ ローカルレビュー → PR → マージ（人間）→ 後片付け、と取りやめ）と、それぞれで使うスキルを、セッションの始まりに Claude に読み込ませる。
    - スキルは呼ばれたときにしか読み込まれないので、流れをスキルに書いても普段の作業中は効かない。プラグインはいつも読み込まれるルール（CLAUDE.md・`.claude/rules/`）を配れない（プラグインの直下の CLAUDE.md は読み込まれない）ので、フックの出力で渡す。SessionStart は起動・`/resume`・`/clear`・コンパクトのたびに動くので、会話が要約されても流れが抜けない。
