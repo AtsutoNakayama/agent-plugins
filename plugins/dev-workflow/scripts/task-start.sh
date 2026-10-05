@@ -110,24 +110,33 @@ if ! $no_worktree; then
       src_ref="$branch"
       note "既にあるブランチ ${branch} のワークツリーを $path に作る"
       $dry_run || git -C "$main_root" worktree add -q "$path" "$branch"
-    elif [ -n "$(git -C "$main_root" ls-remote --heads origin "refs/heads/$branch" 2>/dev/null)" ]; then
-      # 別のマシンで push 済み（またはローカルだけ消した）ブランチは、push 済みのコミットから続ける
-      branch_created=true
-      src_ref="origin/$branch"
-      note "push 済みの origin/${branch} からブランチ ${branch} を作り、ワークツリーを $path に作る"
-      if ! $dry_run; then
-        git -C "$main_root" fetch -q origin "+refs/heads/$branch:refs/remotes/origin/$branch" \
-          || dw_die "origin/${branch} を取得できませんでした"
-        git -C "$main_root" worktree add -q --track -b "$branch" "$path" "origin/$branch"
-      fi
     else
+      # origin のブランチの有無。ls-remote の終了コードは、ブランチが無いとき 2、通信などの失敗のときはそれ以外。
+      # 読めないのを「無い」と見ると、push 済みの作業を無視して base から作り直すので止まる（branch-status.sh と同じ）
+      remote_rc=0
+      git -C "$main_root" ls-remote --exit-code --heads origin "refs/heads/$branch" >/dev/null 2>&1 || remote_rc=$?
+      case "$remote_rc" in
+        0 | 2) ;;
+        *) dw_die "origin のブランチを読めませんでした（通信や認証を確かめてください）" ;;
+      esac
       branch_created=true
-      src_ref="origin/$base"
-      note "origin/${base} からブランチ ${branch} を作り、ワークツリーを $path に作る"
-      if ! $dry_run; then
-        git -C "$main_root" fetch -q origin "$base" || dw_die "origin/${base} を取得できませんでした"
-        # origin/<base> を追跡させない（追跡すると git push の先が base になりうる。push 先は pr-create で決める）
-        git -C "$main_root" worktree add -q --no-track -b "$branch" "$path" "origin/$base"
+      if [ "$remote_rc" -eq 0 ]; then
+        # 別のマシンで push 済み（またはローカルだけ消した）ブランチは、push 済みのコミットから続ける
+        src_ref="origin/$branch"
+        note "push 済みの origin/${branch} からブランチ ${branch} を作り、ワークツリーを $path に作る"
+        if ! $dry_run; then
+          git -C "$main_root" fetch -q origin "+refs/heads/$branch:refs/remotes/origin/$branch" \
+            || dw_die "origin/${branch} を取得できませんでした"
+          git -C "$main_root" worktree add -q --track -b "$branch" "$path" "origin/$branch"
+        fi
+      else
+        src_ref="origin/$base"
+        note "origin/${base} からブランチ ${branch} を作り、ワークツリーを $path に作る"
+        if ! $dry_run; then
+          git -C "$main_root" fetch -q origin "$base" || dw_die "origin/${base} を取得できませんでした"
+          # origin/<base> を追跡させない（追跡すると git push の先が base になりうる。push 先は pr-create で決める）
+          git -C "$main_root" worktree add -q --no-track -b "$branch" "$path" "origin/$base"
+        fi
       fi
     fi
   fi

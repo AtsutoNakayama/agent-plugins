@@ -357,3 +357,17 @@ run_start() {
   assert_equal "$(called edit)" 0
   assert_equal "$(called SetField)" 0
 }
+
+@test "origin を読めなければ、「origin に無い」と区別できないので、ブランチもワークツリーも作らずに止まる（dry-run も同じ）" {
+  setup_fake_gh
+  setup_origin
+  git remote set-url origin "$TMP/no-such.git"
+  for mode in --dry-run ""; do
+    run_start --issue 17 --slug x ${mode:+"$mode"}
+    assert_failure 1
+    assert_output --partial "origin のブランチを読めませんでした（通信や認証を確かめてください）"
+  done
+  [ ! -e .claude/worktrees ]
+  assert_equal "$(git branch --list 'feat/*')" ""
+  assert_equal "$(called edit)" 0
+}
