@@ -6,12 +6,14 @@
 # 使い方: setup-models.sh [オプション]
 #   --review-model M   opus・sonnet・haiku・fable のどれか。off なら null を書き、セッションと同じモデルで動かす
 #   --scope S          書く層。local（<repo>/.claude/dev-workflow/config.local.json。自分だけ）・
-#                      team（<repo>/.claude/dev-workflow/config.json。チームで共有する。コミットが要る）。--review-model には必須
+#                      team（<repo>/.claude/dev-workflow/config.json。チームで共有する。コミットが要る）。
+#                      --review-model と一緒に使う（どちらか片方だけでは止まる）
 #   --dry-run          変更せず、行う予定の操作だけを出力する
 #
 # 出力: review.model（このリポジトリの層を合わせた後の値）・review.decided（このリポジトリのどちらかの層で決めてあるか）・
 #       review.layers（review.model を決めている層と値）・file（書く・書いたファイル）・changed・
-#       ignored（local に書くとき、そのファイルが git に無視されているか。それ以外は null）・actions
+#       local_git（local に書くとき、そのファイルがコミットされてしまわないか。ignored・not_ignored・tracked。
+#       それ以外は null）・actions
 # local は team より優先されるので、team に書いたのに local が別の値を決めていると、書いても効かないので警告する。
 set -euo pipefail
 
@@ -66,7 +68,7 @@ local_file="$(dw_local_config_file "$repo_root")"
 layers="$(dw_review_model_layers "$repo_root" | jq -Rsc 'split("\n") | map(select(. != "") | split("\t")
   | {layer: .[0], file: .[1], model: (.[2] | fromjson)})')"
 
-file=null changed=false actions='[]' ignored=null
+file=null changed=false actions='[]' local_git=null
 if [ -n "$value" ]; then
   case "$scope" in
     team) target="$team_file" ;;
@@ -96,23 +98,21 @@ if [ -n "$value" ]; then
     '({team: 0, local: 1}) as $o | map(select($o[.layer] > $o[$n] and .model != $v)) | last // empty
      | "\(.file) の review.model（\(.model)）が優先されるので、書いた値は効きません"' <<<"$layers")"
   [ -z "$over" ] || dw_warn "$over"
-  # 個人の設定はコミットしないので、git に無視されていなければ知らせる（setup-all.sh が次にやることに出す）
+  # 個人の設定はコミットしないので、コミットされてしまうなら知らせる（setup-all.sh が次にやることに出す）
   if [ "$scope" = local ]; then
-    if dw_local_config_ignored "$repo_root"; then
-      ignored=true
-    else
-      ignored=false
-      dw_warn "${target} が git に無視されていません。.gitignore に .claude/dev-workflow/config.local.json を足してください"
-    fi
+    state="$(dw_local_config_state "$repo_root")"
+    local_git="$(jq -n --arg s "$state" '$s')"
+    hint="$(dw_local_config_hint "$state")"
+    [ -z "$hint" ] || dw_warn "$hint"
   fi
 fi
 
-jq -n --argjson layers "$layers" --argjson file "$file" --argjson changed "$changed" --argjson ignored "$ignored" \
+jq -n --argjson layers "$layers" --argjson file "$file" --argjson changed "$changed" --argjson local_git "$local_git" \
   --argjson dry "$dry_run" --argjson actions "$actions" '{
     dry_run: $dry,
     review: {model: ((($layers | last) // {model: null}).model), decided: ($layers | length > 0), layers: $layers},
     file: $file,
     changed: $changed,
-    ignored: $ignored,
+    local_git: $local_git,
     actions: $actions
   }'

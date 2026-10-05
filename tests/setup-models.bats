@@ -128,19 +128,19 @@ json_of() { printf '%s\n' "$1" | LC_ALL=C sed -n '/^{/,$p'; }
   assert_output opus
 }
 
-@test "local に書くとき、git に無視されていなければ警告し、ignored に出す" {
+@test "local に書くとき、git に無視されていなければ警告し、local_git に出す" {
   run_script setup/setup-models.sh --review-model opus --scope local
   assert_success
-  assert_output --partial "が git に無視されていません。.gitignore に .claude/dev-workflow/config.local.json を足してください"
-  assert_equal "$(json_of "$output" | jq -c .ignored)" false
+  assert_output --partial "が git に無視されていません。.gitignore に足してください"
+  assert_equal "$(json_of "$output" | jq -r .local_git)" not_ignored
   echo .claude/dev-workflow/config.local.json >.gitignore
   run_script setup/setup-models.sh --review-model opus --scope local
   assert_success
   refute_output --partial "無視されていません"
-  assert_equal "$(jq -c .ignored <<<"$output")" true
+  assert_equal "$(jq -r .local_git <<<"$output")" ignored
   # team に書くときは確かめない
   run_script setup/setup-models.sh --review-model opus --scope team
-  assert_equal "$(jq -c .ignored <<<"$output")" null
+  assert_equal "$(jq -c .local_git <<<"$output")" null
 }
 
 @test "リポジトリの層の設定ファイルが壊れていれば、何も書かずに止まる" {
@@ -151,13 +151,13 @@ json_of() { printf '%s\n' "$1" | LC_ALL=C sed -n '/^{/,$p'; }
   [ ! -e "$TEAM" ]
 }
 
-@test "コミット済みの config.local.json でも、.gitignore に書いてあれば無視されているとみなす" {
+@test "コミット済みの config.local.json は、.gitignore に書いてあっても、追跡を外すよう警告する" {
   echo '{}' >"$LOCAL"
   git add "$LOCAL"
   git -c user.name=t -c user.email=t@example.com commit -q -m local
   echo .claude/dev-workflow/config.local.json >.gitignore
   run_script setup/setup-models.sh --review-model opus --scope local
   assert_success
-  refute_output --partial "無視されていません"
-  assert_equal "$(jq -c .ignored <<<"$output")" true
+  assert_output --partial "がコミットされています。git rm --cached .claude/dev-workflow/config.local.json で追跡を外し"
+  assert_equal "$(json_of "$output" | jq -r .local_git)" tracked
 }

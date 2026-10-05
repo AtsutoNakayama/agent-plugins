@@ -114,11 +114,16 @@ args_of() { grep "^$1" "$CALLS" | tail -n 1 | sed "s/^$1 \{0,1\}//"; }
 
 @test "個人の設定が git に無視されていなければ、.gitignore に足すよう案内する" {
   setup_fake_plugin
-  echo '{"review": {"model": "opus"}, "file": "x", "changed": true, "ignored": false, "actions": []}' >"$FIX/setup-models.json"
+  echo '{"review": {"model": "opus"}, "file": "x", "changed": true, "local_git": "not_ignored", "actions": []}' >"$FIX/setup-models.json"
   run_all --review-model opus --models-scope local
   assert_success
-  jq -e '.next_steps | any(test("config.local.json（個人の設定）が git に無視されていないので、.gitignore に足す"))' <<<"$json" >/dev/null \
+  jq -e '.next_steps | any(test("git に無視されていません。.gitignore に足してください"))' <<<"$json" >/dev/null \
     || fail "next_steps に .gitignore の案内がありません: $json"
+  # コミット済みなら、追跡を外すよう案内する
+  echo '{"review": {"model": "opus"}, "file": "x", "changed": true, "local_git": "tracked", "actions": []}' >"$FIX/setup-models.json"
+  run_all --review-model opus --models-scope local
+  jq -e '.next_steps | any(test("git rm --cached .claude/dev-workflow/config.local.json で追跡を外し"))' <<<"$json" >/dev/null \
+    || fail "next_steps に追跡を外す案内がありません: $json"
 }
 
 @test "--dry-run は4つすべてに渡し、テンプレートを作らない" {

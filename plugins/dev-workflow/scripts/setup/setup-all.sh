@@ -188,8 +188,9 @@ if [ "$ignored" != "[]" ]; then
   next="$(jq -c --argjson f "$ignored" \
     '. + ["\($f | join("・")) が git に無視されているので、.gitignore で無視を外す（例：.claude/ を .claude/* に変えて、!.claude/dev-workflow/ と .claude/dev-workflow/config.local.json をこの順に足す）"]' <<<"$next")"
 fi
-if [ "$(jq -r .ignored <<<"$models")" = false ]; then
-  next="$(jq -c '. + [".claude/dev-workflow/config.local.json（個人の設定）が git に無視されていないので、.gitignore に足す"]' <<<"$next")"
+hint="$(dw_local_config_hint "$(jq -r '.local_git // empty' <<<"$models")")"
+if [ -n "$hint" ]; then
+  next="$(jq -c --arg h "$hint" '. + [$h]' <<<"$next")"
 fi
 if [ "$(jq -r .workflows.auto_add <<<"$project")" = false ]; then
   next="$(jq -c --arg u "$(jq -r .workflows.url <<<"$project")" \

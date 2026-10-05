@@ -215,13 +215,32 @@ dw_local_config_file() {
   printf '%s\n' "$f"
 }
 
-# 個人の上書き（dw_local_config_file のファイル）が、.gitignore などで git に無視されるかを確かめる。
-# 既にコミットしてあるファイルでも、無視の設定に当たるかで判断する（--no-index。当たらなければ .gitignore に足すよう案内するため）
-# 使い方: dw_local_config_ignored <リポジトリのルート>
-dw_local_config_ignored() {
-  local f
+# 個人の上書き（dw_local_config_file のファイル）がコミットされてしまわないかを、次のどれかで出力する。
+#   ignored      git に無視されていて、コミットもされていない
+#   not_ignored  git に無視されていない（.gitignore に足す必要がある）
+#   tracked      既にコミットしてある（.gitignore に書いても追跡は外れないので、git rm --cached で外す必要がある）
+# 「.gitignore に当たるか」だけでは、コミット済みのファイルを見分けられないので、追跡しているかを先に確かめる
+# 使い方: dw_local_config_state <リポジトリのルート>
+dw_local_config_state() {
+  local f wt
   f="$(dw_local_config_file "$1")"
-  git -C "${f%/.claude/dev-workflow/config.local.json}" check-ignore -q --no-index .claude/dev-workflow/config.local.json 2>/dev/null
+  wt="${f%/.claude/dev-workflow/config.local.json}"
+  if git -C "$wt" ls-files --error-unmatch -- .claude/dev-workflow/config.local.json >/dev/null 2>&1; then
+    echo tracked
+  elif git -C "$wt" check-ignore -q .claude/dev-workflow/config.local.json 2>/dev/null; then
+    echo ignored
+  else
+    echo not_ignored
+  fi
+}
+
+# dw_local_config_state の not_ignored・tracked のときに、利用者にする案内を出力する（ignored なら何も出さない）
+# 使い方: dw_local_config_hint <状態>
+dw_local_config_hint() {
+  case "$1" in
+    not_ignored) echo "個人の設定（.claude/dev-workflow/config.local.json）が git に無視されていません。.gitignore に足してください" ;;
+    tracked) echo "個人の設定（.claude/dev-workflow/config.local.json）がコミットされています。git rm --cached .claude/dev-workflow/config.local.json で追跡を外し、.gitignore に足してください" ;;
+  esac
 }
 
 # 設定ファイルが review.model を決めていれば（null も「使わないと決めた」として）、その値の JSON を出力する。
@@ -236,6 +255,7 @@ dw_review_model_of() {
 
 # review.model を決めている、このリポジトリの層（team・local）を、優先度の低い順に1行ずつ「<層>\t<ファイル>\t<値の JSON>」で出力する。
 # 導入したリポジトリだけに効かせるため、ユーザーの層（~/.claude/dev-workflow/config.json）は読まない（設計書 §7）。
+# どちらかの層のファイルが JSON のオブジェクトとして読めなければ、書く層でなくても止まる。
 # 使い方: dw_review_model_layers <リポジトリのルート>
 dw_review_model_layers() {
   local pair name f v
