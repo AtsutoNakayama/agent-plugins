@@ -18,6 +18,10 @@
 #   pushed_behind         origin/<base> にあって、origin/<ブランチ>（push 済みのブランチ）に無いコミットの数。
 #                         up_to_date が true でこれが 1 以上なら、手元では取り込み済みで、まだ push していない。
 #                         origin にブランチが無ければ null
+#   pushed_conflicts      origin/<ブランチ>（push 済みのブランチ）に origin/<base> を取り込むと衝突するか。conflicts と同じく
+#                         手元で確かめる。手元で取り込み済みで、まだ push していないとき、GitHub から見た PR が main と衝突して
+#                         いるかが、merge_state が UNKNOWN でも分かる。pushed_behind が 0 なら false。origin にブランチが無いか、
+#                         確かめられないときは null
 #   pr                    そのブランチの開いている PR（number・url・merge_state・merge_queue）。無ければ null
 #                         merge_state は GitHub の mergeStateStatus（BEHIND・DIRTY・BLOCKED・CLEAN など）。
 #                         fork の同じ名前のブランチからの PR は除く。PR が無い、gh が無い、
@@ -60,25 +64,30 @@ git -C "$repo_root" show-ref --verify --quiet "$ref" || dw_die "origin/${base} �
 behind="$(git -C "$repo_root" rev-list --count "refs/heads/$branch..$ref")"
 ahead="$(git -C "$repo_root" rev-list --count "$ref..refs/heads/$branch")"
 
-# 取り込むと衝突するか。merge-tree は、衝突なしで 0、衝突で 1、それ以外の失敗（古い git で --write-tree が無いなど）で
-# 別の値を返す。結果のツリーはオブジェクトとして書かれるだけで、作業ツリーとブランチは変わらない
-conflicts=false
-if [ "$behind" -gt 0 ]; then
-  merge_rc=0
-  git -C "$repo_root" merge-tree --write-tree --no-messages "refs/heads/$branch" "$ref" >/dev/null 2>&1 || merge_rc=$?
-  case "$merge_rc" in
-    0) conflicts=false ;;
-    1) conflicts=true ;;
-    *) conflicts=null ;;
+# 2つのコミットを merge すると衝突するかを、true・false・null（確かめられない）で出力する。merge-tree は、
+# 衝突なしで 0、衝突で 1、それ以外の失敗（古い git で --write-tree が無いなど）で別の値を返す。
+# 結果のツリーはオブジェクトとして書かれるだけで、作業ツリーとブランチは変わらない
+# 使い方: merge_conflicts <コミット> <コミット>
+merge_conflicts() {
+  local rc=0
+  git -C "$repo_root" merge-tree --write-tree --no-messages "$1" "$2" >/dev/null 2>&1 || rc=$?
+  case "$rc" in
+    0) echo false ;;
+    1) echo true ;;
+    *) echo null ;;
   esac
-fi
+}
+
+# 取り込むと衝突するか。遅れていなければ、取り込むものが無いので衝突しない
+conflicts=false
+[ "$behind" -eq 0 ] || conflicts="$(merge_conflicts "refs/heads/$branch" "$ref")"
 
 dirty=false
 [ -z "$(git -C "$repo_root" status --porcelain --untracked-files=no)" ] || dirty=true
 
 # 手元のブランチと origin のブランチのずれ。origin にブランチが無ければ null。
 # ls-remote の終了コードは、ブランチが無いとき 2、通信などの失敗のときはそれ以外（0 か 2 でなければ止める）
-unpushed=null unpulled=null pushed_behind=null
+unpushed=null unpulled=null pushed_behind=null pushed_conflicts=null
 remote_rc=0
 git -C "$repo_root" ls-remote --exit-code --heads origin "refs/heads/$branch" >/dev/null 2>&1 || remote_rc=$?
 case "$remote_rc" in
@@ -87,6 +96,8 @@ case "$remote_rc" in
     unpushed="$(git -C "$repo_root" rev-list --count "refs/remotes/origin/$branch..refs/heads/$branch")"
     unpulled="$(git -C "$repo_root" rev-list --count "refs/heads/$branch..refs/remotes/origin/$branch")"
     pushed_behind="$(git -C "$repo_root" rev-list --count "refs/remotes/origin/$branch..$ref")"
+    pushed_conflicts=false
+    [ "$pushed_behind" -eq 0 ] || pushed_conflicts="$(merge_conflicts "refs/remotes/origin/$branch" "$ref")"
     ;;
   2) ;;
   *) dw_die "origin に ${branch} があるかを確かめられませんでした" ;;
@@ -131,6 +142,6 @@ if [ "$pr" != null ]; then
 fi
 
 jq -n --arg branch "$branch" --arg base "$base" --argjson behind "$behind" --argjson ahead "$ahead" \
-  --argjson conflicts "$conflicts" --argjson dirty "$dirty" --argjson unpushed "$unpushed" --argjson unpulled "$unpulled" --argjson pushed_behind "$pushed_behind" --argjson pr "$pr" \
+  --argjson conflicts "$conflicts" --argjson dirty "$dirty" --argjson unpushed "$unpushed" --argjson unpulled "$unpulled" --argjson pushed_behind "$pushed_behind" --argjson pushed_conflicts "$pushed_conflicts" --argjson pr "$pr" \
   '{branch: $branch, base: $base, behind: $behind, ahead: $ahead, up_to_date: ($behind == 0), conflicts: $conflicts, dirty: $dirty,
-    unpushed: $unpushed, unpulled: $unpulled, pushed_behind: $pushed_behind, pr: $pr}'
+    unpushed: $unpushed, unpulled: $unpulled, pushed_behind: $pushed_behind, pushed_conflicts: $pushed_conflicts, pr: $pr}'

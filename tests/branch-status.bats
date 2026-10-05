@@ -265,9 +265,10 @@ queue_removed_fixture() {
   # shellcheck disable=SC2016 # 偽の git の中身なので、$@ はここでは展開しない
   printf '#!/usr/bin/env bash\nfor a in "$@"; do [ "$a" = merge-tree ] && exit 129; done\nexec "%s" "$@"\n' "$real_git" >"$TMP/bin/git"
   chmod +x "$TMP/bin/git"
+  git push -q origin feat/17-x
   run_status
   assert_success
-  assert_equal "$(jq -c '[.behind, .conflicts]' <<<"$output")" "[1,null]"
+  assert_equal "$(jq -c '[.behind, .conflicts, .pushed_behind, .pushed_conflicts]' <<<"$output")" "[1,null,1,null]"
 }
 
 @test "手元で main を取り込んだが push していなければ、pushed_behind に push 済みのブランチの遅れを出す" {
@@ -299,4 +300,41 @@ queue_removed_fixture() {
   setup_branch
   run_status
   assert_equal "$(jq -c .pushed_behind <<<"$output")" null
+}
+
+@test "手元で衝突を直して取り込んだが push していなければ、push 済みのブランチの衝突を pushed_conflicts に出す" {
+  setup_branch
+  git push -q origin feat/17-x
+  # main 側で work.txt を別の内容で作り、push 済みのブランチと衝突させる
+  git clone -q "$TMP/origin.git" "$TMP/other"
+  echo other >"$TMP/other/work.txt"
+  git -C "$TMP/other" add work.txt
+  git -C "$TMP/other" commit -q -m "main: work"
+  git -C "$TMP/other" push -q origin main
+  git fetch -q origin main
+  git merge -q --no-edit origin/main >/dev/null 2>&1 || true
+  echo resolved >work.txt
+  git add work.txt
+  git commit -q --no-edit
+  run_status
+  assert_success
+  # 手元は取り込み済みで衝突しないが、push 済みのブランチはまだ衝突する
+  assert_equal "$(jq -c '[.up_to_date, .conflicts, .pushed_behind, .pushed_conflicts]' <<<"$output")" "[true,false,1,true]"
+}
+
+@test "push 済みのブランチが遅れていても、衝突しなければ pushed_conflicts は false" {
+  setup_branch
+  git push -q origin feat/17-x
+  advance_main 1
+  run_status
+  assert_equal "$(jq -c '[.pushed_behind, .pushed_conflicts]' <<<"$output")" "[1,false]"
+}
+
+@test "origin にブランチが無ければ pushed_conflicts は null、遅れていなければ false" {
+  setup_branch
+  run_status
+  assert_equal "$(jq -c .pushed_conflicts <<<"$output")" null
+  git push -q origin feat/17-x
+  run_status
+  assert_equal "$(jq -c .pushed_conflicts <<<"$output")" false
 }
