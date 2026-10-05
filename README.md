@@ -195,7 +195,7 @@ plugins/dev-workflow/scripts/setup/setup-project.sh --hold-column "On Hold" --wr
 plugins/dev-workflow/scripts/setup/setup-project.sh --dry-run
 ```
 
-保留の列は、外の条件を待っていて今は着手できない Issue（例：試用期間が終わるまで着手できない）を置く列です。任意で、設定しなければ今までどおりに動きます。保留の列にある Issue は `/dev-workflow:task-next` の候補から外れ、件数と番号が伝えられます。列へ移すのも Todo に戻すのも `/dev-workflow:task-status` で行います（`/dev-workflow:task-status 12 hold`・`/dev-workflow:task-status 12 todo`）。
+保留の列は、外の条件を待っていて今は着手できない Issue（例：試用期間が終わるまで着手できない）を置く列です。任意で、設定しなければ今までどおりに動きます。保留の列にある Issue は `/dev-workflow:task-next` の候補から外れ、件数と番号が伝えられます。列へ移すのも Todo に戻すのも `/dev-workflow:task-status` で行います（`/dev-workflow:task-status 12 hold`・`/dev-workflow:task-status 12 todo`）。保留の列の名前を変えるときは、Project の画面で列の名前を変え、`.claude/dev-workflow/config.json` の `status.hold` も同じ名前にしてください。`--hold-column` で別の列を足して切り替えるときは、今の保留の列に Issue が残っていると止まるので、先に新しい列へ移してください。
 
 Project に組み込みの自動追加（Auto-add to project）は API で有効にできないため、スクリプトが表示する URL の画面で1回だけ手動で有効にしてください。
 

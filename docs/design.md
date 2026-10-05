@@ -90,6 +90,7 @@ agent-plugins/
   - 任意の役割で、既定は null（使わない）。null なら、どのスキルの動きも変わらない。repo-setup で作るかを聞き、作るなら列名を `.claude/dev-workflow/config.json` に書き（`setup-project.sh --hold-column`）、Status 列に足す。
   - スキルが自動でこの列へ移すことは無い。移すのも Todo に戻すのも、利用者が `task-status` で行う（役割の名前 `hold`・`todo` でも、列名でも指定できる）。task-next は、この列の Issue の件数と番号を伝え、条件がそろったものを Todo に戻すよう案内する（戻し忘れを防ぐ）。
   - ほかの役割の列と同じ名前にはできない（同じだと、保留の Issue が Todo や着手中にも数えられる）。`setup-project.sh` と `next-tasks.sh` は、同じ名前なら止まる。
+  - `setup-project.sh --hold-column --write-config` で保留の列を別の列に変えるとき、今の列にこのリポジトリの開いている Issue が残っていれば、Project も設定も変えずに止まる（残ったまま設定だけを変えると、その Issue は Todo でも保留でもなくなり、task-next のどこにも出なくなる）。先に `task-status` で新しい列へ移すか、列の名前を変えるだけなら、Project の画面で列の名前を変えて、設定の `status.hold` も同じ名前にする。
   - Iteration とは独立に使える。
 
 - **Story Point**：数値の項目。使える値はフィボナッチ数の 1, 2, 3, 5, 8, 13, 21, 34 に固定し（設定では変えられない）、スクリプトで検証する。起票時は AI が見積もりを提案し、ユーザーが確定する（空欄も可）。21 と 34 は見積もりの精度が低いので分割を提案し、それでもよければそのまま設定する。34 より大きい作業は分割する。
