@@ -34,7 +34,6 @@ release-please は `GITHUB_TOKEN` でリリース PR を作っていた（[00005
 
 * 良い点：CI を通らないままリリースが出ることが無くなる。
 * 良い点：Lint・Test を必須のチェックにできる（後に [000112](000112-require-ci-on-latest-main.md) で必須にした）。
-* 悪い点：GitHub App を作り、その ID と秘密鍵をリポジトリに登録して管理する手間が増える。
 
 ### 確認
 

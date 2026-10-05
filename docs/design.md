@@ -196,7 +196,7 @@ agent-plugins/
 
 ### 次に着手する Issue の提案（task-next）
 
-Todo が増えたとき、どれから着手するか、同時に進めてよいかを提案する。読み取り専用の単独のスキルで、Issue・Project・ブランチ・ワークツリーのどれも変えない。着手は `task-start` で、使う人が決める。herdr などの並列実行の仕組みが無くても使える。
+Todo が増えたとき、どれから着手するか、同時に進めてよいかを提案する。読み取り専用の単独のスキルで、Issue・Project・ブランチ・ワークツリーのどれも変えない。着手は `task-start` で、使う人が決める。herdr などの並列実行の仕組みが無くても使える。herdr のタブに展開して並列に起動するスキルは作らない（[ADR 000142](adr/000142-drop-herdr-parallel-start.md)）。
 
 - **優先順位**：Project の Todo 列の上から順。Project 上の並び（手動で並べ替えた順）は、gh にも REST にも無く、GraphQL の `orderBy: {field: POSITION}` でだけ読めるので、この箇所だけ GraphQL を使う（§10）。gh と REST の項目の順は、起票順（番号順）で、並べ替えが反映されない。
 - **依存**：次のどれかで、まだ閉じていない Issue があれば、その Issue は候補に入れない（理由と、待っている Issue の番号を添えて「待ち」に出す）。
