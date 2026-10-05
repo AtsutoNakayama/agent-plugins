@@ -111,16 +111,9 @@ if ! $no_worktree; then
       note "既にあるブランチ ${branch} のワークツリーを $path に作る"
       $dry_run || git -C "$main_root" worktree add -q "$path" "$branch"
     else
-      # origin のブランチの有無。ls-remote の終了コードは、ブランチが無いとき 2、通信などの失敗のときはそれ以外。
-      # 読めないのを「無い」と見ると、push 済みの作業を無視して base から作り直すので止まる（branch-status.sh と同じ）
-      remote_rc=0
-      git -C "$main_root" ls-remote --exit-code --heads origin "refs/heads/$branch" >/dev/null 2>&1 || remote_rc=$?
-      case "$remote_rc" in
-        0 | 2) ;;
-        *) dw_die "origin のブランチを読めませんでした（通信や認証を確かめてください）" ;;
-      esac
+      # origin を読めなければ止まる（dw_remote_has_branch。読めないのを「無い」と見ると、push 済みの作業を無視して base から作り直す）
       branch_created=true
-      if [ "$remote_rc" -eq 0 ]; then
+      if dw_remote_has_branch "$main_root" "$branch"; then
         # 別のマシンで push 済み（またはローカルだけ消した）ブランチは、push 済みのコミットから続ける
         src_ref="origin/$branch"
         note "push 済みの origin/${branch} からブランチ ${branch} を作り、ワークツリーを $path に作る"

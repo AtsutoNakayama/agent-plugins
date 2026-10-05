@@ -48,6 +48,20 @@ dw_worktree_of() {
     | awk -v b="refs/heads/$2" '/^worktree /{p=substr($0, 10)} $0 == "branch " b {print p}'
 }
 
+# origin にブランチがあるか。あれば 0、無ければ 1 を返す。読めなければ（通信や認証の失敗）止まる。
+# 読めないのを「無い」と見ると、push 済みの作業を無視して作り直したり、片付けを誤ったりするため。
+# ls-remote の終了コードは、ブランチが無いとき 2、通信などの失敗のときはそれ以外。
+# 使い方: if dw_remote_has_branch <リポジトリ> <ブランチ>; then ...
+dw_remote_has_branch() {
+  local rc=0
+  git -C "$1" ls-remote --exit-code --heads origin "refs/heads/$2" >/dev/null 2>&1 || rc=$?
+  case "$rc" in
+    0) return 0 ;;
+    2) return 1 ;;
+    *) dw_die "origin のブランチを読めませんでした（通信や認証を確かめてください）" ;;
+  esac
+}
+
 # 作業中のリポジトリ（ワークツリー）のルート。
 dw_repo_root() {
   if [ -n "${WORKFLOW_REPO_ROOT:-}" ]; then
