@@ -131,7 +131,7 @@ out_of() { jq -c "$1" <<<"$output"; }
   assert_equal "$(out_of '[.own_comments[] | [.id, .body]]')" '[["C2","返信です"]]'
 }
 
-@test "resolved でないスレッドだけを出し、PR の作者以外の最初の投稿者のものにする" {
+@test "resolved でないスレッドだけを出し、PR の作者以外の投稿者のものにする" {
   setup_fake_gh
   thread false '[["alice", "ここは null になりませんか"], ["me", "直しました"]]'
   thread true '[["alice", "解決済みの指摘"]]'
@@ -145,6 +145,21 @@ out_of() { jq -c "$1" <<<"$output"; }
   assert_equal "$(out_of '.feedback[0].threads[0] | [.path, .line, .outdated, .url, .comments[0].author, .comments[0].body]')" \
     '["a.sh",3,false,"https://github.com/me/demo/pull/5#discussion_r100","alice","ここは null になりませんか"]'
   assert_equal "$(out_of .counts.threads)" 2
+}
+
+@test "スレッドは、PR の作者以外で最後に書いた人（返事を待っている人）のものにする" {
+  setup_fake_gh
+  echo '{"pr_respond": {"handlers": {"coderabbitai[bot]": "coderabbit-respond"}}}' >"$REPO/.claude/dev-workflow/config.json"
+  # bot のスレッドに人が質問を書いたら、担当の skill（人のコメントを扱わない）ではなく、その人の分として汎用の手順で扱う
+  thread false '[["coderabbitai", "指摘"], ["alice", "この指摘は本当ですか"]]'
+  thread false '[["coderabbitai", "指摘"], ["me", "直しました"], ["alice", "直し方に質問です"]]'
+  # 人の後に bot が返したら、bot の分に戻る
+  thread false '[["coderabbitai", "指摘"], ["alice", "どう直す？"], ["coderabbitai", "こう直します"]]'
+  write_threads
+  run_script pr-feedback.sh
+  assert_success
+  assert_equal "$(out_of '[.feedback[] | {author, handler, n: (.threads | length)}]')" \
+    '[{"author":"alice","handler":null,"n":2},{"author":"coderabbitai","handler":"coderabbit-respond","n":1}]'
 }
 
 @test "担当の skill を、大文字と小文字・末尾の [bot] を区別せずに投稿者へ対応させる" {

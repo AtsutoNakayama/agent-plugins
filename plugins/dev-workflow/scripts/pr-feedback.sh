@@ -19,8 +19,9 @@
 #   counts     threads・reviews・comments の合計
 #
 # 決まり:
-#   - PR の作者のレビュー・コメントは feedback に数えない（自分の返信やメモなので。コメントは own_comments に出す）。スレッドは、PR の作者以外の最初の投稿者のものとし、
-#     PR の作者のコメントだけのスレッドは数えない
+#   - PR の作者のレビュー・コメントは feedback に数えない（自分の返信やメモなので。コメントは own_comments に出す）。スレッドは、PR の作者以外で最後に書いた人
+#     （返事を待っている人）のものとし、PR の作者のコメントだけのスレッドは数えない。bot のスレッドに人が質問を書いたら、
+#     その人の分になる（bot の担当の skill は人のコメントを扱わないので、bot の分のままだと誰も答えない）
 #   - 投稿者と handlers のキーは、大文字と小文字、末尾の [bot] を区別せずに照らす（gh は coderabbitai[bot] を coderabbitai と返す）
 #   - スレッドの resolved の状態は gh にも REST にも無いので、そこだけ GraphQL で読む（設計書 §10）。
 #     1つのスレッドのコメントは先頭の 100 件まで読む
@@ -123,7 +124,7 @@ jq -n --argjson v "$view" --argjson threads "$threads" --argjson handlers "$hand
   | [$threads[]
       | {path, line, outdated: .isOutdated,
          comments: [.comments.nodes[] | {author: login, body, created_at: .createdAt, url, id: .databaseId}]}
-      | (first(.comments[] | select(.author | norm != $me)) // null) as $by
+      | ([.comments[] | select(.author | norm != $me)] | last) as $by
       | select($by != null)
       | {author: $by.author, item: {id: .comments[0].id, path, line, outdated, url: .comments[0].url,
           comments: [.comments[] | del(.id)], last_by_pr_author: (.comments[-1].author | norm == $me)}}] as $t
