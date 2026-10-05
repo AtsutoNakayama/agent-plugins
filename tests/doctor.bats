@@ -9,6 +9,7 @@ load test_helper
 # gh label list はリポジトリにある今のラベルとして FAKE_LABELS（既定: プラグインの定義のラベルすべて）を返す。
 # gh api --paginate repos/{owner}/{repo}/rules/branches/<ブランチ> は、パスを FAKE_RULES_LOG のファイル（あれば）に書き、FAKE_RULES（ブランチに効いているルール。ページごとの配列を並べる）を返す。
 # FAKE_RULES が無ければ失敗する（問い合わせられないとき）。
+# gh api repos/{owner}/{repo}/branches/<ブランチ> は FAKE_BRANCH（ブランチの情報。古いブランチ保護を含む）を返し、無ければ失敗する。
 # base_branch のワークフロー（gh api repos/{owner}/{repo}/contents/.github/workflows?ref=...）は、$TMP/workflows/ の
 # ファイルの一覧を返し、ディレクトリが無ければ 404、FAKE_WORKFLOWS_FAIL があれば 403 で失敗する。ファイル（gh api -H ... .../contents/<パス>?ref=...）はそのファイルを返す。
 # ほかの呼び出しは失敗する。
@@ -31,6 +32,10 @@ case "$1 $2" in
     [ -n "${FAKE_RULES:-}" ] || exit 1
     if [ -n "${FAKE_RULES_LOG:-}" ]; then printf '%s\n' "$2" >"$FAKE_RULES_LOG"; fi
     printf '%s\n' "$FAKE_RULES"
+    ;;
+  "api repos/{owner}/{repo}/branches/"*)
+    [ -n "${FAKE_BRANCH:-}" ] || exit 1
+    printf '%s\n' "$FAKE_BRANCH"
     ;;
   "api repos/{owner}/{repo}/contents/.github/workflows?"*)
     if [ -n "${FAKE_WORKFLOWS_FAIL:-}" ]; then echo 'gh: Forbidden (HTTP 403)' >&2; exit 1; fi
@@ -226,7 +231,7 @@ merge_check() { jq -c '.checks[] | select(.name == "merge-queue") | [.ok, .level
   run_script doctor.sh
   assert_success
   assert_equal "$(merge_check)" '[true,"warn","main へのマージはマージキューを通します"]'
-  export FAKE_RULES='[{"type": "required_status_checks", "parameters": {"strict_required_status_checks_policy": true}}]'
+  export FAKE_RULES='[{"type": "required_status_checks", "parameters": {"strict_required_status_checks_policy": true, "required_status_checks": [{"context": "ci"}]}}]'
   run_script doctor.sh
   assert_equal "$(merge_check)" '[true,"warn","main へのマージは、PR が最新の main を取り込んでいることを求めます（strict）"]'
 }
@@ -234,7 +239,7 @@ merge_check() { jq -c '.checks[] | select(.name == "merge-queue") | [.ok, .level
 @test "必須のチェックがあるのにキューも strict も無ければ、止めずに repo-setup を知らせる" {
   fake_gh
   export FAKE_SCOPES="project"
-  export FAKE_RULES='[{"type": "pull_request", "parameters": {}}, {"type": "required_status_checks", "parameters": {"strict_required_status_checks_policy": false}}]'
+  export FAKE_RULES='[{"type": "pull_request", "parameters": {}}, {"type": "required_status_checks", "parameters": {"strict_required_status_checks_policy": false, "required_status_checks": [{"context": "ci"}]}}]'
   run_script doctor.sh
   assert_success
   assert_equal "$(jq -c '.[0:2]' <<<"$(merge_check)")" '[false,"warn"]'
@@ -265,10 +270,30 @@ required_check() { jq -c '.checks[] | select(.name == "required-checks") | [.ok,
   export FAKE_RULES='[{"type": "required_status_checks", "parameters": {"strict_required_status_checks_policy": true, "required_status_checks": []}}]'
   run_script doctor.sh
   assert_equal "$(jq -c '.[0:2]' <<<"$(required_check)")" '[false,"warn"]'
+  # 名前が空のルールは、キューも strict も無いことは知らせない（必須のチェックが無いことだけを知らせる）
+  export FAKE_RULES='[{"type": "required_status_checks", "parameters": {"strict_required_status_checks_policy": false, "required_status_checks": []}}]'
+  run_script doctor.sh
+  assert_equal "$(jq -c '.[0:2]' <<<"$(required_check)")" '[false,"warn"]'
+  assert_equal "$(merge_check)" ""
   # 必須のチェックがあれば知らせない
   export FAKE_RULES='[{"type": "required_status_checks", "parameters": {"strict_required_status_checks_policy": true, "required_status_checks": [{"context": "ci"}]}}]'
   run_script doctor.sh
   assert_equal "$(required_check)" ""
+}
+
+@test "必須のチェックが古いブランチ保護（ルールセットでない）にあれば、警告しない" {
+  fake_gh
+  export FAKE_SCOPES="project" FAKE_RULES='[]'
+  export FAKE_BRANCH='{"name": "main", "protected": true, "protection": {"enabled": true, "required_status_checks": {"enforcement_level": "non_admins", "contexts": ["ci"]}}}'
+  run_script doctor.sh
+  assert_success
+  assert_equal "$(required_check)" ""
+  # strict はブランチの情報から分からないので、キューと strict のことは知らせない
+  assert_equal "$(merge_check)" ""
+  # 古いブランチ保護に必須のチェックが無ければ警告する
+  export FAKE_BRANCH='{"name": "main", "protected": true, "protection": {"enabled": true, "required_status_checks": {"enforcement_level": "off", "contexts": []}}}'
+  run_script doctor.sh
+  assert_equal "$(jq -c '.[0:2]' <<<"$(required_check)")" '[false,"warn"]'
 }
 
 @test "チームの設定で必須のチェックを求めないことにしていれば、警告しない" {
