@@ -333,15 +333,26 @@ EOF2
   assert_output --partial "マージ先が見つかりません: origin/main"
 }
 
-@test "同梱の観点の条件：regression-test は fix、issue-requirements は Issue、main-drift はマージ先が進んだときだけ使う" {
+@test "同梱の観点の条件：regression-test は fix、test-coverage は feat・refactor・perf、issue-requirements は Issue、main-drift はマージ先が進んだときだけ使う" {
   branch_changing a.txt
   run_script review-perspectives.sh --base "$BASE" --target main --type feat
   assert_success
   for n in regression-test issue-requirements main-drift; do
     [ -n "$(skipped_reason "$n")" ] || fail "$n が外れていません: $output"
   done
+  used test-coverage || fail "$output"
   used code-review || fail "$output"
   used docs-sync || fail "$output"
+  for t in refactor perf; do
+    run_script review-perspectives.sh --base "$BASE" --target main --type "$t"
+    assert_success
+    used test-coverage || fail "type が $t で test-coverage が使われていません: $output"
+  done
+  for t in fix docs test; do
+    run_script review-perspectives.sh --base "$BASE" --target main --type "$t"
+    assert_success
+    assert_equal "$(skipped_reason test-coverage)" "type（${t}）が types（feat、refactor、perf）のどれでもない"
+  done
   git checkout -q main
   git commit -q --allow-empty -m later
   git checkout -q work
