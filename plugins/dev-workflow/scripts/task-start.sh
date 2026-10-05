@@ -16,6 +16,7 @@
 #   1. ブランチ名を決める（branch.pattern に従う。既定は {type}/{issue_number}-{slug}）
 #   2. <branch.worktree_dir>/<ブランチ名> にワークツリーを作る（相対パスはメインのワークツリーから）。
 #      ブランチが無ければ、origin に push 済みならそこから、無ければ origin/<base_branch> から作る。
+#      origin を読めなければ（通信や認証の失敗）、push 済みか分からないので、ブランチもワークツリーも作らずに止まる。
 #      ワークツリーの置き場所が git に無視されていなければ、.git/info/exclude に足す（コミットしない手元だけの設定）。
 #      .gitmodules があれば、サブモジュールを初期化する（git submodule update --init --recursive）。
 #      失敗しても（通信できないなど）止めずに警告する。既にあるワークツリーでも、未初期化なら初期化し直す
