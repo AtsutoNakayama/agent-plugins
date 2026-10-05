@@ -16,9 +16,9 @@
 #   - merge_group で動くか：トップレベルの on: の範囲（on: の行から次のトップレベルのキーまで）に、
 #     merge_group という語があるか
 #   - チェックとジョブの対応：チェックの名前を、jobs: の下のジョブの ID か name: と突き合わせる。
-#     matrix の「名前 (値)」は括弧の前でも、再利用するワークフローの「呼ぶ側 / 呼ばれる側」は / の前でも比べ、
-#     name: の ${{ }} の式は何にでも当てはまるものとして比べる（式のほかに空白と記号しか無い name は、どのチェックにも
-#     当たってしまうので、式としては比べない）
+#     matrix の「名前 (値)」は括弧の前でも、再利用するワークフローの「呼ぶ側 / 呼ばれる側」は / の前でも比べる。
+#     ${{ }} の式を含む name: とは比べない（式を何にでも当たる形にすると、どこまで広く当たるかを見分けきれず、
+#     関係の無いチェックに当てて、誤って not_running にしてしまうため。そのチェックは unknown になる）
 #   対応するジョブがあるワークフローのどれも merge_group で動かなければ not_running に、
 #   どのジョブとも対応しない名前（外部のアプリのチェックなど）は unknown に入れる。
 #
@@ -100,11 +100,10 @@ workflows="$(jq -c '[if type == "array" then .[] else empty end
   | select(.type == "file" and (.name | test("\\.ya?ml$"))) | .path]' <<<"$listing" 2>/dev/null)" \
   || dw_die "${branch} のワークフローの一覧を JSON として読めません"
 
-# ワークフローを読み、merge_group で動くか（「on <0|1>」の1行）と、ジョブ（「job <ID> <name> <name の式を * にした形>」。
-# 項目は \037 で区切る（タブでは、read が空の項目を詰めてしまう）。name が無ければ空、式が無ければ形は空）を出力する。インデントは空白だけとみなす（YAML はタブを許さない）
+# ワークフローを読み、merge_group で動くか（「on <0|1>」の1行）と、ジョブ（「job <ID> <name>」。
+# 項目は \037 で区切る（タブでは、read が空の項目を詰めてしまう）。name が無いか ${{ }} の式を含めば空）を出力する。インデントは空白だけとみなす（YAML はタブを許さない）
 parse_workflow() {
-  # 日本語などの名前も、どの環境でも同じに扱うよう、バイト列として読む
-  LC_ALL=C awk '
+  awk '
     function strip(s) {
       sub(/\r$/, "", s)
       if (s ~ /^[ \t]*#/) return ""
@@ -118,15 +117,8 @@ parse_workflow() {
     }
     function flush() {
       if (id != "") {
-        pat = ""
-        if (name ~ /\$\{\{/) {
-          pat = name; gsub(/\$\{\{[^}]*\}\}/, "*", pat)
-          # 式（*）と空白・記号のほかに文字が残らない形（「*」「* (*)」など）は、関係の無いチェックにも当たるので使わない。
-          # LC_ALL=C で動かすので、記号は ASCII のものだけで、日本語などのバイトは文字として残る
-          lit = pat; gsub(/[[:space:][:punct:]]/, "", lit)
-          if (lit == "") pat = ""
-        }
-        printf "job\037%s\037%s\037%s\n", id, name, pat
+        if (name ~ /\$\{\{/) name = ""
+        printf "job\037%s\037%s\n", id, name
       }
       id = ""; name = ""; childind = -1
     }
@@ -166,17 +158,12 @@ candidates() {
   printf '%s\n' "$1" "${1% (*}" "${1%% / *}"
 }
 
-# 使い方: job_matches <チェックの名前> <ジョブの ID> <name> <name の式を * にした形>
+# 使い方: job_matches <チェックの名前> <ジョブの ID> <name>
 job_matches() {
   local c
   while IFS= read -r c; do
     if [ "$c" = "$2" ] || { [ -n "$3" ] && [ "$c" = "$3" ]; }; then
       return 0
-    fi
-    if [ -n "$4" ]; then
-      # 式を * にした形をグロブとして当てる（意図して引用しない）
-      # shellcheck disable=SC2254
-      case "$c" in $4) return 0 ;; esac
     fi
   done <<EOF
 $(candidates "$1")
@@ -195,9 +182,9 @@ while IFS= read -r path; do
   parsed="$(parse_workflow "$tmp/workflow")"
   mg="$(printf '%s\n' "$parsed" | awk -F "$sep" '$1 == "on" { print $2 }')"
   while IFS= read -r check; do
-    while IFS="$sep" read -r kind id name pat; do
+    while IFS="$sep" read -r kind id name; do
       [ "$kind" = job ] || continue
-      if job_matches "$check" "$id" "$name" "$pat"; then
+      if job_matches "$check" "$id" "$name"; then
         result="$(jq -c --arg c "$check" --arg p "$path" --argjson mg "$mg" \
           '.[$c].matched += [$p] | .[$c].matched |= unique | .[$c].running = (.[$c].running or $mg == 1)' <<<"$result")"
         break

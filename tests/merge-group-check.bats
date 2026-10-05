@@ -129,7 +129,7 @@ YML
   assert_equal "$(jq -c '[.not_running[].check]' <<<"$output")" '["c","e"]'
 }
 
-@test "チェックの名前を、ジョブの name・matrix・再利用するワークフロー・式と突き合わせる" {
+@test "チェックの名前を、ジョブの name・matrix・再利用するワークフローと突き合わせ、式を含む name とは比べない" {
   setup_fake_gh
   workflow ci.yml <<'YML'
 on: pull_request
@@ -152,11 +152,12 @@ YML
     --check "call / inner" --check build --check "codecov/patch"
   assert_success
   assert_equal "$(jq -c '[.not_running[].check]' <<<"$output")" \
-    '["Build app","E2E (firefox)","build","call / inner","test (macos-latest)"]'
-  assert_equal "$(jq -c .unknown <<<"$output")" '["codecov/patch"]'
+    '["Build app","build","call / inner","test (macos-latest)"]'
+  # ${{ }} の式を含む name: とは比べない
+  assert_equal "$(jq -c .unknown <<<"$output")" '["E2E (firefox)","codecov/patch"]'
 }
 
-@test "name: が式だけのジョブは、関係の無いチェックに当てない" {
+@test "式を含む name: のジョブは、関係の無いチェックにも、それらしいチェックにも当てない" {
   setup_fake_gh
   workflow nightly.yml <<'YML'
 on: schedule
@@ -165,26 +166,15 @@ jobs:
     name: ${{ matrix.target }}
     runs-on: ubuntu-latest
   pack:
-    name: "${{ matrix.os }} (${{ matrix.arch }})"
+    name: "${{ matrix.os }}・${{ matrix.arch }}"
     runs-on: ubuntu-latest
-YML
-  run_check --branch main --check "CodeRabbit" --check "linux (x64)"
-  assert_success
-  assert_equal "$(jq -c '[.not_running, .unknown]' <<<"$output")" '[[],["CodeRabbit","linux (x64)"]]'
-}
-
-@test "name: の式のほかに日本語などの文字があれば、式として当てる" {
-  setup_fake_gh
-  workflow ci.yml <<'YML'
-on: pull_request
-jobs:
   test:
     name: テスト (${{ matrix.os }})
     runs-on: ubuntu-latest
 YML
-  run_check --branch main --check "テスト (linux)" --check "ビルド (linux)"
+  run_check --branch main --check "CodeRabbit" --check "レビュー・CodeRabbit" --check "テスト (linux)"
   assert_success
-  assert_equal "$(jq -c '[[.not_running[].check], .unknown]' <<<"$output")" '[["テスト (linux)"],["ビルド (linux)"]]'
+  assert_equal "$(jq -c '[.not_running, .unknown]' <<<"$output")" '[[],["CodeRabbit","テスト (linux)","レビュー・CodeRabbit"]]'
 }
 
 @test "同じ名前のジョブが複数のワークフローにあれば、どれかが merge_group で動けば動くとみなす" {
