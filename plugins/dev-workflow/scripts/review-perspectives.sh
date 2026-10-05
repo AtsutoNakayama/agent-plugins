@@ -299,7 +299,8 @@ collect() {
 
 collect plugin "$DW_PLUGIN_ROOT/review"
 # 導入していないリポジトリでは、ユーザーの層を使わない（設計書 §1）
-! dw_is_set_up "$repo_root" || collect user "$(dw_user_review_dir)"
+user_dir="$(dw_user_dir_for "$repo_root")"
+[ -z "$user_dir" ] || collect user "$user_dir/review"
 [ -z "$repo_root" ] || collect repo "$repo_root/.claude/dev-workflow/review"
 
 # 優先度の低い層から順に入れ、同じ名前は後の層で置き換える

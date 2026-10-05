@@ -66,6 +66,14 @@ dw_user_dir() {
   printf '%s\n' "${WORKFLOW_USER_DIR:-$HOME/.claude/dev-workflow}"
 }
 
+# 導入したリポジトリ（dw_is_set_up）なら、ユーザーごとの設定の置き場所（dw_user_dir）を出力する。導入していなければ何も出さない。
+# ユーザーの層を読むスクリプトは、どれもこれで置き場所を決める（導入したかで読むかを変える判定を1か所にする）
+# 使い方: dw_user_dir_for <リポジトリのルート（空ならリポジトリの外）>
+dw_user_dir_for() {
+  dw_is_set_up "${1:-}" || return 0
+  dw_user_dir
+}
+
 # ユーザーごとのレビューの観点の置き場所。
 dw_user_review_dir() {
   printf '%s\n' "$(dw_user_dir)/review"
@@ -326,9 +334,10 @@ dw_review_model_of() {
 # どれかの層のファイルが JSON のオブジェクトとして読めなければ、書く層でなくても止まる。
 # 使い方: dw_review_model_layers <リポジトリのルート>
 dw_review_model_layers() {
-  local pairs pair name f v
+  local pairs pair name f v user_dir
   pairs=()
-  ! dw_is_set_up "$1" || pairs+=("user:$(dw_user_dir)/config.json")
+  user_dir="$(dw_user_dir_for "$1")"
+  [ -z "$user_dir" ] || pairs+=("user:$user_dir/config.json")
   pairs+=("team:$1/.claude/dev-workflow/config.json" "local:$(dw_local_config_file "$1")")
   for pair in "${pairs[@]}"; do
     name="${pair%%:*}" f="${pair#*:}"

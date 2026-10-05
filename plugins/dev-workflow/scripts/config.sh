@@ -22,11 +22,8 @@ dw_require jq
 
 filter="${1:-.}"
 repo_root="$(dw_repo_root || true)"
-# 導入していないリポジトリでは、ユーザーの層を読まない（空にして飛ばす）
-user_dir=""
-if dw_is_set_up "$repo_root"; then
-  user_dir="$(dw_user_dir)"
-fi
+# 導入していないリポジトリでは、ユーザーの層を読まない（空になるので飛ばす）
+user_dir="$(dw_user_dir_for "$repo_root")"
 
 layers=()
 sources=()

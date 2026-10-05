@@ -38,7 +38,7 @@ if ! command -v jq >/dev/null 2>&1; then
   exit 0
 fi
 
-files=("$(dw_user_dir)/task-flow.md" "$repo_root/.claude/dev-workflow/task-flow.md")
+files=("$(dw_user_dir_for "$repo_root")/task-flow.md" "$repo_root/.claude/dev-workflow/task-flow.md")
 
 out="$(cat "$default_file")"
 added=()
