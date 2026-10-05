@@ -245,7 +245,7 @@ plugins/dev-workflow/scripts/setup/setup-models.sh
 - 契約や組織の制限で使えないモデルを指定すると、Claude Code が別のモデルに置き換えて動かします。
 - 対象はレビューだけです。commit などの短いスキルは、別のモデルに任せる手間でかえって費用が増えるので、いつもセッションと同じモデルで動きます。
 - 計った結果（[設計書 §7](docs/design.md#7-レビュー)）：費用の半分ほどはセッションのモデルで動く進行役の分なので、`sonnet` に下げても、レビュー1回の費用は17%ほどしか減りません。`haiku` はトークンを多く使うので `sonnet` より得にならず、時間は倍以上かかります。セッションを Sonnet にしたままレビューだけを `opus` にすると、セッションを Opus にしたときと同じくらいの費用で、レビューを Opus で行えます。
-- `local` に書いたとき、`config.local.json` が git に無視されていなければ警告します。`.gitignore` に `.claude/dev-workflow/config.local.json` を足してください。
+- `local` に書いたとき、`config.local.json` が git に無視されていなければ警告します。`.gitignore` に `.claude/dev-workflow/config.local.json` を足してください。既にコミットしてあるときは、`.gitignore` に書くだけでは追跡が外れないので、`git rm --cached .claude/dev-workflow/config.local.json` で外すよう警告します。
 - `--review-model`・`--models-scope` は、`setup-all.sh` にも渡せます。
 
 ## 開発

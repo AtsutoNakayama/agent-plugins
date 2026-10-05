@@ -306,7 +306,7 @@ Todo が増えたとき、どれから着手するか、同時に進めてよい
 | `setup-labels.sh` | ラベルを登録する（何度実行しても同じ結果になる） |
 | `setup-project.sh` | Project を作るか既存のものに接続し、リポジトリと紐付け、Story Point の項目を追加し、列を揃え、自動追加の設定を案内する |
 | `setup-repo.sh` | マージ方法の設定と、ルールセットの登録。必須のチェックのワークフローが merge_group で動くかも確かめる |
-| `setup-models.sh` | レビューに使うモデル（`review.model`）を、このリポジトリの選んだ層（local・team）の設定ファイルに書く。引数が無ければ、どの層で決めてあるかを出力するだけ。上位の層が別の値を決めていて効かなければ警告する。local に書くとき、そのファイルが git に無視されていなければ警告する（`setup-all.sh` が `next_steps` で `.gitignore` に足すよう案内する） |
+| `setup-models.sh` | レビューに使うモデル（`review.model`）を、このリポジトリの選んだ層（local・team）の設定ファイルに書く。引数が無ければ、どの層で決めてあるかを出力するだけ。上位の層が別の値を決めていて効かなければ警告する。local に書くとき、そのファイルが git に無視されていない・既にコミットしてあるときは警告する（`setup-all.sh` が `next_steps` で、`.gitignore` に足す・`git rm --cached` で追跡を外すよう案内する。`.gitignore` に当たるかだけでは、コミット済みのファイルを見分けられないため、追跡しているかも確かめる） |
 | `setup-all.sh` | 上の4つを実行し、`.claude/dev-workflow/config.json` と各テンプレートを作る |
 
 ## 11. 実装の順番
