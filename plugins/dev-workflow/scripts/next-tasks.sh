@@ -10,7 +10,10 @@
 # 領域が分からない Issue は、並列にできる組に入れない。「.」「*」「**」はリポジトリ全体として、全部と重なる。
 # パスと判断できない行（日本語の文・途中のグロブ）は areas_ignored に出す。着手中の Issue に領域も PR も無いときは、
 # 重なるか分からないので、Todo の各 Issue に warnings を付け、その番号を active_unknown に出す。
-# 出力の next と parallel は、待ちを除いた上からの提案。
+# サブ Issue を持つ親の Issue は、作業を子の Issue で進めるので、parent にして候補に入れない。着手中の列にある親は、
+# 開いている PR が無ければ着手中として数えない（親には作業が無く、数えると、領域も PR も無いとして全部に警告が付く。
+# 本文の領域は子の作業をまとめたものなので、親では使わない）。PR を出した後で子が付いた親は、PR のファイルとの重なりを見る。
+# 出力の next と parallel は、待ちと親を除いた上からの提案。
 set -euo pipefail
 
 # shellcheck source=lib/common.sh
@@ -48,7 +51,7 @@ query='query TodoItems($owner: String!, $number: Int!, $sp: String!, $after: Str
     items(first: 100, after: $after, orderBy: {field: POSITION, direction: ASC}) {
       pageInfo { hasNextPage endCursor }
       nodes {
-        content { __typename ... on Issue { number title state body url repository { nameWithOwner } } }
+        content { __typename ... on Issue { number title state body url repository { nameWithOwner } subIssuesSummary { total } } }
         status: fieldValueByName(name: "Status") { ... on ProjectV2ItemFieldSingleSelectValue { name } }
         sp: fieldValueByName(name: $sp) { ... on ProjectV2ItemFieldNumberValue { number } }
       }
@@ -69,7 +72,8 @@ while :; do
     [.data.repositoryOwner.projectV2.items.nodes[]
       | select(.content.__typename == "Issue" and .content.repository.nameWithOwner == $r and .content.state == "OPEN")
       | {number: .content.number, title: .content.title, url: .content.url, body: (.content.body // ""),
-         status: (.status.name // ""), story_point: (.sp.number // null)}
+         status: (.status.name // ""), story_point: (.sp.number // null),
+         sub_issues: (.content.subIssuesSummary.total // 0)} | .parent = (.sub_issues > 0)
       | select(.status == $todo or (.status | IN($active[])))]' <<<"$page")"
   issues="$(jq -c --argjson p "$picked" '. + $p' <<<"$issues")"
   [ "$(jq -r '.data.repositoryOwner.projectV2.items.pageInfo.hasNextPage' <<<"$page")" = true ] || break
@@ -108,7 +112,7 @@ defs='
 repo_issue_dir="repos/$repo_nwo/issues"
 todo="$(jq -c "$defs"'[.[] | select(.status == $todo) | . + {areas: areas, areas_ignored: areas_ignored, body_deps: deps} | del(.body)]' \
   --arg todo "$todo_col" <<<"$issues")"
-active="$(jq -c "$defs"'[.[] | select(.status | IN($active[])) | {number, title, areas: areas} ]' \
+active="$(jq -c "$defs"'[.[] | select(.status | IN($active[])) | {number, title, parent, areas: areas} ]' \
   --argjson active "$active_cols" <<<"$issues")"
 
 # 各 Todo の Issue の依存関係（blocked by）を読み、本文の依存と合わせて、閉じているかを調べる
@@ -151,9 +155,12 @@ jq -n --argjson todo "$todo" --argjson active "$active" --argjson deps "$deps" -
       | select($x == "." or $y == "." or $x == $y or ($x | startswith($y + "/")) or ($y | startswith($x + "/"))) | {a: $x, b: $y}];
   def pr_issues: ([.closingIssuesReferences[]?.number]
       + [.headRefName | capture("^[^/]+/(?<n>[0-9]+)-") | .n | tonumber]) | unique;
-  ($active | map(. as $i | . + {pr_files: ([$prs[] | select(pr_issues | index($i.number)) | .files[]?.path] | unique)}
+  # 親を残すかは、PR のファイルの数ではなく、PR があるかで決める（ファイルが空の PR もある）
+  ($active | map(. as $i | [$prs[] | select(pr_issues | index($i.number))] as $own
+    | . + {pr_files: ([$own[].files[]?.path] | unique)}
+    | select((.parent | not) or ($own | length > 0)) | if .parent then .areas = [] else . end
     | .paths = ((.areas + .pr_files) | unique)
-    | .area_known = (.paths | length > 0))) as $act
+    | .area_known = (.paths | length > 0) | del(.parent))) as $act
   | ([$act[] | select(.area_known | not) | .number]) as $active_unknown
   | ($todo | map(. as $t
       | ($deps[] | select(.number == $t.number).blockers) as $bl
@@ -164,7 +171,7 @@ jq -n --argjson todo "$todo" --argjson active "$active" --argjson deps "$deps" -
       | .area_known = (.areas | length > 0)
       | .warnings = ($active_unknown | map("着手中の #\(.) は PR も領域も無く、重なるか分からない"))
       | .conflicts_with_active = [$act[] | select(ov($t.areas; .paths) | length > 0) | {issue: .number, paths: ov($t.areas; .paths)}])) as $items
-  | ([$items[] | select(.waiting | not)]) as $ready
+  | ([$items[] | select((.waiting or .parent) | not)]) as $ready
   | (reduce $ready[] as $r ({sel: [], out: []};
       ([.sel[] | select(ov($r.areas; .areas) | length > 0) | {issue: .number, paths: ov($r.areas; .areas)}]) as $clash
       | if (.sel | length) == 0 then .sel += [$r] | .out += [{number: $r.number, parallel: true, reason: "次に着手する"}]
@@ -177,6 +184,6 @@ jq -n --argjson todo "$todo" --argjson active "$active" --argjson deps "$deps" -
      next: ($plan.sel[0].number // null),
      parallel: [$plan.sel[].number],
      todo: ($items | to_entries | map(.value + {position: (.key + 1)} | . as $i
-        | . + ((($plan.out[] | select(.number == $i.number)) // {parallel: false, reason: "待ち（依存が終わっていない）"}) | del(.number)))),
+        | . + ((($plan.out[] | select(.number == $i.number)) // {parallel: false, reason: (if $i.parent then "親の Issue（作業は子の Issue で進める）" else "待ち（依存が終わっていない）" end)}) | del(.number)))),
      active_unknown: $active_unknown,
      in_progress: $act}'
