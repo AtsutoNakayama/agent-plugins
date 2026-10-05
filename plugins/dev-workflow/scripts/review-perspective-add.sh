@@ -26,8 +26,8 @@
 #   終了コード 4  下位の層にだけある（作った観点で置き換わる）
 # 書き込めないときは終了コード 1 で止まる。
 # 観点ファイルの形式は review-perspectives.sh --help を参照。
-# 導入していないリポジトリ（dw_is_set_up）では、ユーザーの層の観点は使われない（設計書 §1）。user の層に作るときは
-# 警告し、repo の層に作るときは、このリポジトリで使われないユーザーの層の同じ名前の観点を数えない。
+# 導入していないリポジトリ（dw_user_dir_for）では、ユーザーの層の観点は使われない（設計書 §1）。user の層に作るときは
+# 警告し（リポジトリの外では警告しない）、repo の層に作るときは、このリポジトリで使われないユーザーの層の同じ名前の観点を数えない。
 #
 # 出力:
 #   name・layer・path  作った観点
@@ -129,18 +129,21 @@ repo_root="$(dw_repo_root || true)"
 user_dir="$(dw_user_review_dir)"
 repo_dir=""
 [ -z "$repo_root" ] || repo_dir="$repo_root/.claude/dev-workflow/review"
-# 同じ名前の観点を探す、ユーザーの層。導入していないリポジトリでは使われないので、user の層に作るとき以外は探さない
-used_user_dir="$user_dir"
+# このリポジトリで使われるユーザーの層（導入していなければ空）
+used_user_dir="$(dw_user_dir_for "$repo_root")"
+used_user_dir="${used_user_dir:+$used_user_dir/review}"
 case "$layer" in
   user)
     dir="$user_dir"
-    dw_is_set_up "$repo_root" \
+    # 同じ名前の観点は、作る層（ユーザーの層）を基準に探す
+    used_user_dir="$user_dir"
+    # リポジトリの外では、導入したかを問わないので警告しない
+    [ -z "$repo_root" ] || [ -n "$(dw_user_dir_for "$repo_root")" ] \
       || dw_warn "このリポジトリにはプラグインを導入していない（.claude/dev-workflow/config.json が無い）ので、ここではユーザーの層の観点は使われません。導入したリポジトリでは使われます"
     ;;
   repo)
     [ -n "$repo_dir" ] || dw_die "git のリポジトリの中ではないので、repo の層には置けません" 2
     dir="$repo_dir"
-    dw_is_set_up "$repo_root" || used_user_dir=""
     # 観点の追加はきっかけになったタスクの PR に含めるので、作業用のブランチの上かを知らせる（設計書 §7）
     # 設定を読めなくても観点は作る（作業用のブランチの上かは分からないものとして null にする）
     base="$("$BASH" "$DW_SCRIPTS_DIR/config.sh" .base_branch 2>/dev/null)" \

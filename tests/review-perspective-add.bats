@@ -277,3 +277,11 @@ add() {
   assert_failure 4
   assert_output --partial "$WORKFLOW_USER_DIR/review/mine.md"
 }
+
+@test "リポジトリの外で user の層に作るときは、導入していないという警告を出さない" {
+  cd "$TMP"
+  add "指示" --name mine --layer user --title "自分の観点"
+  assert_success
+  refute_output --partial "warn:"
+  [ -f "$WORKFLOW_USER_DIR/review/mine.md" ]
+}
