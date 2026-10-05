@@ -331,6 +331,8 @@ required_check() { jq -c '.checks[] | select(.name == "required-checks") | [.ok,
 }
 
 @test "必須のチェックを求めない設定は、個人の設定やユーザーの設定では効かない" {
+  # ユーザーの層も読む、導入したリポジトリで確かめる
+  mark_set_up
   fake_gh
   export FAKE_SCOPES="project" FAKE_RULES='[{"type": "pull_request", "parameters": {}}]'
   echo '{"require_status_checks": false}' >.claude/dev-workflow/config.local.json
@@ -349,6 +351,8 @@ required_check() { jq -c '.checks[] | select(.name == "required-checks") | [.ok,
 }
 
 @test "マージキューの確認は、個人の設定の base_branch ではなく、チームの設定のブランチを見る" {
+  # ユーザーの層も読む、導入したリポジトリで確かめる
+  mark_set_up
   fake_gh
   export FAKE_SCOPES="project" FAKE_RULES="$QUEUE_RULES" FAKE_RULES_LOG="$TMP/rules-path"
   echo '{"base_branch": "mine"}' >.claude/dev-workflow/config.local.json
@@ -426,4 +430,12 @@ QUEUE_RULES='[{"type": "required_status_checks", "parameters": {"strict_required
   run_script doctor.sh
   assert_success
   assert_equal "$(merge_group_check)" ""
+}
+
+@test "導入していないリポジトリでは、フックやユーザーの層が効かないことを警告する" {
+  run_script doctor.sh
+  jq -e '.checks[] | select(.name == "set-up") | (.ok == false and .level == "warn" and (.detail | contains("/dev-workflow:repo-setup")))' <<<"$output" >/dev/null || fail "$output"
+  mark_set_up
+  run_script doctor.sh
+  jq -e '.checks[] | select(.name == "set-up") | .ok' <<<"$output" >/dev/null || fail "$output"
 }

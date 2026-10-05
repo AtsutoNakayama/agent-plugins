@@ -5,6 +5,12 @@ load test_helper
 
 HOOKS="$BATS_TEST_DIRNAME/../plugins/dev-workflow/hooks"
 
+# フックは導入したリポジトリでだけ動くので、テストのリポジトリを導入したことにする
+setup() {
+  test_helper_setup
+  mark_set_up
+}
+
 # フックの入力（JSON）を作って渡す。cwd は既定で今のディレクトリ
 # 使い方: run_hook <コマンド> [cwd]
 run_hook() {
@@ -318,4 +324,34 @@ silent() {
 @test "git branch の名前の後ろに、作らないオプションがあれば確かめない" {
   silent "git branch bar -d" "git branch bar -D" "git branch 'f*' --list" "git branch bar -m baz" "git branch bar --contains main"
   warned bar "git branch bar main -f" "git branch bar -- main"
+}
+
+@test "導入していないリポジトリでは、main の上の commit・強制 push も、ブランチ名も止めない" {
+  rm .claude/dev-workflow/config.json
+  # ユーザーの層の設定も読まない（base_branch を develop にしても、develop の上の commit を止めない）
+  echo '{"base_branch": "develop"}' >"$WORKFLOW_USER_DIR/config.json"
+  silent "git commit -m x" "git push origin main" "git push --force" "git switch -c foo"
+  git switch -q -c develop
+  silent "git commit -m x"
+}
+
+@test "操作する先のリポジトリが導入したものかで判断する" {
+  git init -q -b main "$TMP/other"
+  silent "git -C $TMP/other commit -m x" "cd $TMP/other && git push --force"
+  denied "main の上ではコミットしません" "cd $TMP/other && cd $REPO && git commit -m x"
+  mark_set_up "$TMP/other"
+  denied "main の上ではコミットしません" "git -C $TMP/other commit -m x"
+}
+
+@test "ワークツリーにチームの設定が無くても、メインのワークツリーにあれば守る" {
+  # 初期設定をコミットする前に作ったワークツリーには、チームの設定が無い
+  git worktree add -q "$TMP/wt" -b feat/1-x
+  [ ! -f "$TMP/wt/.claude/dev-workflow/config.json" ]
+  denied "強制 push" "cd $TMP/wt && git push --force"
+  denied "main へは push しません" "cd $TMP/wt && git push origin feat/1-x:main"
+}
+
+@test "操作する先のディレクトリが分からないときは、今までどおり調べる" {
+  rm .claude/dev-workflow/config.json
+  denied "強制 push" "cd - && git push --force"
 }

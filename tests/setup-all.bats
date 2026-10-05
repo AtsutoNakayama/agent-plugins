@@ -311,6 +311,8 @@ SH
 }
 
 @test "個人の設定の pr.template があっても、リポジトリに無ければテンプレートを作る" {
+  # ユーザーの層も読む、導入したリポジトリで確かめる
+  mark_set_up
   setup_fake_plugin
   echo '{"pr": {"template": "mine.md"}}' >"$WORKFLOW_USER_DIR/config.json"
   echo '{"pr": {"template": "local.md"}}' >.claude/dev-workflow/config.local.json

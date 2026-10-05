@@ -11,6 +11,7 @@
 # 標準入力でフックの入力（JSON）を受け取る。止めるときは理由を標準エラーに1行で出し、終了コード 2 で終わる
 # （Claude Code はコマンドを実行せず、理由を Claude に伝える）。警告するときは、フックの出力の JSON を
 # 標準出力に出し、終了コード 0 で終わる。
+# 操作の対象のリポジトリ（cd・git -C で移った先）が、導入していないリポジトリ（dw_is_set_up）なら何もしない（設計書 §1）。
 # コマンドの文字列を簡易に解析するだけなので、sh -c や git の別名（alias）を通すと見逃す。
 # 最後の守りは GitHub のルールセット（setup-repo.sh）。
 set -euo pipefail
@@ -286,6 +287,15 @@ check_command() {
   [ $# -gt 0 ] || return 0
   sub="$1"
   shift
+
+  case "$sub" in
+    commit | push | switch | checkout | branch | worktree)
+      # 導入していないリポジトリでは何もしない。対象のディレクトリが分からないとき（cd - の後など）は、
+      # 守りを外さないよう、今までどおり調べる
+      [ -z "$git_dir" ] || dw_is_set_up "$(git_at rev-parse --show-toplevel || true)" || return 0
+      ;;
+    *) return 0 ;;
+  esac
 
   case "$sub" in
     commit)

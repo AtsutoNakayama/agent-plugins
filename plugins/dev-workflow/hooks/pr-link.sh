@@ -13,6 +13,7 @@
 #   - 同じリンクも、連続で毎回出す（常に見えるようにするため）
 #   - Issue の番号が分からないブランチ（main など）では、ブランチから導くリンクは出さない（作った PR・Issue は出す）
 #   - gh が無い・失敗する・解析できないときは、何も出さずに通す。フックは作業を止めない（いつも終了コード 0）
+#   - 導入していないリポジトリ（dw_is_set_up）では、何も出さない（設計書 §1）
 #
 # 出力は、使用者に見せる systemMessage と、Claude に渡す additionalContext（返答でも触れてもらう）の JSON。
 # コマンドの文字列を簡易に判定するだけなので、sh -c や別名を通すと見逃し、引用符の中の文字にも反応する。
@@ -154,6 +155,9 @@ printf '%s' "$cmd" | sed -E "s/\"[^\"]*\"//g; s/'[^']*'//g" | grep -Eq '(^|[[:sp
 cwd="$(jq -r '.cwd // empty' <<<"$input")"
 dir="$( (cd "${cwd:-.}" && pwd -P) 2>/dev/null || true)"
 [ -n "$dir" ] || exit 0
+# 導入していないリポジトリでは何もしない
+root="$(git -C "$dir" rev-parse --show-toplevel 2>/dev/null || true)"
+dw_is_set_up "$root" || exit 0
 
 # コマンドの標準出力（標準エラーは見ない。警告などが混ざるので）
 stdout="$(jq -r '.tool_response | if type == "object" then (.stdout // "") else (. // "" | tostring) end' <<<"$input" 2>/dev/null || true)"
@@ -181,12 +185,8 @@ if $created; then
 fi
 
 # --- ブランチから導くリンク ----------------------------------------------------------
-root="$(git -C "$dir" rev-parse --show-toplevel 2>/dev/null || true)"
 branch="$(git -C "$dir" symbolic-ref --short -q HEAD 2>/dev/null || true)"
-config=""
-if [ -n "$root" ]; then
-  config="$( (cd "$dir" && WORKFLOW_REPO_ROOT="$root" "$BASH" "$DW_SCRIPTS_DIR/config.sh") 2>/dev/null || true)"
-fi
+config="$( (cd "$dir" && WORKFLOW_REPO_ROOT="$root" "$BASH" "$DW_SCRIPTS_DIR/config.sh") 2>/dev/null || true)"
 # ブランチ名を branch.pattern に当てて、Issue の番号を取り出す。使い方: issue_of <ブランチ名>
 issue_of() {
   [ -n "$config" ] || return 0

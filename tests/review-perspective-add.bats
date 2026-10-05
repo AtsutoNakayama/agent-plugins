@@ -12,6 +12,7 @@ add() {
 }
 
 @test "user の層に観点ファイルを作り、review-perspectives.sh で使われる" {
+  mark_set_up
   add $'差分の中の TODO を探す。\n\n見つからなければ [] を返す。' --name todo-left --layer user --title "TODO が残っていないか"
   assert_success
   assert_equal "$(jq -c '[.name, .layer, .path, .overrides, .shadowed_by]' <<<"$output")" \
@@ -73,6 +74,7 @@ add() {
 }
 
 @test "user の層に作ると、branch と work_branch は null になる" {
+  mark_set_up
   add "指示" --name mine-only --layer user --title "観点"
   assert_success
   assert_equal "$(jq -c '[.branch, .work_branch]' <<<"$output")" '[null,null]'
@@ -95,6 +97,7 @@ add() {
 }
 
 @test "--override で下位の層の観点を置き換え、上位の層にあれば shadowed_by に出す" {
+  mark_set_up
   mkdir -p "$REPO/.claude/dev-workflow/review"
   printf -- '---\ntitle: リポジトリの版\n---\n\n指示\n' >"$REPO/.claude/dev-workflow/review/docs-sync.md"
   add "指示" --name docs-sync --layer user --title "自分の版" --override
@@ -246,4 +249,31 @@ add() {
   assert_failure 64
   assert_output --partial "--builtin code-review は --name code-review のときだけ使えます"
   [ ! -e "$WORKFLOW_USER_DIR/review" ] || fail "何か作っています"
+}
+
+@test "導入していないリポジトリで user の層に作ると、ここでは使われないことを警告する" {
+  add "指示" --name mine --layer user --title "自分の観点"
+  assert_success
+  assert_output --partial "warn: このリポジトリにはプラグインを導入していない"
+  [ -f "$WORKFLOW_USER_DIR/review/mine.md" ]
+  mark_set_up
+  add "指示" --name mine2 --layer user --title "自分の観点"
+  assert_success
+  refute_output --partial "warn:"
+}
+
+@test "導入していないリポジトリの repo の層に作るときは、使われないユーザーの層の同じ名前の観点を数えない" {
+  mkdir -p "$WORKFLOW_USER_DIR/review"
+  printf -- '---\ntitle: 自分の版\n---\n\n指示\n' >"$WORKFLOW_USER_DIR/review/mine.md"
+  add "指示" --name mine --layer repo --title "リポジトリの版"
+  assert_success
+  assert_equal "$(jq -c '[.overrides, .shadowed_by]' <<<"$output")" '[[],[]]'
+  # 導入したリポジトリでは、置き換えるか確かめる
+  mark_set_up
+  add "指示" --name mine --layer repo --title "リポジトリの版" 2>&1
+  assert_failure 3
+  rm "$REPO/.claude/dev-workflow/review/mine.md"
+  add "指示" --name mine --layer repo --title "リポジトリの版"
+  assert_failure 4
+  assert_output --partial "$WORKFLOW_USER_DIR/review/mine.md"
 }

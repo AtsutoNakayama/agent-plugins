@@ -85,6 +85,12 @@ old_location() {
 }
 repo_root="$(dw_repo_root || true)"
 if [ -n "$repo_root" ]; then
+  # プラグインは導入したリポジトリにだけ効く（設計書 §1）。導入していないと、使う人が気づかないまま守りが外れるので知らせる
+  if dw_is_set_up "$repo_root"; then
+    check set-up true warn "導入済み（.claude/dev-workflow/config.json があります）"
+  else
+    check set-up false warn "このリポジトリにはプラグインを導入していません（.claude/dev-workflow/config.json がありません）。フック（main を守る・タスクの進め方を渡す・リンクを出す）は動かず、~/.claude/dev-workflow/ の設定・文章のガイド・レビューの観点も使いません。/dev-workflow:repo-setup で導入してください"
+  fi
   old_location "$repo_root/.claude/workflow.json" "$repo_root/.claude/dev-workflow/config.json"
   old_location "$repo_root/.claude/workflow" "$repo_root/.claude/dev-workflow/"
   old_location "$repo_root/.claude/review" "$repo_root/.claude/dev-workflow/review/"

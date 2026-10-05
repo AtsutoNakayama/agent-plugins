@@ -6,14 +6,14 @@
 #
 # 層（下ほど優先。上位の層が決めていない項目には下位の値が効く）:
 #   5. プラグインの既定             defaults/workflow.json
-#   4. ユーザーの好み               ~/.claude/dev-workflow/config.json
+#   4. ユーザーの好み               ~/.claude/dev-workflow/config.json（導入したリポジトリの中でだけ読む）
 #   3. 既にある規約                 PR テンプレートなどを自動で検出
 #   2. チームの規約                 <repo>/.claude/dev-workflow/config.json
 #   1. 個人がそのリポジトリで上書き  <repo>/.claude/dev-workflow/config.local.json
 #
 # 文章のガイド（*.md）は guides.<名前> にパスの配列として入る（優先度の低い順）。
-# review.model だけは、導入したリポジトリだけに効かせるため、review-perspectives.sh がこの合わせ方とは別に
-# リポジトリの層（2 と 1）からだけ読む（層4 の値は使わない。設計書 §7）。
+# 導入したリポジトリ（チームの設定 2 があるリポジトリ。dw_is_set_up）でなければ、ユーザーの層（層4 と
+# ~/.claude/dev-workflow/*.md）は読まない（設計書 §1）。
 set -euo pipefail
 
 # shellcheck source=lib/common.sh
@@ -22,7 +22,11 @@ dw_require jq
 
 filter="${1:-.}"
 repo_root="$(dw_repo_root || true)"
-user_dir="$(dw_user_dir)"
+# 導入していないリポジトリでは、ユーザーの層を読まない（空にして飛ばす）
+user_dir=""
+if dw_is_set_up "$repo_root"; then
+  user_dir="$(dw_user_dir)"
+fi
 
 layers=()
 sources=()
@@ -68,7 +72,7 @@ detect_existing() {
 }
 
 add_layer "$DW_PLUGIN_ROOT/defaults/workflow.json"
-add_layer "$user_dir/config.json"
+[ -z "$user_dir" ] || add_layer "$user_dir/config.json"
 if [ -n "$repo_root" ]; then
   layers+=("$(detect_existing)")
   add_layer "$repo_root/.claude/dev-workflow/config.json"

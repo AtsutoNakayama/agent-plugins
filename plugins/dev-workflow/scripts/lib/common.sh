@@ -47,6 +47,20 @@ dw_main_root() {
   (cd "$(dirname "$common")" && pwd -P)
 }
 
+# このプラグインを導入したリポジトリ（チームの設定 .claude/dev-workflow/config.json があるリポジトリ）なら成功する。
+# プラグインが効く範囲を、Claude Code で有効にした範囲（ユーザー単位なら全リポジトリ）ではなく、導入したリポジトリに限るため、
+# 導入していないリポジトリでは、フックは何もせず、ユーザーの層（~/.claude/dev-workflow/）も読まない（設計書 §1）。
+# ワークツリーに無くても、メインのワークツリーにあれば導入したとみなす（初期設定をまだコミットしていないときや、
+# 初期設定より前に作ったブランチのワークツリーで、守りが外れないようにする）
+# 使い方: dw_is_set_up <リポジトリのルート（空なら導入していない）>
+dw_is_set_up() {
+  local main
+  [ -n "${1:-}" ] || return 1
+  [ -f "$1/.claude/dev-workflow/config.json" ] && return 0
+  main="$(dw_main_root "$1" || true)"
+  [ -n "$main" ] && [ -f "$main/.claude/dev-workflow/config.json" ]
+}
+
 # ユーザーごとの設定の置き場所。
 dw_user_dir() {
   printf '%s\n' "${WORKFLOW_USER_DIR:-$HOME/.claude/dev-workflow}"

@@ -246,6 +246,8 @@ assert_no_calls() {
 }
 
 @test "個人の設定（config.local.json・ユーザーの設定）の base_branch は使わない" {
+  # ユーザーの層も読む、導入したリポジトリで確かめる
+  mark_set_up
   setup_fake_gh
   echo '{"base_branch": "mine"}' >.claude/dev-workflow/config.local.json
   echo '{"base_branch": "user"}' >"$WORKFLOW_USER_DIR/config.json"
