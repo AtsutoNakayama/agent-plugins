@@ -76,8 +76,8 @@ if [ -n "$value" ]; then
   esac
   file="$(jq -n --arg f "$target" '$f')"
   # review がオブジェクトでないと書けないので、dry-run（setup-all.sh の確認）のときから止める
+  # （JSON として読めるかは、dw_review_model_layers が両方の層で確かめ済み）
   if [ -f "$target" ]; then
-    dw_check_json "$target"
     jq -e '(.review | type) == "object" or .review == null' "$target" >/dev/null \
       || dw_die "${target} の review がオブジェクトではないので、review.model を書けません" 2
   fi
@@ -89,14 +89,9 @@ if [ -n "$value" ]; then
     label="$(if [ "$value" = null ]; then echo "null（セッションと同じモデル）"; else jq -r . <<<"$value"; fi)"
     actions="$(jq -c --arg a "$target の review.model を ${label} にする" '. + [$a]' <<<"$actions")"
     if ! $dry_run; then
-      mkdir -p "$(dirname "$target")"
-      body='{}'
-      [ -f "$target" ] && body="$(cat "$target")"
-      if ! jq --argjson v "$value" '.review = ((.review // {}) + {model: $v})' <<<"$body" >"$target.tmp"; then
-        rm -f "$target.tmp"
-        dw_die "${target} に review.model を書けませんでした" 2
-      fi
-      mv "$target.tmp" "$target"
+      # $v は jq の変数で、bash に展開させない
+      # shellcheck disable=SC2016
+      dw_write_config "$target" --argjson v "$value" '.review = ((.review // {}) + {model: $v})'
     fi
   fi
   layers="$(jq -c --arg n "$scope" --arg f "$target" --argjson v "$value" \

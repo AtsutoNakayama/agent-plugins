@@ -215,6 +215,24 @@ dw_local_config_file() {
   printf '%s\n' "$f"
 }
 
+# 設定ファイルに jq の式を当てて書き直す。ファイルが無ければ {} から作り、JSON のオブジェクトとして読めなければ止まる。
+# 一時ファイルに書いてから置き換え、jq が失敗したら一時ファイルを消して止まる（書きかけのファイルを残さない）
+# 使い方: dw_write_config <設定ファイル> <jq の引数（--arg などと式）...>
+dw_write_config() {
+  local f="$1" body='{}'
+  shift
+  mkdir -p "$(dirname "$f")"
+  if [ -f "$f" ]; then
+    dw_check_json "$f"
+    body="$(cat "$f")"
+  fi
+  if ! jq "$@" <<<"$body" >"$f.tmp"; then
+    rm -f "$f.tmp"
+    dw_die "${f} を書き直せませんでした" 2
+  fi
+  mv "$f.tmp" "$f"
+}
+
 # 個人の上書き（dw_local_config_file のファイル）がコミットされてしまわないかを、次のどれかで出力する。
 #   ignored      git に無視されていて、コミットもされていない
 #   not_ignored  git に無視されていない（.gitignore に足す必要がある）
