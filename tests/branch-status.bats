@@ -347,3 +347,18 @@ queue_removed_fixture() {
   run_status
   assert_equal "$(jq -c .pushed_conflicts <<<"$output")" false
 }
+
+@test "次にすること（plan）を、branch-plan.sh の判断で出す" {
+  setup_branch
+  advance_main 1
+  run_status
+  assert_success
+  # PR が無いので、キューを使わないものとして、遅れていれば取り込む
+  assert_equal "$(jq -c .plan <<<"$output")" '{"action":"merge","reason":"behind","queue":null,"fallback":null}'
+  echo '[{"number": 5, "url": "https://github.com/me/demo/pull/5", "mergeStateStatus": "BEHIND", "isCrossRepository": false}]' >"$FIX/pr-list.json"
+  echo '{"data": {"resource": {"isMergeQueueEnabled": true, "mergeQueueEntry": {"state": "QUEUED", "position": 3}}}}' >"$FIX/PrQueue.json"
+  run_status
+  assert_success
+  # キューを使い、main と衝突しないので取り込まず、並んでいることを案内する
+  assert_equal "$(jq -c .plan <<<"$output")" '{"action":"none","reason":"no_conflict","queue":"queued","fallback":null}'
+}

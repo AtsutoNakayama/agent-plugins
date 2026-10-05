@@ -33,6 +33,8 @@
 #                         すぐにキューから外れる。removed は、PR がキューから外れたままのときの、外れた理由と時刻（{reason, at}。
 #                         reason は GitHub の値で、衝突なら merge_conflict）。外れた後にキューへ入れ直していれば null。
 #                         外れた後に push したかは見ない（理由に対応済みかは分からない）。取得できなければ merge_queue は null になる
+#   plan                  branch-update が次にすること（action・reason・queue・fallback）。上の値から branch-plan.sh が決める。
+#                         項目の意味と判断の表は、branch-plan.sh --help を参照
 set -euo pipefail
 
 # shellcheck source=lib/common.sh
@@ -141,7 +143,11 @@ if [ "$pr" != null ]; then
   pr="$(jq -c --argjson q "$queue" '. + {merge_queue: $q}' <<<"$pr")"
 fi
 
-jq -n --arg branch "$branch" --arg base "$base" --argjson behind "$behind" --argjson ahead "$ahead" \
+status="$(jq -n --arg branch "$branch" --arg base "$base" --argjson behind "$behind" --argjson ahead "$ahead" \
   --argjson conflicts "$conflicts" --argjson dirty "$dirty" --argjson unpushed "$unpushed" --argjson unpulled "$unpulled" --argjson pushed_behind "$pushed_behind" --argjson pushed_conflicts "$pushed_conflicts" --argjson pr "$pr" \
   '{branch: $branch, base: $base, behind: $behind, ahead: $ahead, up_to_date: ($behind == 0), conflicts: $conflicts, dirty: $dirty,
-    unpushed: $unpushed, unpulled: $unpulled, pushed_behind: $pushed_behind, pushed_conflicts: $pushed_conflicts, pr: $pr}'
+    unpushed: $unpushed, unpulled: $unpulled, pushed_behind: $pushed_behind, pushed_conflicts: $pushed_conflicts, pr: $pr}')"
+
+# 次にすることの判断は、テストで組み合わせを確かめられるよう、入力の値だけで決める branch-plan.sh に任せる
+plan="$("$BASH" "$DW_SCRIPTS_DIR/branch-plan.sh" <<<"$status")"
+jq --argjson plan "$plan" '. + {plan: $plan}' <<<"$status"
