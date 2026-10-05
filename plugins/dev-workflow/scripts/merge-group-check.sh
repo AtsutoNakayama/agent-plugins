@@ -106,7 +106,8 @@ workflows="$(jq -c '[if type == "array" then .[] else empty end
 parse_workflow() {
   awk '
     # コメント（行頭か空白の後の #）を消す。引用符の中の #（name: "Build #1" など）は残す。
-    # 引用符は、値の始まり（空白・[・, の後）に来たものだけを数える（Bob\047s のような語の中のものは除く）
+    # 引用符は、値の始まり（空白・[・, の後）に来たものだけを数える（Bob\047s のような語の中のものは除く）。
+    # 引用符の中のエスケープ（単一引用符の中の \047\047、二重引用符の中の \ の次の文字）は、引用符の終わりとみなさない
     function strip(s,   i, c, q, prev) {
       sub(/\r$/, "", s)
       q = ""; prev = " "
@@ -115,8 +116,11 @@ parse_workflow() {
         if (q == "") {
           if (c == "#" && (prev == " " || prev == "\t")) return substr(s, 1, i - 1)
           if ((c == "\"" || c == "\047") && (prev == " " || prev == "\t" || prev == "[" || prev == ",")) q = c
+        } else if (q == "\"" && c == "\\") {
+          i++
         } else if (c == q) {
-          q = ""
+          if (q == "\047" && substr(s, i + 1, 1) == "\047") i++
+          else q = ""
         }
         prev = c
       }
@@ -124,7 +128,14 @@ parse_workflow() {
     }
     function unquote(s) {
       sub(/^[ \t]+/, "", s); sub(/[ \t]+$/, "", s)
-      if (s ~ /^".*"$/ || s ~ /^\047.*\047$/) s = substr(s, 2, length(s) - 2)
+      if (s ~ /^".*"$/) {
+        s = substr(s, 2, length(s) - 2)
+        # \" と \\ を元の文字に戻す。\001 は \\ をいったん置いておく印
+        gsub(/\\\\/, "\001", s); gsub(/\\"/, "\"", s); gsub(/\001/, "\\", s)
+      } else if (s ~ /^\047.*\047$/) {
+        s = substr(s, 2, length(s) - 2)
+        gsub(/\047\047/, "\047", s)
+      }
       return s
     }
     # GitHub はジョブのチェックを、name: があればその値、無ければ ID で名付ける。式を含む name: は比べないので出さない

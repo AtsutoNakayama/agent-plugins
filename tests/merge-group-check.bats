@@ -216,6 +216,27 @@ YML
   assert_equal "$(jq -c '[[.not_running[].check], .unknown]' <<<"$output")" '[["Bob'"'"'s build","Build #1","Test #2"],[]]'
 }
 
+@test "引用符の中のエスケープを読み、元の文字に戻して比べる" {
+  setup_fake_gh
+  workflow ci.yml <<'YML'
+on: pull_request
+jobs:
+  a:
+    name: 'It''s #1' # コメント
+    runs-on: ubuntu-latest
+  b:
+    name: "Say \"hi #2\"" # コメント
+    runs-on: ubuntu-latest
+  c:
+    name: "back\\slash"
+    runs-on: ubuntu-latest
+YML
+  run_check --branch main --check "It's #1" --check 'Say "hi #2"' --check 'back\slash'
+  assert_success
+  assert_equal "$(jq -c '.unknown' <<<"$output")" '[]'
+  assert_equal "$(jq -r '.not_running | length' <<<"$output")" 3
+}
+
 @test "同じ名前のジョブが複数のワークフローにあれば、どれかが merge_group で動けば動くとみなす" {
   setup_fake_gh
   printf 'on: pull_request\njobs:\n  lint:\n    runs-on: x\n' | workflow a.yml
