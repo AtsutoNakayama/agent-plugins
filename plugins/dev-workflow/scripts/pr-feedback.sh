@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # PR の状態（CI・レビュー・マージできるか）と、付いた指摘・質問（未解決のスレッド・レビュー本文・PR のコメント）を、
-# 投稿者ごとにまとめて JSON で出力する。何も変えない（読むだけ）。pr-respond スキルが使う。
+# 投稿者ごとにまとめて JSON で出力する。何も変えない（読むだけ）。pr-respond スキルと、それが呼ぶ担当の skill
+# （このリポジトリの coderabbit-respond など）が使う。出力の形を変えるときは、担当の skill の手順も確かめる。
 #
 # 使い方: pr-feedback.sh [--pr N]
 #   --pr N   PR の番号（#N でもよい）。省略すると今のブランチの PR
@@ -19,9 +20,11 @@
 #   counts     threads・reviews・comments の合計
 #
 # 決まり:
-#   - PR の作者のレビュー・コメントは feedback に数えない（自分の返信やメモなので。コメントは own_comments に出す）。スレッドは、PR の作者以外で最後に書いた人
-#     （返事を待っている人）のものとし、PR の作者のコメントだけのスレッドは数えない。bot のスレッドに人が質問を書いたら、
-#     その人の分になる（bot の担当の skill は人のコメントを扱わないので、bot の分のままだと誰も答えない）
+#   - PR の作者のレビュー・コメントは feedback に数えない（自分の返信やメモなので。コメントは own_comments に出す）。
+#     PR の作者のコメントだけのスレッドは数えない
+#   - スレッドは、PR の作者以外の書き手に、担当の skill が無い人が1人でもいれば、その中で最後に書いた人の分にする
+#     （書いた順番によらない。bot のスレッドに人が質問を書いたとき、bot の担当の skill は人のコメントを扱わないので、
+#     bot の分にすると誰も答えない）。作者以外の書き手がすべて担当のある投稿者なら、その中で最後に書いた人の分にする
 #   - 投稿者と handlers のキーは、大文字と小文字、末尾の [bot] を区別せずに照らす（gh は coderabbitai[bot] を coderabbitai と返す）
 #   - スレッドの resolved の状態は gh にも REST にも無いので、そこだけ GraphQL で読む（設計書 §10）。
 #     1つのスレッドのコメントは先頭の 100 件まで読む
@@ -122,7 +125,8 @@ jq -n --argjson v "$view" --argjson threads "$threads" --argjson handlers "$hand
   | [$threads[]
       | {path, line, outdated: .isOutdated,
          comments: [.comments.nodes[] | {author: login, body, created_at: .createdAt, url, id: .databaseId}]}
-      | ([.comments[] | select(.author | norm != $me)] | last) as $by
+      | [.comments[] | select(.author | norm != $me)] as $others
+      | (([$others[] | select($h[.author | norm] == null)] | last) // ($others | last)) as $by
       | select($by != null)
       | {author: $by.author, item: {id: .comments[0].id, path, line, outdated, url: .comments[0].url,
           comments: [.comments[] | del(.id)], last_by_pr_author: (.comments[-1].author | norm == $me)}}] as $t

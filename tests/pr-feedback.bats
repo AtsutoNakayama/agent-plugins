@@ -149,19 +149,32 @@ out_of() { jq -c "$1" <<<"$output"; }
   assert_equal "$(out_of .counts.threads)" 2
 }
 
-@test "スレッドは、PR の作者以外で最後に書いた人（返事を待っている人）のものにする" {
+@test "担当の skill が無い書き手（人）がいるスレッドは、順番によらず、その人の分にする" {
   setup_fake_gh
   echo '{"pr_respond": {"handlers": {"coderabbitai[bot]": "coderabbit-respond"}}}' >"$REPO/.claude/dev-workflow/config.json"
   # bot のスレッドに人が質問を書いたら、担当の skill（人のコメントを扱わない）ではなく、その人の分として汎用の手順で扱う
   thread false '[["coderabbitai", "指摘"], ["alice", "この指摘は本当ですか"]]'
   thread false '[["coderabbitai", "指摘"], ["me", "直しました"], ["alice", "直し方に質問です"]]'
-  # 人の後に bot が返したら、bot の分に戻る
+  # 人の後に bot が返しても、人の分のまま（bot の分に戻すと、人の質問を誰も扱わない）
   thread false '[["coderabbitai", "指摘"], ["alice", "どう直す？"], ["coderabbitai", "こう直します"]]'
+  # 人が2人いれば、その中で最後に書いた人の分
+  thread false '[["alice", "質問"], ["bob", "補足"], ["coderabbitai", "要約"]]'
+  # PR の作者と bot だけのスレッドは、bot の分（担当の skill に任せる）
+  thread false '[["coderabbitai", "指摘"], ["me", "@coderabbitai 直しました"]]'
   write_threads
   run_script pr-feedback.sh
   assert_success
   assert_equal "$(out_of '[.feedback[] | {author, handler, n: (.threads | length)}]')" \
-    '[{"author":"alice","handler":null,"n":2},{"author":"coderabbitai","handler":"coderabbit-respond","n":1}]'
+    '[{"author":"alice","handler":null,"n":3},{"author":"bob","handler":null,"n":1},{"author":"coderabbitai","handler":"coderabbit-respond","n":1}]'
+}
+
+@test "担当の設定が無ければ、スレッドは PR の作者以外で最後に書いた人の分にする" {
+  setup_fake_gh
+  thread false '[["alice", "指摘"], ["bob", "補足"], ["me", "直しました"]]'
+  write_threads
+  run_script pr-feedback.sh
+  assert_success
+  assert_equal "$(out_of '[.feedback[] | [.author, (.threads | length)]]')" '[["bob",1]]'
 }
 
 @test "担当の skill を、大文字と小文字・末尾の [bot] を区別せずに投稿者へ対応させる" {
