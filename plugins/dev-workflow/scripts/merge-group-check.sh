@@ -15,7 +15,8 @@
 #   キューで動く GitHub 上のものを見る）。YAML のパーサーは前提にしないので、次の簡易な読み方をする。
 #   - merge_group で動くか：トップレベルの on: の範囲（on: の行から次のトップレベルのキーまで）に、
 #     merge_group という語があるか
-#   - チェックとジョブの対応：チェックの名前を、jobs: の下のジョブの ID か name: と突き合わせる。
+#   - チェックとジョブの対応：チェックの名前を、GitHub がジョブのチェックに付ける名前（name: があればその値、
+#     無ければジョブの ID）と突き合わせる。
 #     matrix の「名前 (値)」は括弧の前でも、再利用するワークフローの「呼ぶ側 / 呼ばれる側」は / の前でも比べる。
 #     ${{ }} の式を含む name: とは比べない（式を何にでも当たる形にすると、どこまで広く当たるかを見分けきれず、
 #     関係の無いチェックに当てて、誤って not_running にしてしまうため。そのチェックは unknown になる）
@@ -100,8 +101,8 @@ workflows="$(jq -c '[if type == "array" then .[] else empty end
   | select(.type == "file" and (.name | test("\\.ya?ml$"))) | .path]' <<<"$listing" 2>/dev/null)" \
   || dw_die "${branch} のワークフローの一覧を JSON として読めません"
 
-# ワークフローを読み、merge_group で動くか（「on <0|1>」の1行）と、ジョブ（「job <ID> <name>」。
-# 項目は \037 で区切る（タブでは、read が空の項目を詰めてしまう）。name が無いか ${{ }} の式を含めば空）を出力する。インデントは空白だけとみなす（YAML はタブを許さない）
+# ワークフローを読み、merge_group で動くか（「on <0|1>」の1行）と、ジョブのチェックの名前（「job <名前>」。name: があれば
+# その値、無ければ ID。${{ }} の式を含む name: のジョブは出さない）を出力する。項目は \037 で区切る。インデントは空白だけとみなす（YAML はタブを許さない）
 parse_workflow() {
   awk '
     function strip(s) {
@@ -115,12 +116,13 @@ parse_workflow() {
       if (s ~ /^".*"$/ || s ~ /^\047.*\047$/) s = substr(s, 2, length(s) - 2)
       return s
     }
+    # GitHub はジョブのチェックを、name: があればその値、無ければ ID で名付ける。式を含む name: は比べないので出さない
     function flush() {
       if (id != "") {
-        if (name ~ /\$\{\{/) name = ""
-        printf "job\037%s\037%s\n", id, name
+        label = hasname ? name : id
+        if (label != "" && label !~ /\$\{\{/) printf "job\037%s\n", label
       }
-      id = ""; name = ""; childind = -1
+      id = ""; name = ""; hasname = 0; childind = -1
     }
     BEGIN { section = ""; mg = 0; jobind = -1; childind = -1 }
     {
@@ -145,7 +147,7 @@ parse_workflow() {
       } else if (ind > jobind && id != "") {
         if (childind < 0) childind = ind
         if (ind == childind && s ~ /^ *name[ \t]*:/) {
-          v = s; sub(/^ *name[ \t]*:/, "", v); name = unquote(v)
+          v = s; sub(/^ *name[ \t]*:/, "", v); name = unquote(v); hasname = 1
         }
       }
     }
@@ -158,11 +160,11 @@ candidates() {
   printf '%s\n' "$1" "${1% (*}" "${1%% / *}"
 }
 
-# 使い方: job_matches <チェックの名前> <ジョブの ID> <name>
+# 使い方: job_matches <チェックの名前> <ジョブのチェックの名前>
 job_matches() {
   local c
   while IFS= read -r c; do
-    if [ "$c" = "$2" ] || { [ -n "$3" ] && [ "$c" = "$3" ]; }; then
+    if [ "$c" = "$2" ]; then
       return 0
     fi
   done <<EOF
@@ -182,9 +184,9 @@ while IFS= read -r path; do
   parsed="$(parse_workflow "$tmp/workflow")"
   mg="$(printf '%s\n' "$parsed" | awk -F "$sep" '$1 == "on" { print $2 }')"
   while IFS= read -r check; do
-    while IFS="$sep" read -r kind id name; do
+    while IFS="$sep" read -r kind label; do
       [ "$kind" = job ] || continue
-      if job_matches "$check" "$id" "$name"; then
+      if job_matches "$check" "$label"; then
         result="$(jq -c --arg c "$check" --arg p "$path" --argjson mg "$mg" \
           '.[$c].matched += [$p] | .[$c].matched |= unique | .[$c].running = (.[$c].running or $mg == 1)' <<<"$result")"
         break

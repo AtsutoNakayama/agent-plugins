@@ -152,9 +152,9 @@ YML
     --check "call / inner" --check build --check "codecov/patch"
   assert_success
   assert_equal "$(jq -c '[.not_running[].check]' <<<"$output")" \
-    '["Build app","build","call / inner","test (macos-latest)"]'
-  # ${{ }} の式を含む name: とは比べない
-  assert_equal "$(jq -c .unknown <<<"$output")" '["E2E (firefox)","codecov/patch"]'
+    '["Build app","call / inner","test (macos-latest)"]'
+  # ${{ }} の式を含む name: とは比べない。name: があるジョブ（build）は ID では当てない
+  assert_equal "$(jq -c .unknown <<<"$output")" '["E2E (firefox)","build","codecov/patch"]'
 }
 
 @test "式を含む name: のジョブは、関係の無いチェックにも、それらしいチェックにも当てない" {
@@ -175,6 +175,25 @@ YML
   run_check --branch main --check "CodeRabbit" --check "レビュー・CodeRabbit" --check "テスト (linux)"
   assert_success
   assert_equal "$(jq -c '[.not_running, .unknown]' <<<"$output")" '[[],["CodeRabbit","テスト (linux)","レビュー・CodeRabbit"]]'
+}
+
+@test "GitHub の名付けのきまりどおり、name: があるジョブは name だけと、無いジョブは ID と比べる" {
+  setup_fake_gh
+  workflow nightly.yml <<'YML'
+on: schedule
+jobs:
+  build:
+    name: ${{ matrix.target }}
+    runs-on: ubuntu-latest
+  lint:
+    name: Lint
+    runs-on: ubuntu-latest
+  test:
+    runs-on: ubuntu-latest
+YML
+  run_check --branch main --check build --check "build (x)" --check lint --check Lint --check test
+  assert_success
+  assert_equal "$(jq -c '[[.not_running[].check], .unknown]' <<<"$output")" '[["Lint","test"],["build","build (x)","lint"]]'
 }
 
 @test "同じ名前のジョブが複数のワークフローにあれば、どれかが merge_group で動けば動くとみなす" {
