@@ -128,10 +128,26 @@ labels_check() { jq -c '.checks[] | select(.name == "labels") | [.ok, .level, .d
   run_script doctor.sh
   assert_success
   assert_equal "$(jq -c '.checks[] | select(.name == "local-ignored") | [.ok, .level]' <<<"$output")" '[false,"warn"]'
-  assert_output --partial "個人の設定が git に無視されていません。.gitignore に .claude/dev-workflow/config.local.json を足してください"
+  assert_output --partial "個人の設定（.claude/dev-workflow/config.local.json）が git に無視されていません。.gitignore に足してください"
   # 移して .gitignore も直せば促さない
   mv .claude/workflow.local.json .claude/dev-workflow/config.local.json
   echo '.claude/dev-workflow/config.local.json' >.gitignore
+  run_script doctor.sh
+  assert_equal "$(jq '[.checks[] | select(.name == "local-ignored")] | length' <<<"$output")" 0
+}
+
+@test "コミット済みの個人の設定は、.gitignore に書いてあっても、追跡を外すよう促す" {
+  fake_gh
+  export FAKE_SCOPES="project"
+  echo '{}' >.claude/dev-workflow/config.local.json
+  git add .claude/dev-workflow/config.local.json
+  git -c user.name=t -c user.email=t@example.com commit -q -m local
+  # .gitignore に書いても、コミット済みのファイルは追跡が外れず、変更がコミットされ続ける
+  echo '.claude/dev-workflow/config.local.json' >.gitignore
+  run_script doctor.sh
+  assert_equal "$(jq -c '.checks[] | select(.name == "local-ignored") | [.ok, .level]' <<<"$output")" '[false,"warn"]'
+  assert_output --partial "がコミットされています。git rm --cached .claude/dev-workflow/config.local.json で追跡を外し"
+  git rm -q --cached .claude/dev-workflow/config.local.json
   run_script doctor.sh
   assert_equal "$(jq '[.checks[] | select(.name == "local-ignored")] | length' <<<"$output")" 0
 }

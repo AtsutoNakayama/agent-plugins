@@ -149,3 +149,13 @@ load test_helper
   assert_success
   assert_output "true"
 }
+
+@test "review.model の既定は null（セッションと同じモデル）で、上位の層で指定できる" {
+  run_script config.sh .review.model
+  assert_success
+  assert_output "null"
+  echo '{"review": {"model": "opus"}}' >.claude/dev-workflow/config.local.json
+  run_script config.sh .review.model
+  assert_success
+  assert_output "opus"
+}
