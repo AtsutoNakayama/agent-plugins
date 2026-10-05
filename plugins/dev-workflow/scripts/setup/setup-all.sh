@@ -39,6 +39,7 @@ need_value() {
 }
 
 labels_args=() project_args=() repo_args=() models_args=() dry_run=false
+review_model_given=false models_scope_given=false
 while [ $# -gt 0 ]; do
   case "$1" in
     --number | --title)
@@ -54,7 +55,13 @@ while [ $# -gt 0 ]; do
     --merge-queue | --no-merge-queue) repo_args+=("$1"); shift ;;
     --review-model | --models-scope)
       need_value "$@"
-      if [ "$1" = --models-scope ]; then models_args+=(--scope "$2"); else models_args+=("$1" "$2"); fi
+      if [ "$1" = --models-scope ]; then
+        models_args+=(--scope "$2")
+        models_scope_given=true
+      else
+        models_args+=("$1" "$2")
+        review_model_given=true
+      fi
       shift 2
       ;;
     --keep-defaults) labels_args+=("$1"); shift ;;
@@ -63,6 +70,11 @@ while [ $# -gt 0 ]; do
     *) dw_die "不明な引数です: $1" 64 ;;
   esac
 done
+
+# setup-models.sh には --scope として渡すので、その名前のエラーにならないよう、ここで確かめる
+if $models_scope_given && ! $review_model_given; then
+  dw_die "--models-scope は --review-model と一緒に使ってください" 64
+fi
 
 repo_root="$(dw_repo_root)" || dw_die "リポジトリの中で実行してください" 64
 cd "$repo_root"
@@ -175,6 +187,9 @@ if [ "$ignored" != "[]" ]; then
   dw_warn "git に無視されているのでコミットできません: $(jq -r 'join(", ")' <<<"$ignored")"
   next="$(jq -c --argjson f "$ignored" \
     '. + ["\($f | join("・")) が git に無視されているので、.gitignore で無視を外す（例：.claude/ を .claude/* に変えて、!.claude/dev-workflow/ と .claude/dev-workflow/config.local.json をこの順に足す）"]' <<<"$next")"
+fi
+if [ "$(jq -r .ignored <<<"$models")" = false ]; then
+  next="$(jq -c '. + [".claude/dev-workflow/config.local.json（個人の設定）が git に無視されていないので、.gitignore に足す"]' <<<"$next")"
 fi
 if [ "$(jq -r .workflows.auto_add <<<"$project")" = false ]; then
   next="$(jq -c --arg u "$(jq -r .workflows.url <<<"$project")" \

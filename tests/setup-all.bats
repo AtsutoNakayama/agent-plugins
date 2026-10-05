@@ -104,6 +104,23 @@ args_of() { grep "^$1" "$CALLS" | tail -n 1 | sed "s/^$1 \{0,1\}//"; }
   assert_equal "$(args_of setup-project)" "[--write-config]"
 }
 
+@test "--models-scope だけを付けると、その名前で使い方の誤り（64）にする" {
+  setup_fake_plugin
+  run_all --models-scope local
+  assert_failure 64
+  assert_output --partial "--models-scope は --review-model と一緒に使ってください"
+  assert_equal "$(wc -l <"$CALLS" | tr -d ' ')" 0
+}
+
+@test "個人の設定が git に無視されていなければ、.gitignore に足すよう案内する" {
+  setup_fake_plugin
+  echo '{"review": {"model": "opus"}, "file": "x", "changed": true, "ignored": false, "actions": []}' >"$FIX/setup-models.json"
+  run_all --review-model opus --models-scope local
+  assert_success
+  jq -e '.next_steps | any(test("config.local.json（個人の設定）が git に無視されていないので、.gitignore に足す"))' <<<"$json" >/dev/null \
+    || fail "next_steps に .gitignore の案内がありません: $json"
+}
+
 @test "--dry-run は4つすべてに渡し、テンプレートを作らない" {
   setup_fake_plugin
   run_all --dry-run

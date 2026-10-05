@@ -63,7 +63,7 @@ json_of() { printf '%s\n' "$1" | LC_ALL=C sed -n '/^{/,$p'; }
   run_script setup/setup-models.sh --review-model off --scope local
   assert_success
   assert_equal "$(jq -c . "$LOCAL")" '{"review":{"model":null}}'
-  assert_equal "$(jq -c '[.review.model, .review.decided, .changed]' <<<"$output")" '[null,true,true]'
+  assert_equal "$(json_of "$output" | jq -c '[.review.model, .review.decided, .changed]')" '[null,true,true]'
 }
 
 @test "既に同じ値なら書き直さない" {
@@ -126,4 +126,19 @@ json_of() { printf '%s\n' "$1" | LC_ALL=C sed -n '/^{/,$p'; }
   assert_equal "$(json_of "$output" | jq -r .review.model)" opus
   run_script config.sh .review.model
   assert_output opus
+}
+
+@test "local に書くとき、git に無視されていなければ警告し、ignored に出す" {
+  run_script setup/setup-models.sh --review-model opus --scope local
+  assert_success
+  assert_output --partial "が git に無視されていません。.gitignore に .claude/dev-workflow/config.local.json を足してください"
+  assert_equal "$(json_of "$output" | jq -c .ignored)" false
+  echo .claude/dev-workflow/config.local.json >.gitignore
+  run_script setup/setup-models.sh --review-model opus --scope local
+  assert_success
+  refute_output --partial "無視されていません"
+  assert_equal "$(jq -c .ignored <<<"$output")" true
+  # team に書くときは確かめない
+  run_script setup/setup-models.sh --review-model opus --scope team
+  assert_equal "$(jq -c .ignored <<<"$output")" null
 }
