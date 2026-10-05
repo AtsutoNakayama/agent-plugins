@@ -393,10 +393,10 @@ YML
   assert_success
   assert_equal "$(jq -c '[.not_running, .unknown]' <<<"$output")" '[[],["a","b","c","codecov","d"]]'
   assert_equal "$(jq -r .messages.unknown <<<"$output")" \
-    "必須のチェック codecov は、main のどのワークフローのジョブか分からないので、merge_group のイベントで動くか確かめられません。必須のチェック a、b、c、d は、ジョブ（または needs: で頼るジョブ）の if: の式を読み切れないので、merge_group のイベントで動くか確かめられません"
+    "必須のチェック codecov は、main のどのワークフローのジョブか分からないので、merge_group のイベントで動くか確かめられません。必須のチェック a、b、c、d は、ジョブ（または needs: で頼るジョブ）の if: から、merge_group のイベントで CI が動くかを判定できません"
 }
 
-@test "needs: でたどれるジョブの if: も確かめる（always() の門番のジョブでも、頼るジョブが除かれていれば動かない）" {
+@test "needs: でたどれるジョブの if: も確かめ、always() などの門番のジョブは、頼るジョブが除かれていれば unknown にする" {
   setup_fake_gh
   workflow ci.yml <<'YML'
 on: [pull_request, merge_group]
@@ -427,11 +427,26 @@ jobs:
   gate4:
     needs: lint
     runs-on: ubuntu-latest
+  gate5:
+    needs:
+    - lint
+    - test
+    runs-on: ubuntu-latest
+  gate6:
+    if: ${{ !cancelled() }}
+    needs: [lint]
+    runs-on: ubuntu-latest
+  gate7:
+    if: failure() || github.event_name == 'push'
+    needs: build
+    runs-on: ubuntu-latest
 YML
-  run_check --branch main --check gate --check gate2 --check gate3 --check gate4
+  run_check --branch main --check test --check gate --check gate2 --check gate3 --check gate4 --check gate5 \
+    --check gate6 --check gate7
   assert_success
+  # test・gate5 は暗黙の success() で、頼るジョブ（build）が飛ばされると飛ばされる。gate5 は needs: と同じ深さのリスト
   assert_equal "$(jq -c '[[.not_running[] | [.check, .reason]], .unknown]' <<<"$output")" \
-    '[[["gate","if"]],["gate2","gate3"]]'
+    '[[["gate5","if"],["test","if"]],["gate","gate2","gate3","gate7"]]'
 }
 
 @test "on: に merge_group が無いワークフローは、if: に関わらず on を直す理由にする" {

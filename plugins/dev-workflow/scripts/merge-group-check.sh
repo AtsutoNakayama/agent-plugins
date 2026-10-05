@@ -25,6 +25,9 @@
 #         （github.event.pull_request.draft == false などは、merge_group では値が無いので飛ばされる）
 #       動く：それ以外の項（always()・needs.<ID>.outputs.<名前> など）
 #     除く項が1つでもあればそのジョブは除かれ、無くて分からない項があれば分からないとする。
+#     needs: で頼るジョブが除かれていれば、そのジョブも飛ばされるので除かれるとする。ただし、自分の if: に
+#     状態の関数（always()・cancelled()・failure()）があれば、頼るジョブが飛ばされても動くので、
+#     CI を動かしたかは結果の確かめ方次第になり、分からないとする。
 #     見つからないジョブを needs: で頼っていれば、分からないとする。
 #     再利用するワークフローの、呼ばれる側のジョブの if: は読まない（呼ぶ側のジョブだけで判定する）
 #   - チェックとジョブの対応：チェックの名前を、GitHub がジョブのチェックに付ける名前（name: があればその値、
@@ -42,7 +45,7 @@
 #   not_running   merge_group で動かないチェック（check と workflows と reason）。reason は、ワークフローの on: に
 #                 merge_group が無ければ on（workflows は対応するジョブがあるワークフロー）、ジョブの if: で
 #                 除いていれば if（workflows は除いたジョブがあるワークフロー）
-#   unknown       確かめられないチェックの名前（どのジョブとも対応しないか、ジョブの if: を判定できない）
+#   unknown       確かめられないチェックの名前（どのジョブとも対応しないか、ジョブの if: から判定できない）
 #   messages      利用者に伝える文（not_running・unknown。それぞれ、当てはまるチェックが無ければ null）。
 #                 setup-repo.sh と doctor.sh が同じ文を出すよう、ここで作る
 set -euo pipefail
@@ -116,7 +119,7 @@ output() {
             (if $nojob == [] then empty else
               "必須のチェック \($nojob | join("、")) は、\($b) のどのワークフローのジョブか分からないので、merge_group のイベントで動くか確かめられません" end),
             (if $noif == [] then empty else
-              "必須のチェック \($noif | join("、")) は、ジョブ（または needs: で頼るジョブ）の if: の式を読み切れないので、merge_group のイベントで動くか確かめられません" end)
+              "必須のチェック \($noif | join("、")) は、ジョブ（または needs: で頼るジョブ）の if: から、merge_group のイベントで CI が動くかを判定できません" end)
           ] | join("。") end)
         }
       }'
@@ -233,16 +236,21 @@ parse_workflow() {
       for (i = 1; i <= n; i++) r = worse(r, term(parts[i]))
       return r
     }
-    # ジョブの判定（自分の if: と、needs: でたどれるジョブの if:）。見つからないジョブや循環は unknown
-    function judge(j,   n, k, toks, r) {
+    # ジョブの判定（自分の if: と、needs: でたどれるジョブの if:）。見つからないジョブや循環は unknown。
+    # 状態の関数（always()・cancelled()・failure()）がある if: のジョブは、頼るジョブが飛ばされても動くので、
+    # 頼るジョブの exclude を unknown に弱める（暗黙の success() は、状態の関数が無いときだけ付く）
+    function judge(j,   n, k, toks, r, st2, status) {
       if (j in st) return st[j]
       if (!(j in known) || (j in visiting)) return "unknown"
       visiting[j] = 1
       r = cond(ifs[j])
+      status = (tolower(ifs[j]) ~ /(always|cancelled|failure)[ \t]*\(/)
       n = split(needs[j], toks, /[][, \t]+/)
       for (k = 1; k <= n; k++) {
         if (toks[k] == "" || toks[k] == "-") continue
-        r = worse(r, judge(unquote(toks[k])))
+        st2 = judge(unquote(toks[k]))
+        if (status && st2 == "exclude") st2 = "unknown"
+        r = worse(r, st2)
       }
       delete visiting[j]
       st[j] = r
@@ -278,7 +286,10 @@ parse_workflow() {
         id = s; sub(/:.*$/, "", id); id = unquote(id)
       } else if (ind > jobind && id != "") {
         if (childind < 0) childind = ind
-        if (ind == childind) {
+        if (ind == childind && key == "needs" && s ~ /^ *-/) {
+          # needs: の下のリストは、needs: と同じ深さにも書ける
+          needs[id] = needs[id] " " s
+        } else if (ind == childind) {
           key = ""
           if (s ~ /^ *name[ \t]*:/) {
             v = s; sub(/^ *name[ \t]*:/, "", v); name = unquote(v); hasname = 1
