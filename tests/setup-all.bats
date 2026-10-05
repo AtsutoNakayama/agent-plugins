@@ -4,7 +4,7 @@
 
 load test_helper
 
-# プラグインを一時ディレクトリにコピーし、setup-labels / setup-project / setup-repo を偽物に差し替える。
+# プラグインを一時ディレクトリにコピーし、setup-labels / setup-project / setup-repo / setup-models を偽物に差し替える。
 # 偽物は受け取った引数を $CALLS に「<名前> [引数]...」で1行ずつ記録し、$FIX/<名前>.json を出力する。
 # FAKE_FAIL に指定した名前の偽物は失敗する。
 setup_fake_plugin() {
@@ -15,7 +15,7 @@ setup_fake_plugin() {
   mkdir -p "$FIX"
   : >"$CALLS"
   cp -R "$BATS_TEST_DIRNAME/../plugins/dev-workflow" "$PLUGIN"
-  for name in labels project repo; do
+  for name in labels project repo models; do
     cat >"$PLUGIN/scripts/setup/setup-$name.sh" <<SH
 #!/usr/bin/env bash
 printf 'setup-$name' >>"\$CALLS"
@@ -28,6 +28,7 @@ SH
   echo '{"actions": []}' >"$FIX/setup-labels.json"
   echo '{"actions": [], "workflows": {"auto_add": true, "url": "https://example.com/w"}}' >"$FIX/setup-project.json"
   echo '{"actions": [], "branch": "main"}' >"$FIX/setup-repo.json"
+  echo '{"review": {"model": null, "decided": false, "layers": []}, "file": null, "changed": false, "actions": []}' >"$FIX/setup-models.json"
 }
 
 run_all() {
@@ -42,13 +43,40 @@ run_all() {
 # 使い方: args_of <名前> → 最後の呼び出し（dry-run で確かめた後の本番）の引数
 args_of() { grep "^$1" "$CALLS" | tail -n 1 | sed "s/^$1 \{0,1\}//"; }
 
-@test "3つのスクリプトにオプションを振り分けて実行する" {
+@test "4つのスクリプトにオプションを振り分けて実行する" {
   setup_fake_plugin
-  run_all --keep-defaults --number 3 --title Board --require-approval 1
+  run_all --keep-defaults --number 3 --title Board --require-approval 1 --review-model opus --models-scope user
   assert_success
   assert_equal "$(args_of setup-labels)" "[--keep-defaults]"
   assert_equal "$(args_of setup-project)" "[--write-config] [--number] [3] [--title] [Board]"
   assert_equal "$(args_of setup-repo)" "[--require-approval] [1]"
+  assert_equal "$(args_of setup-models)" "[--review-model] [opus] [--scope] [user]"
+}
+
+@test "setup-models.sh の出力を models に入れる" {
+  setup_fake_plugin
+  echo '{"review": {"model": "opus", "decided": true, "layers": []}, "file": null, "changed": false, "actions": []}' >"$FIX/setup-models.json"
+  run_all
+  assert_success
+  assert_equal "$(jq -r .models.review.model <<<"$json")" opus
+}
+
+@test "dry-run で、レビューのモデルをチームの層に書く予定なら、.claude/dev-workflow/config.json のコミットを案内する" {
+  setup_fake_plugin
+  committed_config '{"project": {"owner": "me", "number": 3}}'
+  echo '{"actions": [], "project": {"owner": "me", "number": 3, "created": false}, "workflows": {"auto_add": true}}' >"$FIX/setup-project.json"
+  jq -n --arg f "$REPO/.claude/dev-workflow/config.json" '{review: {model: "opus"}, file: $f, changed: true, actions: ["x"]}' \
+    >"$FIX/setup-models.json"
+  run_all --dry-run --review-model opus --models-scope team
+  assert_success
+  assert_equal "$(jq -r '.next_steps[0]' <<<"$json")" ".claude/dev-workflow/config.json をコミットし、PR で main にマージする"
+
+  # 個人の層（config.local.json）に書く予定なら、コミットは要らない
+  jq -n --arg f "$REPO/.claude/dev-workflow/config.local.json" '{review: {model: "opus"}, file: $f, changed: true, actions: ["x"]}' \
+    >"$FIX/setup-models.json"
+  run_all --dry-run --review-model opus --models-scope local
+  assert_success
+  assert_equal "$(jq -c .next_steps <<<"$json")" '[]'
 }
 
 @test "--required-check は何度でも指定でき、setup-repo.sh に渡す" {
@@ -76,11 +104,11 @@ args_of() { grep "^$1" "$CALLS" | tail -n 1 | sed "s/^$1 \{0,1\}//"; }
   assert_equal "$(args_of setup-project)" "[--write-config]"
 }
 
-@test "--dry-run は3つすべてに渡し、テンプレートを作らない" {
+@test "--dry-run は4つすべてに渡し、テンプレートを作らない" {
   setup_fake_plugin
   run_all --dry-run
   assert_success
-  assert_equal "$(grep -c -- '\[--dry-run\]' "$CALLS")" 3
+  assert_equal "$(grep -c -- '\[--dry-run\]' "$CALLS")" 4
   [ ! -e .github ]
   assert_equal "$(jq -c .templates.created <<<"$json")" '[".github/pull_request_template.md",".github/ISSUE_TEMPLATE/task.md"]'
 }
@@ -208,13 +236,13 @@ SH
 
 @test "確認の dry-run で失敗したら、何も変更しない" {
   setup_fake_plugin
-  FAKE_FAIL=setup-repo run_all
+  FAKE_FAIL=setup-models run_all
   assert_failure 1
-  assert_output --partial "setup-repo failed"
+  assert_output --partial "setup-models failed"
   assert_output --partial "何も変更していません"
-  # 3つとも dry-run でだけ呼ばれている
-  assert_equal "$(grep -c -- '\[--dry-run\]' "$CALLS")" 3
-  assert_equal "$(wc -l <"$CALLS" | tr -d ' ')" 3
+  # 4つとも dry-run でだけ呼ばれている
+  assert_equal "$(grep -c -- '\[--dry-run\]' "$CALLS")" 4
+  assert_equal "$(wc -l <"$CALLS" | tr -d ' ')" 4
   [ ! -e .github ]
 }
 

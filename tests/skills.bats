@@ -185,3 +185,12 @@ frontmatter() { awk 'NR == 1 && $0 == "---" { on = 1; next } on && $0 == "---" {
   grep -q '手順3のとおりサブエージェントに任せる' <<<"$step8" \
     || fail "再レビュー（手順8）でも /code-review をサブエージェントに任せることが書かれていません"
 }
+
+@test "repo-setup は、レビューに使うモデルを決めていなければ、使うかと保存する層を聞き、使わないことも保存する" {
+  f="$SKILLS/repo-setup/SKILL.md"
+  step2="$(awk '/^### 2\./ { on = 1; next } /^### 3\./ { on = 0 } on' "$f")"
+  grep -q 'review.decided' <<<"$step2" || fail "手順2に、決めてあれば聞かないことが書かれていません"
+  grep -q -- '--review-model off' <<<"$step2" || fail "手順2に、使わないことも保存することが書かれていません"
+  grep -q -- '--models-scope' <<<"$step2" || fail "手順2に、保存する層を渡すことが書かれていません"
+  grep -q 'models.actions' "$f" || fail "手順3の予定に、レビューのモデルの変更が入っていません"
+}
