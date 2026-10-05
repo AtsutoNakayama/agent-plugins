@@ -298,14 +298,7 @@ if $write_config; then
   fi
   $write && note "$config_file の project を $owner/${project_number:-（作成後の番号）} にする"
   if $write && ! $dry_run; then
-    mkdir -p "$repo_root/.claude/dev-workflow"
-    current='{}'
-    if [ -f "$config_file" ]; then
-      dw_check_json "$config_file"
-      current="$(cat "$config_file")"
-    fi
-    jq --arg o "$owner" --argjson n "$project_number" '.project = {owner: $o, number: $n}' <<<"$current" >"$config_file.tmp"
-    mv "$config_file.tmp" "$config_file"
+    dw_write_config "$config_file" --arg o "$owner" --argjson n "$project_number" '.project = {owner: $o, number: $n}'
   fi
 fi
 
