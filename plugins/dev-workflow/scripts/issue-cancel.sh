@@ -88,28 +88,9 @@ fi
 
 repo_nwo="$(gh repo view --json nameWithOwner -q .nameWithOwner)"
 
-# Issue を読む。gh issue view は PR の番号でも成功するので、URL で PR を見分ける
-# 使い方: read_issue <番号> <JSON の項目> <見つからないときの名前>
-read_issue() {
-  local json err
-  err="$(mktemp)"
-  if ! json="$(gh issue view "$1" --json "url,$2" 2>"$err")"; then
-    json="$(cat "$err")"
-    rm -f "$err"
-    case "$json" in
-      *"Could not resolve to"* | *NOT_FOUND*) dw_die "${3} #${1} が ${repo_nwo} にありません" 2 ;;
-      *) dw_die "${3} #${1} を読めません: $json" ;;
-    esac
-  fi
-  rm -f "$err"
-  case "$(jq -r .url <<<"$json")" in
-    */pull/*) dw_die "#${1} は PR です。Issue の番号を指定してください" 2 ;;
-  esac
-  printf '%s\n' "$json"
-}
-
-found="$(read_issue "$issue" number,title,state,stateReason,comments Issue)"
-[ -z "$duplicate_of" ] || read_issue "$duplicate_of" number "重複の元の Issue" >/dev/null
+# gh issue view は PR の番号でも成功するので、dw_read_issue で PR を見分けて止まる
+found="$(dw_read_issue "$issue" number,title,state,stateReason,comments)"
+[ -z "$duplicate_of" ] || dw_read_issue "$duplicate_of" number "重複の元の Issue" >/dev/null
 
 # コメントした後に閉じるのに失敗して再実行したときは、同じ理由を二重にコメントしない
 commented=true

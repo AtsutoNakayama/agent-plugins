@@ -97,7 +97,7 @@ run_branches() {
 @test "Issue を読めなければ止まる。--issue が数字でなければ使い方の誤り" {
   FAKE_FAIL=issue-view run_branches --issue 17
   assert_failure 1
-  assert_output --partial "Issue #17 を読めませんでした"
+  assert_output --partial "Issue #17 を読めません: gh: failed"
   run_branches --issue x
   assert_failure 64
 }
@@ -107,4 +107,11 @@ run_branches() {
   run_branches --issue 017
   assert_success
   assert_equal "$(jq -c '[.issue, [.branches[].name]]' <<<"$json")" '[17,["feat/17-x"]]'
+}
+
+@test "PR の番号は Issue として受け取らずに止まる（task-finish が PR を Issue として閉じないため）" {
+  echo '{"url": "https://github.com/me/demo/pull/21", "number": 21, "closedByPullRequestsReferences": []}' >"$FIX/issue-21.json"
+  run_branches --issue 21
+  assert_failure 2
+  assert_output --partial "#21 は PR です。Issue の番号を指定してください"
 }

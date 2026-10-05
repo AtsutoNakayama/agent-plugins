@@ -74,7 +74,8 @@ actions='[]'
 note() { actions="$(jq -c --arg a "$1" '. + [$a]' <<<"$actions")"; }
 
 # --- Issue ----------------------------------------------------------------------
-issue_json="$(gh issue view "$issue" --json number,title,state,assignees,subIssuesSummary)"
+# PR の番号なら止まる（dw_read_issue。--no-worktree では、PR を割り当てたり列を移したりしてしまうため）
+issue_json="$(dw_read_issue "$issue" number,title,state,assignees,subIssuesSummary)"
 [ "$(jq -r .state <<<"$issue_json")" = OPEN ] || dw_die "Issue #${issue} は閉じています" 2
 # 親の Issue は子をまとめるだけで、親そのものの作業は無い（設計書 §4）。ブランチ・割り当て・列の移動のどれも行わない
 sub_total="$(jq -r '.subIssuesSummary.total // 0' <<<"$issue_json")"

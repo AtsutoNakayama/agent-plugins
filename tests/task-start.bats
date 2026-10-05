@@ -371,3 +371,18 @@ run_start() {
   assert_equal "$(git branch --list 'feat/*')" ""
   assert_equal "$(called edit)" 0
 }
+
+@test "PR の番号は Issue として受け取らず、割り当ても列の移動もせずに止まる（--no-worktree でも）" {
+  setup_fake_gh
+  setup_origin
+  echo '{"url": "https://github.com/me/demo/pull/21", "number": 21, "title": "PR", "state": "OPEN", "assignees": [], "labels": [{"name": "feat"}]}' >"$FIX/issue-21.json"
+  for args in "--no-worktree" "--slug x"; do
+    # shellcheck disable=SC2086 # 単語に分けて渡すのが目的
+    run_start --issue 21 $args
+    assert_failure 2
+    assert_output --partial "#21 は PR です。Issue の番号を指定してください"
+  done
+  [ ! -e .claude/worktrees ]
+  assert_equal "$(called edit)" 0
+  assert_equal "$(called SetField)" 0
+}

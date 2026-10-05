@@ -126,10 +126,19 @@ if [ "$auto" = true ]; then
     err="$(mktemp)"
     if ! command -v gh >/dev/null 2>&1; then
       dw_warn "gh が無いので Issue #${issue} を読めません。type はブランチ名から決めます"
-    elif labels="$(gh issue view "$issue" --json labels 2>"$err")"; then
-      type="$(jq -r --argjson t "$(jq -c .labels.types <<<"$config")" \
-        '[.labels[].name | select(. as $n | $t | index($n))] | if length == 1 then .[0] else "" end' <<<"$labels")"
-      [ -z "$type" ] || type_from=issue
+    elif labels="$(gh issue view "$issue" --json url,labels 2>"$err")"; then
+      # gh issue view は PR の番号でも成功するので、URL で見分ける（PR のラベルで type を決めない）
+      case "$(jq -r .url <<<"$labels")" in
+        */pull/*)
+          dw_warn "#${issue} は PR なので、Issue は無いものとして判断します"
+          issue=""
+          ;;
+        *)
+          type="$(jq -r --argjson t "$(jq -c .labels.types <<<"$config")" \
+            '[.labels[].name | select(. as $n | $t | index($n))] | if length == 1 then .[0] else "" end' <<<"$labels")"
+          [ -z "$type" ] || type_from=issue
+          ;;
+      esac
     else
       case "$(cat "$err")" in
         *NOT_FOUND* | *"Could not resolve to"*)

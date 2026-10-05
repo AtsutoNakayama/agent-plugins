@@ -50,3 +50,21 @@ run_common() {
   assert_success
   assert_output ""
 }
+
+@test "dw_read_issue は、Issue なら JSON を出し、PR の番号・無い番号なら終了コード 2 で止まる" {
+  load fake_gh
+  setup_fake_gh
+  run_common dw_read_issue 17 title
+  assert_success
+  assert_equal "$(jq -r .title <<<"$output")" "作業 17"
+  echo '{"url": "https://github.com/me/demo/pull/21", "number": 21}' >"$FIX/issue-21.json"
+  run_common dw_read_issue 21 number
+  assert_failure 2
+  assert_output "error: #21 は PR です。Issue の番号を指定してください"
+  run_common dw_read_issue 99 number "重複の元の Issue"
+  assert_failure 2
+  assert_output "error: 重複の元の Issue #99 が me/demo にありません"
+  FAKE_FAIL=issue-view FAKE_FAIL_MSG="HTTP 401: Bad credentials" run_common dw_read_issue 17 number
+  assert_failure 1
+  assert_output "error: Issue #17 を読めません: HTTP 401: Bad credentials"
+}

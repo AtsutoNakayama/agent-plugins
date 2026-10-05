@@ -60,8 +60,8 @@ while IFS= read -r b; do
 done <<<"$(printf '%s\n%s\n' "$local_names" "$remote_names" | sort -u)"
 
 # --- PR で探す --------------------------------------------------------------------
-issue_json="$(gh issue view "$issue" --json closedByPullRequestsReferences)" \
-  || dw_die "Issue #${issue} を読めませんでした"
+# PR の番号なら止まる（dw_read_issue。PR を Issue として閉じないため）
+issue_json="$(dw_read_issue "$issue" closedByPullRequestsReferences)"
 nwo="$(gh repo view --json nameWithOwner -q .nameWithOwner)" || dw_die "リポジトリの名前を読めませんでした"
 prs='[]'
 while IFS=$'\t' read -r url pr_repo; do

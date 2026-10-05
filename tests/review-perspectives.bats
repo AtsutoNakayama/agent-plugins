@@ -538,3 +538,12 @@ auto_branch() {
   run_script review-perspectives.sh --auto
   assert_equal "$(json_of "$output" | jq -r .context.model)" sonnet
 }
+
+@test "--auto は、ブランチ名の番号が PR の番号なら、Issue は無いものとし、PR のラベルで type を決めない" {
+  auto_branch fix/21-bug
+  echo '{"url": "https://github.com/me/demo/pull/21", "number": 21, "labels": [{"name": "feat"}]}' >"$FIX/issue-21.json"
+  run bash -c "${TEST_BASH:-bash} '$SCRIPTS/review-perspectives.sh' --auto 2>'$TMP/err'"
+  assert_success
+  assert_equal "$(jq -c '[.context.issue, .context.type, .context.type_from]' <<<"$output")" '[null,"fix","branch"]'
+  grep -q "#21 は PR なので、Issue は無いものとして判断します" "$TMP/err" || fail "$(cat "$TMP/err")"
+}

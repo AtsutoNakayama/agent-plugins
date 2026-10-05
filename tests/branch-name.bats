@@ -104,3 +104,11 @@ load fake_gh
   run_script branch-name.sh --check feat/17-add-login
   assert_failure 2
 }
+
+@test "PR の番号は Issue として受け取らず、PR のラベルでブランチ名を作らない" {
+  setup_fake_gh
+  echo '{"url": "https://github.com/me/demo/pull/21", "number": 21, "labels": [{"name": "feat"}]}' >"$FIX/issue-21.json"
+  run_script branch-name.sh --issue 21 --slug x
+  assert_failure 2
+  assert_output --partial "#21 は PR です。Issue の番号を指定してください"
+}

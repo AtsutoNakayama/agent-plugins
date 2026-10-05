@@ -96,8 +96,9 @@ slug="$(printf '%s' "$slug" | LC_ALL=C tr '[:upper:]' '[:lower:]' \
 config="$("$BASH" "$DW_SCRIPTS_DIR/config.sh")"
 if [ -z "$type" ]; then
   dw_require gh
-  types="$(gh issue view "$issue" --json labels \
-    | jq -c --argjson t "$(jq -c '.labels.types' <<<"$config")" '[.labels[].name | select(. as $n | $t | index($n))]')"
+  # PR の番号なら止まる（dw_read_issue）
+  issue_json="$(dw_read_issue "$issue" labels)"
+  types="$(jq -c --argjson t "$(jq -c '.labels.types' <<<"$config")" '[.labels[].name | select(. as $n | $t | index($n))]' <<<"$issue_json")"
   case "$(jq length <<<"$types")" in
     1) type="$(jq -r '.[0]' <<<"$types")" ;;
     0) dw_die "Issue #${issue} に type ラベルがありません（$(jq -r '.labels.types | join(" / ")' <<<"$config") のどれか1つを付けてください）" 2 ;;

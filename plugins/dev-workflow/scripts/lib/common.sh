@@ -41,6 +41,28 @@ dw_issue_number() {
   printf '%s\n' "$v"
 }
 
+# Issue を読んで、指定した項目と url の JSON を出力する。gh issue view は PR の番号でも成功するので、URL で PR を見分けて止まる。
+# PR の番号・無い番号なら終了コード 2、ほかの失敗（通信・認証など）は 1 で止まる。$(...) の中で呼ぶと、set -e のスクリプトはそのまま止まる。
+# 使い方: json="$(dw_read_issue <番号> <JSON の項目（カンマ区切り。url は自動で足す）> [見つからないときの名前（既定: Issue）])"
+dw_read_issue() {
+  local json err name="${3:-Issue}"
+  err="$(mktemp)"
+  if ! json="$(gh issue view "$1" --json "url,$2" 2>"$err")"; then
+    json="$(cat "$err")"
+    rm -f "$err"
+    case "$json" in
+      *"Could not resolve to"* | *NOT_FOUND*)
+        dw_die "${name} #${1} が $(gh repo view --json nameWithOwner -q .nameWithOwner 2>/dev/null || echo 'このリポジトリ') にありません" 2 ;;
+      *) dw_die "${name} #${1} を読めません: $json" ;;
+    esac
+  fi
+  rm -f "$err"
+  case "$(jq -r .url <<<"$json")" in
+    */pull/*) dw_die "#${1} は PR です。Issue の番号を指定してください" 2 ;;
+  esac
+  printf '%s\n' "$json"
+}
+
 # ブランチを使っているワークツリーの場所（無ければ空）。
 # 使い方: dw_worktree_of <メインのワークツリー> <ブランチ>
 dw_worktree_of() {

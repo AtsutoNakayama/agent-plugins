@@ -87,7 +87,8 @@ branch="$(git -C "$repo_root" symbolic-ref --short -q HEAD || true)"
   || dw_die "未コミットの変更があります。コミットしてから実行してください（commit）" 2
 
 # --- Issue ----------------------------------------------------------------------
-issue_json="$(gh issue view "$issue" --json number,title,state,labels,body)" || dw_die "Issue #${issue} を読めません"
+# PR の番号なら止まる（dw_read_issue）
+issue_json="$(dw_read_issue "$issue" number,title,state,labels,body)"
 labels="$(jq -c '[.labels[].name]' <<<"$issue_json")"
 types="$(jq -c --argjson t "$(jq -c '.labels.types' <<<"$config")" 'map(select(. as $n | $t | index($n)))' <<<"$labels")"
 [ "$(jq length <<<"$types")" = 1 ] \
