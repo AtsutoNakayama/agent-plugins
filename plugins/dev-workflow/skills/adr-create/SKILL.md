@@ -40,10 +40,11 @@ description: 設計上の判断を、MADR 4.0.0 の書式（日本語に訳し�
 
 ### 3. ファイルを作る
 
-`adr-create.sh --issue <番号> --name "<短い名前>" --template <full|minimal|bare|bare-minimal> [--supersedes <ADR>]...` を実行する。
+`adr-create.sh --issue <番号> --name "<短い名前>" --template <full|minimal|bare|bare-minimal> [--date <YYYY-MM-DD>] [--supersedes <ADR>]...` を実行する。
 
 - 短い名前は、判断が分かる**英語**の2〜5語にする（例：`use madr`）。日本語は使わない（ファイル名は `[a-z0-9-]` だけになる）
 - ファイル名は `<adr.dir>/<Issue 番号を6桁に0埋め>-<短い名前>.md` になる。同じ名前があれば止まる（終了コード 3）ので、名前を変える
+- front matter の `date` は判断をした日にする。今の判断なら `--date` は省く（今日の日付になる）。過去の判断を後から残すときは、判断をした日（Issue を閉じた日や PR をマージした日）を `--date` に渡す
 - 古い ADR を置き換えるときは、`--supersedes` に古い ADR を渡す。古い ADR は書き換えず、status の行だけが `superseded by <新しい ADR>` になる（終了コード 4 で止まったら、何も変わっていない。メッセージのとおりに直す）
 
 失敗したら、標準エラーの1行のメッセージをそのまま伝える。
