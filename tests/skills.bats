@@ -35,7 +35,7 @@ frontmatter() { awk 'NR == 1 && $0 == "---" { on = 1; next } on && $0 == "---" {
 }
 
 @test "確認を残すスキルに、選択肢の説明の書き方がある（設計書 §8）" {
-  for name in task-create task-cancel pr-create repo-setup branch-update; do
+  for name in task-create task-cancel pr-create repo-setup branch-update task-start task-finish; do
     f="$SKILLS/$name/SKILL.md"
     grep -q '選択肢の説明には、選ぶと実際に何が起きるか' "$f" \
       || fail "${name} に選択肢の説明の書き方（選ぶと何が起きるかを書く）がありません"
@@ -45,7 +45,7 @@ frontmatter() { awk 'NR == 1 && $0 == "---" { on = 1; next } on && $0 == "---" {
 }
 
 @test "確認を残すスキルは、確認に必要な内容を質問の中にも入れる（設計書 §8）" {
-  for name in task-create task-cancel pr-create repo-setup review review-perspective-add task-finish branch-update; do
+  for name in task-create task-cancel pr-create repo-setup review review-perspective-add task-finish branch-update task-start; do
     f="$SKILLS/$name/SKILL.md"
     grep -q '質問の中にも入れる' "$f" \
       || fail "${name} に、確認に必要な内容を質問の中にも入れることが書かれていません（別の端末から使うと、質問の直前の文章が見えない）"
@@ -169,4 +169,17 @@ frontmatter() { awk 'NR == 1 && $0 == "---" { on = 1; next } on && $0 == "---" {
   grep -q 'gh issue close <番号>' "$f"
   # shellcheck disable=SC2016 # バッククォートはスキルの本文の文字で、展開させない
   grep -q 'どちらのコマンドにも `--repo <owner/repo>` を付けて案内する' "$f"
+}
+
+@test "task-start は、ワークツリーを作るかを本文から判断して提案し、作らないなら --no-worktree で着手する（設計書 §4）" {
+  f="$SKILLS/task-start/SKILL.md"
+  grep -q 'ワークツリーを作って着手する' "$f" || fail "作って着手する選択肢がありません"
+  grep -q 'ワークツリーを作らずに着手する' "$f" || fail "作らずに着手する選択肢がありません"
+  grep -q 'task-start.sh --issue <番号> --no-worktree' "$f" || fail "作らないときの実行のしかたがありません"
+}
+
+@test "ワークツリーの無いタスクを、task-finish は Issue を閉じて終え、task-cancel は Issue を閉じるだけにする" {
+  grep -q '### 4. ワークツリーの無いタスクを終える' "$SKILLS/task-finish/SKILL.md"
+  grep -q 'gh issue close <番号> --reason completed' "$SKILLS/task-finish/SKILL.md"
+  grep -q 'ワークツリーを作らずに着手した' "$SKILLS/task-cancel/SKILL.md"
 }
