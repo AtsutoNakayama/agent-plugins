@@ -161,3 +161,14 @@ json_of() { printf '%s\n' "$1" | LC_ALL=C sed -n '/^{/,$p'; }
   assert_output --partial "がコミットされています。git rm --cached .claude/dev-workflow/config.local.json で追跡を外し"
   assert_equal "$(json_of "$output" | jq -r .local_git)" tracked
 }
+
+@test "書く層の review がオブジェクトでなければ、dry-run のときから止まり、何も書かない" {
+  echo '{"review": "x"}' >"$TEAM"
+  for opt in --dry-run ""; do
+    run_script setup/setup-models.sh --review-model opus --scope team $opt
+    assert_failure 2
+    assert_output --partial "$REPO/$TEAM の review がオブジェクトではないので、review.model を書けません"
+  done
+  assert_equal "$(cat "$TEAM")" '{"review": "x"}'
+  [ ! -e "$TEAM.tmp" ]
+}

@@ -75,6 +75,12 @@ if [ -n "$value" ]; then
     local) target="$local_file" ;;
   esac
   file="$(jq -n --arg f "$target" '$f')"
+  # review がオブジェクトでないと書けないので、dry-run（setup-all.sh の確認）のときから止める
+  if [ -f "$target" ]; then
+    dw_check_json "$target"
+    jq -e '(.review | type) == "object" or .review == null' "$target" >/dev/null \
+      || dw_die "${target} の review がオブジェクトではないので、review.model を書けません" 2
+  fi
   # 決めていない（キーが無い）ことと、null に決めたことを分けるため、無ければ空にする
   current="$(jq -r --arg f "$target" 'map(select(.file == $f) | .model | tojson) | first // ""' <<<"$layers")"
   # 既に同じ値なら書き直さない（書式の違いで空白だけの差分を作らない）
@@ -86,7 +92,10 @@ if [ -n "$value" ]; then
       mkdir -p "$(dirname "$target")"
       body='{}'
       [ -f "$target" ] && body="$(cat "$target")"
-      jq --argjson v "$value" '.review = ((.review // {}) + {model: $v})' <<<"$body" >"$target.tmp"
+      if ! jq --argjson v "$value" '.review = ((.review // {}) + {model: $v})' <<<"$body" >"$target.tmp"; then
+        rm -f "$target.tmp"
+        dw_die "${target} に review.model を書けませんでした" 2
+      fi
       mv "$target.tmp" "$target"
     fi
   fi
