@@ -287,3 +287,12 @@ frontmatter() { awk 'NR == 1 && $0 == "---" { on = 1; next } on && $0 == "---" {
   grep -q '^- 新しい指摘が無ければ.*手順4の「指摘が1つも無ければ」のとおり' <<<"$step8" \
     || fail "手順8の、新しい指摘が無いときに、手順4のとおり伝えることが書かれていません"
 }
+
+@test "観点ファイルは結果の形を書かず、review-perspective-add は結果の形を決める agent を案内する（設計書 §7）" {
+  # 結果の形（findings と notes）は agent perspective-reviewer が決める。観点ファイルが返し方を書くと、agent の決まりと食い違う
+  if grep -n '返す' "$BATS_TEST_DIRNAME/../plugins/dev-workflow/review/"*.md; then
+    fail "同梱の観点ファイルに、返し方が書かれています（「〜と伝える」と書けば notes で伝わる）"
+  fi
+  grep -q 'agents/perspective-reviewer.md' "$SKILLS/review-perspective-add/SKILL.md" \
+    || fail "review-perspective-add に、結果の形を決めるのが agent perspective-reviewer だと書かれていません"
+}
