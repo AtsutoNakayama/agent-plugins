@@ -232,3 +232,40 @@ queue_removed_fixture() {
   run_status
   assert_equal "$(jq -c .pr.merge_queue.removed <<<"$output")" null
 }
+
+@test "main を取り込むと衝突するかを、手元で確かめて conflicts に出す（作業ツリーとブランチは変えない）" {
+  setup_branch
+  advance_main 1
+  run_status
+  assert_equal "$(jq -c '[.behind, .conflicts]' <<<"$output")" "[1,false]"
+  # main 側で work.txt を別の内容で作ると、ブランチの work.txt と衝突する
+  echo other >"$TMP/other/work.txt"
+  git -C "$TMP/other" add work.txt
+  git -C "$TMP/other" commit -q -m "main: work"
+  git -C "$TMP/other" push -q origin main
+  head="$(git rev-parse HEAD)"
+  run_status
+  assert_success
+  assert_equal "$(jq -c '[.behind, .conflicts, .dirty]' <<<"$output")" "[2,true,false]"
+  assert_equal "$(git rev-parse HEAD)" "$head"
+  assert_equal "$(cat work.txt)" work
+}
+
+@test "main が進んでいなければ conflicts は false" {
+  setup_branch
+  run_status
+  assert_equal "$(jq -c .conflicts <<<"$output")" false
+}
+
+@test "衝突を確かめられない（git merge-tree --write-tree の無い古い git）ときは conflicts は null" {
+  setup_branch
+  advance_main 1
+  real_git="$(command -v git)"
+  # merge-tree だけを、古い git と同じく使い方の誤り（129）で失敗させる
+  # shellcheck disable=SC2016 # 偽の git の中身なので、$@ はここでは展開しない
+  printf '#!/usr/bin/env bash\nfor a in "$@"; do [ "$a" = merge-tree ] && exit 129; done\nexec "%s" "$@"\n' "$real_git" >"$TMP/bin/git"
+  chmod +x "$TMP/bin/git"
+  run_status
+  assert_success
+  assert_equal "$(jq -c '[.behind, .conflicts]' <<<"$output")" "[1,null]"
+}

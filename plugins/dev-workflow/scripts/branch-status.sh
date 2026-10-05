@@ -9,6 +9,9 @@
 #   behind                origin/<base> にあって、ブランチに無いコミットの数
 #   ahead                 ブランチにあって、origin/<base> に無いコミットの数
 #   up_to_date            behind が 0 か（取り込むものが無いか）
+#   conflicts             origin/<base> を取り込むと衝突するか。手元で確かめる（git merge-tree。何も変えない）ので、
+#                         GitHub がマージできるかを調べている途中（merge_state が UNKNOWN）でも分かる。
+#                         behind が 0 なら false。確かめられない（git が 2.38 より古いなど）ときは null
 #   dirty                 未コミットの変更（追跡しているファイルの変更。未追跡のファイルと、git が無視するファイルは除く）があるか
 #   unpushed              origin/<ブランチ> に無い、手元のコミットの数。origin にブランチが無ければ null
 #   unpulled              手元に無い、origin/<ブランチ> のコミットの数（push が拒否される原因になる）。origin にブランチが無ければ null
@@ -53,6 +56,19 @@ git -C "$repo_root" show-ref --verify --quiet "$ref" || dw_die "origin/${base} �
 
 behind="$(git -C "$repo_root" rev-list --count "refs/heads/$branch..$ref")"
 ahead="$(git -C "$repo_root" rev-list --count "$ref..refs/heads/$branch")"
+
+# 取り込むと衝突するか。merge-tree は、衝突なしで 0、衝突で 1、それ以外の失敗（古い git で --write-tree が無いなど）で
+# 別の値を返す。結果のツリーはオブジェクトとして書かれるだけで、作業ツリーとブランチは変わらない
+conflicts=false
+if [ "$behind" -gt 0 ]; then
+  merge_rc=0
+  git -C "$repo_root" merge-tree --write-tree --no-messages "refs/heads/$branch" "$ref" >/dev/null 2>&1 || merge_rc=$?
+  case "$merge_rc" in
+    0) conflicts=false ;;
+    1) conflicts=true ;;
+    *) conflicts=null ;;
+  esac
+fi
 
 dirty=false
 [ -z "$(git -C "$repo_root" status --porcelain --untracked-files=no)" ] || dirty=true
@@ -111,6 +127,6 @@ if [ "$pr" != null ]; then
 fi
 
 jq -n --arg branch "$branch" --arg base "$base" --argjson behind "$behind" --argjson ahead "$ahead" \
-  --argjson dirty "$dirty" --argjson unpushed "$unpushed" --argjson unpulled "$unpulled" --argjson pr "$pr" \
-  '{branch: $branch, base: $base, behind: $behind, ahead: $ahead, up_to_date: ($behind == 0), dirty: $dirty,
+  --argjson conflicts "$conflicts" --argjson dirty "$dirty" --argjson unpushed "$unpushed" --argjson unpulled "$unpulled" --argjson pr "$pr" \
+  '{branch: $branch, base: $base, behind: $behind, ahead: $ahead, up_to_date: ($behind == 0), conflicts: $conflicts, dirty: $dirty,
     unpushed: $unpushed, unpulled: $unpulled, pr: $pr}'
