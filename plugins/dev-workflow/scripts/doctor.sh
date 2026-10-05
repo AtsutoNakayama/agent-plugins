@@ -136,28 +136,18 @@ base_branch=""
 if [ -n "$repo_root" ]; then
   base_branch="$(dw_team_config "$repo_root/.claude/dev-workflow/config.json" base_branch || true)"
 fi
-branch_uri="$(jq -rn --arg b "$base_branch" '$b | @uri')"
-# 古いブランチ保護（ルールセットでない）の必須のチェックは rules/branches に出ないので、ブランチの情報から読む。
-# 読めなければ（保護が無い・権限が無いなど）、ルールセットだけで判定する
-classic_checks() {
-  local branch
-  branch="$(gh api "repos/{owner}/{repo}/branches/$branch_uri" 2>/dev/null)" \
-    && jq -c '[.protection.required_status_checks.contexts[]?]' <<<"$branch" 2>/dev/null \
-    || echo '[]'
-}
-# 必須のチェックの有無は、名前の一覧（required）だけで決める。ルールがあっても名前が1つも無ければ、何も求めていない
+# 必須のチェックの有無は、名前の一覧（required。ルールセットと古いブランチ保護を合わせる）だけで決め、strict かは、
+# 名前のあるルールセットのルール（check_rules）だけで見る。ルールがあっても名前が1つも無ければ、何も求めていない
 if $gh_auth && [ -n "$repo_root" ] && [ -n "$base_branch" ] \
-  && rules="$(gh api --paginate "repos/{owner}/{repo}/rules/branches/$branch_uri?per_page=100" 2>/dev/null)" \
-  && required="$(jq -sc --argjson classic "$(classic_checks)" '
+  && rules="$(gh api --paginate "repos/{owner}/{repo}/rules/branches/$(jq -rn --arg b "$base_branch" '$b | @uri')?per_page=100" 2>/dev/null)" \
+  && required="$(dw_required_checks "$rules" "$(dw_classic_required_checks '{owner}/{repo}' "$base_branch")" 2>/dev/null)" \
+  && merge="$(jq -ser --argjson required "$required" "$DW_JQ_CHECK_RULES"'
     # --paginate はページごとに配列を出力するので、1つにまとめる
-    add // [] | [(.[] | select(.type == "required_status_checks") | .parameters.required_status_checks[]?.context),
-      $classic[]] | unique' <<<"$rules" 2>/dev/null)" \
-  && merge="$(jq -ser --argjson required "$required" '
     add // []
     | if any(.[]; .type == "merge_queue") then "queue"
     elif $required == [] then "no-checks"
-    elif any(.[]; .type == "required_status_checks" and .parameters.strict_required_status_checks_policy) then "strict"
-    elif any(.[]; .type == "required_status_checks") then "none"
+    elif any(check_rules[]; .parameters.strict_required_status_checks_policy) then "strict"
+    elif check_rules != [] then "none"
     else "classic" end' <<<"$rules" 2>/dev/null)"; then
   case "$merge" in
     queue) check merge-queue true warn "${base_branch} へのマージはマージキューを通します" ;;

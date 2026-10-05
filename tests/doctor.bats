@@ -290,6 +290,14 @@ required_check() { jq -c '.checks[] | select(.name == "required-checks") | [.ok,
   assert_equal "$(required_check)" ""
   # strict はブランチの情報から分からないので、キューと strict のことは知らせない
   assert_equal "$(merge_check)" ""
+  # ルールセットに名前の無いルールがあっても、strict かは名前のあるルールだけで見る（名前の無いルールの strict は何も求めない）
+  export FAKE_RULES='[{"type": "required_status_checks", "parameters": {"strict_required_status_checks_policy": true, "required_status_checks": []}}]'
+  run_script doctor.sh
+  assert_equal "$(required_check)" ""
+  assert_equal "$(merge_check)" ""
+  export FAKE_RULES='[{"type": "required_status_checks", "parameters": {"strict_required_status_checks_policy": false, "required_status_checks": []}}]'
+  run_script doctor.sh
+  assert_equal "$(merge_check)" ""
   # 古いブランチ保護に必須のチェックが無ければ警告する
   export FAKE_BRANCH='{"name": "main", "protected": true, "protection": {"enabled": true, "required_status_checks": {"enforcement_level": "off", "contexts": []}}}'
   run_script doctor.sh
