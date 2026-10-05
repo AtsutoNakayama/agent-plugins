@@ -12,15 +12,17 @@
 #   dirty                 未コミットの変更（追跡しているファイルの変更。未追跡のファイルと、git が無視するファイルは除く）があるか
 #   unpushed              origin/<ブランチ> に無い、手元のコミットの数。origin にブランチが無ければ null
 #   unpulled              手元に無い、origin/<ブランチ> のコミットの数（push が拒否される原因になる）。origin にブランチが無ければ null
-#   pr                    そのブランチの開いている PR（number・url・merge_state）。無ければ null
+#   pr                    そのブランチの開いている PR（number・url・merge_state・merge_queue）。無ければ null
 #                         merge_state は GitHub の mergeStateStatus（BEHIND・DIRTY・BLOCKED・CLEAN など）。
 #                         fork の同じ名前のブランチからの PR は除く。PR が無い、gh が無い、
 #                         または gh で取得できないときは、pr は null になる（behind と ahead は gh が無くても出る）
-#                         pr.merge_queue はマージキューの状態（enabled・state・position）。enabled は PR のマージ先で
+#                         pr.merge_queue はマージキューの状態（enabled・state・position・removed）。enabled は PR のマージ先で
 #                         キューが有効か、state・position は PR がキューに並んでいるときの状態（QUEUED・AWAITING_CHECKS・
 #                         MERGEABLE・UNMERGEABLE・LOCKED）と順番（1 が先頭）で、並んでいなければ null。
-#                         キューに並んだ PR は、merge_state が CLEAN でも、先に並んだ PR と衝突すると state が UNMERGEABLE になる。
-#                         取得できなければ merge_queue は null になる
+#                         キューに並んだ PR は、merge_state が CLEAN でも、先に並んだ PR と衝突すると state が UNMERGEABLE になり、
+#                         すぐにキューから外れる。removed は、PR がキューから外れたままのときの、外れた理由と時刻（{reason, at}。
+#                         reason は GitHub の値で、衝突なら merge_conflict）。外れた後にキューへ入れ直したか、PR に新しい
+#                         コミットが入っていれば（外れた理由に対応した後なので）null。取得できなければ merge_queue は null になる
 set -euo pipefail
 
 # shellcheck source=lib/common.sh
@@ -78,13 +80,33 @@ if command -v gh >/dev/null 2>&1 \
 fi
 
 # マージキューの状態は gh pr list にも REST にも無いので GraphQL で読む（設計書 §10）。PR の URL から引くので、
-# リポジトリの所有者と名前を別に調べなくてよい。取得できなければ merge_queue は null にする
+# リポジトリの所有者と名前を別に調べなくてよい。取得できなければ merge_queue は null にする。
+# 衝突した PR はすぐにキューから外れて mergeQueueEntry が null になるので、外れたことはタイムラインの最後の
+# キューの出入りのイベントで見る。最後が外れたイベントで、その後に PR の先頭のコミットが作られていなければ、外れたままとみなす
+# （強制 push は使わないので、外れた後の対応のコミットは外れた時刻より新しい）
 if [ "$pr" != null ]; then
   queue=null
   # shellcheck disable=SC2016 # GraphQL の変数（$url）を bash に展開させないため、シングルクォートで書く
-  if res="$(dw_gql 'query PrQueue($url: URI!) { resource(url: $url) { ... on PullRequest { isMergeQueueEnabled mergeQueueEntry { state position } } } }' \
-    "$(jq -c '{url}' <<<"$pr")" 2>/dev/null)"; then
-    queue="$(jq -c '.data.resource // null | if . then {enabled: .isMergeQueueEnabled, state: .mergeQueueEntry.state, position: .mergeQueueEntry.position} else null end' <<<"$res" 2>/dev/null || echo null)"
+  if res="$(dw_gql 'query PrQueue($url: URI!) {
+      resource(url: $url) {
+        ... on PullRequest {
+          isMergeQueueEnabled
+          mergeQueueEntry { state position }
+          commits(last: 1) { nodes { commit { committedDate } } }
+          timelineItems(itemTypes: [ADDED_TO_MERGE_QUEUE_EVENT, REMOVED_FROM_MERGE_QUEUE_EVENT], last: 1) {
+            nodes { __typename ... on RemovedFromMergeQueueEvent { reason createdAt } }
+          }
+        }
+      }
+    }' "$(jq -c '{url}' <<<"$pr")" 2>/dev/null)"; then
+    # 時刻はどちらも UTC の ISO 8601（…Z）なので、文字列のまま比べられる
+    queue="$(jq -c '.data.resource // null | if . then
+        (.timelineItems.nodes[0] // null) as $ev
+        | (.commits.nodes[0].commit.committedDate // "") as $head
+        | {enabled: .isMergeQueueEnabled, state: .mergeQueueEntry.state, position: .mergeQueueEntry.position,
+           removed: (if .mergeQueueEntry == null and $ev.__typename == "RemovedFromMergeQueueEvent" and $ev.createdAt > $head
+                     then {reason: $ev.reason, at: $ev.createdAt} else null end)}
+      else null end' <<<"$res" 2>/dev/null || echo null)"
   fi
   pr="$(jq -c --argjson q "$queue" '. + {merge_queue: $q}' <<<"$pr")"
 fi
