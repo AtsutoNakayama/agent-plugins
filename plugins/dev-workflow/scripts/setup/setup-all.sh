@@ -39,7 +39,7 @@ need_value() {
 }
 
 labels_args=() project_args=() repo_args=() models_args=() dry_run=false
-review_model_given=false models_scope_given=false
+review_model_given=false models_scope=""
 while [ $# -gt 0 ]; do
   case "$1" in
     --number | --title)
@@ -57,7 +57,7 @@ while [ $# -gt 0 ]; do
       need_value "$@"
       if [ "$1" = --models-scope ]; then
         models_args+=(--scope "$2")
-        models_scope_given=true
+        models_scope="$2"
       else
         models_args+=("$1" "$2")
         review_model_given=true
@@ -71,9 +71,17 @@ while [ $# -gt 0 ]; do
   esac
 done
 
-# setup-models.sh には --scope として渡すので、その名前のエラーにならないよう、ここで確かめる
-if $models_scope_given && ! $review_model_given; then
+# --models-scope は setup-models.sh に --scope として渡すので、渡した先の名前のエラーにならないよう、
+# 組み合わせと値の検査は、すべてここで自分の名前で行う
+if [ -n "$models_scope" ] && ! $review_model_given; then
   dw_die "--models-scope は --review-model と一緒に使ってください" 64
+fi
+if $review_model_given; then
+  case "$models_scope" in
+    local | team) ;;
+    "") dw_die "--review-model には --models-scope（local・team）が要ります" 64 ;;
+    *) dw_die "--models-scope は local・team のどちらかにしてください: ${models_scope}" 64 ;;
+  esac
 fi
 
 repo_root="$(dw_repo_root)" || dw_die "リポジトリの中で実行してください" 64
