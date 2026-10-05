@@ -156,8 +156,8 @@ agent-plugins/
 - レビューの観点の追加・修正は、そのきっかけになったタスクの PR に含め、別の Issue にしない（観点の見直しはどのタスクの中でも起き、そのたびに Issue を立てると運用が重いため）。そのため `review-perspective-add` は、リポジトリの層の観点を今のタスクのワークツリーに作り、そのブランチでのコミットを案内する。作業用のブランチの上でなければ（`review-perspective-add.sh` の `work_branch` が false）、そのことを伝える。同梱の観点 `issue-requirements` は、観点ファイルの追加・修正を範囲外の変更として指摘しない。
 - 独自のレビュースキルは独自の観点だけを担当する（観点ごとにサブエージェントで並行してレビューする）。一般的なバグの検出は組み込みの `/code-review`（観点 `code-review`）に任せる。
 - 観点ごとのサブエージェントは、プラグインに同梱する agent `perspective-reviewer`（`agents/perspective-reviewer.md`）で、review スキルは Agent ツールの `subagent_type` に `dev-workflow:perspective-reviewer` を指定して起動する（#200）。汎用のエージェントに SKILL.md の指示文で役割を与えると、どのエージェントが動くかが手順で確実に決まらず、「ファイルは編集しない」もプロンプトで頼むだけになるため。
-  - 担当者への指示と、返す JSON の形式（`file`・`line`・`summary`・`detail`・`suggestion` の配列）は agent の定義に置き、review スキルのプロンプトには、観点ファイルのパス・基点・Issue の番号だけを書く。進行役の手順と担当者への指示を分けるため。
-  - `tools` は `Read, Grep, Glob, Bash` に絞り、ファイルを編集するツール（Edit・Write・NotebookEdit）を持たせない。Bash は `git diff` と、観点によっては `gh issue view` に要る。`tools` では Bash をコマンドごとに絞れない（`Bash(git diff *)` のような書き方は Bash 全体を外す）ので、Bash でファイルを書き換えないことは、agent の定義の指示で頼む。プラグインの agent では `permissionMode`・`hooks`・`mcpServers` が無視されるので、使わない。
+  - 担当者への指示と、返す JSON の形式（`file`・`line`・`summary`・`detail`・`suggestion` の配列）は agent の定義に置き、review スキルのプロンプトには、観点ファイルのパス・基点・Issue の番号だけを書く。進行役の手順と担当者への指示を分けるため。観点ファイルが別の返し方を決めていれば（`issue-requirements` の「Issue を読めないので確かめられない」など）、agent はそれに従い、review スキルは配列でない返事を、観点の名前を添えてそのままユーザーに伝える（理由を隠さないため）。
+  - `tools` は `Read, Grep, Glob, Bash` に絞り、ファイルを編集するツール（Edit・Write・NotebookEdit）を持たせない。Bash は `git diff` と、観点によっては `gh issue view`・`git fetch`（`main-drift`）に要る。`tools` では Bash をコマンドごとに絞れない（`Bash(git diff *)` のような書き方は Bash 全体を外す）ので、Bash でファイルを書き換えないことは、agent の定義の指示で頼む。プラグインの agent では `permissionMode`・`hooks`・`mcpServers` が無視されるので、使わない。
   - `model`・`effort` は書かない。書くと必ず効き、利用者が変えられなくなるため。モデルは、設定の `review.model` を Agent ツールの `model` で渡す（Agent ツールの `model` は agent の定義より優先される）。
   - 一覧にまとめる作業（原因・水平展開・繰り返しの判定）と、選択・反映・再レビューは、main の会話に残す。反映するときに main が同じコードを読み直すので、まとめる作業を agent に移しても、main の文脈の節約は小さいため。
   - `/code-review` を別のモデルで動かすためのサブエージェントは、Skill ツールを使う汎用のエージェントのままにする（`perspective-reviewer` の対象外）。

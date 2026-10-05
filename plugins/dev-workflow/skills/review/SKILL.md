@@ -67,7 +67,7 @@ Skill ツールを使えなければ、そのことだけを返す。
 Issue: <Issue の番号、または なし>
 ```
 
-`dev-workflow:perspective-reviewer` は、指摘を JSON の配列（`file`・`line`・`summary`・`detail`・`suggestion`）で返す。配列として読めない結果が返ったら、その観点の名前と、結果を読めなかったことを手順4の表の後に伝え、ほかの観点で続ける。
+`dev-workflow:perspective-reviewer` は、指摘を JSON の配列（`file`・`line`・`summary`・`detail`・`suggestion`）で返す。配列でない結果（観点ファイルが決めた「Issue を読めないので確かめられない」のような文など）が返ったら、指摘にはせず、その観点の名前と返ってきた文をそのまま手順4の表の後に伝え、ほかの観点で続ける。
 
 ### 4. 一覧にまとめる
 
