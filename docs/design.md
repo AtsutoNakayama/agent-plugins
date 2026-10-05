@@ -74,16 +74,23 @@ agent-plugins/
 - 基本はリポジトリごとに Project を1つ持つ。関連する複数のリポジトリで1つの Project を共有してもよい。
 - 既定の列：`Todo / In Progress / Done`。
 - 役割（どの場面で移すか）と列名の対応を設定ファイルに書く。スキルが自動で移すのは、役割が決まっている列だけ。利用者が追加した列（例：`Blocked`）へは、指示されたときに `task-status` で移す。
-- `setup-project.sh` は、設定の列が Project に無ければ足す。足す列は、設定の順（`todo`・`start`・`pr_opened`・`done`）でそれより前にある列の後ろに入れる（例：`pr_opened` の `In Review` は `In Progress` の後ろ、`Done` の前）。既存の列と、利用者が足した列の位置は変えない。
+- `setup-project.sh` は、設定の列が Project に無ければ足す。足す列は、設定の順（`todo`・`hold`・`start`・`pr_opened`・`done`）でそれより前にある列の後ろに入れる（例：`pr_opened` の `In Review` は `In Progress` の後ろ、`Done` の前。`hold` の列は `Todo` の後ろ）。既存の列と、利用者が足した列の位置は変えない。
 
 ```jsonc
 "status": {
   "todo": "Todo",
+  "hold": null,        // 任意の項目。今は着手できない Issue を置く保留の列。既定では使わない
   "start": "In Progress",
   "pr_opened": null,   // 任意の項目。既定では PR 作成時に列を移さない
   "done": "Done"
 }
 ```
+
+- **保留の列（`hold`）**：外の条件を待っていて今は着手できない Issue（例：試用期間が終わるまで着手できない）を置く列。本文の「依存」は Issue の番号しか書けないので、Issue でない条件で待つものは、この列に置いて task-next の候補から外す。
+  - 任意の役割で、既定は null（使わない）。null なら、どのスキルの動きも変わらない。repo-setup で作るかを聞き、作るなら列名を `.claude/dev-workflow/config.json` に書き（`setup-project.sh --hold-column`）、Status 列に足す。
+  - スキルが自動でこの列へ移すことは無い。移すのも Todo に戻すのも、利用者が `task-status` で行う（役割の名前 `hold`・`todo` でも、列名でも指定できる）。task-next は、この列の Issue の件数と番号を伝え、条件がそろったものを Todo に戻すよう案内する（戻し忘れを防ぐ）。
+  - ほかの役割の列と同じ名前にはできない（同じだと、保留の Issue が Todo や着手中にも数えられる）。`setup-project.sh` と `next-tasks.sh` は、同じ名前なら止まる。
+  - Iteration（いつやるかの計画）とは独立に使える。列は「今は着手できない」という状態、Iteration は計画で、軸が違う。
 
 - **Story Point**：数値の項目。使える値はフィボナッチ数の 1, 2, 3, 5, 8, 13, 21, 34 に固定し（設定では変えられない）、スクリプトで検証する。起票時は AI が見積もりを提案し、ユーザーが確定する（空欄も可）。21 と 34 は見積もりの精度が低いので分割を提案し、それでもよければそのまま設定する。34 より大きい作業は分割する。
 - **Project への自動追加**：Project に組み込みの Auto-add を使う。有効にする API は無いので、Web の画面で1回だけ手動で有効にする。`setup-project.sh` が手順を表示し、有効になったかを API で確認する。
@@ -225,9 +232,10 @@ Todo が増えたとき、どれから着手するか、同時に進めてよい
 - **依存**：次のどれかで、まだ閉じていない Issue があれば、その Issue は候補に入れない（理由と、待っている Issue の番号を添えて「待ち」に出す）。
   - GitHub の Issue の依存関係（blocked by。REST の `issues/{番号}/dependencies/blocked_by`）
   - 本文の「依存」の見出しにある `#N`（「なし」なら無し）
-  - 依存先が Todo や着手中（In Progress と、設定されていれば `pr_opened` の列）の Issue のときも、終わっていないので待ちになる。
+  - 依存先が Todo や保留（設定されていれば `hold` の列）や着手中（In Progress と、設定されていれば `pr_opened` の列）の Issue のときも、終わっていないので待ちになる。
   - 本文の「依存」に書かれた番号の Issue が見つからないとき（書き間違い・削除）は、閉じたと分からないので待ちのままにし、状態を `not_found` として伝える（1件の書き間違いで、全体の提案が止まらないようにする）。
 - **親の Issue**：サブ Issue を持つ Issue（`subIssuesSummary.total` が 1 以上）は、候補に入れない（理由を添えて「親の Issue」として出す）。親には着手しない（§4）ので、勧めると、着手したセッションが止まる。AI は開いている子を案内し、開いている子が無ければ親を閉じるよう伝える。
+- **保留の Issue**：`hold` の列が設定されていれば、その列の Issue は候補に入れず、番号とタイトルを `hold` に出す（§4）。AI は件数と番号を伝え、条件がそろったものは `task-status` で Todo に戻すよう案内する。
 - **コンフリクトの見込み**：警告するだけで、着手を止めない。
   - 着手中の Issue は、`start` の列（既定 `In Progress`）と、`pr_opened` が設定されていればその列（例：`In Review`）にある Issue。親の Issue は、その列にあっても、開いている PR が無ければ作業が無いので、着手中として数えない。PR を出した後で子が付いた親は、PR のファイルだけで重なりを見る（親の本文の領域は、子の作業をまとめたものなので使わない）。`pr_opened` を設定したリポジトリでは、PR を出した Issue はその列へ移るが、PR はまだマージされていないので、着手中として数える。
   - 本文の「変更するファイル・領域」に書かれたパス（ファイルかディレクトリ）と、着手中の Issue の領域・開いている PR が変えているファイルを使う。パスの一方がもう一方の接頭辞なら（`plugins/dev-workflow/scripts/` と `plugins/dev-workflow/scripts/status-set.sh` など）、重なると見なす。末尾の `/**`・`/*` は外してディレクトリとして扱い、`.` はリポジトリ全体として全部と重なる。
@@ -324,7 +332,7 @@ Todo が増えたとき、どれから着手するか、同時に進めてよい
 | 初期設定用（`plugins/dev-workflow/scripts/setup/`） | 役割 |
 |---|---|
 | `setup-labels.sh` | ラベルを登録する（何度実行しても同じ結果になる） |
-| `setup-project.sh` | Project を作るか既存のものに接続し、リポジトリと紐付け、Story Point の項目を追加し、列を揃え、自動追加の設定を案内する |
+| `setup-project.sh` | Project を作るか既存のものに接続し、リポジトリと紐付け、Story Point の項目を追加し、列を揃え（`--hold-column` なら保留の列も足して設定に書く）、自動追加の設定を案内する |
 | `setup-repo.sh` | マージ方法の設定と、ルールセットの登録。必須のチェックのワークフローが merge_group で動くかも確かめる |
 | `setup-models.sh` | レビューに使うモデル（`review.model`）を、このリポジトリの選んだ層（local・team）の設定ファイルに書く。引数が無ければ、どの層で決めてあるかを出力するだけ。上位の層が別の値を決めていて効かなければ警告する。local に書くとき、そのファイルが git に無視されていない・既にコミットしてあるときは警告する（`setup-all.sh` が `next_steps` で、`.gitignore` に足す・`git rm --cached` で追跡を外すよう案内する。`.gitignore` に当たるかだけでは、コミット済みのファイルを見分けられないため、追跡しているかも確かめる） |
 | `setup-all.sh` | 上の4つを実行し、`.claude/dev-workflow/config.json` と各テンプレートを作る |
