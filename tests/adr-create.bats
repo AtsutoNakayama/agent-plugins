@@ -217,3 +217,28 @@ FAKE
   assert_equal "$(sed -n 's/^status: //p' docs/adr/000010-o10.md)" '"superseded by 000012-new"'
   assert_equal "$(ls -A "$TMP/tmpdir")" ""
 }
+
+@test "--date で front matter の date を判断をした日にできる（出力の date も同じ）" {
+  run_script adr-create.sh --issue 1 --name x --template full --date 2025-01-09
+  assert_success
+  assert_equal "$(jq -r .date <<<"$output")" "2025-01-09"
+  assert_equal "$(sed -n '/^---$/,/^---$/{s/^date: *//p;}' docs/adr/000001-x.md)" "2025-01-09"
+}
+
+@test "--date は、うるう年の2月29日を受け付ける" {
+  run_script adr-create.sh --issue 1 --name x --template minimal --date 2024-02-29 --dry-run
+  assert_success
+  run_script adr-create.sh --issue 1 --name x --template minimal --date 2000-02-29 --dry-run
+  assert_success
+}
+
+@test "--date が YYYY-MM-DD の形でない、または暦にない日なら、何も作らず終了コード 64 で止まる" {
+  for d in 2025-1-09 2025/01/09 20250109 2025-01-09x 2025-13-01 2025-00-10 2025-04-31 2025-02-29 1900-02-29 2025-01-00 2025-08-08x; do
+    run_script adr-create.sh --issue 1 --name x --template full --date "$d"
+    assert_failure 64
+    assert_output --partial "--date"
+  done
+  run_script adr-create.sh --issue 1 --name x --template full --date
+  assert_failure 64
+  [ ! -e docs/adr ] || fail "ディレクトリを作っています"
+}

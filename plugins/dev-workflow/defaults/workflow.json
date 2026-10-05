@@ -43,5 +43,8 @@
     "draft": false,
     "close_keyword": "Closes",
     "template": null
+  },
+  "pr_respond": {
+    "handlers": {}
   }
 }

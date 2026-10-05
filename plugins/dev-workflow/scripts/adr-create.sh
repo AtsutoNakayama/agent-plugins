@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # ADR（Architecture Decision Record）のファイルを、テンプレートから1つ作り、JSON で出力する。
 #
-# 使い方: adr-create.sh --issue N --name TEXT --template TYPE [--supersedes FILE]... [--dry-run]
+# 使い方: adr-create.sh --issue N --name TEXT --template TYPE [--date YYYY-MM-DD] [--supersedes FILE]... [--dry-run]
 #
 #   --issue N          判断をした Issue の番号。ファイル名の先頭（6桁に0埋め。999999 まで）と front matter の issue になる
 #   --name TEXT        短い名前（英語）。小文字にし、英数字以外は - にして 40 文字までに整える
@@ -10,13 +10,14 @@
 #                        minimal       必須の節・説明あり（adr-template-minimal.md）
 #                        bare          全部の節・説明なし（adr-template-bare.md）
 #                        bare-minimal  必須の節・説明なし（adr-template-bare-minimal.md）
+#   --date YYYY-MM-DD  front matter の date（判断をした日）。省くと今日の日付。過去の判断を後から残すときに使う
 #   --supersedes FILE  この ADR が置き換える ADR（繰り返して複数書ける）。置き場所からの相対か、リポジトリのルートからの
 #                      相対パス。置き換えられる側は、status の行だけを superseded by <この ADR> に書き換える
 #   --dry-run          何も作らず書き換えず、することを JSON で出力する
 #
 # 置き場所は設定の adr.dir（既定: docs/adr。リポジトリのルートからの相対パス）。
 # ファイル名は <adr.dir>/<Issue 番号を6桁に0埋め>-<短い名前>.md。1つの Issue から、名前を変えて2つ以上作れる。
-# front matter の date は今日の日付、issue は --issue の値にする。status などは、作った後に書く。
+# front matter の date は --date の値（省くと今日の日付）、issue は --issue の値にする。status などは、作った後に書く。
 # 同じファイル名があれば、上書きせずに終了コード 3 で止まる。置き換える ADR の status の行が読めなければ、
 # 何も作らずに終了コード 4 で止まる。
 #
@@ -30,17 +31,18 @@ dw_require jq
 # macOS の BSD sed が日本語で失敗しないよう、バイト列として扱わせる
 usage() { LC_ALL=C sed -n '2,/^[^#]/{/^[^#]/d;s/^# \{0,1\}//;p;}' "$0"; }
 
-issue="" name="" template="" dry_run=false
+issue="" name="" template="" date="" dry_run=false
 supersedes=()
 while [ $# -gt 0 ]; do
   case "$1" in
     -h | --help) usage; exit 0 ;;
-    --issue | --name | --template | --supersedes)
+    --issue | --name | --template | --date | --supersedes)
       [ $# -ge 2 ] && [ -n "$2" ] || dw_die "$1 に値がありません" 64
       case "$1" in
         --issue) issue="$2" ;;
         --name) name="$2" ;;
         --template) template="$2" ;;
+        --date) date="$2" ;;
         --supersedes) supersedes+=("$2") ;;
       esac
       shift 2
@@ -67,6 +69,25 @@ case "$template" in
   "") dw_die "--template は必須です（full / minimal / bare / bare-minimal）" 64 ;;
   *) dw_die "--template は full / minimal / bare / bare-minimal のどれかにしてください: $template" 64 ;;
 esac
+
+# --date は YYYY-MM-DD の形で、暦にある日（2月30日などは不可）だけを受け付ける
+if [ -n "$date" ]; then
+  case "$date" in
+    [0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]) ;;
+    *) dw_die "--date は YYYY-MM-DD の形にしてください: $date" 64 ;;
+  esac
+  # 先頭の 0 を8進数として読まないよう、10# を付ける
+  y=$((10#${date%%-*})) m=$((10#${date:5:2})) d=$((10#${date##*-}))
+  case "$m" in
+    1 | 3 | 5 | 7 | 8 | 10 | 12) last=31 ;;
+    4 | 6 | 9 | 11) last=30 ;;
+    2) if [ $((y % 4)) -eq 0 ] && { [ $((y % 100)) -ne 0 ] || [ $((y % 400)) -eq 0 ]; }; then last=29; else last=28; fi ;;
+    *) last=0 ;;
+  esac
+  [ "$d" -ge 1 ] && [ "$d" -le "$last" ] || dw_die "--date が暦にない日付です: $date" 64
+else
+  date="$(date +%F)"
+fi
 
 # 小文字にし、英数字以外（日本語を含む）を - にまとめ、前後の - を除いて 40 文字までにする
 name="$(printf '%s' "$name" | LC_ALL=C tr '[:upper:]' '[:lower:]' \
@@ -107,7 +128,6 @@ for f in ${supersedes[@]+"${supersedes[@]}"}; do
   old_paths+=("$p")
 done
 
-date="$(date +%F)"
 tpl_path="$DW_PLUGIN_ROOT/templates/adr/$tpl"
 [ -f "$tpl_path" ] || dw_die "テンプレートがありません: ${tpl_path}" 1
 

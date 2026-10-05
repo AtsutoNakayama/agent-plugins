@@ -606,7 +606,7 @@ workflow() {
   assert_output --partial "必須のチェックのうち lint-result（.github/workflows/ci.yml）は、merge_group のイベントで動きません"
   assert_output --partial "必須のチェック codecov は、main のどのワークフローのジョブか分からないので"
   assert_equal "$(jq -c .merge_queue.merge_group <<<"$json")" \
-    '{"not_running":[{"check":"lint-result","workflows":[".github/workflows/ci.yml"]}],"unknown":["codecov"]}'
+    '{"not_running":[{"check":"lint-result","workflows":[".github/workflows/ci.yml"],"reason":"on"}],"unknown":["codecov"]}'
 }
 
 @test "キューを使わないときも、既存の必須のチェックを確かめて出力する（警告はしない）" {
@@ -637,7 +637,7 @@ workflow() {
   run_setup --merge-queue --required-check lint-result --dry-run
   assert_success
   assert_equal "$(jq -c .merge_queue.merge_group <<<"$json")" \
-    '{"not_running":[{"check":"org-check","workflows":[".github/workflows/org.yml"]}],"unknown":[]}'
+    '{"not_running":[{"check":"org-check","workflows":[".github/workflows/org.yml"],"reason":"on"}],"unknown":[]}'
 }
 
 @test "古いブランチ保護が求める必須のチェックも確かめる" {
@@ -652,7 +652,7 @@ workflow() {
   run_setup --merge-queue --required-check lint-result --dry-run
   assert_success
   assert_equal "$(jq -c .merge_queue.merge_group <<<"$json")" \
-    '{"not_running":[{"check":"legacy-check","workflows":[".github/workflows/legacy.yml"]}],"unknown":[]}'
+    '{"not_running":[{"check":"legacy-check","workflows":[".github/workflows/legacy.yml"],"reason":"on"}],"unknown":[]}'
 }
 
 @test "ワークフローを読めなくても、キューを使うときは警告して設定は続ける" {

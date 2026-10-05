@@ -21,7 +21,7 @@ git submodule update --init   # 初回だけ
 1. **Issue を起票します**（`/dev-workflow:task-create`）。作業はすべて Issue から始めます。
 2. **着手します**（`/dev-workflow:task-start`）。ブランチとワークツリー（`.claude/worktrees/<ブランチ名>`）ができるので、以後はその中で作業します。
 3. **コミットします**（`/dev-workflow:commit`）。全部を直し終えてから1回でコミットするのではなく、論理的な区切り（1つの変更を仕上げてテストが通ったところ）ごとにコミットします。
-4. **PR を出します**（`/dev-workflow:pr-create`）。出す前に、下の「テストとチェック」がすべて通ることを確かめます。PR はマージキューに入れてマージします。main が先に進んでも、PR に main を取り込み直す必要はありません（下の「コミットと PR の規約」のマージの条件）。
+4. **PR を出します**（`/dev-workflow:pr-create`）。出す前に、下の「テストとチェック」がすべて通ることを確かめます。PR はマージキューに入れてマージします。main が先に進んでも、PR に main を取り込み直す必要はありません（下の「コミットと PR の規約」のマージの条件）。PR に指摘や質問が付いたら、`/dev-workflow:pr-respond` で対応します（下の「指摘に手元の Claude Code で対応する」）。
 5. **後片付けをします**（`/dev-workflow:task-finish`）。PR がマージされたら、ワークツリーとローカルのブランチを削除し、main を最新にして、PR が閉じる Issue が閉じたかも伝えます。
 
 レビューの観点（`.claude/dev-workflow/review/`）の追加・修正は、そのきっかけになったタスクの PR に含め、別の Issue にはしません。`/dev-workflow:review-perspective-add` は、今のタスクのワークツリーで実行します。
@@ -53,7 +53,7 @@ Claude のレビューは、上限のコメントがきっかけのときは同�
 
 ### 指摘に手元の Claude Code で対応する
 
-試用期間中は、push のたびに CodeRabbit が増分でレビューします（試用期間が終わったら、PR を作ったときの1回だけに戻します。#160）。指摘には返信して resolved にしていきます。この流れは、このリポジトリ専用の skill `.claude/skills/coderabbit-respond/`（プラグインには同梱しません）で行えます。
+試用期間中は、push のたびに CodeRabbit が増分でレビューします（試用期間が終わったら、PR を作ったときの1回だけに戻します。#160）。指摘には返信して resolved にしていきます。この流れは、このリポジトリ専用の skill `.claude/skills/coderabbit-respond/`（プラグインには同梱しません）で行えます。PR に付いた指摘・質問には、プラグインの `/dev-workflow:pr-respond` でまとめて対応できます。このリポジトリでは、`.claude/dev-workflow/config.json` の `pr_respond.handlers` で CodeRabbit（`coderabbitai[bot]`）の担当を `coderabbit-respond` にしているので、CodeRabbit の指摘は pr-respond から coderabbit-respond に任されます（人のレビューや CI の失敗は、pr-respond が汎用の手順で扱います）。CodeRabbit 固有の決まりは、この節が正本です。
 
 - 試用期間中は、push のたびに自動でレビューされるので、`@coderabbitai review` は要りません。試用期間が終わったら、`@coderabbitai review` は使いません（1回ごとにレビューの上限を消費し、使った後の PR では、push のたびに増分のレビューが走って上限を消費するためです）。ただし、試用期間が終わった後でも、PR を作ったときのレビューが、障害などで付かなかったときだけ、1回使ってかまいません（Claude の見回りが拾うのを待たなくて済みます）。
 - 指摘は `gh` で読みます。行ごとの指摘はスレッドで、diff の外の指摘はレビュー本文にあります。

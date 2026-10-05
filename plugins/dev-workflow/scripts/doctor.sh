@@ -172,8 +172,8 @@ if $gh_auth && [ -n "$repo_root" ] && [ -n "$base_branch" ] \
       check required-checks false warn "${base_branch} へのマージに必須のチェックがありません。CI が通らなくてもマージできます。/dev-workflow:repo-setup で必須のチェックを設定してください。CI が無いなら、.claude/dev-workflow/config.json に \"require_status_checks\": false を書くと、この警告は出なくなります"
     fi
   fi
-  # キューを使っていれば、必須のチェックのワークフローが merge_group のイベントで動くかを確かめる。動かないと、
-  # キューのチェックが「待ち」のまま残り、PR がマージされない。確かめられないときは飛ばす
+  # キューを使っていれば、必須のチェックのワークフローが merge_group のイベントで動くかを確かめる（理由は
+  # merge-group-check.sh の先頭）。確かめられないときは飛ばす
   if [ "$merge" = queue ]; then
     if [ "$required" != "[]" ] \
       && mg="$("$BASH" "$DW_SCRIPTS_DIR/merge-group-check.sh" --branch "$base_branch" --checks-json "$required" 2>/dev/null)"; then
