@@ -5,6 +5,7 @@
 load test_helper
 
 # 偽の gh。
+# - gh repo view ... -q .nameWithOwner  me/demo を返す
 # - gh pr view [番号] --json ...   $FIX/pr-view.json を返す。「PrView <引数>」を $CALLS に記録する。無ければ PR が無いとして失敗する
 # - gh api graphql                「PrThreads <変数>」を $CALLS に記録し、$FIX/PrThreads.<n>.json（n 回目。無ければ PrThreads.json）を返す
 # FAKE_FAIL に指定した操作名（PrView・PrThreads）は、FAKE_FAIL_MSG（既定: gh: failed）を出して失敗する。
@@ -18,6 +19,7 @@ setup_fake_gh() {
 #!/usr/bin/env bash
 fail() { if [ "${FAKE_FAIL:-}" = "$1" ]; then echo "${FAKE_FAIL_MSG:-gh: failed}" >&2; exit 1; fi; }
 case "$1 $2" in
+  "repo view") echo me/demo ;;
   "pr view")
     echo "PrView ${*:3}" >>"$CALLS"
     fail PrView
@@ -76,7 +78,7 @@ out_of() { jq -c "$1" <<<"$output"; }
   assert_equal "$(out_of '[.feedback, .own_comments, .counts, .checks.state]')" '[[],[],{"threads":0,"reviews":0,"comments":0},"none"]'
   # 番号を指定しなければ、今のブランチの PR を読む
   assert_equal "$(args PrView)" "--json number,url,title,state,isDraft,author,headRefName,headRefOid,baseRefName,mergeable,mergeStateStatus,reviewDecision,reviews,comments,statusCheckRollup"
-  # スレッドは PR の URL のリポジトリで読む
+  # スレッドは今のリポジトリで読む
   assert_equal "$(args PrThreads)" '{"owner":"me","name":"demo","number":5}'
 }
 

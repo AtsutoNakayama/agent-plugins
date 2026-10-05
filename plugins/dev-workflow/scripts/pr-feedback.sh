@@ -64,10 +64,8 @@ else
   view="$(gh pr view --json "$fields" 2>&1)" || dw_die "今のブランチの PR を読めません（--pr で番号を指定してください）: $view"
 fi
 
-# owner と name は PR の URL（https://github.com/<owner>/<name>/pull/<番号>）から取る
 number="$(jq -r .number <<<"$view")"
-nwo="$(jq -r '.url | capture("^https?://[^/]+/(?<o>[^/]+)/(?<n>[^/]+)/pull/") | "\(.o)/\(.n)"' <<<"$view")" \
-  || dw_die "PR の URL からリポジトリが分かりません: $(jq -r .url <<<"$view")"
+nwo="$(gh repo view --json nameWithOwner -q .nameWithOwner)" || dw_die "リポジトリを読めません"
 
 # resolved でないスレッドを読む。resolved の状態は gh のサブコマンドにも REST にも無いので GraphQL で読み、ページを辿る
 # GraphQL の変数（$owner など）を bash に展開させないため、クエリはシングルクォートで書く
