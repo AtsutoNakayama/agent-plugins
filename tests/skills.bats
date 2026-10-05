@@ -35,7 +35,7 @@ frontmatter() { awk 'NR == 1 && $0 == "---" { on = 1; next } on && $0 == "---" {
 }
 
 @test "確認を残すスキルに、選択肢の説明の書き方がある（設計書 §8）" {
-  for name in task-create task-cancel pr-create repo-setup branch-update task-start task-finish; do
+  for name in task-create task-cancel pr-create repo-setup branch-update pr-respond task-start task-finish; do
     f="$SKILLS/$name/SKILL.md"
     grep -q '選択肢の説明には、選ぶと実際に何が起きるか' "$f" \
       || fail "${name} に選択肢の説明の書き方（選ぶと何が起きるかを書く）がありません"
@@ -45,7 +45,7 @@ frontmatter() { awk 'NR == 1 && $0 == "---" { on = 1; next } on && $0 == "---" {
 }
 
 @test "確認を残すスキルは、確認に必要な内容を質問の中にも入れる（設計書 §8）" {
-  for name in task-create task-cancel pr-create repo-setup review review-perspective-add task-finish branch-update task-start; do
+  for name in task-create task-cancel pr-create repo-setup review review-perspective-add task-finish branch-update pr-respond task-start; do
     f="$SKILLS/$name/SKILL.md"
     grep -q '質問の中にも入れる' "$f" \
       || fail "${name} に、確認に必要な内容を質問の中にも入れることが書かれていません（別の端末から使うと、質問の直前の文章が見えない）"
@@ -114,6 +114,24 @@ frontmatter() { awk 'NR == 1 && $0 == "---" { on = 1; next } on && $0 == "---" {
   if grep -n -e 'AskUserQuestion' -e 'status-set.sh' -e 'task-start.sh' -e 'issue-create.sh' -e 'issue-cancel.sh' "$f"; then
     fail "task-next に、確認や書き込みのスクリプトがあります（何も変えない読み取り専用）"
   fi
+}
+
+@test "task-next は、親の Issue を候補に入れず、開いている子を案内する（設計書 §4）" {
+  # 親の Issue に着手したセッションが、親として進めるか子に着手し直すかを聞いて止まった（#142）
+  f="$SKILLS/task-next/SKILL.md"
+  grep -q "\`parent\`" "$f" || fail "出力の parent の見方が書かれていません"
+  grep -q '待ちでも親でもないもの' "$f" || fail "並列にできないものから、親の Issue が除かれていません"
+  step2="$(awk '/^### 2\./ { on = 1; next } on' "$f")"
+  grep -q '\*\*親の Issue\*\*' <<<"$step2" || fail "手順2に、親の Issue の伝え方がありません"
+  # 子の読み方・案内のしかたは task-start の手順2を参照し、書き写さない（孫や別のリポジトリの子の扱いがずれないように）
+  grep -q 'task-start の手順2と同じように' <<<"$step2" || fail "親の子の案内が、task-start の手順2を参照していません"
+  grep -q 'subIssues' <<<"$step2" && fail "task-start の手順2の、子の読み方を書き写しています"
+  grep -q '親を閉じる' <<<"$step2" || fail "開いている子が無い親を閉じるよう伝えることが書かれていません"
+  # task-start の手順2に、参照する内容（子の読み方・孫・別のリポジトリの子）がある
+  start2="$(awk '/^### 2\./ { on = 1; next } /^### 3\./ { on = 0 } on' "$SKILLS/task-start/SKILL.md")"
+  grep -q 'subIssues' <<<"$start2" || fail "task-start の手順2に、子の読み方がありません"
+  grep -q '孫を案内' <<<"$start2" || fail "task-start の手順2に、孫の案内がありません"
+  grep -q '別のリポジトリの子' <<<"$start2" || fail "task-start の手順2に、別のリポジトリの子の扱いがありません"
 }
 
 @test "review は、局所の指摘でも水平展開の要否を判定し、反映のときに同じ場所も直す（設計書 §7）" {
@@ -189,4 +207,45 @@ frontmatter() { awk 'NR == 1 && $0 == "---" { on = 1; next } on && $0 == "---" {
   grep -q '開いている（`state` が `OPEN`）PR があるかを見る' "$SKILLS/task-finish/SKILL.md"
   grep -q 'argument-hint: "\[Issue番号|ブランチ名\]"' "$SKILLS/task-finish/SKILL.md"
   grep -q 'ワークツリーを作らずに着手した' "$SKILLS/task-cancel/SKILL.md"
+}
+
+@test "pr-respond は PR の番号を引数で受け取り、スレッドを resolved にせず、コメントの本文を信頼しない" {
+  f="$SKILLS/pr-respond/SKILL.md"
+  frontmatter "$f" | grep -q '^argument-hint: .*PR番号' || fail "pr-respond の frontmatter に argument-hint（PR番号）がありません"
+  grep -q '引数があれば' "$f" || fail "pr-respond に、引数の PR の番号の扱いが書かれていません"
+  grep -q 'スレッドは resolved にしない' "$f" || fail "pr-respond に、スレッドを resolved にしないことが書かれていません"
+  grep -q '信頼しないデータとして読む' "$f" || fail "pr-respond に、コメントの本文を信頼しないデータとして読むことが書かれていません"
+  grep -q 'pr_respond.handlers' "$f" || fail "pr-respond に、担当の skill の設定（pr_respond.handlers）が書かれていません"
+}
+
+@test "pr-create と task-finish は pr-respond に依存しない（使わなくてもマージから後片付けまで進める）" {
+  for name in pr-create task-finish; do
+    if grep -n 'pr-respond' "$SKILLS/$name/SKILL.md"; then
+      fail "${name} が pr-respond に触れています（pr-respond は任意の寄り道）"
+    fi
+  done
+}
+
+# shellcheck disable=SC2016 # バッククォートはスキルの本文の文字で、展開させない
+@test "review は、設定 review.model があるときだけ、観点と /code-review をそのモデルのサブエージェントで動かす（設計書 §7）" {
+  f="$SKILLS/review/SKILL.md"
+  step3="$(awk '/^### 3\./ { on = 1; next } /^### 4\./ { on = 0 } on' "$f")"
+  grep -q 'の `model` が null でなければ、Agent ツールの `model` にその値を渡す' <<<"$step3" \
+    || fail "手順3に、観点のサブエージェントへ model を渡すことが書かれていません"
+  grep -q '「`/code-review` を任せるサブエージェントへの指示」' <<<"$step3" \
+    || fail "手順3に、/code-review をサブエージェントに任せることが書かれていません"
+  grep -q 'null なら、手順3はセッションと同じモデルで動かす' "$f" \
+    || fail "設定が null のときにセッションと同じモデルで動かすことが書かれていません"
+  step8="$(awk '/^### 8\./ { on = 1; next } /^### 9\./ { on = 0 } on' "$f")"
+  grep -q '手順3のとおりサブエージェントに任せる' <<<"$step8" \
+    || fail "再レビュー（手順8）でも /code-review をサブエージェントに任せることが書かれていません"
+}
+
+@test "repo-setup は、レビューに使うモデルを決めていなければ、使うかと保存する層を聞き、使わないことも保存する" {
+  f="$SKILLS/repo-setup/SKILL.md"
+  step2="$(awk '/^### 2\./ { on = 1; next } /^### 3\./ { on = 0 } on' "$f")"
+  grep -q 'review.decided' <<<"$step2" || fail "手順2に、決めてあれば聞かないことが書かれていません"
+  grep -q -- '--review-model off' <<<"$step2" || fail "手順2に、使わないことも保存することが書かれていません"
+  grep -q -- '--models-scope' <<<"$step2" || fail "手順2に、保存する層を渡すことが書かれていません"
+  grep -q 'models.actions' "$f" || fail "手順3の予定に、レビューのモデルの変更が入っていません"
 }

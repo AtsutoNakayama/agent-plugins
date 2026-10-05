@@ -93,10 +93,11 @@ if [ -n "$repo_root" ]; then
   main_root="$(dw_main_root "$repo_root" || true)"
   local_root="${main_root:-$repo_root}"
   old_location "$local_root/.claude/workflow.local.json" "$local_root/.claude/dev-workflow/config.local.json"
-  # .gitignore が古い名前だけを無視していると、移した個人の設定がコミットされうる
-  if { [ -f "$local_root/.claude/workflow.local.json" ] || [ -f "$local_root/.claude/dev-workflow/config.local.json" ]; } \
-    && ! git -C "$local_root" check-ignore -q .claude/dev-workflow/config.local.json 2>/dev/null; then
-    check local-ignored false warn "個人の設定が git に無視されていません。.gitignore に .claude/dev-workflow/config.local.json を足してください"
+  # .gitignore が古い名前だけを無視している、または既にコミットしてあると、個人の設定がコミットされうる
+  # （dw_local_config_state で両方を見分け、それぞれに合う案内を出す）
+  if [ -f "$local_root/.claude/workflow.local.json" ] || [ -f "$(dw_local_config_file "$repo_root")" ]; then
+    hint="$(dw_local_config_hint "$(dw_local_config_state "$repo_root")")"
+    [ -z "$hint" ] || check local-ignored false warn "$hint"
   fi
 fi
 user_parent="$(dirname "$(dw_user_dir)")"
@@ -165,8 +166,8 @@ if $gh_auth && [ -n "$repo_root" ] && [ -n "$base_branch" ] \
       check required-checks false warn "${base_branch} へのマージに必須のチェックがありません。CI が通らなくてもマージできます。/dev-workflow:repo-setup で必須のチェックを設定してください。CI が無いなら、.claude/dev-workflow/config.json に \"require_status_checks\": false を書くと、この警告は出なくなります"
     fi
   fi
-  # キューを使っていれば、必須のチェックのワークフローが merge_group のイベントで動くかを確かめる。動かないと、
-  # キューのチェックが「待ち」のまま残り、PR がマージされない。確かめられないときは飛ばす
+  # キューを使っていれば、必須のチェックのワークフローが merge_group のイベントで動くかを確かめる（理由は
+  # merge-group-check.sh の先頭）。確かめられないときは飛ばす
   if [ "$merge" = queue ]; then
     if [ "$required" != "[]" ] \
       && mg="$("$BASH" "$DW_SCRIPTS_DIR/merge-group-check.sh" --branch "$base_branch" --checks-json "$required" 2>/dev/null)"; then
