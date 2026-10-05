@@ -156,18 +156,54 @@ dw_fetch_repo_file() {
   esac
 }
 
-# ルールセットで守るブランチ（チームの base_branch）を出力する。ルールセットはリポジトリ全体で共有するので、
+# チームの設定の項目（トップレベルのキー）を出力する。ルールセットのようにリポジトリ全体で共有するものに使い、
 # 個人の層（config.local.json・~/.claude/dev-workflow）は使わず、チームの設定とプラグインの既定だけで決める。
-# チームの設定のファイルが無ければプラグインの既定を使い、JSON として読めなければ 1 を返す。
-# 使い方: dw_team_base_branch <チームの設定のファイル（空なら無い）>
-dw_team_base_branch() {
+# チームの設定のファイルが無いか、キーが無い（null）ならプラグインの既定を使う（// と違い、false は値として保つ）。
+# JSON として読めなければ 1 を返す。
+# 使い方: dw_team_config <チームの設定のファイル（空なら無い）> <キー>
+dw_team_config() {
   local d
-  d="$(jq -r '.base_branch' "$DW_PLUGIN_ROOT/defaults/workflow.json")"
+  d="$(jq -c --arg k "$2" '.[$k]' "$DW_PLUGIN_ROOT/defaults/workflow.json")"
   if [ -n "$1" ] && [ -f "$1" ]; then
-    jq -r --arg d "$d" '.base_branch // $d' "$1" 2>/dev/null
+    jq -r --arg k "$2" --argjson d "$d" 'if .[$k] == null then $d else .[$k] end' "$1" 2>/dev/null
   else
-    printf '%s\n' "$d"
+    jq -rn --argjson d "$d" '$d'
   fi
+}
+
+# 必須のチェックを求めるルール（rules/branches の required_status_checks のうち、名前が1つ以上あるもの）を選ぶ jq の定義。
+# 名前が1つも無いルールは何も求めていないので数えない。source した側で、jq のフィルターの先頭に付けて使う
+# shellcheck disable=SC2034
+DW_JQ_CHECK_RULES='def check_rules: [.[] | select(.type == "required_status_checks"
+  and ((.parameters.required_status_checks // []) | length > 0))];'
+
+# ブランチに効いているルールセットのルール（組織のルールセットも含む）を出力する。--paginate のページごとの配列が
+# 並ぶので、使う側で jq -s の add でまとめる。読めなければ非0を返す（どう扱うかは呼び出し側で決める）。
+# 使い方: dw_branch_rules <owner/repo（{owner}/{repo} でもよい）> <ブランチ>
+dw_branch_rules() {
+  gh api --paginate "repos/$1/rules/branches/$(jq -rn --arg b "$2" '$b | @uri')?per_page=100" 2>/dev/null
+}
+
+# 古いブランチ保護（ルールセットでない）が求める必須のチェックの名前の一覧（JSON の配列）を出力する。
+# rules/branches には出ないので、ブランチの情報（branches/<ブランチ> の protection）から読む。
+# 読めなければ（保護が無い・権限が無いなど）[] を出力する。
+# 使い方: dw_classic_required_checks <owner/repo（{owner}/{repo} でもよい）> <ブランチ>
+dw_classic_required_checks() {
+  local info
+  info="$(gh api "repos/$1/branches/$(jq -rn --arg b "$2" '$b | @uri')" 2>/dev/null)" \
+    && jq -c '[.protection.required_status_checks.contexts[]?]' <<<"$info" 2>/dev/null \
+    || echo '[]'
+}
+
+# ブランチに効いている必須のチェックの名前の一覧（JSON の配列）を出力する。ルールセットのルール（rules/branches の
+# 出力。--paginate のページを並べたものでもよい）と、古いブランチ保護の名前（dw_classic_required_checks）を合わせる。
+# ルールセットの ID を渡すと、そのルールセットのルールは数えない（置き換える前の一覧を除くとき）。
+# 使い方: dw_required_checks <ルールの JSON> <古いブランチ保護の名前の JSON> [<除くルールセットの ID>]
+dw_required_checks() {
+  jq -sc --argjson classic "$2" --arg id "${3:-}" "$DW_JQ_CHECK_RULES"'
+    add // [] | check_rules
+    | [(.[] | select($id == "" or ((.ruleset_id // "" | tostring) != $id))
+        | .parameters.required_status_checks[].context), $classic[]] | unique' <<<"$1"
 }
 
 # Story Point に使える値（フィボナッチ数）。設定では変えられない。

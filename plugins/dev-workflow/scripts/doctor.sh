@@ -135,28 +135,40 @@ fi
 # チームの設定で決める（個人の設定は使わない）。GitHub に問い合わせられないときは飛ばす
 base_branch=""
 if [ -n "$repo_root" ]; then
-  base_branch="$(dw_team_base_branch "$repo_root/.claude/dev-workflow/config.json" || true)"
+  base_branch="$(dw_team_config "$repo_root/.claude/dev-workflow/config.json" base_branch || true)"
 fi
+# 必須のチェックの有無は、名前の一覧（required。ルールセットと古いブランチ保護を合わせる）だけで決め、strict かは、
+# 名前のあるルールセットのルール（check_rules）だけで見る。ルールがあっても名前が1つも無ければ、何も求めていない
 if $gh_auth && [ -n "$repo_root" ] && [ -n "$base_branch" ] \
-  && rules="$(gh api --paginate "repos/{owner}/{repo}/rules/branches/$(jq -rn --arg b "$base_branch" '$b | @uri')?per_page=100" 2>/dev/null)" \
-  && merge="$(jq -ser '
+  && rules="$(dw_branch_rules '{owner}/{repo}' "$base_branch")" \
+  && required="$(dw_required_checks "$rules" "$(dw_classic_required_checks '{owner}/{repo}' "$base_branch")" 2>/dev/null)" \
+  && merge="$(jq -ser --argjson required "$required" "$DW_JQ_CHECK_RULES"'
     # --paginate はページごとに配列を出力するので、1つにまとめる
     add // []
-    | if any(.[]; .type == "merge_queue") then "queue"
-    elif any(.[]; .type == "required_status_checks" and .parameters.strict_required_status_checks_policy) then "strict"
-    elif any(.[]; .type == "required_status_checks") then "none"
-    else "no-checks" end' <<<"$rules" 2>/dev/null)"; then
+    | if $required == [] then "no-checks"
+    elif any(.[]; .type == "merge_queue") then "queue"
+    elif any(check_rules[]; .parameters.strict_required_status_checks_policy) then "strict"
+    elif check_rules != [] then "none"
+    else "classic" end' <<<"$rules" 2>/dev/null)"; then
   case "$merge" in
     queue) check merge-queue true warn "${base_branch} へのマージはマージキューを通します" ;;
     strict) check merge-queue true warn "${base_branch} へのマージは、PR が最新の ${base_branch} を取り込んでいることを求めます（strict）" ;;
     none) check merge-queue false warn "${base_branch} へのマージに、マージキューも最新の ${base_branch} の取り込み（strict）も求めていません。古い ${base_branch} で通った CI のままマージすると壊れることがあります。/dev-workflow:repo-setup で設定してください" ;;
-    *) check merge-queue true warn "${base_branch} へのマージに必須のチェックが無いので、マージキューも strict も使っていません" ;;
+    # no-checks（必須のチェックが無い）は、キューがあっても、キューも strict も意味がないので知らせない（下で必須のチェックが無いことを知らせる）
+    # classic（必須のチェックが古いブランチ保護にだけある）は、ブランチの情報から strict が分からないので知らせない
   esac
+  # 必須のチェックが無いと、キューを使っていても、CI が通らなくてもマージできる。CI の無いリポジトリでは
+  # 毎回の警告になるので、チームの設定で求めないことにしていれば警告しない
+  if [ "$required" = "[]" ]; then
+    if [ "$(dw_team_config "$repo_root/.claude/dev-workflow/config.json" require_status_checks 2>/dev/null)" = false ]; then
+      check required-checks true warn "${base_branch} へのマージに必須のチェックはありません（設定の require_status_checks が false）"
+    else
+      check required-checks false warn "${base_branch} へのマージに必須のチェックがありません。CI が通らなくてもマージできます。/dev-workflow:repo-setup で必須のチェックを設定してください。CI が無いなら、.claude/dev-workflow/config.json に \"require_status_checks\": false を書くと、この警告は出なくなります"
+    fi
+  fi
   # キューを使っていれば、必須のチェックのワークフローが merge_group のイベントで動くかを確かめる。動かないと、
   # キューのチェックが「待ち」のまま残り、PR がマージされない。確かめられないときは飛ばす
   if [ "$merge" = queue ]; then
-    required="$(jq -sc 'add // [] | [.[] | select(.type == "required_status_checks")
-      | .parameters.required_status_checks[]?.context] | unique' <<<"$rules" 2>/dev/null || echo '[]')"
     if [ "$required" != "[]" ] \
       && mg="$("$BASH" "$DW_SCRIPTS_DIR/merge-group-check.sh" --branch "$base_branch" --checks-json "$required" 2>/dev/null)"; then
       if [ "$(jq -r '.messages.not_running // empty' <<<"$mg")" != "" ]; then
