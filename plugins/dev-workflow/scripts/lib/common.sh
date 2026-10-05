@@ -34,31 +34,93 @@ dw_repo_root() {
   fi
 }
 
-# メインのワークツリーのルート。コミットしないファイル（*.local.json）の置き場所。
-# 使い方: dw_main_root <リポジトリのルート>
-# --path-format=absolute は git 2.31 以降にしか無いので、相対パスは自前で絶対パスにする。
-dw_main_root() {
-  local root="$1" common
-  common="$(git -C "$root" rev-parse --git-common-dir 2>/dev/null)" || return 1
-  case "$common" in
-    /*) ;;
-    *) common="$root/$common" ;;
+# <基準のディレクトリ> からの相対パス（絶対パスでもよい）のディレクトリを、実体の絶対パスにして出力する。無ければ失敗する。
+# --path-format=absolute は git 2.31 以降にしか無いので、git が返す相対パスは、これで絶対パスにする
+# 使い方: dw_abs_dir <基準のディレクトリ> <パス>
+dw_abs_dir() {
+  case "$2" in
+    /*) (cd "$2" 2>/dev/null && pwd -P) ;;
+    *) (cd "$1" 2>/dev/null && cd "$2" 2>/dev/null && pwd -P) ;;
   esac
-  (cd "$(dirname "$common")" && pwd -P)
+}
+
+# <ディレクトリ> で git が見つけるリポジトリ（--git-common-dir。ワークツリーなら元のリポジトリ）を、実体の絶対パスで出力する。
+# リポジトリが無ければ失敗する
+# 使い方: dw_common_dir <ディレクトリ>
+dw_common_dir() {
+  local c
+  c="$(git -C "$1" rev-parse --git-common-dir 2>/dev/null)" && [ -n "$c" ] || return 1
+  dw_abs_dir "$1" "$c"
+}
+
+# <ディレクトリ> で git が <リポジトリ>（dw_common_dir の値）を見つけるなら、その作業ツリーの一番上を出力する。違えば失敗する。
+# git の内部の配置から考えたルートの候補が、本当にそのリポジトリの作業ツリーかを確かめるのに使う
+# 使い方: dw_toplevel_if_repo <ディレクトリ（空なら失敗）> <リポジトリ>
+dw_toplevel_if_repo() {
+  [ -n "$1" ] && [ "$(dw_common_dir "$1" || true)" = "$2" ] || return 1
+  git -C "$1" rev-parse --show-toplevel 2>/dev/null
+}
+
+# <リポジトリ>（dw_common_dir の値）のメインのワークツリーのルートを出力する。分からなければ失敗する。
+# 候補は、リポジトリの親（普通のリポジトリの <ルート>/.git）と core.worktree（サブモジュールの <上のリポジトリ>/.git/modules/<名前>）で、
+# どちらも dw_toplevel_if_repo で確かめる。--separate-git-dir で作ったリポジトリや bare リポジトリは、
+# git がメインのワークツリーを記録していないので分からない
+# 使い方: dw_repo_main_root <リポジトリ>
+dw_repo_main_root() {
+  local wt
+  dw_toplevel_if_repo "$(dirname "$1")" "$1" && return 0
+  wt="$(git --git-dir="$1" config core.worktree 2>/dev/null || true)"
+  [ -n "$wt" ] && dw_toplevel_if_repo "$(dw_abs_dir "$1" "$wt" || true)" "$1"
+}
+
+# メインのワークツリーのルート。コミットしないファイル（*.local.json）の置き場所で、task-start・cleanup がワークツリーを作り・消す場所。
+# <リポジトリのルート> がワークツリー（git worktree add で作ったもの）でなければ、そのルートがメインのワークツリー。
+# ワークツリーなら dw_repo_main_root で求め、分からなければ失敗する（推測した別の場所で操作しないため）
+# 使い方: dw_main_root <リポジトリのルート>
+dw_main_root() {
+  local common gitdir
+  common="$(dw_common_dir "$1")" || return 1
+  gitdir="$(git -C "$1" rev-parse --git-dir 2>/dev/null)" || return 1
+  if [ "$(dw_abs_dir "$1" "$gitdir" || true)" = "$common" ]; then
+    git -C "$1" rev-parse --show-toplevel 2>/dev/null
+    return
+  fi
+  dw_repo_main_root "$common"
+}
+
+# <リポジトリのルート> のチームの設定の置き場所（<ルート>/.claude/dev-workflow）を出力する。
+# ホームをリポジトリにしているとき（dotfiles を ~/.git で管理するときなど）は、そこがユーザーの層の置き場所（dw_user_dir）と
+# 同じになるので、チームの設定の置き場所とはみなさず、何も出さない（ユーザーの層の設定で、導入したことにならないようにする）
+# 使い方: dw_team_dir <リポジトリのルート（空なら何も出さない）>
+dw_team_dir() {
+  local d="$1/.claude/dev-workflow"
+  [ -n "$1" ] || return 0
+  if [ -d "$d" ] && [ "$(dw_abs_dir / "$d" || true)" = "$(dw_abs_dir / "$(dw_user_dir)" || true)" ]; then
+    return 0
+  fi
+  printf '%s\n' "$d"
+}
+
+# <リポジトリのルート> にチームの設定（dw_team_dir の config.json）があれば成功する
+# 使い方: dw_has_team_config <リポジトリのルート>
+dw_has_team_config() {
+  local d
+  d="$(dw_team_dir "$1")"
+  [ -n "$d" ] && [ -f "$d/config.json" ]
 }
 
 # このプラグインを導入したリポジトリ（チームの設定 .claude/dev-workflow/config.json があるリポジトリ）なら成功する。
 # プラグインが効く範囲を、Claude Code で有効にした範囲（ユーザー単位なら全リポジトリ）ではなく、導入したリポジトリに限るため、
 # 導入していないリポジトリでは、フックは何もせず、ユーザーの層（~/.claude/dev-workflow/）も読まない（設計書 §1）。
-# ワークツリーに無くても、メインのワークツリーにあれば導入したとみなす（初期設定をまだコミットしていないときや、
+# ワークツリーに無くても、メインのワークツリー（dw_main_root）にあれば導入したとみなす（初期設定をまだコミットしていないときや、
 # 初期設定より前に作ったブランチのワークツリーで、守りが外れないようにする）
 # 使い方: dw_is_set_up <リポジトリのルート（空なら導入していない）>
 dw_is_set_up() {
   local main
   [ -n "${1:-}" ] || return 1
-  [ -f "$1/.claude/dev-workflow/config.json" ] && return 0
+  dw_has_team_config "$1" && return 0
   main="$(dw_main_root "$1" || true)"
-  [ -n "$main" ] && [ -f "$main/.claude/dev-workflow/config.json" ]
+  [ -n "$main" ] && dw_has_team_config "$main"
 }
 
 # ユーザーごとの設定の置き場所。
@@ -341,11 +403,14 @@ dw_review_model_of() {
 # どれかの層のファイルが JSON のオブジェクトとして読めなければ、書く層でなくても止まる。
 # 使い方: dw_review_model_layers <リポジトリのルート>
 dw_review_model_layers() {
-  local pairs pair name f v user_dir
+  local pairs pair name f v user_dir team_dir
   pairs=()
   user_dir="$(dw_user_dir_for "$1")"
   [ -z "$user_dir" ] || pairs+=("user:$user_dir/config.json")
-  pairs+=("team:$1/.claude/dev-workflow/config.json" "local:$(dw_local_config_file "$1")")
+  # チームの設定は config.sh と同じく dw_team_dir から読む（ホームのリポジトリでは読まない）
+  team_dir="$(dw_team_dir "$1")"
+  [ -z "$team_dir" ] || pairs+=("team:$team_dir/config.json")
+  pairs+=("local:$(dw_local_config_file "$1")")
   for pair in "${pairs[@]}"; do
     name="${pair%%:*}" f="${pair#*:}"
     [ -f "$f" ] || continue

@@ -127,8 +127,10 @@ fi
 
 repo_root="$(dw_repo_root || true)"
 user_dir="$(dw_user_review_dir)"
+# リポジトリの観点の置き場所（ホームのリポジトリでは、ユーザーの層と同じ場所なので空になる）
 repo_dir=""
-[ -z "$repo_root" ] || repo_dir="$repo_root/.claude/dev-workflow/review"
+team_dir="$(dw_team_dir "$repo_root")"
+[ -z "$team_dir" ] || repo_dir="$team_dir/review"
 # このリポジトリで使われるユーザーの層（導入していなければ空）
 used_user_dir="$(dw_user_review_dir_for "$repo_root")"
 case "$layer" in
@@ -141,7 +143,8 @@ case "$layer" in
       || dw_warn "このリポジトリにはプラグインを導入していない（.claude/dev-workflow/config.json が無い）ので、ここではユーザーの層の観点は使われません。導入したリポジトリでは使われます"
     ;;
   repo)
-    [ -n "$repo_dir" ] || dw_die "git のリポジトリの中ではないので、repo の層には置けません" 2
+    [ -n "$repo_root" ] || dw_die "git のリポジトリの中ではないので、repo の層には置けません" 2
+    [ -n "$repo_dir" ] || dw_die "このリポジトリ（${repo_root}）の .claude/dev-workflow はユーザーの層と同じ場所なので、repo の層には置けません" 2
     dir="$repo_dir"
     # 観点の追加はきっかけになったタスクの PR に含めるので、作業用のブランチの上かを知らせる（設計書 §7）
     # 設定を読めなくても観点は作る（作業用のブランチの上かは分からないものとして null にする）

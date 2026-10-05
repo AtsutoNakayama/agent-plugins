@@ -24,6 +24,8 @@ filter="${1:-.}"
 repo_root="$(dw_repo_root || true)"
 # 導入していないリポジトリでは、ユーザーの層を読まない（空になるので飛ばす）
 user_dir="$(dw_user_dir_for "$repo_root")"
+# チームの設定の置き場所（ホームのリポジトリでは、ユーザーの層と同じ場所なので空になり、読まない）
+team_dir="$(dw_team_dir "$repo_root")"
 
 layers=()
 sources=()
@@ -72,14 +74,14 @@ add_layer "$DW_PLUGIN_ROOT/defaults/workflow.json"
 [ -z "$user_dir" ] || add_layer "$user_dir/config.json"
 if [ -n "$repo_root" ]; then
   layers+=("$(detect_existing)")
-  add_layer "$repo_root/.claude/dev-workflow/config.json"
+  [ -z "$team_dir" ] || add_layer "$team_dir/config.json"
   # ワークツリーで作業中なら、メインのワークツリーに置いた個人の設定を使う
   add_layer "$(dw_local_config_file "$repo_root")"
 fi
 
 # 文章のガイド（優先度の低い順: ユーザー → リポジトリ）
 guides='{}'
-for dir in "$user_dir" "${repo_root:+$repo_root/.claude/dev-workflow}"; do
+for dir in "$user_dir" "$team_dir"; do
   if [ -z "$dir" ] || [ ! -d "$dir" ]; then
     continue
   fi
