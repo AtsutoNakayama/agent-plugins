@@ -7,8 +7,8 @@
 #   --body-file PATH     本文のファイル。- なら標準入力（既定: 本文なし）
 #   --story-point N      Story Point。1, 2, 3, 5, 8, 13, 21, 34 のどれか（既定: 空欄）。
 #                        21 と 34 は設定できるが、分割を勧める警告を出す
-#   --blocked-by N       依存する（先に終わらせる）同じリポジトリの Issue の番号。複数回指定できる
-#   --parent N           親にする同じリポジトリの Issue の番号。起票した Issue を N のサブ Issue にする。
+#   --blocked-by N       依存する（先に終わらせる）同じリポジトリの Issue の番号（#N でもよい）。複数回指定できる
+#   --parent N           親にする同じリポジトリの Issue の番号（#N でもよい）。起票した Issue を N のサブ Issue にする。
 #                        親子の深さが設定の sub_issues.max_depth（既定 3）を超えるなら、Issue を作る前に止める。
 #                        目安の 2 層より深くなる（3 層目になる）ときは、作るが警告する。
 #                        Story Point は子にだけ付けるので、親の Project の Story Point が入っていれば空欄にする

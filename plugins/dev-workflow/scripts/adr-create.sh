@@ -3,7 +3,7 @@
 #
 # 使い方: adr-create.sh --issue N --name TEXT --template TYPE [--supersedes FILE]... [--dry-run]
 #
-#   --issue N          判断をした Issue の番号。ファイル名の先頭（6桁に0埋め。999999 まで）と front matter の issue になる
+#   --issue N          判断をした Issue の番号（#N でもよい）。ファイル名の先頭（6桁に0埋め。999999 まで）と front matter の issue になる
 #   --name TEXT        短い名前（英語）。小文字にし、英数字以外は - にして 40 文字までに整える
 #   --template TYPE    テンプレート（templates/adr/ の MADR 4.0.0 を日本語に訳したもの）
 #                        full          全部の節・説明あり（adr-template.md）
