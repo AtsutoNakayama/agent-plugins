@@ -100,7 +100,7 @@ if [ -n "$repo" ]; then
 fi
 
 # --- 守るブランチ（設定の base_branch） ------------------------------------------
-# チームの設定（.claude/dev-workflow/config.json）とプラグインの既定だけで決める（dw_team_base_branch）
+# チームの設定（.claude/dev-workflow/config.json）とプラグインの既定だけで決める（dw_team_config）
 tmp="$(mktemp -d)"
 trap 'rm -rf "$tmp"' EXIT
 team=""
@@ -113,7 +113,7 @@ elif dw_fetch_repo_file "$repo_nwo" .claude/dev-workflow/config.json "$tmp/workf
   # 別のリポジトリでは、そのリポジトリの既定のブランチにある設定を読む
   team="$tmp/workflow.json"
 fi
-branch="$(dw_team_base_branch "$team")" \
+branch="$(dw_team_config "$team" base_branch)" \
   || dw_die "${repo_nwo} の .claude/dev-workflow/config.json を JSON として読めません" 2
 [ -n "$branch" ] || dw_die "設定の base_branch が空です" 2
 

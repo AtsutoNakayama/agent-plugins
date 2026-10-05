@@ -156,17 +156,18 @@ dw_fetch_repo_file() {
   esac
 }
 
-# ルールセットで守るブランチ（チームの base_branch）を出力する。ルールセットはリポジトリ全体で共有するので、
+# チームの設定の項目（トップレベルのキー）を出力する。ルールセットのようにリポジトリ全体で共有するものに使い、
 # 個人の層（config.local.json・~/.claude/dev-workflow）は使わず、チームの設定とプラグインの既定だけで決める。
-# チームの設定のファイルが無ければプラグインの既定を使い、JSON として読めなければ 1 を返す。
-# 使い方: dw_team_base_branch <チームの設定のファイル（空なら無い）>
-dw_team_base_branch() {
+# チームの設定のファイルが無いか、キーが無い（null）ならプラグインの既定を使う（// と違い、false は値として保つ）。
+# JSON として読めなければ 1 を返す。
+# 使い方: dw_team_config <チームの設定のファイル（空なら無い）> <キー>
+dw_team_config() {
   local d
-  d="$(jq -r '.base_branch' "$DW_PLUGIN_ROOT/defaults/workflow.json")"
+  d="$(jq -c --arg k "$2" '.[$k]' "$DW_PLUGIN_ROOT/defaults/workflow.json")"
   if [ -n "$1" ] && [ -f "$1" ]; then
-    jq -r --arg d "$d" '.base_branch // $d' "$1" 2>/dev/null
+    jq -r --arg k "$2" --argjson d "$d" 'if .[$k] == null then $d else .[$k] end' "$1" 2>/dev/null
   else
-    printf '%s\n' "$d"
+    jq -rn --argjson d "$d" '$d'
   fi
 }
 

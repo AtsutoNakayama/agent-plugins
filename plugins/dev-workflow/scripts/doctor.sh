@@ -134,7 +134,7 @@ fi
 # チームの設定で決める（個人の設定は使わない）。GitHub に問い合わせられないときは飛ばす
 base_branch=""
 if [ -n "$repo_root" ]; then
-  base_branch="$(dw_team_base_branch "$repo_root/.claude/dev-workflow/config.json" || true)"
+  base_branch="$(dw_team_config "$repo_root/.claude/dev-workflow/config.json" base_branch || true)"
 fi
 if $gh_auth && [ -n "$repo_root" ] && [ -n "$base_branch" ] \
   && rules="$(gh api --paginate "repos/{owner}/{repo}/rules/branches/$(jq -rn --arg b "$base_branch" '$b | @uri')?per_page=100" 2>/dev/null)" \
