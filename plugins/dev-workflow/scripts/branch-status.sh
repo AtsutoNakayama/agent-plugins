@@ -16,6 +16,11 @@
 #                         merge_state は GitHub の mergeStateStatus（BEHIND・DIRTY・BLOCKED・CLEAN など）。
 #                         fork の同じ名前のブランチからの PR は除く。PR が無い、gh が無い、
 #                         または gh で取得できないときは、pr は null になる（behind と ahead は gh が無くても出る）
+#                         pr.merge_queue はマージキューの状態（enabled・state・position）。enabled は PR のマージ先で
+#                         キューが有効か、state・position は PR がキューに並んでいるときの状態（QUEUED・AWAITING_CHECKS・
+#                         MERGEABLE・UNMERGEABLE・LOCKED）と順番（1 が先頭）で、並んでいなければ null。
+#                         キューに並んだ PR は、merge_state が CLEAN でも、先に並んだ PR と衝突すると state が UNMERGEABLE になる。
+#                         取得できなければ merge_queue は null になる
 set -euo pipefail
 
 # shellcheck source=lib/common.sh
@@ -70,6 +75,18 @@ pr=null
 if command -v gh >/dev/null 2>&1 \
   && prs="$(gh pr list --head "$branch" --state open --json number,url,mergeStateStatus,isCrossRepository 2>/dev/null)"; then
   pr="$(jq -c 'map(select(.isCrossRepository | not)) | first // null | if . then {number, url, merge_state: .mergeStateStatus} else null end' <<<"$prs")"
+fi
+
+# マージキューの状態は gh pr list にも REST にも無いので GraphQL で読む（設計書 §10）。PR の URL から引くので、
+# リポジトリの所有者と名前を別に調べなくてよい。取得できなければ merge_queue は null にする
+if [ "$pr" != null ]; then
+  queue=null
+  # shellcheck disable=SC2016 # GraphQL の変数（$url）を bash に展開させないため、シングルクォートで書く
+  if res="$(dw_gql 'query PrQueue($url: URI!) { resource(url: $url) { ... on PullRequest { isMergeQueueEnabled mergeQueueEntry { state position } } } }' \
+    "$(jq -c '{url}' <<<"$pr")" 2>/dev/null)"; then
+    queue="$(jq -c '.data.resource // null | if . then {enabled: .isMergeQueueEnabled, state: .mergeQueueEntry.state, position: .mergeQueueEntry.position} else null end' <<<"$res" 2>/dev/null || echo null)"
+  fi
+  pr="$(jq -c --argjson q "$queue" '. + {merge_queue: $q}' <<<"$pr")"
 fi
 
 jq -n --arg branch "$branch" --arg base "$base" --argjson behind "$behind" --argjson ahead "$ahead" \

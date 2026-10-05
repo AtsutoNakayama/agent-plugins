@@ -164,3 +164,39 @@ run_status() {
   run_status
   assert_equal "$(jq -c '[.unpushed, .unpulled]' <<<"$output")" "[null,null]"
 }
+
+@test "PR のマージキューの状態（有効か・並んでいるときの状態と順番）を、PR の URL から読んで出す" {
+  setup_branch
+  echo '[{"number": 5, "url": "https://github.com/me/demo/pull/5", "mergeStateStatus": "CLEAN", "isCrossRepository": false}]' >"$FIX/pr-list.json"
+  echo '{"data": {"resource": {"isMergeQueueEnabled": true, "mergeQueueEntry": {"state": "UNMERGEABLE", "position": 2}}}}' >"$FIX/PrQueue.json"
+  run_status
+  assert_success
+  assert_equal "$(jq -c '.pr | [.merge_state, .merge_queue]' <<<"$output")" '["CLEAN",{"enabled":true,"state":"UNMERGEABLE","position":2}]'
+  assert_equal "$(grep '^PrQueue ' "$CALLS")" 'PrQueue {"url":"https://github.com/me/demo/pull/5"}'
+}
+
+@test "キューに並んでいなければ state・position は null、キューが無ければ enabled は false" {
+  setup_branch
+  echo '[{"number": 5, "url": "https://github.com/me/demo/pull/5", "mergeStateStatus": "CLEAN", "isCrossRepository": false}]' >"$FIX/pr-list.json"
+  echo '{"data": {"resource": {"isMergeQueueEnabled": true, "mergeQueueEntry": null}}}' >"$FIX/PrQueue.json"
+  run_status
+  assert_equal "$(jq -c .pr.merge_queue <<<"$output")" '{"enabled":true,"state":null,"position":null}'
+  echo '{"data": {"resource": {"isMergeQueueEnabled": false, "mergeQueueEntry": null}}}' >"$FIX/PrQueue.json"
+  run_status
+  assert_equal "$(jq -c .pr.merge_queue <<<"$output")" '{"enabled":false,"state":null,"position":null}'
+}
+
+@test "マージキューの状態を取得できなくても、PR は出す（merge_queue は null）" {
+  setup_branch
+  echo '[{"number": 5, "url": "https://github.com/me/demo/pull/5", "mergeStateStatus": "DIRTY", "isCrossRepository": false}]' >"$FIX/pr-list.json"
+  FAKE_FAIL=PrQueue run_status
+  assert_success
+  assert_equal "$(jq -c '.pr | [.number, .merge_state, .merge_queue]' <<<"$output")" '[5,"DIRTY",null]'
+}
+
+@test "PR が無ければ、マージキューの状態は問い合わせない" {
+  setup_branch
+  run_status
+  assert_success
+  assert_equal "$(grep -c '^PrQueue ' "$CALLS")" 0
+}
