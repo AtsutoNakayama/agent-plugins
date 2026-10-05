@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Issue の作業を始める。ワークツリーとブランチを作り、Issue を自分に割り当て、Project の start の列に移す。
+# Issue の作業を始める。ワークツリーとブランチを作り（--no-worktree では作らず）、Issue を自分に割り当て、Project の start の列に移す。
 # 何度実行しても同じ結果になる（既にあるワークツリー・ブランチ・割り当ては使い回す）。
 #
 # 使い方: task-start.sh --issue N (--slug TEXT | --no-worktree) [--dry-run]

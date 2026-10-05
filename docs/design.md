@@ -97,7 +97,7 @@ agent-plugins/
     - どちらかは、type ラベルでは分からない（docs でもファイルを変えるし、調査は type に現れない）。そこで `task-start` は、Issue の本文（やること・完了条件・変更するファイル・領域）から AI が判断し、「ワークツリーを作って着手する」「作らずに着手する」を、判断と理由を添えて提案し、ユーザーが選ぶ。本文の判断は外れることがあり、作らずに着手すると base_branch の上でファイルを変えてしまうおそれがあるので、黙って決めない。依頼の文章で既に決まっていれば聞かない。
     - 作らないときは `task-start.sh --no-worktree` で、割り当てと列の移動（start の列）だけを行う。出力の `branch`・`worktree` は `null`。
     - 途中でファイルを変えることになったら、`--slug` を付けて `task-start.sh` をもう一度実行すれば、ワークツリーとブランチを作れる（割り当てと列の移動は済んでいるので飛ばす）。
-    - 終えるときは PR が無いので、マージでは Issue が閉じない。`task-finish` は、手元にもリモートにもブランチが無ければ、片付けるものが無いことを伝え、確認を取って Issue を完了（completed）で閉じる。やめるときは、`task-cancel` がブランチの無い Issue として閉じるだけにする（`cleanup.sh` は呼ばない）。
+    - 終えるときは PR が無いので、マージでは Issue が閉じない。`task-finish` は、手元にもリモートにもブランチが無ければ、片付けるものが無いことを伝え、確認を取って Issue を完了（completed）で閉じる。ただし、Issue を閉じる PR（`closedByPullRequestsReferences`）が開いていれば閉じずに止める（規約に合わない名前のブランチで作業していると、ブランチ名では見つからないため）。やめるときは、`task-cancel` がブランチの無い Issue として閉じるだけにする（`cleanup.sh` は呼ばない）。
   - **親には着手しない**。親は作業の単位ではなく（親そのものの作業は無い）、作業は子の Issue で進めるので、ブランチも PR も作らない。親（`subIssuesSummary.total` が 1 以上）に `task-start` すると、`task-start.sh` はブランチ・割り当て・列の移動のどれも行わずに止まり（終了コード 2）、`task-start` は開いている子の一覧を見せて、どれに着手するかを選んでもらう。開いている子が無ければ、親を閉じるよう案内する。
 - **やらない Issue を閉じる**：誤って起票した Issue や、やらないことにした Issue は、`task-cancel` で not planned（重複なら duplicate）で閉じる。
   - Issue の終わり方は、完了（completed。PR のマージで閉じる）とやめた（not planned・duplicate）の2つに分ける。完了は PR が閉じ、やめたときは `task-cancel` が閉じる。`task-finish` は Issue を閉じたり変えたりせず（PR の無い、ワークツリーを作らなかったタスクだけは、確認を取って completed で閉じる。上のリポジトリを変えないタスク）、マージした後の手元を片付けて、PR が閉じる Issue が閉じたかを伝えるだけ（`cleanup.sh` の `issues`。調べられなくても片付けは止めない）。名前を `task-close` にしなかったのは、close は完了で閉じるときにも使う言葉で、`task-finish` と混同しやすいため。
@@ -255,7 +255,7 @@ Todo が増えたとき、どれから着手するか、同時に進めてよい
    - 出力は、使用者に見せる `systemMessage` と、Claude に渡す `additionalContext`（返答でも触れてもらう）の両方（`guard-git.sh` の警告と同じ形）。
    - `/remote-control` で別の端末から使ったとき、`systemMessage` は別の端末の画面にも出る（2026-10-04 に確認。複数行のメッセージは、行ごとに「PostToolUse:Bash says: …」と出る）。`additionalContext` を受け取った Claude も、返答でリンクに触れる。そのため、別の端末では同じリンクが二重に出るが、常に見えることを優先して、そのままにする。
    - git の操作ではない場面（CI や CodeRabbit の結果を伝えるとき、Issue を起票したときなど）はフックでは出せないので、Claude への決まりとして、SessionStart の案内（`defaults/task-flow.md`）に「PR・Issue・CI に触れるときは URL を添える」と書く。
-4. **SessionStart のフック**（`hooks/task-flow.sh`）：タスクの進め方（Issue から始める → 着手 → 実装（論理的な区切りごとにコミット）→ ローカルレビュー → PR → マージ（人間）→ 後片付け、と取りやめ）と、それぞれで使うスキルを、セッションの始まりに Claude に読み込ませる。
+4. **SessionStart のフック**（`hooks/task-flow.sh`）：タスクの進め方（Issue から始める → 着手 → 実装（論理的な区切りごとにコミット）→ ローカルレビュー → PR → マージ（人間）→ 後片付け、と取りやめ、リポジトリを変えないタスクの流れ（ワークツリーを作らずに着手し、`task-finish` で Issue を閉じる））と、それぞれで使うスキルを、セッションの始まりに Claude に読み込ませる。
    - スキルは呼ばれたときにしか読み込まれないので、流れをスキルに書いても普段の作業中は効かない。プラグインはいつも読み込まれるルール（CLAUDE.md・`.claude/rules/`）を配れない（プラグインの直下の CLAUDE.md は読み込まれない）ので、フックの出力で渡す。SessionStart は起動・`/resume`・`/clear`・コンパクトのたびに動くので、会話が要約されても流れが抜けない。
    - 既定の流れ（`defaults/task-flow.md`）のあとに、個人の追記（`~/.claude/dev-workflow/task-flow.md`）、チームの追記（`<repo>/.claude/dev-workflow/task-flow.md`）の順に出力する（後ろほど優先。`guides.task-flow` と同じ順）。
    - 毎セッション動くので、`config.sh` を呼ばずにファイルを直接読んで速く終える。出力は Claude Code がそのまま渡す上限（1 万文字）に収め、超えたら切って、読み直すファイルを知らせる。
