@@ -1,7 +1,7 @@
 {
   "$schema": "https://anthropic.com/claude-code/marketplace.schema.json",
   "name": "nakayama-plugins",
-  "description": "全リポジトリで共通に使う開発ワークフロー用の Claude Code プラグイン",
+  "description": "導入したリポジトリで共通に使う開発ワークフロー用の Claude Code プラグイン",
   "owner": {
     "name": "AtsutoNakayama"
   },
