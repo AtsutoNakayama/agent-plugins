@@ -155,8 +155,10 @@ jq -n --argjson todo "$todo" --argjson active "$active" --argjson deps "$deps" -
       | select($x == "." or $y == "." or $x == $y or ($x | startswith($y + "/")) or ($y | startswith($x + "/"))) | {a: $x, b: $y}];
   def pr_issues: ([.closingIssuesReferences[]?.number]
       + [.headRefName | capture("^[^/]+/(?<n>[0-9]+)-") | .n | tonumber]) | unique;
-  ($active | map(. as $i | . + {pr_files: ([$prs[] | select(pr_issues | index($i.number)) | .files[]?.path] | unique)}
-    | select((.parent | not) or (.pr_files | length > 0)) | if .parent then .areas = [] else . end
+  # 親を残すかは、PR のファイルの数ではなく、PR があるかで決める（ファイルが空の PR もある）
+  ($active | map(. as $i | [$prs[] | select(pr_issues | index($i.number))] as $own
+    | . + {pr_files: ([$own[].files[]?.path] | unique)}
+    | select((.parent | not) or ($own | length > 0)) | if .parent then .areas = [] else . end
     | .paths = ((.areas + .pr_files) | unique)
     | .area_known = (.paths | length > 0) | del(.parent))) as $act
   | ([$act[] | select(.area_known | not) | .number]) as $active_unknown

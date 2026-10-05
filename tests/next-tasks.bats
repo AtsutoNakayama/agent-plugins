@@ -428,6 +428,19 @@ JSON
   assert_equal "$(out_of '.active_unknown')" '[]'
 }
 
+@test "変更したファイルが空の PR を持つ親の Issue も、着手中として残す" {
+  # PR があるかを PR のファイルの数で見ていたので、ファイルが空の PR を持つ親を着手中から外していた
+  setup_fake_gh
+  item 10 Todo $'## 変更するファイル・領域\n- docs/'
+  item 20 "In Progress" "" "" me/demo OPEN 2
+  write_page
+  echo '[{"number": 50, "headRefName": "feat/20-x", "closingIssuesReferences": [], "files": []}]' >"$FIX/pr-list.json"
+  run_script next-tasks.sh
+  assert_success
+  assert_equal "$(out_of '[.in_progress[].number]')" '[20]'
+  assert_equal "$(out_of '.active_unknown')" '[20]'
+}
+
 @test "着手中の Issue に領域か PR があれば、警告は付かない" {
   setup_fake_gh
   item 10 Todo $'## 変更するファイル・領域\n- docs/'
