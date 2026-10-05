@@ -56,12 +56,13 @@ SH
   write_page
 }
 
-# 使い方: item <番号> <列> [本文] [Story Point] [リポジトリ] [状態]
+# 使い方: item <番号> <列> [本文] [Story Point] [リポジトリ] [状態] [サブ Issue の数]
 # Project の項目を、並びの末尾に足す（write_page で GraphQL の応答にする）
 item() {
-  jq -nc --argjson n "$1" --arg s "$2" --arg b "${3:-}" --arg sp "${4:-}" --arg r "${5:-me/demo}" --arg st "${6:-OPEN}" '{
+  jq -nc --argjson n "$1" --arg s "$2" --arg b "${3:-}" --arg sp "${4:-}" --arg r "${5:-me/demo}" --arg st "${6:-OPEN}" \
+    --argjson sub "${7:-0}" '{
     content: {__typename: "Issue", number: $n, title: "作業 \($n)", state: $st, body: $b,
-      url: "https://github.com/me/demo/issues/\($n)", repository: {nameWithOwner: $r}},
+      url: "https://github.com/me/demo/issues/\($n)", repository: {nameWithOwner: $r}, subIssuesSummary: {total: $sub}},
     status: {name: $s}, sp: (if $sp == "" then null else {number: ($sp | tonumber)} end)}' >>"$FIX/nodes"
 }
 
@@ -122,6 +123,23 @@ out_of() { jq -c "$1" <<<"$output"; }
   assert_equal "$(out_of '.todo[0] | [.number, .waiting, .blocked_by[0].number, .blocked_by[0].sources[0]]')" '[10,true,5,"dependency"]'
   assert_equal "$(out_of .next)" 11
   assert_equal "$(out_of '.parallel')" '[11]'
+}
+
+@test "サブ Issue を持つ親の Issue は、次に着手するものと並列の組に入れない" {
+  # 親の Issue に着手したセッションが、親として進めるか子に着手し直すかを聞いて止まった（#142）
+  setup_fake_gh
+  item 10 Todo $'## 変更するファイル・領域\n- docs/' "" me/demo OPEN 3
+  item 11 Todo $'## 変更するファイル・領域\n- a/'
+  item 12 Todo $'## 変更するファイル・領域\n- b/'
+  write_page
+  run_script next-tasks.sh
+  assert_success
+  assert_equal "$(out_of .next)" 11
+  assert_equal "$(out_of .parallel)" '[11,12]'
+  assert_equal "$(out_of '.todo[0] | {number, parent, sub_issues, parallel, reason}')" \
+    '{"number":10,"parent":true,"sub_issues":3,"parallel":false,"reason":"親の Issue（作業は子の Issue で進める）"}'
+  assert_equal "$(out_of '[.todo[1:][] | .parent]')" '[false,false]'
+  grep -q 'subIssuesSummary { total }' "$FIX/last-query" || fail "GraphQL で subIssuesSummary を読んでいません"
 }
 
 @test "依存先が閉じていれば待たない" {
@@ -379,6 +397,48 @@ JSON
   assert_equal "$(out_of .active_unknown)" '[20]'
   assert_equal "$(out_of '.todo[0].warnings')" '["着手中の #20 は PR も領域も無く、重なるか分からない"]'
   assert_equal "$(out_of '[.in_progress[] | [.number, .area_known]]')" '[[20,false],[21,true]]'
+}
+
+@test "着手中の列にある親の Issue は、着手中として数えず、警告も付けない" {
+  # 親には作業もブランチも無いので、領域も PR も無く、Todo の全部の Issue に「重なるか分からない」と警告していた
+  setup_fake_gh
+  item 10 Todo $'## 変更するファイル・領域\n- docs/'
+  item 20 "In Progress" "" "" me/demo OPEN 2
+  item 21 "In Progress" $'## 変更するファイル・領域\n- tests/'
+  write_page
+  run_script next-tasks.sh
+  assert_success
+  assert_equal "$(out_of '[.active_unknown, .todo[0].warnings]')" '[[],[]]'
+  assert_equal "$(out_of '[.in_progress[].number]')" '[21]'
+}
+
+@test "PR を出した後でサブ Issue が付いた Issue は、着手中として PR のファイルとの重なりを見る" {
+  # 親でも、自分の PR があれば作業が進んでいるので、着手中から外すと重なりを見逃す
+  # 親の本文の領域は子の作業をまとめたものなので、PR が無い親（#21）は領域があっても数えない
+  setup_fake_gh
+  item 10 Todo $'## 変更するファイル・領域\n- docs/'
+  item 20 "In Progress" $'## 変更するファイル・領域\n- tests/' "" me/demo OPEN 2
+  item 21 "In Progress" $'## 変更するファイル・領域\n- docs/' "" me/demo OPEN 1
+  write_page
+  echo '[{"number": 50, "headRefName": "feat/20-x", "closingIssuesReferences": [], "files": [{"path": "docs/a.md"}]}]' >"$FIX/pr-list.json"
+  run_script next-tasks.sh
+  assert_success
+  assert_equal "$(out_of '[.in_progress[] | [.number, .paths]]')" '[[20,["docs/a.md"]]]'
+  assert_equal "$(out_of '[.todo[0].conflicts_with_active[].issue]')" '[20]'
+  assert_equal "$(out_of '.active_unknown')" '[]'
+}
+
+@test "変更したファイルが空の PR を持つ親の Issue も、着手中として残す" {
+  # PR があるかを PR のファイルの数で見ていたので、ファイルが空の PR を持つ親を着手中から外していた
+  setup_fake_gh
+  item 10 Todo $'## 変更するファイル・領域\n- docs/'
+  item 20 "In Progress" "" "" me/demo OPEN 2
+  write_page
+  echo '[{"number": 50, "headRefName": "feat/20-x", "closingIssuesReferences": [], "files": []}]' >"$FIX/pr-list.json"
+  run_script next-tasks.sh
+  assert_success
+  assert_equal "$(out_of '[.in_progress[].number]')" '[20]'
+  assert_equal "$(out_of '.active_unknown')" '[20]'
 }
 
 @test "着手中の Issue に領域か PR があれば、警告は付かない" {
