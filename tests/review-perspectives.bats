@@ -512,3 +512,18 @@ auto_branch() {
     assert_output --partial "review.model は null か opus・sonnet・haiku・fable のどれかにしてください"
   done
 }
+
+@test "--auto は、ユーザーの層の review.model を使わず、警告する（導入したリポジトリだけに効かせる）" {
+  auto_branch feat/17-add-thing
+  fake_issue 17 '["feat"]'
+  echo '{"review": {"model": "opus"}}' >"$WORKFLOW_USER_DIR/config.json"
+  run_script review-perspectives.sh --auto
+  assert_success
+  assert_output --partial "warn: $WORKFLOW_USER_DIR/config.json の review.model は使いません"
+  assert_equal "$(json_of "$output" | jq -c .context.model)" null
+  # リポジトリの層で決めれば、そちらを使う。local は team より優先する
+  echo '{"review": {"model": "haiku"}}' >.claude/dev-workflow/config.json
+  echo '{"review": {"model": "sonnet"}}' >.claude/dev-workflow/config.local.json
+  run_script review-perspectives.sh --auto
+  assert_equal "$(json_of "$output" | jq -r .context.model)" sonnet
+}

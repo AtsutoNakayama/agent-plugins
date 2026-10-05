@@ -15,7 +15,7 @@ json_of() { printf '%s\n' "$1" | LC_ALL=C sed -n '/^{/,$p'; }
   run_script setup/setup-models.sh
   assert_success
   assert_equal "$(jq -c '[.review.model, .review.decided, .review.layers, .file, .changed]' <<<"$output")" '[null,false,[],null,false]'
-  [ ! -e "$TEAM" ] && [ ! -e "$LOCAL" ] && [ ! -e "$WORKFLOW_USER_DIR/config.json" ]
+  [ ! -e "$TEAM" ] && [ ! -e "$LOCAL" ]
 }
 
 @test "null に決めた層があれば、オフに決めたとみなす" {
@@ -25,21 +25,26 @@ json_of() { printf '%s\n' "$1" | LC_ALL=C sed -n '/^{/,$p'; }
   assert_equal "$(jq -c '[.review.model, .review.decided, (.review.layers | map(.layer))]' <<<"$output")" '[null,true,["local"]]'
 }
 
-@test "user の層に書くと、ほかの項目を残して review.model を足し、config.sh に効く" {
-  echo '{"language": "en", "review": {"max_rounds": 5}}' >"$WORKFLOW_USER_DIR/config.json"
-  run_script setup/setup-models.sh --review-model sonnet --scope user
+@test "team の層には、ほかの項目を残してリポジトリの config.json に書き、config.sh に効く" {
+  echo '{"language": "en", "review": {"max_rounds": 5}}' >"$TEAM"
+  run_script setup/setup-models.sh --review-model sonnet --scope team
   assert_success
   assert_equal "$(jq -c '[.review.model, .review.decided, .changed, .file]' <<<"$output")" \
-    "[\"sonnet\",true,true,\"$WORKFLOW_USER_DIR/config.json\"]"
-  assert_equal "$(jq -c . "$WORKFLOW_USER_DIR/config.json")" '{"language":"en","review":{"max_rounds":5,"model":"sonnet"}}'
+    "[\"sonnet\",true,true,\"$REPO/$TEAM\"]"
+  assert_equal "$(jq -c . "$TEAM")" '{"language":"en","review":{"max_rounds":5,"model":"sonnet"}}'
   run_script config.sh .review.model
   assert_output sonnet
 }
 
-@test "team の層には、リポジトリの config.json に書く" {
-  run_script setup/setup-models.sh --review-model opus --scope team
+@test "ユーザーの層（~/.claude/dev-workflow/config.json）には書けず、そこで決めた値も、決めたとみなさない" {
+  echo '{"review": {"model": "opus"}}' >"$WORKFLOW_USER_DIR/config.json"
+  run_script setup/setup-models.sh
   assert_success
-  assert_equal "$(jq -c . "$TEAM")" '{"review":{"model":"opus"}}'
+  assert_equal "$(jq -c '[.review.decided, .review.layers]' <<<"$output")" '[false,[]]'
+  run_script setup/setup-models.sh --review-model sonnet --scope user
+  assert_failure 64
+  assert_output --partial "--scope は local・team のどちらかにしてください: user"
+  assert_equal "$(jq -c . "$WORKFLOW_USER_DIR/config.json")" '{"review":{"model":"opus"}}'
 }
 
 @test "local の層には、ワークツリーの中でもメインのワークツリーの config.local.json に書く" {
@@ -100,7 +105,7 @@ json_of() { printf '%s\n' "$1" | LC_ALL=C sed -n '/^{/,$p'; }
   assert_output --partial "--review-model は off か opus・sonnet・haiku・fable のどれかにしてください: gpt"
   run_script setup/setup-models.sh --review-model opus
   assert_failure 64
-  assert_output --partial "--scope（user・local・team）が要ります"
+  assert_output --partial "--scope（local・team）が要ります"
   run_script setup/setup-models.sh --review-model opus --scope repo
   assert_failure 64
   run_script setup/setup-models.sh --scope team

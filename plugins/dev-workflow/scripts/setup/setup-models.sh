@@ -1,17 +1,17 @@
 #!/usr/bin/env bash
-# レビューのサブエージェントに使うモデル（設定の review.model）を、選んだ層の設定ファイルに書く。
+# レビューのサブエージェントに使うモデル（設定の review.model）を、このリポジトリの中の選んだ層の設定ファイルに書く。
 # 何度実行しても同じ結果になる。オプションを付けなければ、今の設定と、どの層で決めたかだけを出力する。
+# 導入したリポジトリだけに効かせるため、ユーザーの層（~/.claude/dev-workflow/config.json）には書かず、読みもしない。
 #
 # 使い方: setup-models.sh [オプション]
 #   --review-model M   opus・sonnet・haiku・fable のどれか。off なら null を書き、セッションと同じモデルで動かす
-#   --scope S          書く層。user（~/.claude/dev-workflow/config.json。自分のすべてのリポジトリ）・
-#                      local（<repo>/.claude/dev-workflow/config.local.json。自分だけ・このリポジトリ）・
-#                      team（<repo>/.claude/dev-workflow/config.json。チーム。コミットが要る）。--review-model には必須
+#   --scope S          書く層。local（<repo>/.claude/dev-workflow/config.local.json。自分だけ）・
+#                      team（<repo>/.claude/dev-workflow/config.json。チームで共有する。コミットが要る）。--review-model には必須
 #   --dry-run          変更せず、行う予定の操作だけを出力する
 #
-# 出力: review.model（合わせた後の値）・review.decided（既定の層以外のどこかで決めてあるか）・
+# 出力: review.model（このリポジトリの層を合わせた後の値）・review.decided（このリポジトリのどちらかの層で決めてあるか）・
 #       review.layers（review.model を決めている層と値）・file（書く・書いたファイル）・changed・actions
-# 書いた層より上位の層（user < team < local）が別の値を決めていると、書いても効かないので警告する。
+# local は team より優先されるので、team に書いたのに local が別の値を決めていると、書いても効かないので警告する。
 set -euo pipefail
 
 # shellcheck source=../lib/common.sh
@@ -49,9 +49,9 @@ if [ -n "$review_model" ]; then
     esac
   fi
   case "$scope" in
-    user | local | team) ;;
-    "") dw_die "--review-model には --scope（user・local・team）が要ります" 64 ;;
-    *) dw_die "--scope は user・local・team のどれかにしてください: ${scope}" 64 ;;
+    local | team) ;;
+    "") dw_die "--review-model には --scope（local・team）が要ります" 64 ;;
+    *) dw_die "--scope は local・team のどちらかにしてください: ${scope}" 64 ;;
   esac
 elif [ -n "$scope" ]; then
   dw_die "--scope は --review-model と一緒に使ってください" 64
@@ -60,26 +60,16 @@ fi
 repo_root="$(dw_repo_root)" || dw_die "リポジトリの中で実行してください" 64
 # 個人の上書き（local）は、ワークツリーで作業中でもメインのワークツリーに置く（config.sh が読む場所と揃える）
 main_root="$(dw_main_root "$repo_root" || true)"
-user_file="$(dw_user_dir)/config.json"
 team_file="$repo_root/.claude/dev-workflow/config.json"
 local_file="${main_root:-$repo_root}/.claude/dev-workflow/config.local.json"
 
 # 層ごとに review.model を決めているか（null も「オフに決めた」とみなす）。優先度の低い順に並べる
-layers='[]'
-for pair in "user:$user_file" "team:$team_file" "local:$local_file"; do
-  name="${pair%%:*}" f="${pair#*:}"
-  [ -f "$f" ] || continue
-  dw_check_json "$f"
-  if jq -e '(.review | type) == "object" and (.review | has("model"))' "$f" >/dev/null; then
-    layers="$(jq -c --arg n "$name" --arg f "$f" --argjson v "$(jq -c .review.model "$f")" \
-      '. + [{layer: $n, file: $f, model: $v}]' <<<"$layers")"
-  fi
-done
+layers="$(dw_review_model_layers "$repo_root" | jq -Rsc 'split("\n") | map(select(. != "") | split("\t")
+  | {layer: .[0], file: .[1], model: (.[2] | fromjson)})')"
 
 file=null changed=false actions='[]'
 if [ -n "$value" ]; then
   case "$scope" in
-    user) target="$user_file" ;;
     team) target="$team_file" ;;
     local) target="$local_file" ;;
   esac
@@ -104,10 +94,10 @@ if [ -n "$value" ]; then
   fi
   layers="$(jq -c --arg n "$scope" --arg f "$target" --argjson v "$value" \
     'map(select(.layer != $n)) + [{layer: $n, file: $f, model: $v}]
-     | sort_by({user: 0, team: 1, local: 2}[.layer])' <<<"$layers")"
+     | sort_by({team: 0, local: 1}[.layer])' <<<"$layers")"
   # 上位の層が別の値を決めていれば、書いても効かない
   over="$(jq -r --arg n "$scope" --argjson v "$value" \
-    '({user: 0, team: 1, local: 2}) as $o | map(select($o[.layer] > $o[$n] and .model != $v)) | last // empty
+    '({team: 0, local: 1}) as $o | map(select($o[.layer] > $o[$n] and .model != $v)) | last // empty
      | "\(.file) の review.model（\(.model)）が優先されるので、書いた値は効きません"' <<<"$layers")"
   [ -z "$over" ] || dw_warn "$over"
 fi

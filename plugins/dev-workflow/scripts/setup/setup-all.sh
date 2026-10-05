@@ -10,14 +10,14 @@
 #   --merge-queue           マージキューを使う（使えないリポジトリでは止まる）
 #   --no-merge-queue        マージキューを外す（どちらも付けなければ今のまま）
 #   --review-model M        レビューのサブエージェントのモデル（opus・sonnet・haiku・fable。off ならセッションと同じモデル）
-#   --models-scope S        --review-model を書く層（user・local・team）。--review-model には必須
+#   --models-scope S        --review-model を書く層（local・team）。--review-model には必須
 #   --dry-run               変更せず、行う予定の操作だけを出力する
 #
 # 行うこと:
 #   1. setup-labels.sh：type ラベルと breaking ラベルの登録
 #   2. setup-project.sh --write-config：Project の作成・接続と、.claude/dev-workflow/config.json への書き込み
 #   3. setup-repo.sh：マージ方法の設定と、ルールセットの登録（必須のチェックのワークフローが merge_group で動くかも確かめる）
-#   4. setup-models.sh：レビューのモデル（review.model）を選んだ層に書く。--review-model が無ければ、今の設定を読むだけ
+#   4. setup-models.sh：レビューのモデル（review.model）を、このリポジトリの選んだ層に書く。--review-model が無ければ、今の設定を読むだけ
 #   5. PR テンプレート（.github/pull_request_template.md）と Issue テンプレート
 #      （.github/ISSUE_TEMPLATE/task.md）を作る。既にテンプレートがあれば作らない
 #      （チームの設定の pr.template が実在するファイルを指していれば、PR テンプレートは作らない）

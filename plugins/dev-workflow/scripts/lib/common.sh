@@ -191,6 +191,27 @@ DW_BREAKING_LABEL=breaking
 # shellcheck disable=SC2034
 DW_REVIEW_MODELS="opus sonnet haiku fable"
 
+# review.model を決めている、このリポジトリの層（team・local）を、優先度の低い順に1行ずつ「<層>\t<ファイル>\t<値の JSON>」で出力する。
+# 導入したリポジトリだけに効かせるため、ユーザーの層（~/.claude/dev-workflow/config.json）は読まない（設計書 §7）。
+# null も「使わないと決めた」として出す。local は config.sh と同じく、無ければメインのワークツリーのものを使う。
+# 使い方: dw_review_model_layers <リポジトリのルート>
+dw_review_model_layers() {
+  local root="$1" local_file main pair name f
+  local_file="$root/.claude/dev-workflow/config.local.json"
+  if [ ! -f "$local_file" ]; then
+    main="$(dw_main_root "$root" || true)"
+    [ -n "$main" ] && local_file="$main/.claude/dev-workflow/config.local.json"
+  fi
+  for pair in "team:$root/.claude/dev-workflow/config.json" "local:$local_file"; do
+    name="${pair%%:*}" f="${pair#*:}"
+    [ -f "$f" ] || continue
+    dw_check_json "$f"
+    if jq -e '(.review | type) == "object" and (.review | has("model"))' "$f" >/dev/null; then
+      printf '%s\t%s\t%s\n' "$name" "$f" "$(jq -c .review.model "$f")"
+    fi
+  done
+}
+
 # GitHub がテンプレートを探す場所。source した側で使う。
 # 大文字小文字は区別せず、拡張子は .md・.txt・なしを認める。書き方は dw_find_nocase を参照
 # PR テンプレート（1ファイル）と、複数の PR テンプレートを置くディレクトリ（?template= で選ぶ形式）
