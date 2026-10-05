@@ -269,3 +269,34 @@ queue_removed_fixture() {
   assert_success
   assert_equal "$(jq -c '[.behind, .conflicts]' <<<"$output")" "[1,null]"
 }
+
+@test "手元で main を取り込んだが push していなければ、pushed_behind に push 済みのブランチの遅れを出す" {
+  setup_branch
+  git push -q origin feat/17-x
+  advance_main 2
+  run_status
+  assert_equal "$(jq -c '[.behind, .pushed_behind]' <<<"$output")" "[2,2]"
+  git merge -q --no-edit origin/main
+  run_status
+  # 手元は最新だが、push 済みのブランチはまだ遅れている
+  assert_equal "$(jq -c '[.up_to_date, .unpushed, .pushed_behind]' <<<"$output")" "[true,3,2]"
+  git push -q origin feat/17-x
+  run_status
+  assert_equal "$(jq -c '[.up_to_date, .unpushed, .pushed_behind]' <<<"$output")" "[true,0,0]"
+}
+
+@test "取り込みと関係の無いコミットだけが push されていなくても、pushed_behind は 0" {
+  setup_branch
+  git push -q origin feat/17-x
+  echo a >a.txt
+  git add a.txt
+  git commit -q -m "feat: a"
+  run_status
+  assert_equal "$(jq -c '[.up_to_date, .unpushed, .pushed_behind]' <<<"$output")" "[true,1,0]"
+}
+
+@test "origin にブランチが無ければ pushed_behind は null" {
+  setup_branch
+  run_status
+  assert_equal "$(jq -c .pushed_behind <<<"$output")" null
+}
