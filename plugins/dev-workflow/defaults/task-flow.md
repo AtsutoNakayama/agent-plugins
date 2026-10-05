@@ -13,4 +13,5 @@
 - 次にどの Issue に着手するか、同時に進められるものはあるかを知りたいときは、`/dev-workflow:task-next` を使います（読むだけで、何も変えません）。
 - Issue を任意の列（Blocked など）へ移すときは、`/dev-workflow:task-status` を使います。
 - 質問への回答や調査だけで、ファイルを変えない依頼には、この流れは要りません。
+- Issue にしたタスクでも、リポジトリのファイルを変えないもの（調査・洗い出し・Issue の整理など）は、`/dev-workflow:task-start` でワークツリーとブランチを作らずに着手できます（割り当てと列の移動だけを行います）。結果は Issue のコメントや別の Issue に残し、終わったら `/dev-workflow:task-finish` で Issue を閉じます（PR が無いので、3〜5 は要りません）。途中でファイルを変えることになったら、もう一度 `/dev-workflow:task-start` でワークツリーを作ってから変えます。
 - PR・Issue・CI に触れるときは、URL を添えます。git の操作の後のリンクはフックが出しますが、CI や CodeRabbit の結果を伝えるとき、Issue を起票したとき、PR や Issue の状態を答えるときなど、フックで出せない場面では、自分で URL を書きます。
