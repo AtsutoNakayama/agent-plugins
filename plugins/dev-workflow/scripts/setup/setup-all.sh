@@ -9,13 +9,16 @@
 #   --required-check NAME   マージの前に成功を求めるチェックの名前（繰り返し指定できる。既定: 必須のチェックの一覧に触れない）
 #   --merge-queue           マージキューを使う（使えないリポジトリでは止まる）
 #   --no-merge-queue        マージキューを外す（どちらも付けなければ今のまま）
+#   --review-model M        レビューのサブエージェントのモデル（opus・sonnet・haiku・fable。off ならセッションと同じモデル）
+#   --models-scope S        --review-model を書く層（local・team）。--review-model と一緒に使う（どちらか片方だけでは止まる）
 #   --dry-run               変更せず、行う予定の操作だけを出力する
 #
 # 行うこと:
 #   1. setup-labels.sh：type ラベルと breaking ラベルの登録
 #   2. setup-project.sh --write-config：Project の作成・接続と、.claude/dev-workflow/config.json への書き込み
 #   3. setup-repo.sh：マージ方法の設定と、ルールセットの登録（必須のチェックのワークフローが merge_group で動くかも確かめる）
-#   4. PR テンプレート（.github/pull_request_template.md）と Issue テンプレート
+#   4. setup-models.sh：レビューのモデル（review.model）を、このリポジトリの選んだ層に書く。--review-model が無ければ、今の設定を読むだけ
+#   5. PR テンプレート（.github/pull_request_template.md）と Issue テンプレート
 #      （.github/ISSUE_TEMPLATE/task.md）を作る。既にテンプレートがあれば作らない
 #      （チームの設定の pr.template が実在するファイルを指していれば、PR テンプレートは作らない）
 # 作ったファイルはコミットしない。マージ先のブランチは守られているので、PR でマージする。
@@ -35,7 +38,8 @@ need_value() {
   fi
 }
 
-labels_args=() project_args=() repo_args=() dry_run=false
+labels_args=() project_args=() repo_args=() models_args=() dry_run=false
+review_model_given=false models_scope=""
 while [ $# -gt 0 ]; do
   case "$1" in
     --number | --title)
@@ -49,6 +53,17 @@ while [ $# -gt 0 ]; do
       shift 2
       ;;
     --merge-queue | --no-merge-queue) repo_args+=("$1"); shift ;;
+    --review-model | --models-scope)
+      need_value "$@"
+      if [ "$1" = --models-scope ]; then
+        models_args+=(--scope "$2")
+        models_scope="$2"
+      else
+        models_args+=("$1" "$2")
+        review_model_given=true
+      fi
+      shift 2
+      ;;
     --keep-defaults) labels_args+=("$1"); shift ;;
     --dry-run) dry_run=true; shift ;;
     -h | --help) usage; exit 0 ;;
@@ -56,22 +71,36 @@ while [ $# -gt 0 ]; do
   esac
 done
 
+# --models-scope は setup-models.sh に --scope として渡すので、渡した先の名前のエラーにならないよう、
+# 組み合わせと値の検査は、すべてここで自分の名前で行う
+if [ -n "$models_scope" ] && ! $review_model_given; then
+  dw_die "--models-scope は --review-model と一緒に使ってください" 64
+fi
+if $review_model_given; then
+  case "$models_scope" in
+    local | team) ;;
+    "") dw_die "--review-model には --models-scope（local・team）が要ります" 64 ;;
+    *) dw_die "--models-scope は local・team のどちらかにしてください: ${models_scope}" 64 ;;
+  esac
+fi
+
 repo_root="$(dw_repo_root)" || dw_die "リポジトリの中で実行してください" 64
 cd "$repo_root"
 setup_dir="$DW_SCRIPTS_DIR/setup"
 
-# 3つを順に実行し、それぞれの出力を labels・project・repo に入れる。引数は dry-run のときに足すもの
+# 4つを順に実行し、それぞれの出力を labels・project・repo・models に入れる。引数は dry-run のときに足すもの
 # if の条件の中でも最初の失敗で止まるよう、set -e に頼らず || return で返す
 # bash 3.2 では空の配列を "${a[@]}" で展開すると set -u で止まるので、${a[@]+"${a[@]}"} と書く
 run_steps() {
   labels="$("$BASH" "$setup_dir/setup-labels.sh" ${labels_args[@]+"${labels_args[@]}"} "$@")" || return
   project="$("$BASH" "$setup_dir/setup-project.sh" --write-config ${project_args[@]+"${project_args[@]}"} "$@")" || return
   repo="$("$BASH" "$setup_dir/setup-repo.sh" ${repo_args[@]+"${repo_args[@]}"} "$@")" || return
+  models="$("$BASH" "$setup_dir/setup-models.sh" ${models_args[@]+"${models_args[@]}"} "$@")" || return
 }
 if $dry_run; then
   run_steps --dry-run
 else
-  # 途中で失敗して一部だけ変わらないよう、先に3つとも dry-run で通ることを確かめる
+  # 途中で失敗して一部だけ変わらないよう、先に4つとも dry-run で通ることを確かめる
   # （例：非公開のリポジトリで、プランによってルールセットを使えない）。警告は本番で出るので、失敗したときだけ表示する
   if ! preflight="$(run_steps --dry-run 2>&1)"; then
     printf '%s\n' "$preflight" >&2
@@ -136,6 +165,10 @@ if $dry_run; then
       '.project.owner == $p.project.owner and .project.number == $p.project.number' .claude/dev-workflow/config.json >/dev/null 2>&1; then
     config_changes=false
   fi
+  # レビューのモデルをチームの層に書く予定なら、config.json が変わる
+  if jq -e --arg f "$repo_root/.claude/dev-workflow/config.json" '.changed and .file == $f' <<<"$models" >/dev/null; then
+    config_changes=true
+  fi
 else
   config_changes=false
   if [ "$(cat .claude/dev-workflow/config.json 2>/dev/null || true)" != "$config_before" ] || config_uncommitted; then
@@ -163,17 +196,22 @@ if [ "$ignored" != "[]" ]; then
   next="$(jq -c --argjson f "$ignored" \
     '. + ["\($f | join("・")) が git に無視されているので、.gitignore で無視を外す（例：.claude/ を .claude/* に変えて、!.claude/dev-workflow/ と .claude/dev-workflow/config.local.json をこの順に足す）"]' <<<"$next")"
 fi
+hint="$(dw_local_config_hint "$(jq -r '.local_git // empty' <<<"$models")")"
+if [ -n "$hint" ]; then
+  next="$(jq -c --arg h "$hint" '. + [$h]' <<<"$next")"
+fi
 if [ "$(jq -r .workflows.auto_add <<<"$project")" = false ]; then
   next="$(jq -c --arg u "$(jq -r .workflows.url <<<"$project")" \
     '. + ["自動追加（Auto-add to project）を \($u) で有効にする"]' <<<"$next")"
 fi
 
-jq -n --argjson dry "$dry_run" --argjson labels "$labels" --argjson project "$project" --argjson repo "$repo" \
+jq -n --argjson dry "$dry_run" --argjson labels "$labels" --argjson project "$project" --argjson repo "$repo" --argjson models "$models" \
   --argjson created "$created" --argjson skipped "$skipped" --argjson next "$next" '{
     dry_run: $dry,
     labels: $labels,
     project: $project,
     repo: $repo,
+    models: $models,
     templates: {created: $created, skipped: $skipped},
     next_steps: $next
   }'

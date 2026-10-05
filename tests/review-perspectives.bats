@@ -390,7 +390,7 @@ auto_branch() {
   run_script review-perspectives.sh --auto
   assert_success
   assert_equal "$(jq -c .context <<<"$output")" \
-    "{\"base\":\"$BASE\",\"target\":\"origin/main\",\"ahead\":0,\"issue\":17,\"type\":\"fix\",\"type_from\":\"issue\",\"max_rounds\":3}"
+    "{\"base\":\"$BASE\",\"target\":\"origin/main\",\"ahead\":0,\"issue\":17,\"type\":\"fix\",\"type_from\":\"issue\",\"max_rounds\":3,\"model\":null}"
   used regression-test || fail "Issue の type（fix）で regression-test が使われていません: $output"
   used issue-requirements || fail "$output"
   [ -n "$(skipped_reason main-drift)" ] || fail "$output"
@@ -489,4 +489,41 @@ auto_branch() {
     assert_failure 2
     assert_output --partial "review.max_rounds は1以上の整数にしてください"
   done
+}
+
+@test "--auto は、設定の review.model を context に出す" {
+  auto_branch feat/17-add-thing
+  fake_issue 17 '["feat"]'
+  for v in opus sonnet haiku fable; do
+    echo "{\"review\": {\"model\": \"$v\"}}" >.claude/dev-workflow/config.json
+    run_script review-perspectives.sh --auto
+    assert_success
+    assert_equal "$(jq -r .context.model <<<"$output")" "$v"
+  done
+}
+
+@test "--auto は、review.model が null か使えるモデルの別名でなければ止まる" {
+  auto_branch feat/17-add-thing
+  fake_issue 17 '["feat"]'
+  for v in '"gpt"' '"Opus"' '"claude-opus-5-5"' '""' 1 true '["opus"]' '{"model": "opus"}'; do
+    echo "{\"review\": {\"model\": $v}}" >.claude/dev-workflow/config.json
+    run_script review-perspectives.sh --auto
+    assert_failure 2
+    assert_output --partial "review.model は null か opus・sonnet・haiku・fable のどれかにしてください"
+  done
+}
+
+@test "--auto は、ユーザーの層の review.model を使わず、警告する（導入したリポジトリだけに効かせる）" {
+  auto_branch feat/17-add-thing
+  fake_issue 17 '["feat"]'
+  echo '{"review": {"model": "opus"}}' >"$WORKFLOW_USER_DIR/config.json"
+  run_script review-perspectives.sh --auto
+  assert_success
+  assert_output --partial "warn: $WORKFLOW_USER_DIR/config.json の review.model は使いません"
+  assert_equal "$(json_of "$output" | jq -c .context.model)" null
+  # リポジトリの層で決めれば、そちらを使う。local は team より優先する
+  echo '{"review": {"model": "haiku"}}' >.claude/dev-workflow/config.json
+  echo '{"review": {"model": "sonnet"}}' >.claude/dev-workflow/config.local.json
+  run_script review-perspectives.sh --auto
+  assert_equal "$(json_of "$output" | jq -r .context.model)" sonnet
 }
