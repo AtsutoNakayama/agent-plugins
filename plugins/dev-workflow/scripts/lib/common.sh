@@ -186,6 +186,11 @@ DW_SUB_ISSUE_DEPTH_GUIDE=2
 # shellcheck disable=SC2034
 DW_BREAKING_LABEL=breaking
 
+# レビューのサブエージェントに指定できるモデル（設定の review.model。Agent ツールの model が受け付ける別名）。
+# 設定が null ならサブエージェントはセッションと同じモデルで動く（設計書 §7）。source した側で使う
+# shellcheck disable=SC2034
+DW_REVIEW_MODELS="opus sonnet haiku fable"
+
 # GitHub がテンプレートを探す場所。source した側で使う。
 # 大文字小文字は区別せず、拡張子は .md・.txt・なしを認める。書き方は dw_find_nocase を参照
 # PR テンプレート（1ファイル）と、複数の PR テンプレートを置くディレクトリ（?template= で選ぶ形式）

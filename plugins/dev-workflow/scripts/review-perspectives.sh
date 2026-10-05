@@ -61,7 +61,9 @@
 #                 ファイル名が正しければ、下位の層にある同じ名前の観点も使わない（止めるつもりの書き間違いで動かさない）
 #   context       絞り込みに使った値（絞り込まないときは null）。base・target・ahead（マージ先が基点より
 #                 進んだコミットの数）・issue（番号か null）・type（null もある）・type_from（issue・branch・given・null）・
-#                 max_rounds（--auto のとき、設定 review.max_rounds の値。1以上の整数でなければ止まる。--auto でなければ null）
+#                 max_rounds（--auto のとき、設定 review.max_rounds の値。1以上の整数でなければ止まる。--auto でなければ null）・
+#                 model（--auto のとき、設定 review.model の値。null か opus・sonnet・haiku・fable でなければ止まる。
+#                 --auto でなければ null）
 set -euo pipefail
 
 # shellcheck source=lib/common.sh
@@ -92,6 +94,7 @@ done
 
 type_from=null
 max_rounds=null
+model=null
 if [ "$auto" = true ]; then
   if [ -n "$base$target$type$issue" ]; then
     dw_die "--auto と --base・--target・--type・--issue は一緒に使えません" 64
@@ -102,6 +105,10 @@ if [ "$auto" = true ]; then
   case "$max_rounds" in
     "" | null | 0 | 0[0-9]* | *[!0-9]*) dw_die "review.max_rounds は1以上の整数にしてください: ${max_rounds}" 2 ;;
   esac
+  model="$(jq -c '.review.model' <<<"$config")"
+  if [ "$model" != null ] && ! jq -e --arg m "$DW_REVIEW_MODELS" '. as $v | $m | split(" ") | any(. == $v)' <<<"$model" >/dev/null; then
+    dw_die "review.model は null か ${DW_REVIEW_MODELS// /・} のどれかにしてください: ${model}" 2
+  fi
   base_branch="$(jq -r .base_branch <<<"$config")"
   target="origin/$base_branch"
   git fetch -q origin "$base_branch" 2>/dev/null \
@@ -372,10 +379,10 @@ if [ "$filter" = true ]; then
     fi
   done < <(jq -c '.perspectives[]' <<<"$result")
   result="$(jq -c --argjson k "$kept" '.perspectives = $k' <<<"$result")"
-  context="$(jq -nc --arg b "$base" --arg t "$target" --argjson a "$ahead" --arg i "$issue" --arg ty "$type" --argjson mr "$max_rounds" \
+  context="$(jq -nc --arg b "$base" --arg t "$target" --argjson a "$ahead" --arg i "$issue" --arg ty "$type" --argjson mr "$max_rounds" --argjson m "$model" \
     --argjson f "$(if [ "$type_from" = null ]; then echo null; else jq -n --arg x "$type_from" '$x'; fi)" \
     '{base: $b, target: $t, ahead: $a, issue: (if $i == "" then null else ($i | tonumber) end),
-      type: (if $ty == "" then null else $ty end), type_from: $f, max_rounds: $mr}')"
+      type: (if $ty == "" then null else $ty end), type_from: $f, max_rounds: $mr, model: $m}')"
 fi
 
 jq --argjson s "$skipped" --argjson c "$context" \
