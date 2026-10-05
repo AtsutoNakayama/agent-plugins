@@ -165,7 +165,7 @@ parse_workflow() {
       return s
     }
     function unquote(s) {
-      sub(/^[ \t]+/, "", s); sub(/[ \t]+$/, "", s)
+      s = trim(s)
       if (s ~ /^".*"$/) {
         s = substr(s, 2, length(s) - 2)
         # \" と \\ を元の文字に戻す。\001 は \\ をいったん置いておく印
