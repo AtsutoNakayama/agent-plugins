@@ -76,7 +76,7 @@ jobs:
 YML
   run_check --branch main --check test-result --check lint
   assert_success
-  assert_equal "$(jq -c .not_running <<<"$output")" '[{"check":"test-result","workflows":[".github/workflows/ci.yml"]}]'
+  assert_equal "$(jq -c .not_running <<<"$output")" '[{"check":"test-result","workflows":[".github/workflows/ci.yml"],"reason":"on"}]'
   assert_equal "$(jq -c .unknown <<<"$output")" '[]'
   assert_equal "$(jq -c .workflows <<<"$output")" '[".github/workflows/ci.yml",".github/workflows/queue.yaml"]'
 }
@@ -310,4 +310,158 @@ YML
   assert_failure 64
   run_check --branch main --checks-json '[1]'
   assert_failure 64
+}
+
+@test "ジョブの if: で merge_group を除いていれば、if を直す理由で not_running に入れる" {
+  setup_fake_gh
+  workflow ci.yml <<'YML'
+on: [pull_request, merge_group]
+jobs:
+  a:
+    if: github.event_name != 'merge_group'
+    runs-on: ubuntu-latest
+  b:
+    if: ${{ github.event_name == 'pull_request' }}
+    runs-on: ubuntu-latest
+  c:
+    if: "'MERGE_GROUP' != github.event_name" # 文字列は大文字と小文字を区別しない
+    runs-on: ubuntu-latest
+  d:
+    if: always() && (github.event_name != 'merge_group')
+    runs-on: ubuntu-latest
+  e:
+    if: >-
+      !cancelled() &&
+      github.event_name == 'push'
+    runs-on: ubuntu-latest
+YML
+  run_check --branch main --check a --check b --check c --check d --check e
+  assert_success
+  assert_equal "$(jq -c '[.not_running[] | [.check, .reason, .workflows[]]]' <<<"$output")" \
+    '[["a","if",".github/workflows/ci.yml"],["b","if",".github/workflows/ci.yml"],["c","if",".github/workflows/ci.yml"],["d","if",".github/workflows/ci.yml"],["e","if",".github/workflows/ci.yml"]]'
+  assert_equal "$(jq -c .unknown <<<"$output")" '[]'
+  run_check --branch main --check a
+  assert_equal "$(jq -r .messages.not_running <<<"$output")" \
+    "必須のチェックのうち a（.github/workflows/ci.yml）は、ジョブ（または needs: で頼るジョブ）の if: で merge_group のイベントを除いています。飛ばされたジョブのチェックは成功とみなされるので、マージキューは CI を動かさないまま PR をマージします。ジョブの if: を直してください"
+}
+
+@test "merge_group で真になると分かる if: と、イベントに関わらない if: のジョブは動くとみなす" {
+  setup_fake_gh
+  workflow ci.yml <<'YML'
+on: [pull_request, merge_group]
+jobs:
+  a:
+    if: always()
+    runs-on: ubuntu-latest
+  b:
+    if: ${{ github.event_name == 'merge_group' && !cancelled() }}
+    runs-on: ubuntu-latest
+  c:
+    if: (github.event_name != 'push')
+    runs-on: ubuntu-latest
+  d:
+    if: needs.x.outputs.docs_only != 'true' && contains(vars.TARGETS, 'a && b')
+    needs: x
+    runs-on: ubuntu-latest
+  x:
+    runs-on: ubuntu-latest
+YML
+  run_check --branch main --check a --check b --check c --check d
+  assert_success
+  assert_equal "$(jq -c '[.not_running, .unknown]' <<<"$output")" '[[],[]]'
+}
+
+@test "読み切れない if: のジョブは、動くとみなさず unknown に入れる" {
+  setup_fake_gh
+  workflow ci.yml <<'YML'
+on: [pull_request, merge_group]
+jobs:
+  a:
+    if: github.event.pull_request.draft == false
+    runs-on: ubuntu-latest
+  b:
+    if: github.event_name == 'merge_group' || github.event_name == 'push'
+    runs-on: ubuntu-latest
+  c:
+    if: contains(fromJSON('["push", "pull_request"]'), github.event_name)
+    runs-on: ubuntu-latest
+  d:
+    if: startsWith(github.ref, 'refs/heads/main')
+    runs-on: ubuntu-latest
+YML
+  run_check --branch main --check a --check b --check c --check d --check codecov
+  assert_success
+  assert_equal "$(jq -c '[.not_running, .unknown]' <<<"$output")" '[[],["a","b","c","codecov","d"]]'
+  assert_equal "$(jq -r .messages.unknown <<<"$output")" \
+    "必須のチェック codecov は、main のどのワークフローのジョブか分からないので、merge_group のイベントで動くか確かめられません。必須のチェック a、b、c、d は、ジョブ（または needs: で頼るジョブ）の if: の式を読み切れないので、merge_group のイベントで動くか確かめられません"
+}
+
+@test "needs: でたどれるジョブの if: も確かめる（always() の門番のジョブでも、頼るジョブが除かれていれば動かない）" {
+  setup_fake_gh
+  workflow ci.yml <<'YML'
+on: [pull_request, merge_group]
+jobs:
+  build:
+    if: github.event_name != 'merge_group'
+    runs-on: ubuntu-latest
+  test:
+    needs: build
+    runs-on: ubuntu-latest
+  gate:
+    if: always()
+    needs: [lint, "test"]
+    runs-on: ubuntu-latest
+  lint:
+    runs-on: ubuntu-latest
+  gate2:
+    needs:
+      - lint
+      - draft
+    runs-on: ubuntu-latest
+  draft:
+    if: github.event.pull_request.draft == false
+    runs-on: ubuntu-latest
+  gate3:
+    needs: [lint, missing]
+    runs-on: ubuntu-latest
+  gate4:
+    needs: lint
+    runs-on: ubuntu-latest
+YML
+  run_check --branch main --check gate --check gate2 --check gate3 --check gate4
+  assert_success
+  assert_equal "$(jq -c '[[.not_running[] | [.check, .reason]], .unknown]' <<<"$output")" \
+    '[[["gate","if"]],["gate2","gate3"]]'
+}
+
+@test "on: に merge_group が無いワークフローは、if: に関わらず on を直す理由にする" {
+  setup_fake_gh
+  workflow ci.yml <<'YML'
+on: pull_request
+jobs:
+  a:
+    if: github.event_name != 'merge_group'
+    runs-on: ubuntu-latest
+YML
+  run_check --branch main --check a
+  assert_success
+  assert_equal "$(jq -c '.not_running' <<<"$output")" '[{"check":"a","workflows":[".github/workflows/ci.yml"],"reason":"on"}]'
+}
+
+@test "同じ名前のジョブのどれかが merge_group で動けば、ほかのジョブが if: で除かれていても動くとみなす" {
+  setup_fake_gh
+  printf 'on: merge_group\njobs:\n  lint:\n    if: github.event_name == '"'"'push'"'"'\n    runs-on: x\n' | workflow a.yml
+  printf 'on: merge_group\njobs:\n  lint:\n    runs-on: x\n' | workflow b.yml
+  run_check --branch main --check lint
+  assert_success
+  assert_equal "$(jq -c '[.not_running, .unknown]' <<<"$output")" '[[],[]]'
+}
+
+@test "このリポジトリのワークフロー（docs だけの変更で飛ばすジョブと、always() の門番のジョブ）は動くとみなす" {
+  setup_fake_gh
+  workflow lint.yml <"$BATS_TEST_DIRNAME/../.github/workflows/lint.yml"
+  workflow test.yml <"$BATS_TEST_DIRNAME/../.github/workflows/test.yml"
+  run_check --branch main --check lint-result --check test-result
+  assert_success
+  assert_equal "$(jq -c '[.not_running, .unknown]' <<<"$output")" '[[],[]]'
 }

@@ -15,19 +15,34 @@
 #   キューで動く GitHub 上のものを見る）。YAML のパーサーは前提にしないので、次の簡易な読み方をする。
 #   - merge_group で動くか：トップレベルの on: の範囲（on: の行から次のトップレベルのキーまで）に、
 #     merge_group という語があるか
+#   - ジョブの if:：必須のチェックのジョブと、そのジョブが needs: でたどれるすべてのジョブの if: を読む。
+#     if: で merge_group を除いたジョブは飛ばされ、飛ばされたジョブのチェックは成功とみなされるので、
+#     キューは CI を動かさないままマージしてしまう。式は ${{ }} を外し、括弧の外の && で項に分けて
+#     （括弧の外に || があれば式全体を1つの項として）、項ごとに次のように判定する。
+#       除く：github.event_name を merge_group 以外と == で、または merge_group と != で比べる項
+#       動く：github.event_name を merge_group と == で、または merge_group 以外と != で比べる項
+#       分からない：上の形以外で github.event・github.head_ref・github.base_ref・github.ref・merge_group を使う項
+#         （github.event.pull_request.draft == false などは、merge_group では値が無いので飛ばされる）
+#       動く：それ以外の項（always()・needs.<ID>.outputs.<名前> など）
+#     除く項が1つでもあればそのジョブは除かれ、無くて分からない項があれば分からないとする。
+#     見つからないジョブを needs: で頼っていれば、分からないとする。
+#     再利用するワークフローの、呼ばれる側のジョブの if: は読まない（呼ぶ側のジョブだけで判定する）
 #   - チェックとジョブの対応：チェックの名前を、GitHub がジョブのチェックに付ける名前（name: があればその値、
 #     無ければジョブの ID）と突き合わせる。
 #     matrix の「名前 (値)」は括弧の前でも、再利用するワークフローの「呼ぶ側 / 呼ばれる側」は / の前でも比べる。
 #     ${{ }} の式を含む name: とは比べない（式を何にでも当たる形にすると、どこまで広く当たるかを見分けきれず、
 #     関係の無いチェックに当てて、誤って not_running にしてしまうため。そのチェックは unknown になる）
-#   対応するジョブがあるワークフローのどれも merge_group で動かなければ not_running に、
-#   どのジョブとも対応しない名前（外部のアプリのチェックなど）は unknown に入れる。
+#   対応するジョブのどれかが、merge_group で動くワークフローにあり、if: でも除かれていなければ、動くとみなす。
+#   そうでなく、if: を判定できないジョブがあれば unknown に、どれも動かなければ not_running に入れる。
+#   どのジョブとも対応しない名前（外部のアプリのチェックなど）も unknown に入れる。
 #
 # 出力（JSON）:
 #   branch        読んだブランチ
 #   workflows     読んだワークフローのファイル
-#   not_running   merge_group で動かないチェック（check と、対応するジョブがあるワークフローの workflows）
-#   unknown       どのジョブとも対応せず、確かめられないチェックの名前
+#   not_running   merge_group で動かないチェック（check と workflows と reason）。reason は、ワークフローの on: に
+#                 merge_group が無ければ on（workflows は対応するジョブがあるワークフロー）、ジョブの if: で
+#                 除いていれば if（workflows は除いたジョブがあるワークフロー）
+#   unknown       確かめられないチェックの名前（どのジョブとも対応しないか、ジョブの if: を判定できない）
 #   messages      利用者に伝える文（not_running・unknown。それぞれ、当てはまるチェックが無ければ null）。
 #                 setup-repo.sh と doctor.sh が同じ文を出すよう、ここで作る
 set -euo pipefail
@@ -71,20 +86,38 @@ checks_json="$(printf '%s\n' ${checks[@]+"${checks[@]}"} \
 
 # 結果に、利用者に伝える文（messages）を添えて出力する。使い方: output <ワークフローの JSON> <チェックごとの結果の JSON>
 output() {
+  # hits はチェックに対応するジョブごとに、ワークフロー（path）・merge_group で動くか（mg）・if: の判定（status）を持つ
   jq -n --arg b "$branch" --argjson w "$1" --argjson r "$2" '
-    [$r | to_entries[] | select((.value.matched | length) > 0 and (.value.running | not))
-      | {check: .key, workflows: .value.matched}] as $not
-    | [$r | to_entries[] | select((.value.matched | length) == 0) | .key] as $unknown
+    def listed: [.[] | "\(.check)（\(.workflows | join("・"))）"] | join("、");
+    [$r | to_entries[] | {check: .key, hits: .value}
+      | .running = any(.hits[]; .mg == 1 and .status == "run")
+      | .unknown_if = any(.hits[]; .mg == 1 and .status == "unknown")
+      | .excluded = ([.hits[] | select(.mg == 1 and .status == "exclude") | .path] | unique)] as $all
+    | [$all[] | select(.hits != [] and (.running | not) and (.unknown_if | not))
+      | if .excluded != [] then {check, workflows: .excluded, reason: "if"}
+        else {check, workflows: ([.hits[].path] | unique), reason: "on"} end] as $not
+    | [$all[] | select(.hits == []) | .check] as $nojob
+    | [$all[] | select((.running | not) and .unknown_if) | .check] as $noif
+    | [$not[] | select(.reason == "on")] as $on
+    | [$not[] | select(.reason == "if")] as $if
     | {
         branch: $b,
         workflows: $w,
         not_running: $not,
-        unknown: $unknown,
+        unknown: ($nojob + $noif | unique),
         messages: {
-          not_running: (if $not == [] then null else
-            "必須のチェックのうち \([$not[] | "\(.check)（\(.workflows | join("・"))）"] | join("、"))は、merge_group のイベントで動きません。マージキューのチェックが「待ち」のまま残り、PR がマージされません。ワークフローの on: に merge_group を足してください" end),
-          unknown: (if $unknown == [] then null else
-            "必須のチェック \($unknown | join("、")) は、\($b) のどのワークフローのジョブか分からないので、merge_group のイベントで動くか確かめられません" end)
+          not_running: (if $not == [] then null else [
+            (if $on == [] then empty else
+              "必須のチェックのうち \($on | listed)は、merge_group のイベントで動きません。マージキューのチェックが「待ち」のまま残り、PR がマージされません。ワークフローの on: に merge_group を足してください" end),
+            (if $if == [] then empty else
+              "必須のチェックのうち \($if | listed)は、ジョブ（または needs: で頼るジョブ）の if: で merge_group のイベントを除いています。飛ばされたジョブのチェックは成功とみなされるので、マージキューは CI を動かさないまま PR をマージします。ジョブの if: を直してください" end)
+          ] | join("。") end),
+          unknown: (if $nojob + $noif == [] then null else [
+            (if $nojob == [] then empty else
+              "必須のチェック \($nojob | join("、")) は、\($b) のどのワークフローのジョブか分からないので、merge_group のイベントで動くか確かめられません" end),
+            (if $noif == [] then empty else
+              "必須のチェック \($noif | join("、")) は、ジョブ（または needs: で頼るジョブ）の if: の式を読み切れないので、merge_group のイベントで動くか確かめられません" end)
+          ] | join("。") end)
         }
       }'
 }
@@ -101,8 +134,10 @@ workflows="$(jq -c '[if type == "array" then .[] else empty end
   | select(.type == "file" and (.name | test("\\.ya?ml$"))) | .path]' <<<"$listing" 2>/dev/null)" \
   || dw_die "${branch} のワークフローの一覧を JSON として読めません"
 
-# ワークフローを読み、merge_group で動くか（「on <0|1>」の1行）と、ジョブのチェックの名前（「job <名前>」。name: があれば
-# その値、無ければ ID。${{ }} の式を含む name: のジョブは出さない）を出力する。項目は \037 で区切る。インデントは空白だけとみなす（YAML はタブを許さない）
+# ワークフローを読み、merge_group で動くか（「on <0|1>」の1行）と、ジョブのチェックの名前と if: の判定（「job <名前> <判定>」。
+# 名前は name: があればその値、無ければ ID。${{ }} の式を含む name: のジョブは出さない。判定は、ジョブと needs: でたどれる
+# ジョブの if: が merge_group で動くなら run、除くなら exclude、分からなければ unknown）を出力する。
+# 項目は \037 で区切る。インデントは空白だけとみなす（YAML はタブを許さない）
 parse_workflow() {
   awk '
     # コメント（行頭か空白の後の #）を消す。引用符の中の #（name: "Build #1" など）は残す。
@@ -138,15 +173,90 @@ parse_workflow() {
       }
       return s
     }
+    function trim(s) { sub(/^[ \t]+/, "", s); sub(/[ \t]+$/, "", s); return s }
+    # 式の全体を囲む括弧を外す（「(a) && (b)」のように、先頭と末尾の括弧が対でなければ外さない）
+    function unparen(t,   i, c, d, q) {
+      while (t ~ /^\(.*\)$/) {
+        d = 0; q = 0
+        for (i = 1; i < length(t); i++) {
+          c = substr(t, i, 1)
+          if (c == "\047") q = !q
+          else if (!q && c == "(") d++
+          else if (!q && c == ")") d--
+          if (d == 0) return t
+        }
+        t = trim(substr(t, 2, length(t) - 2))
+      }
+      return t
+    }
+    # 1つの項を判定する：run（merge_group で真）・exclude（merge_group で偽）・unknown
+    function term(t,   l, op, v) {
+      l = tolower(unparen(trim(t))); v = ""
+      if (l ~ /^github\.event_name[ \t]*[!=]=[ \t]*\047[^\047]*\047$/) {
+        v = l; sub(/^github\.event_name[ \t]*/, "", v)
+        op = substr(v, 1, 2); v = trim(substr(v, 3))
+      } else if (l ~ /^\047[^\047]*\047[ \t]*[!=]=[ \t]*github\.event_name$/) {
+        v = l; sub(/[ \t]*github\.event_name$/, "", v)
+        op = substr(v, length(v) - 1); v = trim(substr(v, 1, length(v) - 2))
+      }
+      if (v != "") {
+        v = substr(v, 2, length(v) - 2)
+        return ((op == "==") == (v == "merge_group")) ? "run" : "exclude"
+      }
+      if (l ~ /github\.(event|head_ref|base_ref|ref)|merge_group/) return "unknown"
+      return "run"
+    }
+    function worse(a, b) {
+      if (a == "exclude" || b == "exclude") return "exclude"
+      if (a == "unknown" || b == "unknown") return "unknown"
+      return "run"
+    }
+    # if: の式を判定する。${{ }} を外し、括弧と引用符の外の && で項に分ける。括弧の外に || があれば全体を1つの項とする
+    function cond(e,   i, c, d, q, n, parts, r) {
+      e = trim(e)
+      if (e ~ /^[|>][-+0-9]*$/ || e ~ /^[|>][-+0-9]* /) sub(/^[|>][-+0-9]*/, "", e)
+      e = unquote(e)
+      if (e ~ /^\$\{\{.*\}\}$/) e = substr(e, 4, length(e) - 5)
+      e = trim(e)
+      if (e == "") return "run"
+      d = 0; q = 0; n = 1; parts[1] = ""
+      for (i = 1; i <= length(e); i++) {
+        c = substr(e, i, 1)
+        if (c == "\047") q = !q
+        else if (!q && c == "(") d++
+        else if (!q && c == ")") d--
+        if (!q && d == 0 && substr(e, i, 2) == "||") return term(e)
+        if (!q && d == 0 && substr(e, i, 2) == "&&") { parts[++n] = ""; i++; continue }
+        parts[n] = parts[n] c
+      }
+      r = "run"
+      for (i = 1; i <= n; i++) r = worse(r, term(parts[i]))
+      return r
+    }
+    # ジョブの判定（自分の if: と、needs: でたどれるジョブの if:）。見つからないジョブや循環は unknown
+    function judge(j,   n, k, toks, r) {
+      if (j in st) return st[j]
+      if (!(j in known) || (j in visiting)) return "unknown"
+      visiting[j] = 1
+      r = cond(ifs[j])
+      n = split(needs[j], toks, /[][, \t]+/)
+      for (k = 1; k <= n; k++) {
+        if (toks[k] == "" || toks[k] == "-") continue
+        r = worse(r, judge(unquote(toks[k])))
+      }
+      delete visiting[j]
+      st[j] = r
+      return r
+    }
     # GitHub はジョブのチェックを、name: があればその値、無ければ ID で名付ける。式を含む name: は比べないので出さない
     function flush() {
       if (id != "") {
-        label = hasname ? name : id
-        if (label != "" && label !~ /\$\{\{/) printf "job\037%s\n", label
+        known[id] = 1; order[++njobs] = id
+        label[id] = hasname ? name : id
       }
-      id = ""; name = ""; hasname = 0; childind = -1
+      id = ""; name = ""; hasname = 0; childind = -1; key = ""
     }
-    BEGIN { section = ""; mg = 0; jobind = -1; childind = -1 }
+    BEGIN { section = ""; mg = 0; jobind = -1; childind = -1; njobs = 0 }
     {
       s = strip($0)
       if (s ~ /^[ \t]*$/) next
@@ -168,12 +278,31 @@ parse_workflow() {
         id = s; sub(/:.*$/, "", id); id = unquote(id)
       } else if (ind > jobind && id != "") {
         if (childind < 0) childind = ind
-        if (ind == childind && s ~ /^ *name[ \t]*:/) {
-          v = s; sub(/^ *name[ \t]*:/, "", v); name = unquote(v); hasname = 1
+        if (ind == childind) {
+          key = ""
+          if (s ~ /^ *name[ \t]*:/) {
+            v = s; sub(/^ *name[ \t]*:/, "", v); name = unquote(v); hasname = 1
+          } else if (s ~ /^ *if[ \t]*:/) {
+            # 続きの行（複数行の式）は、ジョブの次のキーまで空白でつなぐ
+            v = s; sub(/^ *if[ \t]*:/, "", v); ifs[id] = v; key = "if"
+          } else if (s ~ /^ *needs[ \t]*:/) {
+            v = s; sub(/^ *needs[ \t]*:/, "", v); needs[id] = v; key = "needs"
+          }
+        } else if (key == "if") {
+          ifs[id] = ifs[id] " " trim(s)
+        } else if (key == "needs") {
+          needs[id] = needs[id] " " s
         }
       }
     }
-    END { flush(); printf "on\037%d\n", mg }
+    END {
+      flush()
+      for (k = 1; k <= njobs; k++) {
+        j = order[k]
+        if (label[j] != "" && label[j] !~ /\$\{\{/) printf "job\037%s\037%s\n", label[j], judge(j)
+      }
+      printf "on\037%d\n", mg
+    }
   ' "$1"
 }
 
@@ -198,20 +327,20 @@ EOF
 sep=$'\037'
 tmp="$(mktemp -d)"
 trap 'rm -rf "$tmp"' EXIT
-# チェックごとに、対応するジョブがあるワークフロー（matched）と、そのうち merge_group で動くか（running）を集める
-result="$(jq -c 'map({key: ., value: {matched: [], running: false}}) | from_entries' <<<"$checks_json")"
+# チェックごとに、対応するジョブ（hits）を集める。ジョブごとに、ワークフロー（path）と、そのワークフローが merge_group で
+# 動くか（mg）と、ジョブの if: の判定（status）を持つ
+result="$(jq -c 'map({key: ., value: []}) | from_entries' <<<"$checks_json")"
 while IFS= read -r path; do
   [ -n "$path" ] || continue
   dw_fetch_repo_file "$repo" "$path" "$tmp/workflow" "$branch" || continue
   parsed="$(parse_workflow "$tmp/workflow")"
   mg="$(printf '%s\n' "$parsed" | awk -F "$sep" '$1 == "on" { print $2 }')"
   while IFS= read -r check; do
-    while IFS="$sep" read -r kind label; do
+    while IFS="$sep" read -r kind label status; do
       [ "$kind" = job ] || continue
       if job_matches "$check" "$label"; then
-        result="$(jq -c --arg c "$check" --arg p "$path" --argjson mg "$mg" \
-          '.[$c].matched += [$p] | .[$c].matched |= unique | .[$c].running = (.[$c].running or $mg == 1)' <<<"$result")"
-        break
+        result="$(jq -c --arg c "$check" --arg p "$path" --argjson mg "$mg" --arg s "$status" \
+          '.[$c] += [{path: $p, mg: $mg, status: $s}]' <<<"$result")"
       fi
     done <<EOF
 $parsed
