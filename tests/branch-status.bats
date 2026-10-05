@@ -31,6 +31,16 @@ advance_main() {
   git -C "$TMP/other" push -q origin main
 }
 
+# origin の main に、ブランチの work.txt と衝突する変更（work.txt を別の内容で作る）がマージされたことにする
+conflict_main() {
+  [ -d "$TMP/other" ] || git clone -q "$TMP/origin.git" "$TMP/other"
+  git -C "$TMP/other" pull -q origin main
+  echo other >"$TMP/other/work.txt"
+  git -C "$TMP/other" add work.txt
+  git -C "$TMP/other" commit -q -m "main: work"
+  git -C "$TMP/other" push -q origin main
+}
+
 run_status() {
   run_script branch-status.sh "$@"
   printf '%s\n' "$output"
@@ -238,11 +248,7 @@ queue_removed_fixture() {
   advance_main 1
   run_status
   assert_equal "$(jq -c '[.behind, .conflicts]' <<<"$output")" "[1,false]"
-  # main 側で work.txt を別の内容で作ると、ブランチの work.txt と衝突する
-  echo other >"$TMP/other/work.txt"
-  git -C "$TMP/other" add work.txt
-  git -C "$TMP/other" commit -q -m "main: work"
-  git -C "$TMP/other" push -q origin main
+  conflict_main
   head="$(git rev-parse HEAD)"
   run_status
   assert_success
@@ -305,12 +311,7 @@ queue_removed_fixture() {
 @test "手元で衝突を直して取り込んだが push していなければ、push 済みのブランチの衝突を pushed_conflicts に出す" {
   setup_branch
   git push -q origin feat/17-x
-  # main 側で work.txt を別の内容で作り、push 済みのブランチと衝突させる
-  git clone -q "$TMP/origin.git" "$TMP/other"
-  echo other >"$TMP/other/work.txt"
-  git -C "$TMP/other" add work.txt
-  git -C "$TMP/other" commit -q -m "main: work"
-  git -C "$TMP/other" push -q origin main
+  conflict_main
   git fetch -q origin main
   git merge -q --no-edit origin/main >/dev/null 2>&1 || true
   echo resolved >work.txt
