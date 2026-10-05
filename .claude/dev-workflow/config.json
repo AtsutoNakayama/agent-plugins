@@ -5,5 +5,10 @@
   },
   "status": {
     "pr_opened": "In Review"
+  },
+  "pr_respond": {
+    "handlers": {
+      "coderabbitai[bot]": "coderabbit-respond"
+    }
   }
 }

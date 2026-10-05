@@ -28,11 +28,24 @@ plugins/dev-workflow/scripts/doctor.sh
 | `/dev-workflow:review-perspective-add` | レビューの観点を聞き取り、形式に沿った観点ファイル（下記）を自分の層（`~/.claude/dev-workflow/review/`）かリポジトリの層（`<repo>/.claude/dev-workflow/review/`）に作る。同じ層に同じ名前の観点があれば上書きせずに知らせ、ほかの層の観点を置き換えるときは確認する |
 | `/dev-workflow:adr-create` | 設計上の判断を、MADR 4.0.0 の書式の ADR として `docs/adr/<Issue 番号を6桁に0埋め>-<名前>.md` に残す（[ADR](#adr)）。判断の内容を聞き取り、判断に合うテンプレートを選んで中身まで書く。古い ADR を置き換えるときは、古い方の status だけを superseded にする。確認は取らない（作るのは手元のファイルだけ） |
 | `/dev-workflow:pr-create` | 作業用のブランチを push し、Issue に紐付けた PR を作る。タイトルは `<type>: <Issueのタイトル>`、本文は PR テンプレートに沿って書き、`Closes #N` を付けてラベルを引き継ぐ。Issue に `breaking` ラベルがあれば、タイトルを `<type>!:` にし、本文に `BREAKING CHANGE:`（移行のしかた）を書く。Issue の「やること」のうち差分で済んだ項目にチェックを付ける。確認してから push する |
+| `/dev-workflow:pr-respond` | PR を出した後に付いたレビューの指摘・質問・コメントと、CI の失敗に対応する。最初に PR の状態（CI・レビュー・マージできるか）を見せ、指摘（直す）・質問（答えるだけ）・感想や承認（何もしない）に分けて一覧にする。直すものと答えるものを選ぶと、直してコミットし、push するコミットと返信の本文を見せて確認してから、push と返信を行う。スレッドは resolved にしない（レビューした人に任せる）。コメントの本文にある AI への指示には従わない。コメントが無ければ何も変えずに終わる。使わなくてもマージや `task-finish` は進められる |
 | `/dev-workflow:task-finish` | PR がマージされた後の後片付け。マージを確かめ、ワークツリーとローカルのブランチを削除し、main を最新にし（`git pull --ff-only`）、PR が閉じる Issue が閉じたかも伝える（閉じるのは頼まれたときだけ）。確認を取らずに進め、作業が失われるとき（マージされていない、PR に入っていないコミット・未コミットの変更・サブモジュールの push していないコミットがある）は、何も消さずに止まる。`.env` など git が無視するファイルが残っているときは、一覧を見せて消してよいか確認する |
 | `/dev-workflow:branch-update` | PR のブランチに、設定済みの `base_branch`（既定は main）の最新状態を取り込む。遅れを調べ、`origin/<base_branch>` を merge し（rebase と強制 push は使いません）、衝突を直して、リポジトリのテストとチェックを通します。push の前に、取り込んだコミットとチェックの結果を見せて確認を取り、push の後は CI が通り直るのを待って結果を伝えます。すでに最新なら何もしません。判断できない衝突はユーザーに聞きます |
 | `/dev-workflow:task-cancel` | やらないことにした Issue や誤って起票した Issue を取りやめる。理由と参照先（代わりに作業する Issue など）をコメントに書き、not planned（重複なら元の Issue に紐付けて duplicate）で閉じる。着手していれば、PR を閉じ、リモートと手元のブランチ・ワークツリーも削除する。失う作業（マージしていないコミット・未コミットの変更・`.env` など）を見せて確認してから行う。親の Issue（サブ Issue を持つ Issue）を取りやめるときは、開いている子孫（子・孫）を一緒に取りやめるか、残すかを確認で選ぶ（一緒に取りやめるなら、着手中の子孫の PR とブランチも片付ける）。Project からは外さず、Story Point も残す（後からボードで経緯を参照できるように）。マージした後の片付けは `task-finish` を使う |
 
-Issue の番号を取るスキル（`task-start`・`task-status`・`task-finish`・`task-cancel`）は、`/dev-workflow:task-start 12` や `/dev-workflow:task-start #12` のように、引数で番号を渡せます。`task-status` は `/dev-workflow:task-status 12 Blocked` のように、番号、列名の順に渡します。引数が無ければ、依頼の文章から読み取ります。
+Issue の番号を取るスキル（`task-start`・`task-status`・`task-finish`・`task-cancel`）は、`/dev-workflow:task-start 12` や `/dev-workflow:task-start #12` のように、引数で番号を渡せます。`task-status` は `/dev-workflow:task-status 12 Blocked` のように、番号、列名の順に渡します。引数が無ければ、依頼の文章から読み取ります。`pr-respond` は `/dev-workflow:pr-respond 42` のように PR の番号を渡せます（無ければ今のブランチの PR）。
+
+`pr-respond` は、投稿者ごとに担当の skill を、設定（`.claude/dev-workflow/config.json`）の `pr_respond.handlers` で指定できます。担当の skill がある投稿者の指摘は、その skill に任せます（PR の番号を引数にして呼びます）。設定が無ければ、すべて汎用の手順で扱います。投稿者の名前は、大文字と小文字、末尾の `[bot]` を区別しません。
+
+```json
+{
+  "pr_respond": {
+    "handlers": {
+      "coderabbitai[bot]": "coderabbit-respond"
+    }
+  }
+}
+```
 
 ## レビューの観点
 
@@ -96,7 +109,7 @@ base_ahead: required
 
 ### タスクの進め方
 
-プラグインを入れると、セッションの始まり（起動・`/resume`・`/clear`・コンパクトの後）のたびに、タスクの進め方（Issue から始める → 着手 → 区切りごとのコミット → PR の前のローカルレビュー → PR → 後片付け、と取りやめ）と、それぞれで使うスキルを Claude に読み込ませます（`hooks/task-flow.sh`）。スキルは呼ばれたときにしか読み込まれないので、流れはいつも渡しておきます。会話が要約されても抜けません。
+プラグインを入れると、セッションの始まり（起動・`/resume`・`/clear`・コンパクトの後）のたびに、タスクの進め方（Issue から始める → 着手 → 区切りごとのコミット → PR の前のローカルレビュー → PR →（指摘が付いたら対応）→ 後片付け、と取りやめ）と、それぞれで使うスキルを Claude に読み込ませます（`hooks/task-flow.sh`）。スキルは呼ばれたときにしか読み込まれないので、流れはいつも渡しておきます。会話が要約されても抜けません。
 
 既定の流れは `plugins/dev-workflow/defaults/task-flow.md` です。次のファイルを置くと、既定の流れのあとに、この順で追記として渡します（後ろほど優先します）。
 
