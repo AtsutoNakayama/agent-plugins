@@ -196,6 +196,26 @@ YML
   assert_equal "$(jq -c '[[.not_running[].check], .unknown]' <<<"$output")" '[["Lint","test"],["build","build (x)","lint"]]'
 }
 
+@test "引用符の中の # はコメントとして消さない" {
+  setup_fake_gh
+  workflow ci.yml <<'YML'
+on: pull_request # merge_group は使わない
+jobs:
+  a:
+    name: "Build #1" # 表示名
+    runs-on: ubuntu-latest
+  b:
+    name: 'Test #2'
+    runs-on: ubuntu-latest
+  c:
+    name: Bob's build # コメント
+    runs-on: ubuntu-latest
+YML
+  run_check --branch main --check "Build #1" --check "Test #2" --check "Bob's build"
+  assert_success
+  assert_equal "$(jq -c '[[.not_running[].check], .unknown]' <<<"$output")" '[["Bob'"'"'s build","Build #1","Test #2"],[]]'
+}
+
 @test "同じ名前のジョブが複数のワークフローにあれば、どれかが merge_group で動けば動くとみなす" {
   setup_fake_gh
   printf 'on: pull_request\njobs:\n  lint:\n    runs-on: x\n' | workflow a.yml

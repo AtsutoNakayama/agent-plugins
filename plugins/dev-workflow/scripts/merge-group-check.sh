@@ -105,10 +105,21 @@ workflows="$(jq -c '[if type == "array" then .[] else empty end
 # その値、無ければ ID。${{ }} の式を含む name: のジョブは出さない）を出力する。項目は \037 で区切る。インデントは空白だけとみなす（YAML はタブを許さない）
 parse_workflow() {
   awk '
-    function strip(s) {
+    # コメント（行頭か空白の後の #）を消す。引用符の中の #（name: "Build #1" など）は残す。
+    # 引用符は、値の始まり（空白・[・, の後）に来たものだけを数える（Bob\047s のような語の中のものは除く）
+    function strip(s,   i, c, q, prev) {
       sub(/\r$/, "", s)
-      if (s ~ /^[ \t]*#/) return ""
-      sub(/[ \t]#.*$/, "", s)
+      q = ""; prev = " "
+      for (i = 1; i <= length(s); i++) {
+        c = substr(s, i, 1)
+        if (q == "") {
+          if (c == "#" && (prev == " " || prev == "\t")) return substr(s, 1, i - 1)
+          if ((c == "\"" || c == "\047") && (prev == " " || prev == "\t" || prev == "[" || prev == ",")) q = c
+        } else if (c == q) {
+          q = ""
+        }
+        prev = c
+      }
       return s
     }
     function unquote(s) {
