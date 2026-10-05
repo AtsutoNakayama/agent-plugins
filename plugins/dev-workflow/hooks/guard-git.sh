@@ -227,7 +227,7 @@ check_branch() {
 # 1つのコマンド（単語の並び）を調べる。cd ならディレクトリを移す。
 # 使い方: check_command <単語>...
 check_command() {
-  local target sub base
+  local target sub base top
   # 先頭の環境変数の代入（FOO=1 git push）、前に付くだけのコマンド、予約語（then git push）を飛ばす
   while [ $# -gt 0 ]; do
     case "$1" in
@@ -290,9 +290,13 @@ check_command() {
 
   case "$sub" in
     commit | push | switch | checkout | branch | worktree)
-      # 導入していないリポジトリでは何もしない。対象のディレクトリが分からないとき（cd - の後など）は、
-      # 守りを外さないよう、今までどおり調べる
-      [ -z "$git_dir" ] || dw_is_set_up "$(git_at rev-parse --show-toplevel || true)" || return 0
+      # 導入していないリポジトリでは何もしない。対象のリポジトリが分からないときは、守りを外さないよう、今までどおり調べる。
+      # 分からないのは、ディレクトリが分からないとき（cd - の後など）、--git-dir・--work-tree を付けたとき
+      # （--git-dir だけなら、show-toplevel は今のディレクトリを返す）、作業ツリーが無いとき（bare リポジトリ・.git の中）
+      if [ -n "$git_dir" ] && [ "${#gopts[@]}" -eq 0 ]; then
+        top="$(git_at rev-parse --show-toplevel || true)"
+        [ -z "$top" ] || dw_is_set_up "$top" || return 0
+      fi
       ;;
     *) return 0 ;;
   esac

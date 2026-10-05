@@ -355,3 +355,11 @@ silent() {
   rm .claude/dev-workflow/config.json
   denied "強制 push" "cd - && git push --force"
 }
+
+@test "--git-dir・--work-tree を付けたときや、作業ツリーが無いときは、対象が分からないので今までどおり調べる" {
+  # --git-dir だけなら、git rev-parse --show-toplevel は今のディレクトリ（導入していない $TMP）を返す
+  denied "強制 push" "cd $TMP && git --git-dir=$REPO/.git push --force" "cd $TMP && git --git-dir $REPO/.git --work-tree $REPO push --force"
+  denied "main へは push しません" "cd $TMP && git --git-dir=$REPO/.git push origin main"
+  git init -q --bare "$TMP/bare.git"
+  denied "強制 push" "cd $TMP/bare.git && git push --force" "cd $REPO/.git && git push --force"
+}
