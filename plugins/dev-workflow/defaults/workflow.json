@@ -1,6 +1,7 @@
 {
   "language": "ja",
   "base_branch": "main",
+  "require_status_checks": true,
   "allow_ai_merge": false,
   "project": {
     "owner": null,

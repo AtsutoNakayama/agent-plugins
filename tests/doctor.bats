@@ -239,10 +239,45 @@ merge_check() { jq -c '.checks[] | select(.name == "merge-queue") | [.ok, .level
   assert_success
   assert_equal "$(jq -c '.[0:2]' <<<"$(merge_check)")" '[false,"warn"]'
   assert_output --partial "マージキューも最新の main の取り込み（strict）も求めていません"
-  # 必須のチェックが無ければ、キューも strict も意味がないので知らせない
-  export FAKE_RULES='[{"type": "pull_request", "parameters": {}}]'
+}
+
+# 使い方: required_check → required-checks の確認の [ok, level, detail]。確認が無ければ空
+required_check() { jq -c '.checks[] | select(.name == "required-checks") | [.ok, .level, .detail]' <<<"$output"; }
+
+@test "必須のチェックが無ければ、止めずに repo-setup で設定するよう知らせる（キューと strict は知らせない）" {
+  fake_gh
+  export FAKE_SCOPES="project" FAKE_RULES='[{"type": "pull_request", "parameters": {}}]'
   run_script doctor.sh
-  assert_equal "$(jq -c '.[0]' <<<"$(merge_check)")" true
+  assert_success
+  assert_equal "$(jq -c '.[0:2]' <<<"$(required_check)")" '[false,"warn"]'
+  detail="$(jq -r '.[2]' <<<"$(required_check)")"
+  [[ "$detail" == "main へのマージに必須のチェックがありません。"* ]]
+  [[ "$detail" == *"/dev-workflow:repo-setup"* ]]
+  [[ "$detail" == *'"require_status_checks": false'* ]]
+  # 必須のチェックが無ければ、キューも strict も意味がないので知らせない
+  assert_equal "$(merge_check)" ""
+  # 必須のチェックがあれば知らせない
+  export FAKE_RULES='[{"type": "required_status_checks", "parameters": {"strict_required_status_checks_policy": true}}]'
+  run_script doctor.sh
+  assert_equal "$(required_check)" ""
+}
+
+@test "チームの設定で必須のチェックを求めないことにしていれば、警告しない" {
+  fake_gh
+  export FAKE_SCOPES="project" FAKE_RULES='[{"type": "pull_request", "parameters": {}}]'
+  echo '{"require_status_checks": false}' >.claude/dev-workflow/config.json
+  run_script doctor.sh
+  assert_success
+  assert_equal "$(required_check)" '[true,"warn","main へのマージに必須のチェックはありません（設定の require_status_checks が false）"]'
+}
+
+@test "必須のチェックを求めない設定は、個人の設定やユーザーの設定では効かない" {
+  fake_gh
+  export FAKE_SCOPES="project" FAKE_RULES='[{"type": "pull_request", "parameters": {}}]'
+  echo '{"require_status_checks": false}' >.claude/dev-workflow/config.local.json
+  echo '{"require_status_checks": false}' >"$WORKFLOW_USER_DIR/config.json"
+  run_script doctor.sh
+  assert_equal "$(jq -c '.[0:2]' <<<"$(required_check)")" '[false,"warn"]'
 }
 
 @test "マージキューの確認は設定の base_branch を見る（/ を含む名前はエンコードする）" {
