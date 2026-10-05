@@ -79,6 +79,13 @@ dw_user_review_dir() {
   printf '%s\n' "$(dw_user_dir)/review"
 }
 
+# 導入したリポジトリ（dw_is_set_up）なら、ユーザーごとのレビューの観点の置き場所（dw_user_review_dir）を出力する。
+# 導入していなければ何も出さない（dw_user_dir_for と同じ判定）
+# 使い方: dw_user_review_dir_for <リポジトリのルート（空ならリポジトリの外）>
+dw_user_review_dir_for() {
+  [ -z "$(dw_user_dir_for "${1:-}")" ] || dw_user_review_dir
+}
+
 # gh の最低限のバージョン。issue-cancel.sh の gh issue close --duplicate-of が 2.88.0 から。source した側で使う
 # shellcheck disable=SC2034
 DW_GH_MIN_VERSION=2.88.0

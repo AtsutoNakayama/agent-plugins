@@ -130,8 +130,7 @@ user_dir="$(dw_user_review_dir)"
 repo_dir=""
 [ -z "$repo_root" ] || repo_dir="$repo_root/.claude/dev-workflow/review"
 # このリポジトリで使われるユーザーの層（導入していなければ空）
-used_user_dir="$(dw_user_dir_for "$repo_root")"
-used_user_dir="${used_user_dir:+$used_user_dir/review}"
+used_user_dir="$(dw_user_review_dir_for "$repo_root")"
 case "$layer" in
   user)
     dir="$user_dir"
