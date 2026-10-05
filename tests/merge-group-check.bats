@@ -173,6 +173,20 @@ YML
   assert_equal "$(jq -c '[.not_running, .unknown]' <<<"$output")" '[[],["CodeRabbit","linux (x64)"]]'
 }
 
+@test "name: の式のほかに日本語などの文字があれば、式として当てる" {
+  setup_fake_gh
+  workflow ci.yml <<'YML'
+on: pull_request
+jobs:
+  test:
+    name: テスト (${{ matrix.os }})
+    runs-on: ubuntu-latest
+YML
+  run_check --branch main --check "テスト (linux)" --check "ビルド (linux)"
+  assert_success
+  assert_equal "$(jq -c '[[.not_running[].check], .unknown]' <<<"$output")" '[["テスト (linux)"],["ビルド (linux)"]]'
+}
+
 @test "同じ名前のジョブが複数のワークフローにあれば、どれかが merge_group で動けば動くとみなす" {
   setup_fake_gh
   printf 'on: pull_request\njobs:\n  lint:\n    runs-on: x\n' | workflow a.yml
