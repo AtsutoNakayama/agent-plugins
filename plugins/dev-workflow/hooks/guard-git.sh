@@ -11,8 +11,9 @@
 # 標準入力でフックの入力（JSON）を受け取る。止めるときは理由を標準エラーに1行で出し、終了コード 2 で終わる
 # （Claude Code はコマンドを実行せず、理由を Claude に伝える）。警告するときは、フックの出力の JSON を
 # 標準出力に出し、終了コード 0 で終わる。
-# 操作の対象のリポジトリ（cd・git -C で移った先、--git-dir・GIT_DIR などで指したリポジトリ）が、導入していないリポジトリ
-# （dw_is_set_up。bare リポジトリを含む）なら何もしない。対象が分からないときは、守りを外さないよう調べる（設計書 §1）。
+# 操作の対象のリポジトリ（cd・git -C で移った先）が、導入していないリポジトリ（dw_is_set_up。bare リポジトリを含む）なら
+# 何もしない。対象のルートが分からないとき（--git-dir・--work-tree・GIT_DIR などを付けたとき、.git の中など）は、
+# 守りを外さないよう調べる（設計書 §1）。
 # コマンドの文字列を簡易に解析するだけなので、sh -c や git の別名（alias）を通すと見逃す。
 # 最後の守りは GitHub のルールセット（setup-repo.sh）。
 set -euo pipefail
@@ -63,33 +64,33 @@ git_at() {
   (cd "$git_dir" && env ${genv[@]+"${genv[@]}"} git ${gopts[@]+"${gopts[@]}"} "$@" 2>/dev/null)
 }
 
+# 操作の対象のリポジトリのルート（作業ツリーの一番上）を出力する。確実に分かるときだけ出力し、分からなければ何も出さない。
+# 確実に分かるのは、--git-dir・--work-tree も GIT_DIR などの環境変数も無く、--show-toplevel が答えるとき。
+# オプションや環境変数があると --show-toplevel は今のディレクトリを返すことがあり（--git-dir だけのとき）、git の内部の配置
+# （.git の親がルート）から推測すると、サブモジュールや --separate-git-dir のリポジトリで誤るので、推測はしない。
+# 導入したかの判定と、設定（base_branch・branch.pattern）を読むリポジトリは、どちらもこれで決める
+target_root() {
+  [ "${#gopts[@]}" -eq 0 ] && [ "${#genv[@]}" -eq 0 ] || return 0
+  git_at rev-parse --show-toplevel || true
+}
+
 # 操作の対象のリポジトリが、導入したリポジトリ（dw_is_set_up）なら成功し、導入していなければ 1 を返す（設計書 §1）。
-# 対象は、コマンドと同じディレクトリ・--git-dir・--work-tree・GIT_DIR などで git rev-parse して求める。作業ツリー
-# （--show-toplevel）は、--git-dir だけを付けたときは今のディレクトリを返し、.git の中では求められないので、
-# リポジトリ（--git-common-dir）の元のルートで判断する。作業ツリーで判断できるとき（オプションも環境変数も無い）は、
-# そのワークツリーにあるチームの設定も見る。bare リポジトリは、チームの設定を置く作業ツリーが無いので、導入していないとみなす。
-# 対象が分からない（ディレクトリが分からない・git がリポジトリを見つけられない）ときは、守りを外さないよう、導入したものとみなす
+# bare リポジトリは、チームの設定を置く作業ツリーが無いので、導入していないとみなす（ミラーの移行の push --mirror などを止めない）。
+# ルートが分からないときは、守りを外さないよう、導入したものとみなす
 target_set_up() {
-  local common top
-  [ -n "$git_dir" ] || return 0
-  common="$(git_at rev-parse --git-common-dir || true)"
-  [ -n "$common" ] || return 0
-  [ "$(git_at rev-parse --is-bare-repository || true)" != true ] || return 1
-  if [ "${#gopts[@]}" -eq 0 ] && [ "${#genv[@]}" -eq 0 ]; then
-    top="$(git_at rev-parse --show-toplevel || true)"
-    [ -z "$top" ] || ! dw_is_set_up "$top" || return 0
+  local root
+  root="$(target_root)"
+  if [ -n "$root" ]; then
+    dw_is_set_up "$root"
+    return
   fi
-  case "$common" in
-    /*) ;;
-    *) common="$git_dir/$common" ;;
-  esac
-  dw_is_set_up "$(cd "$common/.." 2>/dev/null && pwd -P)"
+  [ "$(git_at rev-parse --is-bare-repository || true)" != true ]
 }
 
 # 対象のリポジトリの設定から base_branch を出力する。読めなければ main
 base_branch() {
   local root base
-  root="$(git_at rev-parse --show-toplevel || true)"
+  root="$(target_root)"
   base="$( (cd "${git_dir:-/}" && WORKFLOW_REPO_ROOT="$root" "$BASH" "$DW_SCRIPTS_DIR/config.sh" '.base_branch // empty') 2>/dev/null || true)"
   printf '%s\n' "${base:-main}"
 }
@@ -173,7 +174,7 @@ check_branch_name() {
   case "$name" in
     '' | *'$'* | *'`'*) return 0 ;;
   esac
-  root="$(git_at rev-parse --show-toplevel || true)"
+  root="$(target_root)"
   [ -n "$root" ] || return 0
   [ "$name" != "$(base_branch)" ] || return 0
   git_at show-ref --verify --quiet "refs/heads/$name" && return 0

@@ -356,7 +356,7 @@ silent() {
   denied "強制 push" "cd - && git push --force"
 }
 
-@test "--git-dir・--work-tree・GIT_DIR で指したリポジトリや、.git の中では、元のリポジトリが導入したものかで判断する" {
+@test "--git-dir・--work-tree・GIT_DIR などを付けたときや .git の中では、対象のルートが分からないので、導入したかを問わず調べる" {
   git init -q -b main "$TMP/other"
   # --git-dir だけなら、git rev-parse --show-toplevel は今のディレクトリ（導入していない other）を返すが、それでは判断しない
   denied "強制 push" \
@@ -365,10 +365,24 @@ silent() {
     "cd $TMP/other && GIT_DIR=$REPO/.git git push --force" \
     "cd $TMP/other && env GIT_DIR=$REPO/.git git push --force" \
     "cd $TMP && GIT_DIR=repo/.git GIT_WORK_TREE=repo git push --force" \
-    "cd $REPO/.git && git push --force"
+    "cd $REPO/.git && git push --force" \
+    "git --git-dir=$TMP/other/.git push --force" \
+    "cd $TMP/other/.git && git push --force"
   denied "main へは push しません" "cd $TMP/other && GIT_DIR=$REPO/.git git push origin main"
-  # 逆に、導入していないリポジトリを指せば止めない
-  silent "git --git-dir=$TMP/other/.git push --force" "GIT_DIR=$TMP/other/.git git push --force" "cd $TMP/other/.git && git push --force"
+}
+
+@test "git の内部の配置からルートを推測しない（--separate-git-dir のリポジトリでも、GIT_WORK_TREE・--work-tree で守りを外さない）" {
+  # .git の親がルートではないリポジトリ（サブモジュールも同じ）
+  git init -q -b main --separate-git-dir "$TMP/sep.git" "$TMP/sep"
+  mark_set_up "$TMP/sep"
+  denied "main の上ではコミットしません" \
+    "cd $TMP/sep && git commit -m x" \
+    "cd $TMP/sep && GIT_WORK_TREE=. git commit -m x" \
+    "cd $TMP/sep && git --work-tree=. commit -m x"
+}
+
+@test "対象のルートが分からないときは、ブランチ名を確かめない" {
+  silent "cd $TMP && git --git-dir=$REPO/.git switch -c foo"
 }
 
 @test "bare リポジトリは導入していないとみなし、止めない（ミラーの移行など）" {
