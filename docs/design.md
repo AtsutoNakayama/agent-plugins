@@ -97,7 +97,7 @@ agent-plugins/
     - どちらかは、type ラベルでは分からない（docs でもファイルを変えるし、調査は type に現れない）。そこで `task-start` は、Issue の本文（やること・完了条件・変更するファイル・領域）から AI が判断し、「ワークツリーを作って着手する」「作らずに着手する」を、判断と理由を添えて提案し、ユーザーが選ぶ。本文の判断は外れることがあり、作らずに着手すると base_branch の上でファイルを変えてしまうおそれがあるので、黙って決めない。依頼の文章で既に決まっていれば聞かない。
     - 作らないときは `task-start.sh --no-worktree` で、割り当てと列の移動（start の列）だけを行う。出力の `branch`・`worktree` は `null`。
     - 途中でファイルを変えることになったら、`--slug` を付けて `task-start.sh` をもう一度実行すれば、ワークツリーとブランチを作れる（割り当てと列の移動は済んでいるので飛ばす）。
-    - 終えるときは PR が無いので、マージでは Issue が閉じない。`task-finish` は、ブランチを名前（`<type>/<番号>-…`）で探し、見つからなければ Issue に紐付く PR（`closingIssuesReferences`。`next-tasks.sh` と同じ結び付け方）の `headRefName` から探す。規約に合わない名前のブランチで作業していると、名前では見つからないため。PR があればそのブランチを `cleanup.sh` で片付け（開いていれば「まだマージされていません」で止まる）、名前でも PR でも見つからないときだけ、片付けるものが無いことを伝え、確認を取って Issue を完了（completed）で閉じる。やめるときは、`task-cancel` がブランチの無い Issue として閉じるだけにする（`cleanup.sh` は呼ばない）。
+    - 終えるときは PR が無いので、マージでは Issue が閉じない。`task-finish`・`task-cancel` は、Issue の作業のブランチを `issue-branches.sh` で探す。名前（`branch.pattern` に当てた番号）で見つかる手元・リモートのブランチと、Issue に紐付く PR（`gh issue view` の `closedByPullRequestsReferences`。Issue の側から読むので、PR の件数の上限を受けない）のブランチを出す。規約に合わない名前のブランチで作業していると、名前では見つからないため。マージせずに閉じた PR は、作業が残っていないので除く。フォークや別のリポジトリの PR は、ブランチが origin に無いので `fork` として分けて出す。`task-finish` は、見つかったブランチを `cleanup.sh` で片付け（PR が開いていれば「まだマージされていません」で止まる）、ブランチが無くても開いている PR（フォークなど）があれば止まり、どちらも無いときだけ、片付けるものが無いことを伝え、確認を取って Issue を完了（completed）で閉じる。判断を文章ではなくスクリプトにしたのは、閉じた PR・フォーク・件数の上限などの場合を bats で確かめるため。やめるときは、`task-cancel` がブランチの無い Issue として閉じるだけにする（`cleanup.sh` は呼ばない）。
   - **親には着手しない**。親は作業の単位ではなく（親そのものの作業は無い）、作業は子の Issue で進めるので、ブランチも PR も作らない。親（`subIssuesSummary.total` が 1 以上）に `task-start` すると、`task-start.sh` はブランチ・割り当て・列の移動のどれも行わずに止まり（終了コード 2）、`task-start` は開いている子の一覧を見せて、どれに着手するかを選んでもらう。開いている子が無ければ、親を閉じるよう案内する。
 - **やらない Issue を閉じる**：誤って起票した Issue や、やらないことにした Issue は、`task-cancel` で not planned（重複なら duplicate）で閉じる。
   - Issue の終わり方は、完了（completed。PR のマージで閉じる）とやめた（not planned・duplicate）の2つに分ける。完了は PR が閉じ、やめたときは `task-cancel` が閉じる。`task-finish` は Issue を閉じたり変えたりせず（PR の無い、ワークツリーを作らなかったタスクだけは、確認を取って completed で閉じる。上のリポジトリを変えないタスク）、マージした後の手元を片付けて、PR が閉じる Issue が閉じたかを伝えるだけ（`cleanup.sh` の `issues`。調べられなくても片付けは止めない）。名前を `task-close` にしなかったのは、close は完了で閉じるときにも使う言葉で、`task-finish` と混同しやすいため。
@@ -189,7 +189,7 @@ agent-plugins/
 
 - 不具合の修正（type が `fix`）では、直す前に、同じ原因の他の箇所を、同じ書き方・同じ前提でリポジトリを検索して探し、見つかった分も同じ変更で直してテストを足す。この手順は CONTRIBUTING.md の「テストのルール」と、SessionStart フックが渡す流れ（`defaults/task-flow.md`）に書き、review の水平展開（§7）と同じ考え方を、レビューの前の実装の段階にも持ち込む。
 - どのスキルも、依頼の内容から自動で呼ばれてよい（`disable-model-invocation` は付けない）。
-- Issue の番号を取るスキル（`task-start`・`task-status`・`task-finish`・`task-cancel`）は、`/dev-workflow:task-start 12` のように引数で番号を受け取れる。`12` でも `#12` でもよい。frontmatter の `argument-hint` に書く。引数が無ければ依頼の文章から読み、それでも分からなければ聞く。スクリプトの `--issue`（`issue-cancel.sh` の `--duplicate-of` も）は、先頭の `#` を1つだけ外して受け取る（`#` だけの値は、番号が無いものとして拒否する）。
+- Issue の番号を取るスキル（`task-start`・`task-status`・`task-finish`・`task-cancel`）は、`/dev-workflow:task-start 12` のように引数で番号を受け取れる。`12` でも `#12` でもよい。frontmatter の `argument-hint` に書く。`task-finish` は、規約に合わない名前のブランチも片付けられるよう、番号でない値をブランチ名として受け取る（`argument-hint` は `[Issue番号|ブランチ名]`）。引数が無ければ依頼の文章から読み、それでも分からなければ聞く。スクリプトの `--issue`（`issue-cancel.sh` の `--duplicate-of` も）は、先頭の `#` を1つだけ外して受け取る（`#` だけの値は、番号が無いものとして拒否する）。
 - その代わり、次の操作の前には、必ず AskUserQuestion で使用者の確認を取る。確認の前に、何が起きるか（下書きや dry-run の結果）を見せる。
   - AI が決めた内容（Issue や PR の文章、Story Point の見積もり）を GitHub に残す操作
   - 取り消しにくく、スクリプトが安全を確かめていない操作（push、リポジトリの設定の変更など）
@@ -296,6 +296,7 @@ Todo が増えたとき、どれから着手するか、同時に進めてよい
 | `issue-cancel.sh` | 理由をコメントし、Issue を not planned か duplicate で閉じる。`--branch` で、そのブランチの開いている PR を閉じ、リモートのブランチを削除する。`--sub-issues close\|keep` で、親を閉じるときに開いている子孫を閉じるか残すかを決める（開いている子孫があるのに無ければ止まる）。理由が空、または違う理由で既に閉じていれば何もせずに止まる |
 | `branch-status.sh` | 作業用のブランチの、base_branch に対する遅れ・先行、追跡しているファイルの未コミットの変更（未追跡のファイルは除く）、origin のブランチとのずれ、開いている PR のマージ状態（`merge_state`）を調べる。変更はしない（origin からの取得だけ行う） |
 | `merge-group-check.sh` | 必須のチェックを出すワークフローが、マージキューの merge_group のイベントでも動くかを確かめる（base_branch のワークフローを API で読み、チェックの名前とジョブを突き合わせる）。何も変えない。`setup-repo.sh` と `doctor.sh` が使う |
+| `issue-branches.sh` | Issue の作業のブランチ（名前で見つかる手元・リモートのブランチと、Issue に紐付く開いている・マージ済みの PR のブランチ）と PR を探す。何も変えない。`task-finish`・`task-cancel` が使う |
 | `cleanup.sh` | マージを確認し、ワークツリーとブランチを削除し、main を最新にし、PR が閉じる Issue の状態（`issues`）を出す。未コミットの変更や git が無視するファイルがあれば、何も消さずに止まる（無視するファイルは `--remove-ignored` で消せる）。`--abandon` では、マージの確認・main の更新・Issue の状態の確認を飛ばし、失うものを一覧にして削除する |
 
 | 初期設定用（`plugins/dev-workflow/scripts/setup/`） | 役割 |
