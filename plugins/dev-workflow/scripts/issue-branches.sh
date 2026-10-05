@@ -78,12 +78,13 @@ done < <(jq -r '.closedByPullRequestsReferences // [] | .[]
   | [.url, (if .repository then "\(.repository.owner.login)/\(.repository.name)" else "" end)] | @tsv' <<<"$issue_json")
 
 # --- まとめる ---------------------------------------------------------------------
+# ワークツリーの場所は、見つかったブランチ（ふつう1〜2本）だけで引く（手元のブランチすべてで引くと、ブランチが多いと遅い）
 worktrees='{}'
 while IFS= read -r b; do
   [ -n "$b" ] || continue
   p="$(dw_worktree_of "$main_root" "$b")"
   [ -z "$p" ] || worktrees="$(jq -c --arg b "$b" --arg p "$p" '. + {($b): $p}' <<<"$worktrees")"
-done <<<"$local_names"
+done <<<"$(jq -r --argjson prs "$prs" '(. + [$prs[] | select(.fork | not) | .branch]) | unique[]' <<<"$named")"
 jq -n --argjson i "$issue" --argjson named "$named" --argjson prs "$prs" --argjson wt "$worktrees" \
   --arg local "$local_names" --arg remote "$remote_names" '
   ($local | split("\n")) as $l | ($remote | split("\n")) as $r
