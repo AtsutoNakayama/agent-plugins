@@ -109,12 +109,10 @@ if [ "$auto" = true ]; then
   model="$(dw_review_model_layers "$(dw_repo_root)" | tail -n 1 | cut -f 3)"
   model="${model:-null}"
   user_config="$(dw_user_dir)/config.json"
-  if [ -f "$user_config" ] && jq -e '(.review | type) == "object" and (.review | has("model"))' "$user_config" >/dev/null 2>&1; then
+  if dw_review_model_of "$user_config" >/dev/null; then
     dw_warn "${user_config} の review.model は使いません（リポジトリの .claude/dev-workflow/config.json か config.local.json に書いてください）"
   fi
-  if [ "$model" != null ] && ! jq -e --arg m "$DW_REVIEW_MODELS" '. as $v | $m | split(" ") | any(. == $v)' <<<"$model" >/dev/null; then
-    dw_die "review.model は null か ${DW_REVIEW_MODELS// /・} のどれかにしてください: ${model}" 2
-  fi
+  dw_review_model_ok "$model" || dw_die "review.model は null か $(dw_review_model_names) のどれかにしてください: ${model}" 2
   base_branch="$(jq -r .base_branch <<<"$config")"
   target="origin/$base_branch"
   git fetch -q origin "$base_branch" 2>/dev/null \

@@ -12,6 +12,8 @@
 #   1. 個人がそのリポジトリで上書き  <repo>/.claude/dev-workflow/config.local.json
 #
 # 文章のガイド（*.md）は guides.<名前> にパスの配列として入る（優先度の低い順）。
+# review.model だけは、導入したリポジトリだけに効かせるため、review-perspectives.sh がこの合わせ方とは別に
+# リポジトリの層（2 と 1）からだけ読む（層4 の値は使わない。設計書 §7）。
 set -euo pipefail
 
 # shellcheck source=lib/common.sh
@@ -70,13 +72,8 @@ add_layer "$user_dir/config.json"
 if [ -n "$repo_root" ]; then
   layers+=("$(detect_existing)")
   add_layer "$repo_root/.claude/dev-workflow/config.json"
-  local_file="$repo_root/.claude/dev-workflow/config.local.json"
-  if [ ! -f "$local_file" ]; then
-    # ワークツリーで作業中なら、メインのワークツリーに置いた個人の設定を使う
-    main_root="$(dw_main_root "$repo_root" || true)"
-    [ -n "$main_root" ] && local_file="$main_root/.claude/dev-workflow/config.local.json"
-  fi
-  add_layer "$local_file"
+  # ワークツリーで作業中なら、メインのワークツリーに置いた個人の設定を使う
+  add_layer "$(dw_local_config_file "$repo_root")"
 fi
 
 # 文章のガイド（優先度の低い順: ユーザー → リポジトリ）

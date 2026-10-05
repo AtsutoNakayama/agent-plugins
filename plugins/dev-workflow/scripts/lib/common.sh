@@ -189,26 +189,51 @@ DW_BREAKING_LABEL=breaking
 # レビューのサブエージェントに指定できるモデル（設定の review.model。Agent ツールの model が受け付ける別名）。
 # 設定が null ならサブエージェントはセッションと同じモデルで動く（設計書 §7）。source した側で使う
 # shellcheck disable=SC2034
-DW_REVIEW_MODELS="opus sonnet haiku fable"
+DW_REVIEW_MODELS='["opus", "sonnet", "haiku", "fable"]'
+
+# review.model に書ける値（null か DW_REVIEW_MODELS のどれか）かを確かめる。値は JSON で渡す（例: "opus"・null）
+# 使い方: dw_review_model_ok <値の JSON>
+dw_review_model_ok() {
+  jq -e --argjson v "$1" '$v == null or (($v | type) == "string" and index($v) != null)' <<<"$DW_REVIEW_MODELS" >/dev/null 2>&1
+}
+
+# 使えるモデルの一覧を「opus・sonnet・haiku・fable」の形で出力する（エラーのメッセージ用）
+dw_review_model_names() {
+  jq -r 'join("・")' <<<"$DW_REVIEW_MODELS"
+}
+
+# リポジトリの個人の上書き（config.local.json）のパスを出力する。今のワークツリーに無ければ、メインのワークツリーのもの。
+# config.sh が読む場所と、setup-models.sh が書く場所を、ここで1つに決める
+# 使い方: dw_local_config_file <リポジトリのルート>
+dw_local_config_file() {
+  local f="$1/.claude/dev-workflow/config.local.json" main
+  if [ ! -f "$f" ]; then
+    # ワークツリーで作業中なら、メインのワークツリーに置いた個人の設定を使う
+    main="$(dw_main_root "$1" || true)"
+    [ -n "$main" ] && f="$main/.claude/dev-workflow/config.local.json"
+  fi
+  printf '%s\n' "$f"
+}
+
+# 設定ファイルが review.model を決めていれば（null も「使わないと決めた」として）、その値の JSON を出力する。
+# 決めていなければ（ファイルもキーも無い）何も出さずに 1 を返す。JSON のオブジェクトとして読めなければ止まる
+# 使い方: dw_review_model_of <設定ファイル>
+dw_review_model_of() {
+  [ -f "$1" ] || return 1
+  dw_check_json "$1"
+  jq -e '(.review | type) == "object" and (.review | has("model"))' "$1" >/dev/null || return 1
+  jq -c .review.model "$1"
+}
 
 # review.model を決めている、このリポジトリの層（team・local）を、優先度の低い順に1行ずつ「<層>\t<ファイル>\t<値の JSON>」で出力する。
 # 導入したリポジトリだけに効かせるため、ユーザーの層（~/.claude/dev-workflow/config.json）は読まない（設計書 §7）。
-# null も「使わないと決めた」として出す。local は config.sh と同じく、無ければメインのワークツリーのものを使う。
 # 使い方: dw_review_model_layers <リポジトリのルート>
 dw_review_model_layers() {
-  local root="$1" local_file main pair name f
-  local_file="$root/.claude/dev-workflow/config.local.json"
-  if [ ! -f "$local_file" ]; then
-    main="$(dw_main_root "$root" || true)"
-    [ -n "$main" ] && local_file="$main/.claude/dev-workflow/config.local.json"
-  fi
-  for pair in "team:$root/.claude/dev-workflow/config.json" "local:$local_file"; do
+  local pair name f v
+  for pair in "team:$1/.claude/dev-workflow/config.json" "local:$(dw_local_config_file "$1")"; do
     name="${pair%%:*}" f="${pair#*:}"
-    [ -f "$f" ] || continue
-    dw_check_json "$f"
-    if jq -e '(.review | type) == "object" and (.review | has("model"))' "$f" >/dev/null; then
-      printf '%s\t%s\t%s\n' "$name" "$f" "$(jq -c .review.model "$f")"
-    fi
+    v="$(dw_review_model_of "$f")" || continue
+    printf '%s\t%s\t%s\n' "$name" "$f" "$v"
   done
 }
 

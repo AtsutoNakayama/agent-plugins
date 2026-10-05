@@ -112,3 +112,18 @@ json_of() { printf '%s\n' "$1" | LC_ALL=C sed -n '/^{/,$p'; }
   assert_failure 64
   [ ! -e "$TEAM" ]
 }
+
+@test "ワークツリーに自分の config.local.json があれば、config.sh が読むのと同じそのファイルに書く" {
+  echo '{"review": {"model": "fable"}}' >"$LOCAL"
+  git worktree add -q -b feat/1-x "$TMP/wt"
+  cd "$TMP/wt"
+  mkdir -p .claude/dev-workflow
+  echo '{"review": {"model": "haiku"}}' >"$LOCAL"
+  run_script setup/setup-models.sh --review-model opus --scope local
+  assert_success
+  assert_equal "$(jq -c . "$TMP/wt/$LOCAL")" '{"review":{"model":"opus"}}'
+  assert_equal "$(jq -c . "$REPO/$LOCAL")" '{"review":{"model":"fable"}}'
+  assert_equal "$(json_of "$output" | jq -r .review.model)" opus
+  run_script config.sh .review.model
+  assert_output opus
+}

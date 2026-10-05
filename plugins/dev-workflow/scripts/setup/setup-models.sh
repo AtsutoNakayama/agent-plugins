@@ -43,10 +43,9 @@ if [ -n "$review_model" ]; then
   if [ "$review_model" = off ]; then
     value=null
   else
-    case " $DW_REVIEW_MODELS " in
-      *" $review_model "*) value="$(jq -n --arg m "$review_model" '$m')" ;;
-      *) dw_die "--review-model は off か ${DW_REVIEW_MODELS// /・} のどれかにしてください: ${review_model}" 64 ;;
-    esac
+    value="$(jq -n --arg m "$review_model" '$m')"
+    dw_review_model_ok "$value" \
+      || dw_die "--review-model は off か $(dw_review_model_names) のどれかにしてください: ${review_model}" 64
   fi
   case "$scope" in
     local | team) ;;
@@ -58,10 +57,9 @@ elif [ -n "$scope" ]; then
 fi
 
 repo_root="$(dw_repo_root)" || dw_die "リポジトリの中で実行してください" 64
-# 個人の上書き（local）は、ワークツリーで作業中でもメインのワークツリーに置く（config.sh が読む場所と揃える）
-main_root="$(dw_main_root "$repo_root" || true)"
 team_file="$repo_root/.claude/dev-workflow/config.json"
-local_file="${main_root:-$repo_root}/.claude/dev-workflow/config.local.json"
+# 個人の上書き（local）は、config.sh が読むのと同じファイルに書く
+local_file="$(dw_local_config_file "$repo_root")"
 
 # 層ごとに review.model を決めているか（null も「オフに決めた」とみなす）。優先度の低い順に並べる
 layers="$(dw_review_model_layers "$repo_root" | jq -Rsc 'split("\n") | map(select(. != "") | split("\t")
@@ -75,10 +73,7 @@ if [ -n "$value" ]; then
   esac
   file="$(jq -n --arg f "$target" '$f')"
   # 決めていない（キーが無い）ことと、null に決めたことを分けるため、無ければ空にする
-  current=""
-  if [ -f "$target" ] && jq -e '(.review | type) == "object" and (.review | has("model"))' "$target" >/dev/null; then
-    current="$(jq -c .review.model "$target")"
-  fi
+  current="$(jq -r --arg f "$target" 'map(select(.file == $f) | .model | tojson) | first // ""' <<<"$layers")"
   # 既に同じ値なら書き直さない（書式の違いで空白だけの差分を作らない）
   if [ "$current" != "$value" ]; then
     changed=true
