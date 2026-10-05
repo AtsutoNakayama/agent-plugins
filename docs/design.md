@@ -2,11 +2,13 @@
 
 全リポジトリで共通に使う Claude Code のスキル群と、GitHub の初期設定スクリプトの設計。
 
+この設計書は今の設計を書く。設計上の判断の経緯と理由（他にどんな案があり、なぜそれを選んだか）は、ADR として [docs/adr/](adr/) に残し、該当する箇所からリンクする。
+
 ## 1. 配布方法
 
 - このリポジトリを **Claude Code のプラグインマーケットプレイス**にする（`.claude-plugin/marketplace.json`）。
 - リポジトリは公開。リポジトリごとに異なる値（Project の番号、列名など）は設定ファイルに外出しする。
-- プラグインは `dev-workflow` の1つにまとめる。レビューだけ使いたい人が出てきたら分割を検討する。
+- プラグインは `dev-workflow` の1つにまとめる。レビューだけ使いたい人が出てきたら分割を検討する（[ADR 000001](adr/000001-plugin-marketplace-distribution.md)）。
 - チームに配るときは、対象リポジトリの `.claude/settings.json` に `extraKnownMarketplaces` と `enabledPlugins` を書く。
 - プラグインとして入れると、プラグインのディレクトリの外にあるファイルは使えない（キャッシュにコピーされない）。スキルから呼ぶものは、初期設定用のスクリプトも含めてすべてプラグインの中に置く。
 
@@ -29,9 +31,9 @@ agent-plugins/
 
 - 配布の対象は `plugins/dev-workflow/` の中だけ。外（`.github/`、`tests/`、`docs/`、`release-please-config.json` など）はこのリポジトリ専用で、利用者には届かない。
 - Claude Code は plugin.json の version → marketplace.json のエントリの version → コミット SHA の順に version を決め、version が変わらないと更新を検出しない（git のタグは読まない）。version は plugin.json だけに書き、marketplace.json のエントリには書かない。
-- version は [release-please](https://github.com/googleapis/release-please) が上げ、手で変えない（`.github/workflows/release-please.yml`）。
+- version は [release-please](https://github.com/googleapis/release-please) が上げ、手で変えない（`.github/workflows/release-please.yml`。[ADR 000050](adr/000050-release-please-versioning.md)）。
   - release-please は今の version を `.release-please-manifest.json` に持ち、リリース PR で plugin.json と同時に上げる。手で plugin.json だけを変えると食い違うので、CI で2つが同じかを確かめる。
-  - ワークフローは GitHub App のトークンでリリース PR・タグ・GitHub Release を作る。GITHUB_TOKEN が起こしたイベントでは新しいワークフローが動かないので、GITHUB_TOKEN で作るとリリース PR に Lint・Test が付かず、CI を通らないままリリースが出る。また、Lint・Test をルールセットの必須チェックにできない。App は PAT と違って期限の管理が要らず、PR の作者が `<App名>[bot]` になる。
+  - ワークフローは GitHub App のトークンでリリース PR・タグ・GitHub Release を作る。GITHUB_TOKEN が起こしたイベントでは新しいワークフローが動かないので、GITHUB_TOKEN で作るとリリース PR に Lint・Test が付かず、CI を通らないままリリースが出る。また、Lint・Test をルールセットの必須チェックにできない。App は PAT と違って期限の管理が要らず、PR の作者が `<App名>[bot]` になる（[ADR 000057](adr/000057-github-app-token-for-release.md)）。
     - App は Webhook なし・このアカウントだけにインストールできる設定で作り、Repository permissions は Contents・Issues・Pull requests を Read and write にする（Issues はリリース PR のラベルに要る）。インストール先はこのリポジトリだけにする。
     - リポジトリの Variables の `RELEASE_APP_ID` に App ID を、Secrets の `RELEASE_APP_PRIVATE_KEY` に App の秘密鍵（.pem の中身全体）を登録する。秘密鍵に期限はない。ワークフローは実行ごとに 1 時間で切れるトークンを作る。
     - GITHUB_TOKEN では PR を作らないので、リポジトリの設定の「Allow GitHub Actions to create and approve pull requests」は要らない。
@@ -90,12 +92,12 @@ agent-plugins/
 - **Project への自動追加**：Project に組み込みの Auto-add を使う。有効にする API は無いので、Web の画面で1回だけ手動で有効にする。`setup-project.sh` が手順を表示し、有効になったかを API で確認する。
 - `task-create` は起票の後、毎回 `gh project item-add` を呼んで項目の ID を取得する。既に追加済みなら既存の項目が返るだけなので、自動追加とは重複しない。ただし、Issue を作った直後に自動追加と同時に走ると、片方が「Content already exists」で失敗することがある。この失敗のときだけ、待って最大3回まで再試行する（待つ秒数は環境変数 `DW_RETRY_SLEEP`、既定 1）。再試行で成功すれば、既存の項目が返る。3回とも同じ失敗のときは、項目が既にあるので、項目の一覧（REST）から探してその項目を使う（見つからなければ止まる）。
 - **依存する Issue**：先に終わらせる Issue があれば、本文の「依存」の見出しに `#N` で書き（無ければ「なし」）、GitHub の Issue の依存関係（blocked by。REST の `issues/{番号}/dependencies/blocked_by`）にも登録する。本文は読む人のため、依存関係はボードや Issue の画面で区別するため。文章だけ（「〜の Issue の後に」）では番号が分からないので、必ず番号で書く。存在しない Issue の番号は、起票の前に止める。1回の依頼で複数の Issue を起票するときは、依存される側から順に起票し、先に起票した番号を後の Issue の依存に使う。
-- **親子の Issue（サブ Issue）**：ざっくりした仕様を着手できる大きさに分けて管理するため、親の Issue の下に子の Issue を GitHub のサブ Issue として紐付ける（REST の `issues/{親の番号}/sub_issues` に、子の数値の id を送る）。起票するときに親の番号を指定する（`issue-create.sh --parent N`）。親は同じリポジトリの Issue に限る。1回の依頼で親と子を起票するときは、親から先に起票し、その番号を子の `--parent` に使う。親と子は `task-create` でまとめて下書きし、確認の preview に親子の木と各 Issue の本文を入れる。既にある Issue を親に指定して、子だけを足して起票することもできる。
+- **親子の Issue（サブ Issue）**（[ADR 000104](adr/000104-parent-child-issues.md)）：ざっくりした仕様を着手できる大きさに分けて管理するため、親の Issue の下に子の Issue を GitHub のサブ Issue として紐付ける（REST の `issues/{親の番号}/sub_issues` に、子の数値の id を送る）。起票するときに親の番号を指定する（`issue-create.sh --parent N`）。親は同じリポジトリの Issue に限る。1回の依頼で親と子を起票するときは、親から先に起票し、その番号を子の `--parent` に使う。親と子は `task-create` でまとめて下書きし、確認の preview に親子の木と各 Issue の本文を入れる。既にある Issue を親に指定して、子だけを足して起票することもできる。
   - 親子の深さは「仕様 → 着手できる作業」の2層を目安にし、必要なら3層まで作れる。上限は設定の `sub_issues.max_depth`（既定 3、1〜3）で、3層目を作らせたくないリポジトリは 2 にする。GitHub は8層まで作れるが、深いと全体を見通せなくなるので、3層より深くはしない。目安（`common.sh` の `DW_SUB_ISSUE_DEPTH_GUIDE`）より深い Issue を作るときは、`issue-create.sh` が警告し、`task-create` は起票の前にユーザーに確認する。深さは、親から上へ `issues/{番号}/parent` をたどって数える（一番上の Issue が1層目）。上限を超える紐付けと、存在しない親（PR の番号を含む）は、起票の前に止める。
   - **Story Point は子にだけ付ける**。親（サブ Issue を持つ Issue）には付けない。親にも付けると、同じ作業を親と子とで二重に数えることになり、親の大きさは子の合計で分かるため。親にする Issue に Story Point が付いていたら、子を足すときに `issue-create.sh` が空欄にする（Issue から Project の項目を引く REST は無いので、REST の項目の一覧をリポジトリと Issue で絞って番号で探す。GraphQL は使わない）。起票の確認には、親の Story Point が入っていれば空欄にすることを書き、空欄にした値は結果で伝える。
   - **子が全部閉じても、親は自動では閉じない**。GitHub は親に子の進み具合（閉じた子の数）を表示するだけで、子が全部閉じても親を閉じない（[サブ Issue の説明](https://docs.github.com/ja/issues/tracking-your-work-with-issues/using-issues/adding-sub-issues)にも、自動で閉じる機能は書かれていない）。親は、最後の子を閉じた後に人が閉じる（completed）。親で別にやる作業が残っていれば、それを子の Issue として足し、親を PR で直接閉じることはしない。親を閉じたときも、Project の自動化（Item closed）が有効なら Done に移る。
   - **親には着手しない**。親は作業の単位ではなく（親そのものの作業は無い）、作業は子の Issue で進めるので、ブランチも PR も作らない。`task-next` も親を着手の候補に入れない（§8 の task-next）。親（`subIssuesSummary.total` が 1 以上）に `task-start` すると、`task-start.sh` はブランチ・割り当て・列の移動のどれも行わずに止まり（終了コード 2）、`task-start` は開いている子の一覧を見せて、どれに着手するかを選んでもらう。開いている子が無ければ、親を閉じるよう案内する。
-- **やらない Issue を閉じる**：誤って起票した Issue や、やらないことにした Issue は、`task-cancel` で not planned（重複なら duplicate）で閉じる。
+- **やらない Issue を閉じる**（[ADR 000065](adr/000065-issue-cancel-outcomes.md)）：誤って起票した Issue や、やらないことにした Issue は、`task-cancel` で not planned（重複なら duplicate）で閉じる。
   - Issue の終わり方は、完了（completed。PR のマージで閉じる）とやめた（not planned・duplicate）の2つに分ける。完了は PR が閉じ、やめたときは `task-cancel` が閉じる。`task-finish` は Issue を閉じたり変えたりせず、マージした後の手元を片付けて、PR が閉じる Issue が閉じたかを伝えるだけ（`cleanup.sh` の `issues`。調べられなくても片付けは止めない）。名前を `task-close` にしなかったのは、close は完了で閉じるときにも使う言葉で、`task-finish` と混同しやすいため。
   - 閉じる前に、理由と参照先（代わりに作業する Issue など）を `#N` でコメントする。理由が空（空白だけを含む）なら閉じない。
   - **別のリポジトリの子は扱わない**。GitHub のサブ Issue は、同じ所有者の別のリポジトリの Issue も子にできるが、このプラグインで起票する子は親と同じリポジトリに限る（上の親子の Issue）。別のリポジトリの子は、GitHub の画面で手で紐付けたときだけできる。スクリプトは今のリポジトリの Issue を番号で扱うので、その子を番号だけで扱うと、今のリポジトリの同じ番号の無関係な Issue を操作してしまう。まれな場合のために、別のリポジトリの Issue・PR・ブランチまで片付ける仕組みは作らず、扱わずに止める。`task-start` は別のリポジトリの子を着手の案内に入れず、そういう子があることだけを伝える。`issue-cancel.sh` は、開いている子孫に別のリポジトリの Issue があれば、何もせずに止まり（終了コード 2）、親から外すか、そのリポジトリで取りやめてからやり直すよう伝える。
@@ -114,8 +116,8 @@ agent-plugins/
 
 - `ci` は CI/CD パイプラインの変更、`build` はビルドの設定・依存関係・Dockerfile の変更に使う。
 - type ラベル・ブランチ名・PR のタイトル・コミットの type は、同じ type で1対1に対応させる（読み替えはしない）。
-- 緊急の修正も `fix` にする（緊急の修正のための type は設けない）。GitHub Flow には緊急の修正のための別の手順が無く、違いは緊急度だけなので、type では区別しない。緊急度が必要なら type とは別のラベル（`priority: high` など）で表す。
-- 破壊的変更は、type とは別の `breaking` ラベルで表す（`labels.types` には入れない。type ラベルは1つだけという決まりはそのまま）。破壊的変更はどの type にも起こりうるので、`feat!` のような type ごとのラベルは作らない。ラベル → PR のタイトル（`<type>!: …`）→ スカッシュのコミットと情報が流れるので、Issue の段階で付けておけば `!` の付け忘れがなくなる。
+- 緊急の修正も `fix` にする（緊急の修正のための type は設けない）。GitHub Flow には緊急の修正のための別の手順が無く、違いは緊急度だけなので、type では区別しない。緊急度が必要なら type とは別のラベル（`priority: high` など）で表す（[ADR 000026](adr/000026-unify-hotfix-into-fix.md)）。
+- 破壊的変更は、type とは別の `breaking` ラベルで表す（`labels.types` には入れない。type ラベルは1つだけという決まりはそのまま）。破壊的変更はどの type にも起こりうるので、`feat!` のような type ごとのラベルは作らない。ラベル → PR のタイトル（`<type>!: …`）→ スカッシュのコミットと情報が流れるので、Issue の段階で付けておけば `!` の付け忘れがなくなる（[ADR 000052](adr/000052-breaking-label.md)）。
   - 破壊的変更とは、既存の利用者が設定やコマンドを直さないと動かなくなる変更（設定キーやプレースホルダの名前の変更、スクリプトの引数の変更・削除、スキル名の変更など）。
   - version を上げたいから付けるものではない。破壊的変更を伴わない節目（1.0.0 など）は release-please の `release-as` で上げる。
 - GitHub の既定のラベルは削除する（オプションで残せる）。
@@ -138,7 +140,7 @@ agent-plugins/
 | 4. 自分の好み | `~/.claude/dev-workflow/config.json` と `~/.claude/dev-workflow/*.md` |
 | 5. フォールバック | プラグインの既定 |
 
-- dev-workflow のファイル（設定・ガイド・レビューの観点・ラベルの定義）は、リポジトリでは `<repo>/.claude/dev-workflow/`、ホームでは `~/.claude/dev-workflow/` の1か所にまとめ、どちらも同じ形にする。Claude Code 本体が使う `.claude/` の下の名前（`.claude/workflows/` など）と取り違えないため。
+- dev-workflow のファイル（設定・ガイド・レビューの観点・ラベルの定義）は、リポジトリでは `<repo>/.claude/dev-workflow/`、ホームでは `~/.claude/dev-workflow/` の1か所にまとめ、どちらも同じ形にする。Claude Code 本体が使う `.claude/` の下の名前（`.claude/workflows/` など）と取り違えないため（[ADR 000093](adr/000093-consolidate-dev-workflow-dir.md)）。
 - 層は**項目ごとに合わせる**。上位の層が決めていない項目には、下位の層の値が効く。例外として、レビューに使うモデル（`review.model`）は、導入したリポジトリだけに効かせるため、層1・2 からだけ読み、層4 の値は使わない（§7）。
 - 構造化された設定（正規表現・type の一覧など）はスクリプトが検証に使い、文章のガイド（`*.md`）は AI が読む。ガイドどうしが矛盾したら、上位の層を優先する。
 
@@ -164,7 +166,7 @@ agent-plugins/
 - 指摘は1つの一覧にまとめ、反映するものをユーザーが選ぶ。
 - 一覧の各指摘には、最初の周から毎回、「なぜ起きたか」を1行添え、その場所だけの誤り（局所）か、設計や前提の誤り（構造）かを分ける。構造の指摘には、その場所を直す案と並べて、根本を直す案（その仕組み自体が要らないかも含めて）を出す。指摘の周りのコードを読むだけにし、サブエージェントは増やさない（すべての指摘で深く調べると重くなるので、深く調べるのは繰り返す指摘だけにする。#108 では、Lint の検査への指摘をその場所ごとに直し続けた末に、検査そのものが要らないと分かった）。
 - 一覧の各指摘には、最初の周から毎回、「水平展開の要否」も判定する。局所の指摘でも、同じ書き方・同じ前提の場所をリポジトリで検索し、同じ誤りが残っていれば同じ一覧に加え、反映のときは同じ検索結果も直して、同じ検索をもう一度実行して残りが無いことを確かめる。検索で見つかった場所だけを調べ、サブエージェントは増やさない（#149 では、`--limit 1000` で項目が切れる指摘に対して、同じ目的のページを辿る探索が同じコードの中に既にあった。所有者の種類からパスを決める処理のコピーは2周目まで見つからなかった。最初の指摘の時点で同じ誤りを探していれば、周を重ねずに済んだ）。繰り返しの指摘でなくても行うのは、繰り返しを待つと、同じ原因の指摘が周を重ねて出るため。
-- 反映でコードの振る舞いが変わったら（言い換えやコメントだけなら不要）、反映したコミットの差分を、`/code-review` と、今の変更に当てはまる独自の観点で再レビューする。新しい指摘が無ければ終える。反映の後に新しい指摘が見つかるため（#108）、手順として決めておく。
+- 反映でコードの振る舞いが変わったら（言い換えやコメントだけなら不要）、反映したコミットの差分を、`/code-review` と、今の変更に当てはまる独自の観点で再レビューする。新しい指摘が無ければ終える。反映の後に新しい指摘が見つかるため（#108）、手順として決めておく（原因の添え方・再レビュー・周回の上限・繰り返す指摘の経緯は [ADR 000115](adr/000115-review-rounds-root-cause.md)）。
 - 周回の上限は設定の `review.max_rounds`（既定 3。最初のレビューを含む）。上限の周でも指摘が出たら（反映したかどうか、何も選ばなかったかは問わない）、自動では回さず、「もう1周レビューする」「ここで終える」をユーザーに選んでもらう。続けるなら1周ごとに同じように聞くので、4周目以降も回せる。上限で終えた後も、「もう一度レビューして」でいつでも実行できる。自動で回し続けると、直しては新しい指摘が出る往復が止まらなくなるため。
 - レビューに使うモデルは、設定の `review.model`（既定 null）で、利用者が任意に選べる（#131）。null なら、観点ごとのサブエージェントも `/code-review` も、セッションと同じモデルで動く。opus・sonnet・haiku・fable のどれかを指定すると、観点ごとのサブエージェントには Agent ツールの `model` でそのモデルを渡し、`/code-review` は、そのモデルのサブエージェントの中で実行させる（Skill ツールで直接実行すると、セッションのモデルで動くため）。セッションより下のモデルにして費用を抑えることも、セッションより上のモデルにしてレビューだけ深くすることもできる。値は `review-perspectives.sh --auto` が検査して `context.model` に出し、使えない値なら止まる。
   - スキルの frontmatter の `model`・`effort` では指定しない。書くと必ず効き、利用者がスキルごとに上書きしたり、使わずにセッションと同じモデルに戻したりする設定が Claude Code に無いため（`availableModels` で外すと、`/model` でもそのモデルを選べなくなる）。指定するかは利用者が決めることなので、プラグインの設定（層を重ねて上書きできる）に置く。
@@ -201,7 +203,7 @@ agent-plugins/
 | `repo-setup` | 初期設定を対話的に実行し、設定ファイルを作る | ラベル・Project・リポジトリの設定の変更 |
 
 - 不具合の修正（type が `fix`）では、直す前に、同じ原因の他の箇所を、同じ書き方・同じ前提でリポジトリを検索して探し、見つかった分も同じ変更で直してテストを足す。この手順は CONTRIBUTING.md の「テストのルール」と、SessionStart フックが渡す流れ（`defaults/task-flow.md`）に書き、review の水平展開（§7）と同じ考え方を、レビューの前の実装の段階にも持ち込む。
-- どのスキルも、依頼の内容から自動で呼ばれてよい（`disable-model-invocation` は付けない）。
+- どのスキルも、依頼の内容から自動で呼ばれてよい（`disable-model-invocation` は付けない）。確認を取る操作の線引きの経緯は [ADR 000064](adr/000064-confirmation-policy.md)。
 - Issue の番号を取るスキル（`task-start`・`task-status`・`task-finish`・`task-cancel`）は、`/dev-workflow:task-start 12` のように引数で番号を受け取れる。`12` でも `#12` でもよい。frontmatter の `argument-hint` に書く。引数が無ければ依頼の文章から読み、それでも分からなければ聞く。PR の番号を取るスキル（`pr-respond` と、担当の skill として呼ばれるリポジトリの skill）も同じく、引数で番号を受け取る（無ければ今のブランチの PR）。スクリプトの `--issue`（`issue-cancel.sh` の `--duplicate-of` も）は、先頭の `#` を1つだけ外して受け取る（`#` だけの値は、番号が無いものとして拒否する）。
 - その代わり、次の操作の前には、必ず AskUserQuestion で使用者の確認を取る。確認の前に、何が起きるか（下書きや dry-run の結果）を見せる。
   - AI が決めた内容（Issue や PR の文章、Story Point の見積もり）を GitHub に残す操作
@@ -226,7 +228,7 @@ PR を出した後のコメント・指摘・質問・CI の失敗を確かめ�
 
 ### 次に着手する Issue の提案（task-next）
 
-Todo が増えたとき、どれから着手するか、同時に進めてよいかを提案する。読み取り専用の単独のスキルで、Issue・Project・ブランチ・ワークツリーのどれも変えない。着手は `task-start` で、使う人が決める。herdr などの並列実行の仕組みが無くても使える。
+Todo が増えたとき、どれから着手するか、同時に進めてよいかを提案する。読み取り専用の単独のスキルで、Issue・Project・ブランチ・ワークツリーのどれも変えない。着手は `task-start` で、使う人が決める。herdr などの並列実行の仕組みが無くても使える。herdr のタブに展開して並列に起動するスキルは作らない（[ADR 000142](adr/000142-drop-herdr-parallel-start.md)）。
 
 - **優先順位**：Project の Todo 列の上から順。Project 上の並び（手動で並べ替えた順）は、gh にも REST にも無く、GraphQL の `orderBy: {field: POSITION}` でだけ読めるので、この箇所だけ GraphQL を使う（§10）。gh と REST の項目の順は、起票順（番号順）で、並べ替えが反映されない。
 - **依存**：次のどれかで、まだ閉じていない Issue があれば、その Issue は候補に入れない（理由と、待っている Issue の番号を添えて「待ち」に出す）。
@@ -254,18 +256,18 @@ Todo が増えたとき、どれから着手するか、同時に進めてよい
 - **書式は公式の MADR 4.0.0**（<https://github.com/adr/madr>、2024-09-17、ライセンスは MIT OR CC0-1.0）に従う。MADR は「4つのテンプレートのどれかを出発点にする」としているので、4つとも日本語に訳して `plugins/dev-workflow/templates/adr/` に置き、ADR ごとに使うものを選ぶ。見出しも訳す（公式のドイツ語訳と同じ扱い）。元にした版・出典・ライセンスは、同じ場所の `README.md` に記録する。MADR の版が上がったときは、タグどうしの差分をその訳に反映する。
 - **使うテンプレート**：他の案と比べて選んだ判断・破壊的変更・元に戻しにくい判断は、全部の節がある `adr-template.md`。記録しておけば足りる判断は `adr-template-minimal.md`。説明のない `bare` の2つは、手で書く人向けで、スキルは使用者が指定したときだけ使う。
 - **MADR から変えたところ**：front matter に `issue`（判断をした Issue の番号）を足した。minimal の2つには、元には無い front matter（`status`・`date`・`issue`）を足した（置き換えた ADR の `status` を書き換えるのに要る）。
-- **ADR は判断ごとに作る**。Issue ごとではなく、判断をした Issue でだけ作る。1つの Issue から2つ以上の ADR ができてもよい。
+- **ADR は判断ごとに作る**。Issue ごとではなく、判断をした Issue でだけ作る。1つの Issue から2つ以上の ADR ができてもよい。過去の判断を後から残すときは、残す作業の Issue で作り、`issue` と `date` を判断をした Issue と日にする（`adr-create.sh --date`。#154 で、それまでの判断を遡って残した）。
 - **採番は連番ではなく Issue 番号にする**。ワークツリーで並行して作業すると連番はぶつかるが、Issue 番号は重ならない。ファイル名は `<adr.dir>/<Issue 番号を6桁に0埋め>-<短い名前>.md`（短い名前は英語）。
   - 6桁にするのは、一覧が Issue 番号の順（おおよそ Issue を作った順）に並ぶようにするため。桁数が混ざると並びが崩れ、後から直すには、置き換えの参照（`superseded by <ファイル名>`）も含めてファイル名を変えることになる。Issue と PR は番号を共有するので広めの6桁とし、7桁以上の Issue 番号は作らずに止める（0埋めをしない案は、並びが最初から文字列順で崩れるので採らない）。
 - **置き場所**は設定の `adr.dir`（既定 `docs/adr`。リポジトリのルートからの相対パス）。
-- **置き換えた ADR は書き換えない**。古い方の `status` の行だけを `superseded by <新しい ADR>` にする（`adr-create.sh --supersedes`）。ADR は、判断をした Issue の PR に含める。
+- **置き換えた ADR は書き換えない**。古い方の `status` の行だけを `superseded by <新しい ADR>` にする（`adr-create.sh --supersedes`）。ADR は、判断をした Issue の PR に含める（過去の判断を後から残すときは、残す作業の Issue の PR に含める）。
 - 作るのは手元のファイルだけなので、確認は取らない。ファイル名の決定・テンプレートの展開・`status` の書き換えは `adr-create.sh` が行い、判断の聞き取り・テンプレートの選択・中身の文章は AI が担当する。
 - task-create・pr-create から ADR を促すことは、今はしない。
 
 ## 9. ガードレール
 
 1. **GitHub のルールセット**（`setup-repo.sh`）：main への直接 push の禁止と PR の必須化、強制 push と main の削除の禁止。承認の必須化はオプション（既定は無効）。必須のチェックと「最新の main の取り込み」もオプション（`--required-check <名前>`、既定は無効）。
-   - 古い main で通った CI の結果のままマージすると、先にマージされた変更と組み合わさって main が壊れる（#108）。ルールセットで、チェックの成功と最新の main の取り込みを求めて防ぐ。
+   - 古い main で通った CI の結果のままマージすると、先にマージされた変更と組み合わさって main が壊れる（#108）。ルールセットで、チェックの成功と最新の main の取り込みを求めて防ぐ（[ADR 000112](adr/000112-require-ci-on-latest-main.md)）。
    - マージキューもオプション（`--merge-queue`、外すときは `--no-merge-queue`、既定は今のまま）。キューは最新の main と組み合わせた結果で CI を動かすので、使うときは「最新の main の取り込み」（strict）を外し、使わないときは strict で防ぐ。キューを使えるのは Organization の公開リポジトリと GitHub Enterprise Cloud の Organization の非公開リポジトリで、所有者の種類・公開範囲・組織のプラン（組織の所有者にしか返らない）から判定する。プランが分からなければ判定できないので、警告して GitHub に任せる。`doctor.sh` は、base_branch にどちらが効いているかを示す。
    - キューは必須のチェックを `merge_group` のイベントでもう一度動かすので、そのワークフローが `merge_group` で動かないと、チェックが「待ち」のまま残ってマージされない。`merge-group-check.sh` が、base_branch の `.github/workflows/` を GitHub の API で読んで確かめる（キューで動くのは GitHub 上の base_branch のワークフローなので、手元の作業中のファイルではなく、それを読む）。YAML のパーサー（yq）は前提にしないので、トップレベルの `on:` の範囲に `merge_group` の語があるかで判定し、必須のチェックの名前は、GitHub がジョブのチェックに付ける名前（`name:` があればその値、無ければジョブの ID）と突き合わせる（matrix の括弧・再利用するワークフローの「/」の前も考える）。`${{ }}` の式を含む `name:` とは比べない。式を何にでも当たる形にすると、どこまで広く当たるかを見分けきれず、関係の無いチェックに当てて、誤って「動かない」と知らせてしまうため（誤りは、別のワークフローを直させる案内になる。比べなければ「確かめられない」と知らせるだけで済む）。どのジョブとも対応しない名前（外部のアプリのチェックなど）は「確かめられない」とする。`on:` に `merge_group` があっても、ジョブの `if:` で除いていれば、ジョブは飛ばされ、飛ばされたジョブのチェックは成功とみなされるので、キューは CI を動かさないままマージしてしまう。そこで、必須のチェックのジョブと、そのジョブが `needs:` でたどれるジョブの `if:` も読む（頼るジョブが飛ばされれば、そのジョブも飛ばされる。ただし、`always()`・`cancelled()`・`failure()` の状態の関数を `if:` に書いた門番のジョブは、頼るジョブが飛ばされても動き、CI を動かしたかは結果の確かめ方次第なので、「確かめられない」とする）。`if:` の式は `contains(...)`・`&&`・`||` などを組み合わせられ、簡易な読み方ではすべてを正しく判定できないので、誤って「動く」と判定しないことを優先する。式は `${{ }}` を外し、括弧の外の `&&` で項に分け（括弧の外に `||` があれば全体を1つの項とする）、`github.event_name` を `==`・`!=` で文字列と比べる項だけを読み分ける。それ以外で `github.event`・`github.head_ref`・`github.base_ref`・`github.ref`・`merge_group` を使う項は「確かめられない」とし（`github.event.pull_request.draft == false` は、`merge_group` では値が無いので飛ばされる）、イベントに関わらない項（`always()`・`needs.<ID>.outputs.<名前>` など）は動くとみなす。除く項が1つでもあれば、ジョブの `if:` を直すよう案内する（`on:` を直す案内とは分ける）。再利用するワークフローの、呼ばれる側のジョブの `if:` は読まない。`setup-repo.sh` は、必須のチェック（ほかのルールセットと古いブランチ保護が求めるものも含める。集め方は `doctor.sh` と同じく `common.sh` の `dw_required_checks`）があれば（dry-run でも、キューを使わないときも）確かめて出力し、キューを使うのに動かない・確かめられないチェックがあれば警告する。判定は推測を含むので、止めはしない。`doctor.sh` は、キューを使っていれば確かめて知らせる。
    - 既定の方式は、ルールセットの必須のチェックと strict にした。個人のアカウントのリポジトリでも使えるためである。マージキューは使えるリポジトリが限られる（#174 で、このリポジトリを Organization に移して確かめた）ので、選んだときだけ設定する。strict では main が進むたびに PR へ main を取り込み直すが、キューでは要らない（取り込むのはコンフリクトしたときだけ）。
@@ -294,7 +296,7 @@ Todo が増えたとき、どれから着手するか、同時に進めてよい
 - **bash 3.2 でも動く書き方**（macOS の標準の bash に合わせる）＋ `gh` ＋ `jq`。`set -euo pipefail` を書き、`shellcheck` と `bats` を CI で実行する。
 - 判断と文章の生成だけを AI が担当し、決まった手順で済む処理はスクリプトに切り出す（トークン削減のため）。
 - 出力は JSON、エラーは終了コードと1行のメッセージ。初期設定用のスクリプトは `--dry-run` に対応する。
-- **GitHub の操作は gh のサブコマンドと REST で行う**（`gh issue`・`gh project` など、無ければ `gh api` で REST）。GraphQL（`gh api graphql`）は他に手段が無いときだけ使い、使う箇所には理由をコメントに書く。
+- **GitHub の操作は gh のサブコマンドと REST で行う**（`gh issue`・`gh project` など、無ければ `gh api` で REST）。GraphQL（`gh api graphql`）は他に手段が無いときだけ使い、使う箇所には理由をコメントに書く（[ADR 000089](adr/000089-prefer-gh-and-rest-over-graphql.md)）。
   - 速さや API の負荷のためではない。GraphQL は入れ子のデータを1回で取れるので、呼び出しの回数はむしろ少ないことが多い。`gh project` のサブコマンドも内部では GraphQL を使う。レート制限は GraphQL と REST で別々に数えられ、このワークフローの回数ではどちらも上限に届かない。
   - 理由は次の4つ。
     - 読みやすい：クエリの文字列が無く、何をしているかがコマンド名で分かる。
@@ -320,7 +322,7 @@ Todo が増えたとき、どれから着手するか、同時に進めてよい
 | `task-start.sh` | ワークツリーの作成（サブモジュールの初期化を含む）、割り当て、In Progress への移動。親の Issue では何もせずに止まる |
 | `review-perspectives.sh` | 観点ファイルを集める。`--auto`（または `--base` と `--target`）を渡すと、観点ごとの実行する条件（`types`・`paths`・`issue`・`base_ahead`）に当てはまらない観点を外し、理由つきで `skipped` に出す |
 | `review-perspective-add.sh` | 観点ファイルを作る。同じ層に同じ名前のファイルがあれば上書きせずに止まり、ほかの層にあれば `--override` が無いかぎり止まる（上位の層にあり、作っても使われないときは、下位の層にあるときと別の終了コードで知らせる）。リポジトリの層に作ったときは、そのブランチと、作業用のブランチの上か（`work_branch`）も出力する。`--builtin code-review` を付けると、同梱の観点 `code-review` を置き換える builtin の観点（本文は「## 指摘しないこと」の節）を作る（名前が `code-review` のときだけ） |
-| `adr-create.sh` | ADR をテンプレートから作る（ファイル名の決定、`date` と `issue` の記入）。`--supersedes` で置き換える ADR の `status` の行だけを書き換える。同じファイル名があれば上書きせずに止まる |
+| `adr-create.sh` | ADR をテンプレートから作る（ファイル名の決定、`date` と `issue` の記入。`date` は既定で今日、過去の判断は `--date` で判断をした日にする）。`--supersedes` で置き換える ADR の `status` の行だけを書き換える。同じファイル名があれば上書きせずに止まる |
 | `pr-create.sh` | PR を作る。`--check` で文を指定した Issue のチェックリストの項目にだけチェックを付ける（既にある PR に push するときも付ける。ほかの行は変えない）。項目は番号ではなく文で指す。確認を待つ間に項目が増減しても別の項目に付かないようにし、Markdown の解析（コードブロックの判定など）を誤ったときも、別の項目に付けずに止まるようにするため |
 | `issue-cancel.sh` | 理由をコメントし、Issue を not planned か duplicate で閉じる。`--branch` で、そのブランチの開いている PR を閉じ、リモートのブランチを削除する。`--sub-issues close\|keep` で、親を閉じるときに開いている子孫を閉じるか残すかを決める（開いている子孫があるのに無ければ止まる）。理由が空、または違う理由で既に閉じていれば何もせずに止まる |
 | `pr-feedback.sh` | PR の状態（CI・レビューの判定・マージできるか）と、resolved でないスレッド・レビュー本文・PR のコメントを投稿者ごとにまとめ、設定の `pr_respond.handlers` から担当の skill を添えて出力する。何も変えない |
