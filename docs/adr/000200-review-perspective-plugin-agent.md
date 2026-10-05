@@ -1,0 +1,61 @@
+---
+status: "accepted"
+date: 2026-10-05
+issue: 200
+---
+
+# review の観点ごとのレビューを、ツールを絞ったプラグインの agent で動かす
+
+## 背景と課題
+
+review スキルの手順3は、独自の観点ごとにサブエージェントを起動していた。ただし `subagent_type` を指定していなかったので、動くのは汎用のエージェントで、役割は SKILL.md に埋め込んだ指示文で与えていた。そのため、次の問題があった。
+
+* どのエージェントが動くかが、手順で確実に決まっていなかった。
+* 「ファイルは編集しない」はプロンプトで頼んでいるだけで、ツールの側では止めていなかった。
+* 担当者への指示と、返す JSON の形式が、進行役の手順と同じファイルに混ざっていた。
+
+## 判断の決め手
+
+* 観点のレビューの担当者が、ファイルを編集するツールを持たないこと
+* 進行役の手順と、担当者への指示を分けること
+* 利用者が、レビューのモデルを設定（`review.model`）で選べることを保つこと
+
+## 検討した案
+
+* 担当者の動かし方
+  * 汎用のエージェントに、SKILL.md の指示文で役割を与える（これまで）
+  * プラグインの `agents/` に担当者を定義し、`subagent_type` で呼ぶ
+* agent に任せる範囲
+  * 観点ごとのレビューだけ
+  * 一覧にまとめる作業（手順4。原因・水平展開・繰り返しの判定）も agent に移す
+* モデルの決め方
+  * agent の定義の frontmatter に `model`・`effort` を書く
+  * 書かずに、設定の `review.model` を Agent ツールの `model` で渡す（これまでどおり）
+* Bash の扱い
+  * Bash を外す（差分は進行役がプロンプトに入れる）
+  * Bash を持たせ、ファイルを書き換えないことは agent の定義の指示で頼む
+
+## 判断の結果
+
+選んだ案：プラグインの agent `perspective-reviewer` を定義して `subagent_type` で呼び、任せるのは観点ごとのレビューだけにする。`model`・`effort` は書かず、Bash は持たせる。
+
+* `tools` は `Read, Grep, Glob, Bash` に絞り、Edit・Write・NotebookEdit を持たせない。`tools` では Bash をコマンドごとに絞れず（`Bash(git diff *)` のような書き方は Bash 全体を外す）、観点は `git diff` のほかに `gh issue view`（`issue-requirements`）や `git fetch`（`main-drift`）も使うので、Bash は外さない。
+* 一覧にまとめる作業と、選択・反映・再レビューは main の会話に残す。反映するときに main が同じコードを読み直すので、まとめる作業を移しても、main の文脈の節約は小さい。
+* `model`・`effort` を frontmatter に書くと必ず効き、利用者が変えられなくなる。Agent ツールの `model` は agent の定義より優先されるので、`review.model` はこれまでどおり渡せる。
+* プラグインの agent では `permissionMode`・`hooks`・`mcpServers` が無視されるので、これらで書き込みを止めることはできない。
+
+### 結果として起きること
+
+* 良い点：担当者がファイルを編集するツールを持たないことを、ツールの側で保てる。
+* 良い点：担当者への指示と返す形式が agent の定義の1か所にまとまり、SKILL.md は進行役の手順だけになる。
+* 悪い点：Bash でファイルを書き換えないことは、指示で頼むだけにとどまる。
+* 観点ファイルが別の返し方を決めているとき（`issue-requirements` の「Issue を読めないので確かめられない」など）は、agent はそれに従い、review スキルはその文をそのままユーザーに伝える。
+
+### 確認
+
+`tests/skills.bats` で、agent の `name` と `tools`、SKILL.md の手順3・手順8が `dev-workflow:perspective-reviewer` を呼ぶこと、返す JSON の形式が SKILL.md に残っていないことを確かめる。`claude plugin validate --strict plugins/dev-workflow` で agent の定義を検査する。
+
+## 補足
+
+* 出典：Issue #200（https://github.com/nakayama-labs/agent-plugins/issues/200）、設計書 §7
+* `/code-review` を別のモデルで動かすためのサブエージェントは Skill ツールを使うので、`perspective-reviewer` の対象外とし、汎用のエージェントのままにする。
