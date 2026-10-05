@@ -38,10 +38,7 @@ while [ $# -gt 0 ]; do
   esac
 done
 [ -n "$issue" ] || dw_die "--issue は必須です" 64
-case "$issue" in "#"?*) issue="${issue#\#}" ;; esac
-case "$issue" in
-  *[!0-9]*) dw_die "--issue には数字を指定してください: $issue" 64 ;;
-esac
+issue="$(dw_issue_number --issue "$issue")"
 
 repo_root="$(dw_repo_root)" || dw_die "リポジトリの中で実行してください" 64
 main_root="$(dw_main_root "$repo_root")" || dw_die "メインのワークツリーが分かりません"

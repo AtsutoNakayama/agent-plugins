@@ -117,7 +117,7 @@ writes() { grep -oE '^(issue-comment|issue-close|pr-comment|pr-close|api-delete)
   setup_cancel
   run_script issue-cancel.sh --issue 17 --reason "重複です" --duplicate-of '#'
   assert_failure 64
-  assert_output --partial "--duplicate-of に値がありません"
+  assert_output --partial "--duplicate-of には数字を指定してください: #"
   assert_equal "$(writes)" ""
 }
 

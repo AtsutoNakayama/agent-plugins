@@ -102,3 +102,10 @@ run_branches() {
   run_branches --issue x
   assert_failure 64
 }
+
+@test "先頭に 0 が付いた --issue（017）でも、名前のブランチ（feat/17-x）を見つける" {
+  git branch feat/17-x
+  run_branches --issue 017
+  assert_success
+  assert_equal "$(jq -c '[.issue, [.branches[].name]]' <<<"$json")" '[17,["feat/17-x"]]'
+}

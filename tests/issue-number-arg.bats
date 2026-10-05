@@ -56,7 +56,7 @@ same_as_plain() {
   done
   run_script review-perspectives.sh --base HEAD --target HEAD --issue '#'
   assert_failure 64
-  assert_output --partial "Issue の番号にしてください: #"
+  assert_output --partial "--issue には数字を指定してください: #"
 }
 
 @test "issue-cancel.sh の --duplicate-of も、# だけや ## で始まる値は拒否し、#5 は 5 と同じに扱う" {
@@ -76,4 +76,30 @@ same_as_plain() {
   assert_output --partial "--issue には数字を指定してください"
   run_script branch-name.sh --issue '##17' --slug x
   assert_failure 64
+}
+
+@test "先頭に 0 が付いた --issue（017）は 17 と同じに扱う（ブランチ名も feat/17-… になる）" {
+  setup_fake_gh
+  run_script branch-name.sh --issue 017 --slug x
+  assert_success
+  assert_equal "$(json_of "$output" | jq -r .branch)" feat/17-x
+  run_script branch-name.sh --issue '#017' --slug x
+  assert_equal "$(json_of "$output" | jq -r .branch)" feat/17-x
+  # 終了コードも出力も、17 を渡したときと同じになる
+  for args in "task-start.sh --slug x" "status-set.sh --to start" "issue-cancel.sh --reason x" "pr-create.sh --body-file /nonexistent" "review-perspectives.sh --base HEAD --target HEAD"; do
+    # shellcheck disable=SC2086 # 単語に分けて渡すのが目的
+    run_script ${args%% *} --issue 17 ${args#* }
+    local status_plain="$status" output_plain="$output"
+    # shellcheck disable=SC2086 # 単語に分けて渡すのが目的
+    run_script ${args%% *} --issue 017 ${args#* }
+    assert_equal "$status" "$status_plain"
+    assert_equal "$output" "$output_plain"
+  done
+}
+
+@test "issue-cancel.sh は、先頭の 0 が違うだけの --duplicate-of を、閉じる Issue 自身として拒否する" {
+  setup_fake_gh
+  run_script issue-cancel.sh --issue 17 --reason x --duplicate-of 017
+  assert_failure 64
+  assert_output --partial "--duplicate-of に閉じる Issue 自身（#17）は指定できません"
 }

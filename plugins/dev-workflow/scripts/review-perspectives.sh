@@ -143,11 +143,8 @@ if [ "$auto" = true ] || [ -n "$base" ] || [ -n "$target" ] || [ -n "$type" ] ||
   if [ -z "$base" ] || [ -z "$target" ]; then
     dw_die "条件で絞り込むには --base と --target の両方を渡してください" 64
   fi
-  # スキルの引数の #12 も受ける。# だけは番号が無いので、そのまま残して数字以外として拒否する
-  case "$issue" in "#"?*) issue="${issue#\#}" ;; esac
-  case "$issue" in
-    "" | *[!0-9]*) [ -z "$issue" ] || dw_die "--issue は Issue の番号にしてください: ${issue}" 64 ;;
-  esac
+  # スキルの引数の #12 も受ける（dw_issue_number）。--issue は任意
+  [ -z "$issue" ] || issue="$(dw_issue_number --issue "$issue")"
   git rev-parse --verify --quiet "$base^{commit}" >/dev/null || dw_die "基点のコミットが見つかりません: ${base}" 2
   git rev-parse --verify --quiet "$target^{commit}" >/dev/null || dw_die "マージ先が見つかりません: ${target}" 2
   filter=true

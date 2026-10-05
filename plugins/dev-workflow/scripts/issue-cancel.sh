@@ -43,11 +43,7 @@ while [ $# -gt 0 ]; do
       case "$1" in
         --issue) issue="$2" ;;
         --reason) reason="$2" ;;
-        --duplicate-of)
-          # # だけを渡されて空になったまま not planned で閉じないよう、# を取った後も値があるか確かめる
-          duplicate_of="${2#\#}"
-          [ -n "$duplicate_of" ] || dw_die "--duplicate-of に値がありません" 64
-          ;;
+        --duplicate-of) duplicate_of="$2" ;;
         --branch) branch="$2" ;;
         --sub-issues)
           case "$2" in
@@ -64,16 +60,12 @@ while [ $# -gt 0 ]; do
   esac
 done
 [ -n "$issue" ] || dw_die "--issue は必須です" 64
-# スキルの引数の #12 も受ける。# だけは番号が無いので、そのまま残して数字以外として拒否する
-case "$issue" in "#"?*) issue="${issue#\#}" ;; esac
-case "$issue" in
-  *[!0-9]*) dw_die "--issue には数字を指定してください: $issue" 64 ;;
-esac
-case "$duplicate_of" in
-  *[!0-9]*) dw_die "--duplicate-of には数字を指定してください: $duplicate_of" 64 ;;
-esac
-# 先頭の 0 を取り除いてから比べる（017 と 17 は同じ Issue）
-if [ -n "$duplicate_of" ] && [ "$((10#$duplicate_of))" -eq "$((10#$issue))" ]; then
+# スキルの引数の #12 も受ける（dw_issue_number）
+issue="$(dw_issue_number --issue "$issue")"
+# # だけを渡されて番号が空のまま not planned で閉じないよう、dw_issue_number が拒否する
+[ -z "$duplicate_of" ] || duplicate_of="$(dw_issue_number --duplicate-of "$duplicate_of")"
+# どちらも先頭の 0 をそろえてあるので、文字列で比べられる（017 と 17 は同じ Issue）
+if [ -n "$duplicate_of" ] && [ "$duplicate_of" = "$issue" ]; then
   dw_die "--duplicate-of に閉じる Issue 自身（#${issue}）は指定できません" 64
 fi
 # 理由の無いまま閉じると経緯が残らないので、空白だけの理由も受け付けない。
