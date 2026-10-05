@@ -78,9 +78,12 @@ done < <(jq -r '.closedByPullRequestsReferences // [] | .[]
   | [.url, (if .repository then "\(.repository.owner.login)/\(.repository.name)" else "" end)] | @tsv' <<<"$issue_json")
 
 # --- まとめる ---------------------------------------------------------------------
-worktrees="$(git -C "$main_root" worktree list --porcelain \
-  | awk '/^worktree /{p=substr($0, 10)} /^branch refs\/heads\//{print substr($0, 19) "\t" p}' \
-  | jq -R -s -c 'split("\n") | map(select(. != "") | split("\t") | {key: .[0], value: .[1]}) | from_entries')"
+worktrees='{}'
+while IFS= read -r b; do
+  [ -n "$b" ] || continue
+  p="$(dw_worktree_of "$main_root" "$b")"
+  [ -z "$p" ] || worktrees="$(jq -c --arg b "$b" --arg p "$p" '. + {($b): $p}' <<<"$worktrees")"
+done <<<"$local_names"
 jq -n --argjson i "$issue" --argjson named "$named" --argjson prs "$prs" --argjson wt "$worktrees" \
   --arg local "$local_names" --arg remote "$remote_names" '
   ($local | split("\n")) as $l | ($remote | split("\n")) as $r

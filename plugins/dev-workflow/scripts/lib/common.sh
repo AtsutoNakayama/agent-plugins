@@ -39,6 +39,13 @@ dw_issue_number() {
   printf '%s\n' "${v:-0}"
 }
 
+# ブランチを使っているワークツリーの場所（無ければ空）。
+# 使い方: dw_worktree_of <メインのワークツリー> <ブランチ>
+dw_worktree_of() {
+  git -C "$1" worktree list --porcelain \
+    | awk -v b="refs/heads/$2" '/^worktree /{p=substr($0, 10)} $0 == "branch " b {print p}'
+}
+
 # 作業中のリポジトリ（ワークツリー）のルート。
 dw_repo_root() {
   if [ -n "${WORKFLOW_REPO_ROOT:-}" ]; then

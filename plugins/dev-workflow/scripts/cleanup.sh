@@ -74,10 +74,7 @@ actions='[]'
 note() { actions="$(jq -c --arg a "$1" '. + [$a]' <<<"$actions")"; }
 
 # ブランチを使っているワークツリーの場所（無ければ空）
-worktree_of() {
-  git -C "$main_root" worktree list --porcelain \
-    | awk -v b="refs/heads/$1" '/^worktree /{p=substr($0, 10)} $0 == "branch " b {print p}'
-}
+worktree_of() { dw_worktree_of "$main_root" "$1"; }
 
 # 失うものの一覧（--abandon）。使い方: lose <種類> <1行に1つの一覧>
 lost='{"commits": [], "uncommitted": [], "ignored": [], "submodules": []}'

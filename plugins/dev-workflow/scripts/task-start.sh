@@ -94,8 +94,7 @@ if ! $no_worktree; then
 
   # --- 2. ワークツリーとブランチ --------------------------------------------------
   # そのブランチのワークツリーが既にあれば使い回す
-  existing="$(git -C "$main_root" worktree list --porcelain \
-    | awk -v b="refs/heads/$branch" '/^worktree /{p=substr($0, 10)} $0 == "branch " b {print p}')"
+  existing="$(dw_worktree_of "$main_root" "$branch")"
   src_ref=""  # 新しく作るワークツリーの中身の元（dry-run で .gitmodules の有無を見る）
   # ディレクトリを手で消すと、git の記録だけが残る。記録を片付けてから作り直す
   if [ -n "$existing" ] && [ ! -d "$existing" ]; then
