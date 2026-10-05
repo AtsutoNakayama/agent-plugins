@@ -23,6 +23,9 @@
 #      （オプションが無くても）外す。キューが最新の base_branch と組み合わせた結果で CI を動かすためである。
 #      使っていなければ、--required-check・--no-merge-queue のときに求め、どちらも無ければ今のまま
 #      このスクリプトが扱わないルール（オプションを指定しないときの必須のステータスチェックなど）は残す
+#   3. 必須のチェックがあれば、そのワークフローが merge_group のイベントで動くかを確かめる（merge-group-check.sh。
+#      dry-run でも確かめ、結果は merge_queue.merge_group に出す）。キューを使うのに動かない・確かめられない
+#      チェックがあれば警告する（キューのチェックが「待ち」のまま残り、PR がマージされないため）。止めはしない
 # リポジトリの管理者権限が必要（dry-run でも確かめる）。守るブランチがリポジトリに無ければ止める。
 # 守るブランチは、チームの設定（.claude/dev-workflow/config.json）の base_branch で決める（個人の設定は使わない）。
 # --repo が今いるリポジトリと違うときは、対象のリポジトリの .claude/dev-workflow/config.json を API で読む。
@@ -279,6 +282,33 @@ elif [ "$queue" = off ] && [ "$(jq '[(.rules // [])[] | select(.type == "merge_q
 fi
 approvals_now="$(jq '.rules[] | select(.type == "pull_request") | .parameters.required_approving_review_count' <<<"$desired")"
 
+# 必須のチェックを出すワークフローが merge_group のイベントで動くか。キューは必須のチェックを merge_group で
+# もう一度動かすので、動かないとキューのチェックが「待ち」のまま残ってマージされない。キューを使うかを決める
+# 材料にするため、キューを使わないときも確かめる（警告はキューを使うときだけ）。必須のチェックは、このルールセットのものと、
+# 組織などのほかのルールセットが base_branch に求めるもの（rules/branches）を合わせる
+other_checks="$(gh api --paginate "repos/$repo_nwo/rules/branches/$(jq -rn --arg b "$branch" '$b | @uri')?per_page=100" 2>/dev/null \
+  | jq -sc --arg id "$ruleset_id" '[add // [] | .[]
+      | select(.type == "required_status_checks" and ((.ruleset_id // "" | tostring) != $id))
+      | .parameters.required_status_checks[]?.context]' 2>/dev/null)" || other_checks='[]'
+all_checks="$(jq -c --argjson o "$other_checks" '[.rules[] | select(.type == "required_status_checks")
+  | .parameters.required_status_checks[].context] + $o | unique' <<<"$desired")"
+merge_group=null
+if [ "$all_checks" != "[]" ]; then
+  if mg="$("$BASH" "$DW_SCRIPTS_DIR/merge-group-check.sh" --repo "$repo_nwo" --branch "$branch" --checks-json "$all_checks" 2>&1)" \
+    && merge_group="$(jq -c '{not_running, unknown}' <<<"$mg" 2>/dev/null)"; then
+    if $queue_enabled; then
+      while IFS= read -r m; do
+        dw_warn "$m"
+      done < <(jq -r '.messages | .not_running, .unknown | values' <<<"$mg")
+    fi
+  else
+    merge_group=null
+    if $queue_enabled; then
+      dw_warn "必須のチェックのワークフローが merge_group のイベントで動くか確かめられません: $(printf '%s\n' "$mg" | tail -n 1 | LC_ALL=C sed 's/^error: //')"
+    fi
+  fi
+fi
+
 # 比べる形に揃える（ルールは種類の順、GitHub が付け足す項目は除く）
 normalize() {
   jq -S '{enforcement, target, bypass_actors: (.bypass_actors // []),
@@ -306,7 +336,8 @@ fi
 jq -n --argjson dry "$dry_run" --arg repo "$repo_nwo" --arg branch "$branch" --argjson changed "$changed" \
   --arg id "$ruleset_id" --argjson created "$created" --argjson updated "$updated" \
   --argjson approvals "$approvals_now" --argjson checks "$checks_json" --argjson actions "$actions" \
-  --argjson qa "$queue_available" --argjson qe "$queue_enabled" --argjson rule "$checks_rule" '{
+  --argjson qa "$queue_available" --argjson qe "$queue_enabled" --argjson rule "$checks_rule" \
+  --argjson mg "$merge_group" '{
     dry_run: $dry,
     repo: $repo,
     branch: $branch,
@@ -315,6 +346,8 @@ jq -n --argjson dry "$dry_run" --arg repo "$repo_nwo" --arg branch "$branch" --a
       required_approvals: $approvals, required_checks: $checks,
       # 必須のチェックが無ければ null
       strict: (if $rule == null then null else ($rule.parameters.strict_required_status_checks_policy // false) end)},
-    merge_queue: {available: $qa, enabled: $qe},
+    # merge_group：必須のチェックのワークフローが merge_group で動くか（merge-group-check.sh の not_running・unknown）。
+    # 必須のチェックが無い、または確かめられなければ null
+    merge_queue: {available: $qa, enabled: $qe, merge_group: $mg},
     actions: $actions
   }'

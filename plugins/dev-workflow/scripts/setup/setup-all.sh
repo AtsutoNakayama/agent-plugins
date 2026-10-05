@@ -14,7 +14,7 @@
 # 行うこと:
 #   1. setup-labels.sh：type ラベルと breaking ラベルの登録
 #   2. setup-project.sh --write-config：Project の作成・接続と、.claude/dev-workflow/config.json への書き込み
-#   3. setup-repo.sh：マージ方法の設定と、ルールセットの登録
+#   3. setup-repo.sh：マージ方法の設定と、ルールセットの登録（必須のチェックのワークフローが merge_group で動くかも確かめる）
 #   4. PR テンプレート（.github/pull_request_template.md）と Issue テンプレート
 #      （.github/ISSUE_TEMPLATE/task.md）を作る。既にテンプレートがあれば作らない
 #      （チームの設定の pr.template が実在するファイルを指していれば、PR テンプレートは作らない）

@@ -151,6 +151,22 @@ if $gh_auth && [ -n "$repo_root" ] && [ -n "$base_branch" ] \
     none) check merge-queue false warn "${base_branch} へのマージに、マージキューも最新の ${base_branch} の取り込み（strict）も求めていません。古い ${base_branch} で通った CI のままマージすると壊れることがあります。/dev-workflow:repo-setup で設定してください" ;;
     *) check merge-queue true warn "${base_branch} へのマージに必須のチェックが無いので、マージキューも strict も使っていません" ;;
   esac
+  # キューを使っていれば、必須のチェックのワークフローが merge_group のイベントで動くかを確かめる。動かないと、
+  # キューのチェックが「待ち」のまま残り、PR がマージされない。確かめられないときは飛ばす
+  if [ "$merge" = queue ]; then
+    required="$(jq -sc 'add // [] | [.[] | select(.type == "required_status_checks")
+      | .parameters.required_status_checks[]?.context] | unique' <<<"$rules" 2>/dev/null || echo '[]')"
+    if [ "$required" != "[]" ] \
+      && mg="$("$BASH" "$DW_SCRIPTS_DIR/merge-group-check.sh" --branch "$base_branch" --checks-json "$required" 2>/dev/null)"; then
+      if [ "$(jq -r '.messages.not_running // empty' <<<"$mg")" != "" ]; then
+        check merge-group false warn "$(jq -r .messages.not_running <<<"$mg")"
+      elif [ "$(jq -r '.messages.unknown // empty' <<<"$mg")" != "" ]; then
+        check merge-group true warn "$(jq -r .messages.unknown <<<"$mg")"
+      else
+        check merge-group true warn "必須のチェックのワークフローは、merge_group のイベントでも動きます"
+      fi
+    fi
+  fi
 fi
 
 result="$(printf '%s' "$checks" | jq -s '{ok: (map(select(.level == "error" and (.ok | not))) | length == 0), checks: .}')"
