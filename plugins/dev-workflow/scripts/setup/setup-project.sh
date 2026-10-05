@@ -7,7 +7,9 @@
 #   --owner LOGIN      Project の所有者（既定: 設定の project.owner、無ければリポジトリの所有者）
 #   --number N         既存の Project に接続する（既定: 設定の project.number）
 #   --title TITLE      Project の名前で探し、無ければその名前で作る（既定: リポジトリ名）
-#   --write-config     .claude/dev-workflow/config.json の project を書き換える（対象のリポジトリの中で実行すること）
+#   --hold-column NAME 保留の列（status.hold）の名前。Status 列に足し、--write-config なら設定にも書く
+#   --write-config     .claude/dev-workflow/config.json の project（と --hold-column の status.hold）を書き換える
+#                      （対象のリポジトリの中で実行すること）
 #   --dry-run          変更せず、行う予定の操作だけを出力する
 #
 # 行うこと:
@@ -37,16 +39,17 @@ need_value() {
   fi
 }
 
-repo="" owner="" number="" title="" write_config=false dry_run=false
+repo="" owner="" number="" title="" hold="" write_config=false dry_run=false
 while [ $# -gt 0 ]; do
   case "$1" in
-    --repo | --owner | --number | --title)
+    --repo | --owner | --number | --title | --hold-column)
       need_value "$@"
       case "$1" in
         --repo) repo="$2" ;;
         --owner) owner="$2" ;;
         --number) number="$2" ;;
         --title) title="$2" ;;
+        --hold-column) hold="$2" ;;
       esac
       shift 2
       ;;
@@ -61,6 +64,9 @@ case "$number" in
 esac
 
 config="$("$BASH" "$DW_SCRIPTS_DIR/config.sh")"
+# --hold-column は、設定に書く前でも Status 列に足せるよう、読んだ設定に重ねる
+[ -z "$hold" ] || config="$(jq -c --arg h "$hold" '.status.hold = $h' <<<"$config")"
+dw_check_hold_column "$config"
 # 設定に書かれた順のまま重複を除く
 status_names="$(jq -c 'reduce (.status[] | select(. != null)) as $s ([]; if any(.[]; . == $s) then . else . + [$s] end)' <<<"$config")"
 todo_name="$(jq -r '.status.todo // empty' <<<"$config")"
@@ -215,7 +221,7 @@ else
   if [ "$missing" != "[]" ]; then
     note "$(msg_status "$missing")"
     # 既存の選択肢は id を付けて渡し、Issue に付いている値を残す。
-    # 足す列は、設定の順（todo・start・pr_opened・done）でそれより前にある列のうち最後のものの後ろに入れる
+    # 足す列は、設定の順（todo・hold・start・pr_opened・done）でそれより前にある列のうち最後のものの後ろに入れる
     # （無ければ、後ろにある列のうち最初のものの前。どちらも無ければ末尾）。
     # 末尾に足すと、pr_opened の列が done の列より後ろに並んでしまう。利用者が足した列の位置は変えない
     # gh にも REST にも既存の項目を変える操作が無いので GraphQL を使う（設計書 §10）
@@ -299,6 +305,12 @@ if $write_config; then
   $write && note "$config_file の project を $owner/${project_number:-（作成後の番号）} にする"
   if $write && ! $dry_run; then
     dw_write_config "$config_file" --arg o "$owner" --argjson n "$project_number" '.project = {owner: $o, number: $n}'
+  fi
+  # 保留の列も、既に同じ名前なら書き直さない
+  if [ -n "$hold" ] && ! { [ -f "$config_file" ] \
+    && jq -e --arg h "$hold" '.status.hold == $h' "$config_file" >/dev/null 2>&1; }; then
+    note "$config_file の status.hold を「${hold}」にする"
+    $dry_run || dw_write_config "$config_file" --arg h "$hold" '.status.hold = $h'
   fi
 fi
 

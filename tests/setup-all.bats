@@ -45,10 +45,10 @@ args_of() { grep "^$1" "$CALLS" | tail -n 1 | sed "s/^$1 \{0,1\}//"; }
 
 @test "4つのスクリプトにオプションを振り分けて実行する" {
   setup_fake_plugin
-  run_all --keep-defaults --number 3 --title Board --require-approval 1 --review-model opus --models-scope local
+  run_all --keep-defaults --number 3 --title Board --hold-column "On Hold" --require-approval 1 --review-model opus --models-scope local
   assert_success
   assert_equal "$(args_of setup-labels)" "[--keep-defaults]"
-  assert_equal "$(args_of setup-project)" "[--write-config] [--number] [3] [--title] [Board]"
+  assert_equal "$(args_of setup-project)" "[--write-config] [--number] [3] [--title] [Board] [--hold-column] [On Hold]"
   assert_equal "$(args_of setup-repo)" "[--require-approval] [1]"
   assert_equal "$(args_of setup-models)" "[--review-model] [opus] [--scope] [local]"
 }

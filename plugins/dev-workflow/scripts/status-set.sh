@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Issue の Project の Status を移す。移す先は役割（todo / start / pr_opened / done）か列名で指定する。
+# Issue の Project の Status を移す。移す先は役割（todo / hold / start / pr_opened / done）か列名で指定する。
 #
 # 使い方: status-set.sh --issue N --to ROLE|COLUMN [--item-id ID] [--dry-run]
 #   --issue N      Issue の番号（#N でもよい）
@@ -56,7 +56,7 @@ config="$("$BASH" "$DW_SCRIPTS_DIR/config.sh")"
 # 役割なら設定の列名に置き換える。列が null の役割は、その場面では列を移さないという意味
 column="$to"
 case "$to" in
-  todo | start | pr_opened | done)
+  todo | hold | start | pr_opened | done)
     column="$(jq -r --arg r "$to" '.status[$r] // empty' <<<"$config")"
     if [ -z "$column" ]; then
       jq -n --argjson i "$issue" --arg r "$to" '{issue: $i, skipped: true, reason: "status.\($r) が設定されていないので、列を移しません"}'
