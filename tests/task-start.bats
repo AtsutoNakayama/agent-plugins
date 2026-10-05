@@ -294,3 +294,66 @@ run_start() {
   assert_success
   jq -e 'any(.actions[]; . == "ワークツリーのサブモジュールを初期化する（git submodule update --init --recursive）")' <<<"$json"
 }
+
+@test "--no-worktree では、ブランチもワークツリーも作らず、割り当てと列の移動だけを行う" {
+  setup_fake_gh
+  setup_origin
+  run_start --issue 17 --no-worktree
+  assert_success
+  assert_equal "$(jq -c '[.branch, .worktree, .created.worktree, .created.branch, .assigned, .status.to]' <<<"$json")" \
+    '[null,null,false,false,true,"In Progress"]'
+  [ ! -e .claude/worktrees ]
+  assert_equal "$(git branch --list 'feat/*')" ""
+  assert_equal "$(git worktree list | wc -l | tr -d ' ')" 1
+  run grep -c worktrees .git/info/exclude
+  assert_output 0
+  assert_equal "$(args edit)" "17 --add-assignee @me"
+  assert_equal "$(args SetField | jq -r '."single-select-option-id"')" O2
+}
+
+@test "--no-worktree の dry-run では、割り当てと列の移動を予定に出すだけ" {
+  setup_fake_gh
+  setup_origin
+  run_start --issue 17 --no-worktree --dry-run
+  assert_success
+  assert_equal "$(jq '.actions | length' <<<"$json")" 2
+  assert_equal "$(called edit)" 0
+  assert_equal "$(called SetField)" 0
+}
+
+@test "--no-worktree で着手した後に --slug で実行すると、ワークツリーとブランチだけを作る" {
+  setup_fake_gh
+  setup_origin
+  run_start --issue 17 --no-worktree
+  fake_issue 17 '["feat"]' OPEN '["me"]'
+  issue_item "In Progress"
+  : >"$CALLS"
+  run_start --issue 17 --slug x
+  assert_success
+  assert_equal "$(jq -c '[.branch, .created.worktree, .created.branch, .assigned]' <<<"$json")" '["feat/17-x",true,true,false]'
+  [ -d .claude/worktrees/feat/17-x ]
+  assert_equal "$(called edit)" 0
+  assert_equal "$(called SetField)" 0
+}
+
+@test "--no-worktree と --slug を一緒に指定すると、何も変えずにエラーになる" {
+  setup_fake_gh
+  setup_origin
+  run_start --issue 17 --no-worktree --slug x
+  assert_failure 64
+  assert_output --partial "--no-worktree と --slug は一緒に指定できません"
+  [ ! -e .claude/worktrees ]
+  assert_equal "$(called edit)" 0
+}
+
+@test "--no-worktree でも、親の Issue には着手しない" {
+  setup_fake_gh
+  setup_origin
+  jq '. + {subIssuesSummary: {total: 2, completed: 0, percentCompleted: 0}}' "$FIX/issue-17.json" >"$FIX/i" \
+    && mv "$FIX/i" "$FIX/issue-17.json"
+  run_start --issue 17 --no-worktree
+  assert_failure 2
+  assert_output --partial "親の Issue"
+  assert_equal "$(called edit)" 0
+  assert_equal "$(called SetField)" 0
+}
