@@ -1,12 +1,15 @@
 #!/usr/bin/env bash
 # レビューの観点ファイルを1つ作り、JSON で出力する。本文（レビューの指示）は標準入力から読む。
 #
-# 使い方: review-perspective-add.sh --name <名前> --layer user|repo --title <title> [条件...] [--override] <本文
+# 使い方: review-perspective-add.sh --name <名前> --layer user|repo --title <title> [条件...] [--override] [--builtin code-review] <本文
 #
 #   --name      観点の名前（ファイル名から .md を除いたもの）。小文字の英数字と - だけ
 #   --layer     置く層。user は ~/.claude/dev-workflow/review/、repo は <repo>/.claude/dev-workflow/review/
 #   --title     一覧に出す1行の説明
 #   --override  ほかの層にある同じ名前の観点を、作る観点で置き換えてよい
+#   --builtin   本文の代わりに組み込みのコマンドを実行する観点にする（code-review だけで、--name も code-review。
+#               同梱の観点 code-review を上位の層で置き換えるときに使う）。本文には、
+#               そのコマンドの指摘のうち出さないものを「## 指摘しないこと」の節に書く（review スキルが照らして外す）
 #
 # 実行する条件（任意。書かなければ毎回実行する。複数書けば、すべてに当てはまるときだけ実行する）:
 #   --type <type>          変更の type がこのどれかのとき（繰り返して複数書ける）。小文字の英数字と - だけ
@@ -45,6 +48,7 @@ usage() { LC_ALL=C sed -n '2,/^[^#]/{/^[^#]/d;s/^# \{0,1\}//;p;}' "$0"; }
 name=""
 layer=""
 title=""
+builtin=""
 override=false
 types=""
 paths=""
@@ -53,12 +57,13 @@ base_ahead_required=false
 while [ $# -gt 0 ]; do
   case "$1" in
     -h | --help) usage; exit 0 ;;
-    --name | --layer | --title)
+    --name | --layer | --title | --builtin)
       [ $# -ge 2 ] || dw_die "$1 に値がありません" 64
       case "$1" in
         --name) name="$2" ;;
         --layer) layer="$2" ;;
         --title) title="$2" ;;
+        --builtin) builtin="$2" ;;
       esac
       shift 2
       ;;
@@ -108,6 +113,15 @@ title="$(printf '%s' "$title" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//
 case "$title" in
   \"*\" | \'*\') dw_die "title の全体を引用符で囲まないでください（読むときに外れます）: ${title}" 64 ;;
 esac
+
+case "$builtin" in
+  "" | code-review) ;;
+  *) dw_die "--builtin は code-review にしてください: ${builtin}" 64 ;;
+esac
+# 別の名前で作ると /code-review が2回動き、review スキルが読む除外の決まり（code-review の観点の本文）にもならない
+if [ -n "$builtin" ] && [ "$name" != "$builtin" ]; then
+  dw_die "--builtin ${builtin} は --name ${builtin} のときだけ使えます（同梱の観点 ${builtin} を置き換える）: ${name}" 64
+fi
 
 repo_root="$(dw_repo_root || true)"
 user_dir="$(dw_user_review_dir)"
@@ -179,8 +193,10 @@ if [ "$override" = false ]; then
 fi
 
 mkdir -p "$dir" 2>/dev/null || dw_die "観点ファイルを置くディレクトリを作れません: ${dir}" 1
-# frontmatter の条件の行（review-perspectives.sh --help の形式）
+# frontmatter の builtin と条件の行（review-perspectives.sh --help の形式）
 when=""
+[ -z "$builtin" ] || when="builtin: ${builtin}
+"
 [ -z "$types" ] || when="${when}types: [${types}]
 "
 [ -z "$paths" ] || when="${when}paths: [${paths}]

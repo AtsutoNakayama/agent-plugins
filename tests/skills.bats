@@ -127,6 +127,36 @@ frontmatter() { awk 'NR == 1 && $0 == "---" { on = 1; next } on && $0 == "---" {
   grep -q '同じ検索' <<<"$step6" || fail "手順6に、直した後の再検索がありません"
 }
 
+@test "review は、終えるときに見落としの指摘と今後も要らない指摘を観点に残すかを尋ねる（設計書 §7）" {
+  f="$SKILLS/review/SKILL.md"
+  step9="$(awk '/^### 9\./ { on = 1; next } on' "$f")"
+  [ -n "$step9" ] || fail "手順9（観点に残すか確かめる）がありません"
+  grep -q '見落とし' <<<"$step9" || fail "見落としの指摘を拾うことが書かれていません"
+  grep -q '今後も要らない指摘' <<<"$step9" || fail "今後も要らない指摘を拾うことが書かれていません"
+  grep -q '一般的なバグ' <<<"$step9" || fail "一般的なバグを対象にしないことが書かれていません"
+  grep -q 'その場限りの好み' <<<"$step9" || fail "その場限りの好みを対象にしないことが書かれていません"
+  grep -q '自動では変えない' <<<"$step9" || fail "ユーザーが選んだものだけを変えることが書かれていません"
+  grep -q 'review-perspective-add' <<<"$step9" || fail "review-perspective-add の手順で作ることが書かれていません"
+  grep -q '既にある観点' <<<"$step9" || fail "既にある観点を直す案が書かれていません"
+  grep -q '「〜を指摘しない」だけの観点は新しく作らない' <<<"$step9" || fail "指摘しないだけの観点を作らないことが書かれていません"
+  grep -q -- '--builtin code-review' <<<"$step9" || fail "code-review の除外を上位の層に作ることが書かれていません"
+  # 周回を終える出口（手順8）と、指摘が無い・何も選ばれないときの終わり方が、手順9へ進む
+  step8="$(awk '/^### 8\./ { on = 1; next } /^### 9\./ { on = 0 } on' "$f")"
+  grep -q '手順9へ進む' <<<"$step8" || fail "手順8で終えるときに手順9へ進むことが書かれていません"
+  [ "$(grep -c '手順9へ進む' "$f")" -ge 3 ] || fail "手順4・5の終わり方が手順9へ進んでいません"
+  # /code-review の指摘は、code-review の観点ファイルの「指摘しないこと」で外す
+  step4="$(awk '/^### 4\./ { on = 1; next } /^### 5\./ { on = 0 } on' "$f")"
+  grep -q '## 指摘しないこと' <<<"$step4" || fail "手順4で /code-review の指摘を除外の決まりと照らすことが書かれていません"
+  grep -q '外した件数' <<<"$step4" || fail "外した件数を伝えることが書かれていません"
+  # 同梱の code-review.md 自体には、除外の節を書かない（書くと全員の指摘が外れる）
+  grep -q '^## 指摘しないこと' "$BATS_TEST_DIRNAME/../plugins/dev-workflow/review/code-review.md" \
+    && fail "同梱の code-review.md に除外の節があります"
+  grep -q 'dev-workflow:review` の手順9（観点に残すか確かめる）' "$BATS_TEST_DIRNAME/../plugins/dev-workflow/defaults/task-flow.md" \
+    || fail "SessionStart の流れ（defaults/task-flow.md）に、レビューの後の指摘を観点に残すことがありません"
+  grep -q '「〜を指摘しない」ことだけを書いた観点は作らない' "$SKILLS/review-perspective-add/SKILL.md" \
+    || fail "review-perspective-add に、指摘しないだけの観点を作らないことが書かれていません"
+}
+
 @test "不具合の修正の手順に、同じ原因の他の箇所を探すことがある（CONTRIBUTING・task-flow・設計書）" {
   grep -q '同じ原因の他の箇所' "$BATS_TEST_DIRNAME/../CONTRIBUTING.md" || fail "CONTRIBUTING のテストのルールにありません"
   grep -q '同じ原因の他の箇所' "$BATS_TEST_DIRNAME/../plugins/dev-workflow/defaults/task-flow.md" || fail "SessionStart の流れ（defaults/task-flow.md）にありません"
