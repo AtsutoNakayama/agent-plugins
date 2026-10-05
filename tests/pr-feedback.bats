@@ -142,7 +142,7 @@ out_of() { jq -c "$1" <<<"$output"; }
   write_threads
   run_script pr-feedback.sh
   assert_success
-  assert_equal "$(out_of '[.feedback[] | {author, t: [.threads[] | [.id, .last_by_pr_author, (.comments | length)]]}]')" \
+  assert_equal "$(out_of '[.feedback[] | {author, t: [.threads[] | [.id, .replied, (.comments | length)]]}]')" \
     '[{"author":"alice","t":[[100,true,2]]},{"author":"bob","t":[[100,false,2]]}]'
   assert_equal "$(out_of '.feedback[0].threads[0] | [.path, .line, .outdated, .url, .comments[0].author, .comments[0].body]')" \
     '["a.sh",3,false,"https://github.com/me/demo/pull/5#discussion_r100","alice","ここは null になりませんか"]'
@@ -166,6 +166,21 @@ out_of() { jq -c "$1" <<<"$output"; }
   assert_success
   assert_equal "$(out_of '[.feedback[] | {author, handler, n: (.threads | length)}]')" \
     '[{"author":"alice","handler":null,"n":3},{"author":"bob","handler":null,"n":1},{"author":"coderabbitai","handler":"coderabbit-respond","n":1}]'
+}
+
+@test "replied は、スレッドの持ち主の最後のコメントの後に PR の作者が書いたかで決める" {
+  setup_fake_gh
+  echo '{"pr_respond": {"handlers": {"coderabbitai[bot]": "coderabbit-respond"}}}' >"$REPO/.claude/dev-workflow/config.json"
+  # alice の分。作者が alice に答えた後に bot が書いても、alice には返信済み
+  thread false '[["coderabbitai", "指摘"], ["alice", "質問"], ["me", "回答"], ["coderabbitai", "確認"]]'
+  # alice の分。作者の返信の後に alice が書いたので、返信していない
+  thread false '[["alice", "質問"], ["me", "回答"], ["alice", "追加の質問"]]'
+  # bot の分。作者が最後に書いたので、返信済み
+  thread false '[["coderabbitai", "指摘"], ["me", "@coderabbitai 直しました"]]'
+  write_threads
+  run_script pr-feedback.sh
+  assert_success
+  assert_equal "$(out_of '[.feedback[] | [.author, [.threads[].replied]]]')" '[["alice",[true,false]],["coderabbitai",[true]]]'
 }
 
 @test "担当の設定が無ければ、スレッドは PR の作者以外で最後に書いた人の分にする" {
