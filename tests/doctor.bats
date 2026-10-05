@@ -261,8 +261,12 @@ required_check() { jq -c '.checks[] | select(.name == "required-checks") | [.ok,
   run_script doctor.sh
   assert_equal "$(jq -c '.[0:2]' <<<"$(required_check)")" '[false,"warn"]'
   assert_equal "$(merge_check)" '[true,"warn","main へのマージはマージキューを通します"]'
+  # 必須のチェックのルールがあっても、名前が1つも無ければ何も求めていないので知らせる
+  export FAKE_RULES='[{"type": "required_status_checks", "parameters": {"strict_required_status_checks_policy": true, "required_status_checks": []}}]'
+  run_script doctor.sh
+  assert_equal "$(jq -c '.[0:2]' <<<"$(required_check)")" '[false,"warn"]'
   # 必須のチェックがあれば知らせない
-  export FAKE_RULES='[{"type": "required_status_checks", "parameters": {"strict_required_status_checks_policy": true}}]'
+  export FAKE_RULES='[{"type": "required_status_checks", "parameters": {"strict_required_status_checks_policy": true, "required_status_checks": [{"context": "ci"}]}}]'
   run_script doctor.sh
   assert_equal "$(required_check)" ""
 }

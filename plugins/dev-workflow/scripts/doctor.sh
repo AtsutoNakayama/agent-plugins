@@ -153,7 +153,10 @@ if $gh_auth && [ -n "$repo_root" ] && [ -n "$base_branch" ] \
   esac
   # 必須のチェックが無いと、キューを使っていても、CI が通らなくてもマージできる。CI の無いリポジトリでは
   # 毎回の警告になるので、チームの設定で求めないことにしていれば警告しない
-  if ! jq -se 'add // [] | any(.[]; .type == "required_status_checks")' <<<"$rules" >/dev/null 2>&1; then
+  # 必須のチェックの名前の一覧。ルールがあっても名前が1つも無ければ、何も求めていないので無いとみなす
+  required="$(jq -sc 'add // [] | [.[] | select(.type == "required_status_checks")
+    | .parameters.required_status_checks[]?.context] | unique' <<<"$rules" 2>/dev/null || echo '[]')"
+  if [ "$required" = "[]" ]; then
     if [ "$(dw_team_config "$repo_root/.claude/dev-workflow/config.json" require_status_checks 2>/dev/null)" = false ]; then
       check required-checks true warn "${base_branch} へのマージに必須のチェックはありません（設定の require_status_checks が false）"
     else
@@ -163,8 +166,6 @@ if $gh_auth && [ -n "$repo_root" ] && [ -n "$base_branch" ] \
   # キューを使っていれば、必須のチェックのワークフローが merge_group のイベントで動くかを確かめる。動かないと、
   # キューのチェックが「待ち」のまま残り、PR がマージされない。確かめられないときは飛ばす
   if [ "$merge" = queue ]; then
-    required="$(jq -sc 'add // [] | [.[] | select(.type == "required_status_checks")
-      | .parameters.required_status_checks[]?.context] | unique' <<<"$rules" 2>/dev/null || echo '[]')"
     if [ "$required" != "[]" ] \
       && mg="$("$BASH" "$DW_SCRIPTS_DIR/merge-group-check.sh" --branch "$base_branch" --checks-json "$required" 2>/dev/null)"; then
       if [ "$(jq -r '.messages.not_running // empty' <<<"$mg")" != "" ]; then
