@@ -523,14 +523,19 @@ auto_branch() {
   done
 }
 
-@test "--auto は、ユーザーの層の review.model を使わず、警告する（導入したリポジトリだけに効かせる）" {
+@test "--auto は、ユーザーの層の review.model を、導入したリポジトリでだけ使う" {
   auto_branch feat/17-add-thing
   fake_issue 17 '["feat"]'
   echo '{"review": {"model": "opus"}}' >"$WORKFLOW_USER_DIR/config.json"
+  rm -f .claude/dev-workflow/config.json
   run_script review-perspectives.sh --auto
   assert_success
-  assert_output --partial "warn: $WORKFLOW_USER_DIR/config.json の review.model は使いません"
   assert_equal "$(json_of "$output" | jq -c .context.model)" null
+  mark_set_up
+  run_script review-perspectives.sh --auto
+  assert_success
+  refute_output --partial "warn:"
+  assert_equal "$(json_of "$output" | jq -r .context.model)" opus
   # リポジトリの層で決めれば、そちらを使う。local は team より優先する
   echo '{"review": {"model": "haiku"}}' >.claude/dev-workflow/config.json
   echo '{"review": {"model": "sonnet"}}' >.claude/dev-workflow/config.local.json

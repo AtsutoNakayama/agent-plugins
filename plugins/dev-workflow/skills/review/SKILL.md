@@ -11,7 +11,7 @@ description: 作業中のブランチの変更を、組み込みの /code-review
 
 スクリプト（JSON を出力する）:
 
-- `${CLAUDE_PLUGIN_ROOT}/scripts/config.sh`：合わせた設定の出力（`review.max_rounds`：周回の上限。既定 3。最初のレビューを含む）。`review-perspectives.sh --auto` が、これを検査して `context.max_rounds` に出す。レビューのサブエージェントのモデル（`review.model`。既定 null で、セッションと同じモデル）は、`config.sh` の値を使わず、`review-perspectives.sh --auto` がリポジトリの層（`config.json`・`config.local.json`）だけから読んで検査した `context.model` を使う（ユーザーの層の値は使わない）
+- `${CLAUDE_PLUGIN_ROOT}/scripts/config.sh`：合わせた設定の出力（`review.max_rounds`：周回の上限。既定 3。最初のレビューを含む）。`review-perspectives.sh --auto` が、これを検査して `context.max_rounds` に出す。レビューのサブエージェントのモデル（`review.model`。既定 null で、セッションと同じモデル）は、`review-perspectives.sh --auto` が `config.sh` の値を検査した `context.model` を使う
 - `${CLAUDE_PLUGIN_ROOT}/scripts/review-perspectives.sh`：3つの層から観点ファイルを集め、今の変更に当てはまらない観点を外す（`--help` で観点ファイルの形式）
 
 レビューを終えるときは、ユーザーが出した見落としの指摘や、今後も要らないとして却下した指摘を、観点に残すかを確かめる（手順9。設計書 §7）。観点を作るのは review-perspective-add スキルの手順に従う。

@@ -321,13 +321,16 @@ dw_review_model_of() {
   jq -c .review.model "$1"
 }
 
-# review.model を決めている、このリポジトリの層（team・local）を、優先度の低い順に1行ずつ「<層>\t<ファイル>\t<値の JSON>」で出力する。
-# 導入したリポジトリだけに効かせるため、ユーザーの層（~/.claude/dev-workflow/config.json）は読まない（設計書 §7）。
-# どちらかの層のファイルが JSON のオブジェクトとして読めなければ、書く層でなくても止まる。
+# review.model を決めている層（user・team・local）を、優先度の低い順に1行ずつ「<層>\t<ファイル>\t<値の JSON>」で出力する。
+# ユーザーの層（~/.claude/dev-workflow/config.json）は、config.sh と同じく、導入したリポジトリ（dw_is_set_up）の中でだけ読む（設計書 §1）。
+# どれかの層のファイルが JSON のオブジェクトとして読めなければ、書く層でなくても止まる。
 # 使い方: dw_review_model_layers <リポジトリのルート>
 dw_review_model_layers() {
-  local pair name f v
-  for pair in "team:$1/.claude/dev-workflow/config.json" "local:$(dw_local_config_file "$1")"; do
+  local pairs pair name f v
+  pairs=()
+  ! dw_is_set_up "$1" || pairs+=("user:$(dw_user_dir)/config.json")
+  pairs+=("team:$1/.claude/dev-workflow/config.json" "local:$(dw_local_config_file "$1")")
+  for pair in "${pairs[@]}"; do
     name="${pair%%:*}" f="${pair#*:}"
     [ -f "$f" ] || continue
     # 壊れたファイルで止めるため、$(...) の外で確かめる（中で止めても、そのサブシェルが終わるだけになる）

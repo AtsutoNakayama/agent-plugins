@@ -36,11 +36,25 @@ json_of() { printf '%s\n' "$1" | LC_ALL=C sed -n '/^{/,$p'; }
   assert_output sonnet
 }
 
-@test "ユーザーの層（~/.claude/dev-workflow/config.json）には書けず、そこで決めた値も、決めたとみなさない" {
+@test "ユーザーの層（~/.claude/dev-workflow/config.json）で決めた値は、導入したリポジトリでだけ決めたとみなす" {
   echo '{"review": {"model": "opus"}}' >"$WORKFLOW_USER_DIR/config.json"
   run_script setup/setup-models.sh
   assert_success
-  assert_equal "$(jq -c '[.review.decided, .review.layers]' <<<"$output")" '[false,[]]'
+  assert_equal "$(jq -c '[.review.model, .review.decided, .review.layers]' <<<"$output")" '[null,false,[]]'
+  mark_set_up
+  run_script setup/setup-models.sh
+  assert_success
+  assert_equal "$(jq -c '[.review.model, .review.decided, .review.layers]' <<<"$output")" \
+    "[\"opus\",true,[{\"layer\":\"user\",\"file\":\"$WORKFLOW_USER_DIR/config.json\",\"model\":\"opus\"}]]"
+  # リポジトリの層に書けば、ユーザーの層より優先される（効かないという警告は出さない）
+  run_script setup/setup-models.sh --review-model sonnet --scope local
+  assert_success
+  refute_output --partial "効きません"
+  assert_equal "$(json_of "$output" | jq -c '[.review.model, [.review.layers[].layer]]')" '["sonnet",["user","local"]]'
+}
+
+@test "ユーザーの層（~/.claude/dev-workflow/config.json）には書けない" {
+  echo '{"review": {"model": "opus"}}' >"$WORKFLOW_USER_DIR/config.json"
   run_script setup/setup-models.sh --review-model sonnet --scope user
   assert_failure 64
   assert_output --partial "--scope は local・team のどちらかにしてください: user"

@@ -62,7 +62,7 @@
 #   context       絞り込みに使った値（絞り込まないときは null）。base・target・ahead（マージ先が基点より
 #                 進んだコミットの数）・issue（番号か null）・type（null もある）・type_from（issue・branch・given・null）・
 #                 max_rounds（--auto のとき、設定 review.max_rounds の値。1以上の整数でなければ止まる。--auto でなければ null）・
-#                 model（--auto のとき、リポジトリの層（team・local）の設定 review.model の値。ユーザーの層の値は使わない。
+#                 model（--auto のとき、設定 review.model の値。
 #                 null か opus・sonnet・haiku・fable でなければ止まる。--auto でなければ null）
 set -euo pipefail
 
@@ -105,13 +105,8 @@ if [ "$auto" = true ]; then
   case "$max_rounds" in
     "" | null | 0 | 0[0-9]* | *[!0-9]*) dw_die "review.max_rounds は1以上の整数にしてください: ${max_rounds}" 2 ;;
   esac
-  # review.model は、導入したリポジトリだけに効かせるため、リポジトリの層（team・local）からだけ読む（設計書 §7）
-  model="$(dw_review_model_layers "$(dw_repo_root)" | tail -n 1 | cut -f 3)"
-  model="${model:-null}"
-  user_config="$(dw_user_dir)/config.json"
-  if dw_review_model_of "$user_config" >/dev/null; then
-    dw_warn "${user_config} の review.model は使いません（リポジトリの .claude/dev-workflow/config.json か config.local.json に書いてください）"
-  fi
+  # review.model もほかの設定と同じく層を合わせた値を使う（ユーザーの層は、導入したリポジトリの中でだけ効く。設計書 §7）
+  model="$(jq -c '.review.model' <<<"$config")"
   dw_review_model_ok "$model" || dw_die "review.model は null か $(dw_review_model_names) のどれかにしてください: ${model}" 2
   base_branch="$(jq -r .base_branch <<<"$config")"
   target="origin/$base_branch"
