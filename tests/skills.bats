@@ -229,3 +229,24 @@ frontmatter() { awk 'NR == 1 && $0 == "---" { on = 1; next } on && $0 == "---" {
   grep -q -- '--models-scope' <<<"$step2" || fail "手順2に、保存する層を渡すことが書かれていません"
   grep -q 'models.actions' "$f" || fail "手順3の予定に、レビューのモデルの変更が入っていません"
 }
+
+# shellcheck disable=SC2016 # バッククォートはスキルの本文の文字で、展開させない
+@test "review は、独自の観点をプラグインの agent（ファイルを編集するツールを持たない）でレビューする（設計書 §7）" {
+  agent="$BATS_TEST_DIRNAME/../plugins/dev-workflow/agents/perspective-reviewer.md"
+  [ -f "$agent" ] || fail "agents/perspective-reviewer.md がありません"
+  assert_equal "$(frontmatter "$agent" | sed -n 's/^name: //p')" "perspective-reviewer"
+  tools="$(frontmatter "$agent" | sed -n 's/^tools: //p')"
+  assert_equal "$tools" "Read, Grep, Glob, Bash"
+  grep -q '"suggestion"' "$agent" || fail "agent の定義に、返す JSON の形式がありません"
+
+  f="$SKILLS/review/SKILL.md"
+  step3="$(awk '/^### 3\./ { on = 1; next } /^### 4\./ { on = 0 } on' "$f")"
+  grep -q '`subagent_type` を `dev-workflow:perspective-reviewer`' <<<"$step3" \
+    || fail "手順3に、独自の観点を subagent_type で agent に任せることが書かれていません"
+  if grep -n '"suggestion"' "$f"; then
+    fail "review の SKILL.md に、返す JSON の形式が残っています（agent の定義だけに書く）"
+  fi
+  step8="$(awk '/^### 8\./ { on = 1; next } /^### 9\./ { on = 0 } on' "$f")"
+  grep -q 'dev-workflow:perspective-reviewer' <<<"$step8" \
+    || fail "再レビュー（手順8）で、独自の観点を agent で起動することが書かれていません"
+}
