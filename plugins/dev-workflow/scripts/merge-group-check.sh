@@ -6,7 +6,8 @@
 # 使い方: merge-group-check.sh --branch NAME [--repo OWNER/NAME] [--check NAME]... [--checks-json JSON]
 #   --branch NAME    ワークフローを読むブランチ（base_branch。キューはこのブランチのワークフローを動かす）
 #   --repo OWNER/NAME  対象のリポジトリ（既定: 今いるリポジトリ）
-#   --check NAME     必須のチェックの名前（繰り返し指定できる。無ければ何も読まずに空の結果を出す）
+#   --check NAME     必須のチェックの名前（繰り返し指定できる。--check と --checks-json のどちらにも名前が無ければ、
+#                    何も読まずに空の結果を出す）
 #   --checks-json JSON  必須のチェックの名前の JSON の配列（--check と合わせて使える）
 #
 # 確かめ方:
