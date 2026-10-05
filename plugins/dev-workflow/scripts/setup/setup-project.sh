@@ -67,8 +67,8 @@ config="$("$BASH" "$DW_SCRIPTS_DIR/config.sh")"
 # --hold-column は、設定に書く前でも Status 列に足せるよう、読んだ設定に重ねる
 [ -z "$hold" ] || config="$(jq -c --arg h "$hold" '.status.hold = $h' <<<"$config")"
 dw_check_hold_column "$config"
-# 設定に書かれた順のまま重複を除く
-status_names="$(jq -c 'reduce (.status[] | select(. != null)) as $s ([]; if any(.[]; . == $s) then . else . + [$s] end)' <<<"$config")"
+# 設定に書かれた順のまま重複を除く。null と空文字は、その役割の列を使わないという意味なので外す
+status_names="$(jq -c 'reduce (.status[] | select(. != null and . != "")) as $s ([]; if any(.[]; . == $s) then . else . + [$s] end)' <<<"$config")"
 todo_name="$(jq -r '.status.todo // empty' <<<"$config")"
 sp_name="$(jq -r '.story_point.field' <<<"$config")"
 

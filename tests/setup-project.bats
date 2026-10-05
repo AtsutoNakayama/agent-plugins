@@ -223,6 +223,14 @@ called() { grep -c "^$1 " "$CALLS" || true; }
   assert_equal "$(called UpdateStatus)" 0
 }
 
+@test "役割の列名が空文字（hold や pr_opened）なら、未設定として Status 列に足さない" {
+  setup_fake_gh
+  echo '{"status": {"hold": "", "pr_opened": ""}}' >.claude/dev-workflow/config.json
+  run_setup
+  assert_success
+  assert_equal "$(called UpdateStatus)" 0
+}
+
 @test "--hold-column は、設定に無くても保留の列を追加し、--write-config なら status.hold を書き込む" {
   setup_fake_gh
   echo '{"language": "en"}' >.claude/dev-workflow/config.json
