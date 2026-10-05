@@ -41,12 +41,13 @@ need_value() {
 }
 
 labels_args=() project_args=() repo_args=() models_args=() dry_run=false
-review_model_given=false models_scope=""
+review_model_given=false models_scope="" hold=""
 while [ $# -gt 0 ]; do
   case "$1" in
     --number | --title | --hold-column)
       need_value "$@"
       project_args+=("$1" "$2")
+      [ "$1" != --hold-column ] || hold="$2"
       shift 2
       ;;
     --require-approval | --required-check)
@@ -166,6 +167,10 @@ if $dry_run; then
     && jq -e --argjson p "$project" \
       '.project.owner == $p.project.owner and .project.number == $p.project.number' .claude/dev-workflow/config.json >/dev/null 2>&1; then
     config_changes=false
+  fi
+  # 保留の列を、今の設定と違う名前で書く予定なら、config.json が変わる
+  if [ -n "$hold" ] && ! jq -e --arg h "$hold" '.status.hold == $h' .claude/dev-workflow/config.json >/dev/null 2>&1; then
+    config_changes=true
   fi
   # レビューのモデルをチームの層に書く予定なら、config.json が変わる
   if jq -e --arg f "$repo_root/.claude/dev-workflow/config.json" '.changed and .file == $f' <<<"$models" >/dev/null; then
