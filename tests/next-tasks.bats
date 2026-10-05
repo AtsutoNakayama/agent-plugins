@@ -399,6 +399,19 @@ JSON
   assert_equal "$(out_of '[.in_progress[] | [.number, .area_known]]')" '[[20,false],[21,true]]'
 }
 
+@test "着手中の列にある親の Issue は、着手中として数えず、警告も付けない" {
+  # 親には作業もブランチも無いので、領域も PR も無く、Todo の全部の Issue に「重なるか分からない」と警告していた
+  setup_fake_gh
+  item 10 Todo $'## 変更するファイル・領域\n- docs/'
+  item 20 "In Progress" "" "" me/demo OPEN 2
+  item 21 "In Progress" $'## 変更するファイル・領域\n- tests/'
+  write_page
+  run_script next-tasks.sh
+  assert_success
+  assert_equal "$(out_of '[.active_unknown, .todo[0].warnings]')" '[[],[]]'
+  assert_equal "$(out_of '[.in_progress[].number]')" '[21]'
+}
+
 @test "着手中の Issue に領域か PR があれば、警告は付かない" {
   setup_fake_gh
   item 10 Todo $'## 変更するファイル・領域\n- docs/'
