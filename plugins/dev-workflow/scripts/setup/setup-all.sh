@@ -10,7 +10,7 @@
 #   --merge-queue           マージキューを使う（使えないリポジトリでは止まる）
 #   --no-merge-queue        マージキューを外す（どちらも付けなければ今のまま）
 #   --review-model M        レビューのサブエージェントのモデル（opus・sonnet・haiku・fable。off ならセッションと同じモデル）
-#   --models-scope S        --review-model を書く層（local・team）。--review-model には必須
+#   --models-scope S        --review-model を書く層（local・team）。--review-model と一緒に使う（どちらか片方だけでは止まる）
 #   --dry-run               変更せず、行う予定の操作だけを出力する
 #
 # 行うこと:
