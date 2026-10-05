@@ -158,7 +158,8 @@ agent-plugins/
 - レビューの観点の追加・修正は、そのきっかけになったタスクの PR に含め、別の Issue にしない（観点の見直しはどのタスクの中でも起き、そのたびに Issue を立てると運用が重いため）。そのため `review-perspective-add` は、リポジトリの層の観点を今のタスクのワークツリーに作り、そのブランチでのコミットを案内する。作業用のブランチの上でなければ（`review-perspective-add.sh` の `work_branch` が false）、そのことを伝える。同梱の観点 `issue-requirements` は、観点ファイルの追加・修正を範囲外の変更として指摘しない。
 - 独自のレビュースキルは独自の観点だけを担当する（観点ごとにサブエージェントで並行してレビューする）。一般的なバグの検出は組み込みの `/code-review`（観点 `code-review`）に任せる。
 - 観点ごとのサブエージェントは、プラグインに同梱する agent `perspective-reviewer`（`agents/perspective-reviewer.md`）で、review スキルは Agent ツールの `subagent_type` に `dev-workflow:perspective-reviewer` を指定して起動する（[ADR 000200](adr/000200-review-perspective-plugin-agent.md)）。
-  - 担当者への指示と、返す JSON の形式は agent の定義に置き、review スキルのプロンプトには、観点ファイルのパス・基点・Issue の番号だけを書く。返事は、いつも JSON のオブジェクト1つ（`findings`：`file`・`line`・`summary`・`detail`・`suggestion` の配列、`notes`：指摘の外で伝える文か null）にする。観点ファイルが決めた文（`issue-requirements` の「Issue を読めないので確かめられない」など）は `notes` に入れ、review スキルは `notes` を観点の名前を添えてそのままユーザーに伝える。JSON として読めない返事だけは、全文を `notes` と同じように伝える。
+  - 担当者への指示と、返す JSON の形式は agent の定義に置き、review スキルのプロンプトには、観点ファイルのパス・基点・Issue の番号だけを書く。返事は、いつも JSON のオブジェクト1つ（`findings`：`file`・`line`・`summary`・`detail`・`suggestion` の配列、`notes`：指摘の外で伝える文か null）にする。観点ファイルが決めた文（`issue-requirements` の「Issue を読めないので確かめられない」など）は `notes` に入れる。
+  - review スキルは、返事のどの部分も捨てずに読む。コードブロックの囲みや前置きがあっても JSON のオブジェクトを読み、`findings` を指摘の一覧に入れ、`notes` とオブジェクトの外の文を観点からの伝言にする。オブジェクトを読めない返事は、全文を伝言にする。伝言は、観点の名前を添えてそのまま、一覧の後（指摘が無いときも）・反映するものを選ぶ質問の中・結果のまとめで伝える。
   - `tools` は `Read, Grep, Glob, Bash` で、ファイルを編集するツール（Edit・Write・NotebookEdit）を持たない。Bash は `git diff`・`gh issue view`・`git fetch` に使い、Bash でファイルを書き換えないことは agent の定義の指示で頼む。
   - `model`・`effort` は書かない。モデルは、設定の `review.model` を Agent ツールの `model` で渡す。
   - 一覧にまとめる作業（原因・水平展開・繰り返しの判定）と、選択・反映・再レビューは、main の会話で行う。
