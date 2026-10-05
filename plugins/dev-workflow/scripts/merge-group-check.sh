@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
 # 必須のチェックを出すワークフローが、マージキューの merge_group のイベントでも動くかを確かめる。何も変更しない。
-# キューは必須のチェックを merge_group のイベントでもう一度動かしてからマージするので、動かないワークフローの
-# チェックは「待ち」のまま残り、PR がマージされない。setup-repo.sh と doctor.sh が使う。
+# キューは必須のチェックを merge_group のイベントでもう一度動かしてからマージするので、ワークフローの on: に
+# merge_group が無いと、チェックが「待ち」のまま残り、PR がマージされない。ジョブの if: で merge_group を
+# 除いていると、ジョブが飛ばされて成功とみなされ、キューが CI を動かさないままマージしてしまう。
+# setup-repo.sh と doctor.sh が使う（確かめる理由は、この説明を正本とする）。
 #
 # 使い方: merge-group-check.sh --branch NAME [--repo OWNER/NAME] [--check NAME]... [--checks-json JSON]
 #   --branch NAME    ワークフローを読むブランチ（base_branch。キューはこのブランチのワークフローを動かす）

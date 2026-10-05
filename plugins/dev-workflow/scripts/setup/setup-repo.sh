@@ -25,9 +25,7 @@
 #      このスクリプトが扱わないルール（オプションを指定しないときの必須のステータスチェックなど）は残す
 #   3. 必須のチェックがあれば、そのワークフローが merge_group のイベントで動くかを確かめる（merge-group-check.sh。
 #      dry-run でも確かめ、結果は merge_queue.merge_group に出す）。キューを使うのに動かない・確かめられない
-#      チェックがあれば警告する（ワークフローの on: に merge_group が無いと、キューのチェックが「待ち」のまま残り、
-#      PR がマージされない。ジョブの if: で merge_group を除いていると、ジョブが飛ばされて成功とみなされ、
-#      キューが CI を動かさないままマージしてしまう）。止めはしない
+#      チェックがあれば警告する（理由は merge-group-check.sh の先頭）。止めはしない
 # リポジトリの管理者権限が必要（dry-run でも確かめる）。守るブランチがリポジトリに無ければ止める。
 # 守るブランチは、チームの設定（.claude/dev-workflow/config.json）の base_branch で決める（個人の設定は使わない）。
 # --repo が今いるリポジトリと違うときは、対象のリポジトリの .claude/dev-workflow/config.json を API で読む。
@@ -284,10 +282,8 @@ elif [ "$queue" = off ] && [ "$(jq '[(.rules // [])[] | select(.type == "merge_q
 fi
 approvals_now="$(jq '.rules[] | select(.type == "pull_request") | .parameters.required_approving_review_count' <<<"$desired")"
 
-# 必須のチェックを出すワークフローが merge_group のイベントで動くか。キューは必須のチェックを merge_group で
-# もう一度動かすので、on: に無いとキューのチェックが「待ち」のまま残ってマージされず、ジョブの if: で除くと
-# CI を動かさないままマージされる。キューを使うかを決める
-# 材料にするため、キューを使わないときも確かめる（警告はキューを使うときだけ）。必須のチェックは、このルールセットのものと、
+# 必須のチェックを出すワークフローが merge_group のイベントで動くか（理由は merge-group-check.sh の先頭）。
+# キューを使うかを決める材料にするため、キューを使わないときも確かめる（警告はキューを使うときだけ）。必須のチェックは、このルールセットのものと、
 # 組織などのほかのルールセットが base_branch に求めるもの（rules/branches）と、古いブランチ保護が求めるものを合わせる
 other_rules="$(dw_branch_rules "$repo_nwo" "$branch")" || other_rules='[]'
 other_checks="$(dw_required_checks "$other_rules" "$(dw_classic_required_checks "$repo_nwo" "$branch")" "$ruleset_id" 2>/dev/null)" \
