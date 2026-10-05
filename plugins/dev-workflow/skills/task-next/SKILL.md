@@ -1,6 +1,6 @@
 ---
 name: task-next
-description: GitHub Project の Todo の Issue から、次に着手すべきものと、同時に進められる組を提案する。優先順位（Todo の上から順）・依存（blocked by と本文の「依存」）・コンフリクトの見込み（本文の「変更するファイル・領域」と着手中の PR のファイル）を見る。何も変えない読み取り専用。「次に何をやればいい？」「並列で進められる Issue はある？」のように、着手する Issue を選ぶときに使う。
+description: GitHub Project の Todo の Issue から、次に着手すべきものと、同時に進められる組を提案する。優先順位（Todo の上から順）・依存（blocked by と本文の「依存」）・コンフリクトの見込み（本文の「変更するファイル・領域」と着手中の PR のファイル）を見る。サブ Issue を持つ親の Issue（作業は子の Issue で進める）は候補から外す。何も変えない読み取り専用。「次に何をやればいい？」「並列で進められる Issue はある？」のように、着手する Issue を選ぶときに使う。
 ---
 
 # 次に着手する Issue の提案
@@ -9,7 +9,7 @@ Todo の Issue を読み、次に着手すべきものと、同時に進めら�
 
 スクリプト（JSON を出力する）:
 
-- `${CLAUDE_PLUGIN_ROOT}/scripts/next-tasks.sh`：Todo の Issue を Project の並び順で読み、待ち・領域の重なりを判定する（`--help` で使い方）
+- `${CLAUDE_PLUGIN_ROOT}/scripts/next-tasks.sh`：Todo の Issue を Project の並び順で読み、待ち・親の Issue・領域の重なりを判定する（`--help` で使い方）
 
 ## 手順
 
@@ -36,7 +36,7 @@ Todo の Issue を読み、次に着手すべきものと、同時に進めら�
   - 「領域が不明なので、重なるか分からない」：その Issue に「変更するファイル・領域」を書けば、並列の候補にできると伝える
   - 「次に着手するものの領域が不明なので、重なるか分からない」：この Issue の領域は分かっている。`next` の Issue に「変更するファイル・領域」を書けば、並列の組を作れると伝える（書くべき Issue を取り違えない）
 - **待ちのもの**：`waiting` の Issue と、待っている Issue の番号（`blocked_by`）。候補には入れない。`blocked_by` の `state` が `not_found` なら、本文の「依存」に書かれた番号の Issue が見つからない（書き間違いか、削除された）ので、番号を直すよう伝える
-- **親の Issue**：`parent` が true の Issue。親は子をまとめるだけで、作業は子の Issue で進めるので、候補には入れない（設計書 §4）。`gh issue view <番号> --json subIssues,subIssuesSummary` で子を読み、開いている子（`state` が `OPEN`）を番号とタイトルで添えて、着手するなら子を選ぶよう伝える（`subIssues.totalCount` が読めた数より多ければ `gh api --paginate repos/{owner}/{repo}/issues/<番号>/sub_issues` で全部を読む。別のリポジトリの子は一覧に入れず、あることだけを伝える）。開いている子が無ければ、親の作業は終わっているので、親を閉じる（completed）よう伝える
+- **親の Issue**：`parent` が true の Issue。親は子をまとめるだけで、作業は子の Issue で進めるので、候補には入れない（設計書 §4）。開いている子は、task-start の手順2と同じように読んで案内する（子がさらに親なら孫を案内し、別のリポジトリの子は一覧に入れない。開いている子が無ければ、親を閉じるよう伝える）
 
 次の注意も、該当すれば伝える。
 

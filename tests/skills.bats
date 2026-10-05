@@ -123,8 +123,15 @@ frontmatter() { awk 'NR == 1 && $0 == "---" { on = 1; next } on && $0 == "---" {
   grep -q '待ちでも親でもないもの' "$f" || fail "並列にできないものから、親の Issue が除かれていません"
   step2="$(awk '/^### 2\./ { on = 1; next } on' "$f")"
   grep -q '\*\*親の Issue\*\*' <<<"$step2" || fail "手順2に、親の Issue の伝え方がありません"
-  grep -q 'subIssues' <<<"$step2" || fail "親の開いている子を読む手順がありません"
+  # 子の読み方・案内のしかたは task-start の手順2を参照し、書き写さない（孫や別のリポジトリの子の扱いがずれないように）
+  grep -q 'task-start の手順2と同じように' <<<"$step2" || fail "親の子の案内が、task-start の手順2を参照していません"
+  grep -q 'subIssues' <<<"$step2" && fail "task-start の手順2の、子の読み方を書き写しています"
   grep -q '親を閉じる' <<<"$step2" || fail "開いている子が無い親を閉じるよう伝えることが書かれていません"
+  # task-start の手順2に、参照する内容（子の読み方・孫・別のリポジトリの子）がある
+  start2="$(awk '/^### 2\./ { on = 1; next } /^### 3\./ { on = 0 } on' "$SKILLS/task-start/SKILL.md")"
+  grep -q 'subIssues' <<<"$start2" || fail "task-start の手順2に、子の読み方がありません"
+  grep -q '孫を案内' <<<"$start2" || fail "task-start の手順2に、孫の案内がありません"
+  grep -q '別のリポジトリの子' <<<"$start2" || fail "task-start の手順2に、別のリポジトリの子の扱いがありません"
 }
 
 @test "review は、局所の指摘でも水平展開の要否を判定し、反映のときに同じ場所も直す（設計書 §7）" {
