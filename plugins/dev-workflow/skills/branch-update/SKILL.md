@@ -11,7 +11,7 @@ main が進んだ PR は、最新の main を取り込んで CI が通り直る�
 
 スクリプト（JSON を出力する）:
 
-- `${CLAUDE_PLUGIN_ROOT}/scripts/branch-status.sh`：origin から `base_branch` を取得し、ブランチの遅れ（`behind`）・先行（`ahead`）、取り込むと衝突するか（`conflicts`。手元で確かめる）、追跡しているファイルの未コミットの変更（`dirty`。未追跡のファイルは除く）、origin のブランチとのずれ（`unpushed`・`unpulled`）、push 済みのブランチの遅れ（`pushed_behind`）、開いている PR のマージ状態（`pr.merge_state`）と、マージキューの状態（`pr.merge_queue`。マージ先でキューが有効か（`enabled`）、キューに並んでいるときの状態（`state`）と順番（`position`）、キューから外れたままのときの理由と時刻（`removed`））を調べる。何も変更しない（`--help` で使い方）
+- `${CLAUDE_PLUGIN_ROOT}/scripts/branch-status.sh`：origin から `base_branch` を取得し、ブランチの遅れ（`behind`）・先行（`ahead`）、取り込むと衝突するか（`conflicts`。手元で確かめる）、追跡しているファイルの未コミットの変更（`dirty`。未追跡のファイルは除く）、origin のブランチとのずれ（`unpushed`・`unpulled`）、push 済みのブランチの遅れ（`pushed_behind`）と衝突（`pushed_conflicts`）、開いている PR のマージ状態（`pr.merge_state`）と、マージキューの状態（`pr.merge_queue`。マージ先でキューが有効か（`enabled`）、キューに並んでいるときの状態（`state`）と順番（`position`）、キューから外れたままのときの理由と時刻（`removed`））を調べる。何も変更しない（`--help` で使い方）
 
 ## 手順
 
@@ -19,7 +19,7 @@ main が進んだ PR は、最新の main を取り込んで CI が通り直る�
 
 取り込むのは今のブランチ（HEAD）なので、取り込む作業用のブランチのワークツリーの中で `branch-status.sh` を実行する（調べるのは今のブランチだけ。別のブランチに取り込むときは、そのブランチのワークツリーに移ってから行う）。
 
-まず、手元では取り込み済みで、まだ push していない（`up_to_date` が true で、`pushed_behind` が 1 以上）かを見る。前に取り込んで直したが push しなかった（push を断った・拒否された）ときで、GitHub は push 済みの古いコミットを見て `BEHIND` や `DIRTY` のままになっている。このときは、取り込みは済んでいるので、下の判断はせずに、下の「取り込むとき」の確認をしてから、手順2を飛ばして手順3へ進む（手順4・6は、取り込み済みのときの扱いに従う）。ただし、キューを使うリポジトリ（`pr.merge_queue.enabled` が true）では、push 済みのブランチが main と衝突している（`pr.merge_state` が `DIRTY`）ときだけ、そうする。衝突していなければ push は要らない（push すると、キューに並んでいる PR はキューから外れる）ので、下の「キューを使うリポジトリ」の判断に進み、手元で取り込んだ分は push しなくてよいことを添える。
+まず、手元では取り込み済みで、まだ push していない（`up_to_date` が true で、`pushed_behind` が 1 以上）かを見る。前に取り込んで直したが push しなかった（push を断った・拒否された）ときで、GitHub は push 済みの古いコミットを見て `BEHIND` や `DIRTY` のままになっている。このときは、取り込みは済んでいるので、下の判断はせずに、下の「取り込むとき」の確認をしてから、手順2を飛ばして手順3へ進む（手順4・6は、取り込み済みのときの扱いに従う）。ただし、キューを使うリポジトリ（`pr.merge_queue.enabled` が true）では、push 済みのブランチが main と衝突している（`pushed_conflicts` が true か、`pr.merge_state` が `DIRTY`）ときだけ、そうする。`pushed_conflicts` は手元で確かめた結果なので、`pr.merge_state` が `UNKNOWN` でも使える（手元の `conflicts` は、取り込み済みの HEAD を比べるので、ここでは使えない）。`pushed_conflicts` が null で `pr.merge_state` が `UNKNOWN` なら、衝突しているか分からないので、数秒待って `branch-status.sh` を実行し直し、それでも分からなければ、push するかをユーザーに聞く。衝突していなければ push は要らない（push すると、キューに並んでいる PR はキューから外れる）ので、下の「キューを使うリポジトリ」の判断に進み、手元で取り込んだ分は push しなくてよいことを添える。
 
 それ以外は、取り込むかどうかを、マージキューを使うか（`pr.merge_queue.enabled` が true か）で分けて決める。PR が無いか、`pr.merge_queue` が null（取得できなかった）なら、キューを使わないリポジトリとして決める。
 
