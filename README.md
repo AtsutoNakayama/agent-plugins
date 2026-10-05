@@ -35,7 +35,7 @@ plugins/dev-workflow/scripts/doctor.sh
 
 Issue の番号を取るスキル（`task-start`・`task-status`・`task-finish`・`task-cancel`）は、`/dev-workflow:task-start 12` や `/dev-workflow:task-start #12` のように、引数で番号を渡せます。`task-status` は `/dev-workflow:task-status 12 Blocked` のように、番号、列名の順に渡します。引数が無ければ、依頼の文章から読み取ります。`pr-respond` は `/dev-workflow:pr-respond 42` のように PR の番号を渡せます（無ければ今のブランチの PR）。
 
-`pr-respond` は、投稿者ごとに担当の skill を設定で指定できます。担当の skill がある投稿者の指摘は、その skill に任せます（PR の番号を引数にして呼びます）。設定が無ければ、すべて汎用の手順で扱います。投稿者の名前は、大文字と小文字、末尾の `[bot]` を区別しません。
+`pr-respond` は、投稿者ごとに担当の skill を、設定（`.claude/dev-workflow/config.json`）の `pr_respond.handlers` で指定できます。担当の skill がある投稿者の指摘は、その skill に任せます（PR の番号を引数にして呼びます）。設定が無ければ、すべて汎用の手順で扱います。投稿者の名前は、大文字と小文字、末尾の `[bot]` を区別しません。
 
 ```json
 {
