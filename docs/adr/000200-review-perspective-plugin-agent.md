@@ -46,6 +46,7 @@ review スキルの手順3は、独自の観点ごとにサブエージェント
 選んだ案：プラグインの agent `perspective-reviewer` を定義して `subagent_type` で呼び、任せるのは観点ごとのレビューだけにする。`model`・`effort` は書かず、Bash は持たせる。返事は `findings` と `notes` のオブジェクト1つにそろえ、読む側はどの部分も捨てない。
 
 * `tools` は `Read, Grep, Glob, Bash` に絞り、Edit・Write・NotebookEdit を持たせない。`tools` では Bash をコマンドごとに絞れず（`Bash(git diff *)` のような書き方は Bash 全体を外す）、観点は `git diff` のほかに `gh issue view`（`issue-requirements`）や `git fetch`（`main-drift`）も使うので、Bash は外さない。
+* Bash のコマンドは1つずつ実行させ、`cd` も、`&&`・`;`・`|` でのつなぎも使わせない。headless で review を通しで動かしたとき、コマンドをつないだ3つの agent は Bash を承認されず差分を読めなかった（単体の `git diff` は通った）。つなぐと、対話でも承認を求める回数が増える。
 * 一覧にまとめる作業と、選択・反映・再レビューは main の会話に残す。反映するときに main が同じコードを読み直すので、まとめる作業を移しても、main の文脈の節約は小さい。
 * `model`・`effort` を frontmatter に書くと必ず効き、利用者が変えられなくなる。Agent ツールの `model` は agent の定義より優先されるので、`review.model` はこれまでどおり渡せる。
 * プラグインの agent では `permissionMode`・`hooks`・`mcpServers` が無視されるので、これらで書き込みを止めることはできない。
@@ -63,7 +64,7 @@ review スキルの手順3は、独自の観点ごとにサブエージェント
 
 ### 確認
 
-`tests/skills.bats` で、agent の `name` と `tools`、SKILL.md の手順3・手順8が `dev-workflow:perspective-reviewer` を呼ぶこと、返す JSON の形式（`findings` と `notes`）が agent の定義にあって SKILL.md に無いこと、`notes` に問題を入れない決まりが agent の定義にあること、手順3の返事の読み方（囲みや前置きがあっても読み、どの部分も捨てない）と伝言の伝え方、伝言を手順4・5・7で伝えることを確かめる。`claude plugin validate --strict plugins/dev-workflow` で agent の定義を検査する。agent が実際にこの形で返すかはテストでは確かめられないので、`claude -p --plugin-dir plugins/dev-workflow` で agent を起動して確かめる。
+`tests/skills.bats` で、agent の `name` と `tools`、SKILL.md の手順3・手順8が `dev-workflow:perspective-reviewer` を呼ぶこと、返す JSON の形式（`findings` と `notes`）が agent の定義にあって SKILL.md に無いこと、`notes` に問題を入れない決まりと、Bash のコマンドを1つずつ実行する決まりが agent の定義にあること、手順3の返事の読み方（囲みや前置きがあっても読み、どの部分も捨てない）と伝言の伝え方、伝言を手順4・5・7で伝えることを確かめる。`claude plugin validate --strict plugins/dev-workflow` で agent の定義を検査する。agent が実際にこの形で返すかはテストでは確かめられないので、`claude -p --plugin-dir plugins/dev-workflow` で agent を起動して確かめる。
 
 ## 補足
 

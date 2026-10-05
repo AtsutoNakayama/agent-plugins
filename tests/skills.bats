@@ -238,6 +238,8 @@ frontmatter() { awk 'NR == 1 && $0 == "---" { on = 1; next } on && $0 == "---" {
   assert_equal "$(frontmatter "$AGENT" | sed -n 's/^name: //p')" "perspective-reviewer"
   tools="$(frontmatter "$AGENT" | sed -n 's/^tools: //p')"
   assert_equal "$tools" "Read, Grep, Glob, Bash"
+  grep -q 'Bash のコマンドは1つずつ実行し、`cd` をせず、`&&`・`;`・`|` でつながない' "$AGENT" \
+    || fail "agent の定義に、Bash のコマンドを1つずつ実行する決まりがありません（つなぐと承認されないことがある）"
 
   f="$SKILLS/review/SKILL.md"
   step3="$(awk '/^### 3\./ { on = 1; next } /^### 4\./ { on = 0 } on' "$f")"
