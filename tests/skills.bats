@@ -4,6 +4,8 @@
 load test_helper
 
 SKILLS="$BATS_TEST_DIRNAME/../plugins/dev-workflow/skills"
+# 独自の観点をレビューする agent（review スキルが起動する）
+AGENT="$BATS_TEST_DIRNAME/../plugins/dev-workflow/agents/perspective-reviewer.md"
 
 # 使い方: frontmatter <SKILL.md> → 先頭の --- で囲まれた部分
 frontmatter() { awk 'NR == 1 && $0 == "---" { on = 1; next } on && $0 == "---" { exit } on' "$1"; }
@@ -232,20 +234,15 @@ frontmatter() { awk 'NR == 1 && $0 == "---" { on = 1; next } on && $0 == "---" {
 
 # shellcheck disable=SC2016 # バッククォートはスキルの本文の文字で、展開させない
 @test "review は、独自の観点をプラグインの agent（ファイルを編集するツールを持たない）でレビューする（設計書 §7）" {
-  agent="$BATS_TEST_DIRNAME/../plugins/dev-workflow/agents/perspective-reviewer.md"
-  [ -f "$agent" ] || fail "agents/perspective-reviewer.md がありません"
-  assert_equal "$(frontmatter "$agent" | sed -n 's/^name: //p')" "perspective-reviewer"
-  tools="$(frontmatter "$agent" | sed -n 's/^tools: //p')"
+  [ -f "$AGENT" ] || fail "agents/perspective-reviewer.md がありません"
+  assert_equal "$(frontmatter "$AGENT" | sed -n 's/^name: //p')" "perspective-reviewer"
+  tools="$(frontmatter "$AGENT" | sed -n 's/^tools: //p')"
   assert_equal "$tools" "Read, Grep, Glob, Bash"
-  grep -q '"suggestion"' "$agent" || fail "agent の定義に、返す JSON の形式がありません"
 
   f="$SKILLS/review/SKILL.md"
   step3="$(awk '/^### 3\./ { on = 1; next } /^### 4\./ { on = 0 } on' "$f")"
   grep -q '`subagent_type` を `dev-workflow:perspective-reviewer`' <<<"$step3" \
     || fail "手順3に、独自の観点を subagent_type で agent に任せることが書かれていません"
-  if grep -n '"suggestion"' "$f"; then
-    fail "review の SKILL.md に、返す JSON の形式が残っています（agent の定義だけに書く）"
-  fi
   step8="$(awk '/^### 8\./ { on = 1; next } /^### 9\./ { on = 0 } on' "$f")"
   grep -q 'dev-workflow:perspective-reviewer' <<<"$step8" \
     || fail "再レビュー（手順8）で、独自の観点を agent で起動することが書かれていません"
@@ -253,12 +250,12 @@ frontmatter() { awk 'NR == 1 && $0 == "---" { on = 1; next } on && $0 == "---" {
 
 # shellcheck disable=SC2016 # バッククォートはスキルの本文の文字で、展開させない
 @test "perspective-reviewer は findings と notes の1つの形で返し、review は notes を手順4で伝える（設計書 §7）" {
-  agent="$BATS_TEST_DIRNAME/../plugins/dev-workflow/agents/perspective-reviewer.md"
-  grep -q '{"findings": ' "$agent" || fail "agent の定義に、findings と notes の形がありません"
-  grep -q '`notes`' "$agent" || fail "agent の定義に、notes の説明がありません"
+  grep -q '{"findings": ' "$AGENT" || fail "agent の定義に、findings と notes の形がありません"
+  grep -q '"suggestion"' "$AGENT" || fail "agent の定義に、指摘の項目（file・line・summary・detail・suggestion）がありません"
+  grep -q '`notes`' "$AGENT" || fail "agent の定義に、notes の説明がありません"
   f="$SKILLS/review/SKILL.md"
-  if grep -n '配列でない' "$f"; then
-    fail "review の SKILL.md に、配列でない返事の扱いが残っています（返事は findings と notes の1つの形）"
+  if grep -n '"suggestion"' "$f"; then
+    fail "review の SKILL.md に、返す JSON の形式が残っています（agent の定義だけに書く）"
   fi
   step3="$(awk '/^### 3\./ { on = 1; next } /^### 4\./ { on = 0 } on' "$f")"
   grep -q 'JSON として読めない返事は、指摘にはせず、返事の全文を観点からの伝言として扱う' <<<"$step3" \
