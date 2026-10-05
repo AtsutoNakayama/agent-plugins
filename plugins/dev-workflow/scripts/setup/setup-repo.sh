@@ -285,11 +285,11 @@ approvals_now="$(jq '.rules[] | select(.type == "pull_request") | .parameters.re
 # 必須のチェックを出すワークフローが merge_group のイベントで動くか。キューは必須のチェックを merge_group で
 # もう一度動かすので、動かないとキューのチェックが「待ち」のまま残ってマージされない。キューを使うかを決める
 # 材料にするため、キューを使わないときも確かめる（警告はキューを使うときだけ）。必須のチェックは、このルールセットのものと、
-# 組織などのほかのルールセットが base_branch に求めるもの（rules/branches）を合わせる
-other_checks="$(gh api --paginate "repos/$repo_nwo/rules/branches/$(jq -rn --arg b "$branch" '$b | @uri')?per_page=100" 2>/dev/null \
-  | jq -sc --arg id "$ruleset_id" '[add // [] | .[]
-      | select(.type == "required_status_checks" and ((.ruleset_id // "" | tostring) != $id))
-      | .parameters.required_status_checks[]?.context]' 2>/dev/null)" || other_checks='[]'
+# 組織などのほかのルールセットが base_branch に求めるもの（rules/branches）と、古いブランチ保護が求めるものを合わせる
+other_rules="$(gh api --paginate "repos/$repo_nwo/rules/branches/$(jq -rn --arg b "$branch" '$b | @uri')?per_page=100" 2>/dev/null)" \
+  || other_rules='[]'
+other_checks="$(dw_required_checks "$other_rules" "$(dw_classic_required_checks "$repo_nwo" "$branch")" "$ruleset_id" 2>/dev/null)" \
+  || other_checks='[]'
 all_checks="$(jq -c --argjson o "$other_checks" '[.rules[] | select(.type == "required_status_checks")
   | .parameters.required_status_checks[].context] + $o | unique' <<<"$desired")"
 merge_group=null
