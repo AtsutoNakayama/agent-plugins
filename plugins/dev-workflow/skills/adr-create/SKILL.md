@@ -5,7 +5,7 @@ description: 設計上の判断を、MADR 4.0.0 の書式（日本語に訳し�
 
 # ADR の作成
 
-判断の内容を聞き取り、`adr-create.sh` で ADR のファイルを作って、中身を書く。ADR は Issue ごとではなく**判断ごと**に作る（判断をした Issue でだけ作る。1つの Issue から2つ以上の ADR ができてもよい）。
+判断の内容を聞き取り、`adr-create.sh` で ADR のファイルを作って、中身を書く。ADR は Issue ごとではなく**判断ごと**に作る（判断をした Issue でだけ作る。1つの Issue から2つ以上の ADR ができてもよい）。過去の判断を後から残すときは、残す作業の Issue で作り、front matter の `issue` と `date` は、判断をした Issue と日にする（`--issue`・`--date`）。
 
 作るのは手元のファイルだけなので、作成の確認は取らない（設計書 §8）。ただし、判断の内容や、置き換える ADR が依頼から決められないときは、推測で埋めずにユーザーに聞く。
 
@@ -59,4 +59,4 @@ description: 設計上の判断を、MADR 4.0.0 の書式（日本語に訳し�
 
 ### 5. 結果を伝える
 
-作った ADR の `path` と、選んだテンプレート、status を書き換えた ADR（`superseded`）を伝える。ADR は、判断をした Issue の PR に含める。
+作った ADR の `path` と、選んだテンプレート、status を書き換えた ADR（`superseded`）を伝える。ADR は、判断をした Issue の PR に含める（過去の判断を後から残すときは、残す作業の Issue の PR に含める）。

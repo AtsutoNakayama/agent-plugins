@@ -82,7 +82,7 @@ base_ahead: required
 `/dev-workflow:adr-create` は、設計上の判断の「なぜ」を ADR（Architecture Decision Record）として残します。
 
 - 書式は [MADR](https://github.com/adr/madr) 4.0.0 です。公式の4つのテンプレートを日本語に訳して、プラグインに同梱しています（`plugins/dev-workflow/templates/adr/`。元にした版とライセンスは同じ場所の `README.md`）。
-- ADR は Issue ごとではなく、判断ごとに作ります。判断をした Issue でだけ作り、1つの Issue から2つ以上の ADR ができてもかまいません。
+- ADR は Issue ごとではなく、判断ごとに作ります。判断をした Issue でだけ作り、1つの Issue から2つ以上の ADR ができてもかまいません。過去の判断を後から残すときは、残す作業の Issue の PR で作り、ADR の `issue` と `date` を、判断をした Issue と日にします（`adr-create.sh` の `--issue`・`--date`）。
 - ファイル名は `docs/adr/<Issue 番号を6桁に0埋め>-<短い名前>.md` です（例：`docs/adr/000107-use-madr.md`）。連番ではなく Issue 番号なので、ワークツリーで並行して作業しても名前がぶつかりません。
 - テンプレートは判断に合わせて選びます。他の案と比べて選んだ判断・破壊的変更・元に戻しにくい判断は全部の節がある `adr-template.md`、記録しておけば足りる判断は `adr-template-minimal.md` です。説明のない2つ（`bare`）は、手で書く人向けです。
 - 置き換えた ADR は書き換えません。古い方の `status` の行だけを `superseded by <新しい ADR>` にします。
