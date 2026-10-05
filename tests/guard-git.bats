@@ -356,10 +356,27 @@ silent() {
   denied "強制 push" "cd - && git push --force"
 }
 
-@test "--git-dir・--work-tree を付けたときや、作業ツリーが無いときは、対象が分からないので今までどおり調べる" {
-  # --git-dir だけなら、git rev-parse --show-toplevel は今のディレクトリ（導入していない $TMP）を返す
-  denied "強制 push" "cd $TMP && git --git-dir=$REPO/.git push --force" "cd $TMP && git --git-dir $REPO/.git --work-tree $REPO push --force"
-  denied "main へは push しません" "cd $TMP && git --git-dir=$REPO/.git push origin main"
-  git init -q --bare "$TMP/bare.git"
-  denied "強制 push" "cd $TMP/bare.git && git push --force" "cd $REPO/.git && git push --force"
+@test "--git-dir・--work-tree・GIT_DIR で指したリポジトリや、.git の中では、元のリポジトリが導入したものかで判断する" {
+  git init -q -b main "$TMP/other"
+  # --git-dir だけなら、git rev-parse --show-toplevel は今のディレクトリ（導入していない other）を返すが、それでは判断しない
+  denied "強制 push" \
+    "cd $TMP/other && git --git-dir=$REPO/.git push --force" \
+    "cd $TMP/other && git --git-dir $REPO/.git --work-tree $REPO push --force" \
+    "cd $TMP/other && GIT_DIR=$REPO/.git git push --force" \
+    "cd $TMP/other && env GIT_DIR=$REPO/.git git push --force" \
+    "cd $TMP && GIT_DIR=repo/.git GIT_WORK_TREE=repo git push --force" \
+    "cd $REPO/.git && git push --force"
+  denied "main へは push しません" "cd $TMP/other && GIT_DIR=$REPO/.git git push origin main"
+  # 逆に、導入していないリポジトリを指せば止めない
+  silent "git --git-dir=$TMP/other/.git push --force" "GIT_DIR=$TMP/other/.git git push --force" "cd $TMP/other/.git && git push --force"
+}
+
+@test "bare リポジトリは導入していないとみなし、止めない（ミラーの移行など）" {
+  git clone -q --mirror "$REPO" "$TMP/mirror.git"
+  silent "cd $TMP/mirror.git && git push --mirror ../elsewhere.git" "git -C $TMP/mirror.git push --force"
+}
+
+@test "対象のリポジトリが見つからないときは、守りを外さないよう調べる" {
+  mkdir "$TMP/plain"
+  denied "強制 push" "cd $TMP/plain && git push --force" "cd $TMP/plain && GIT_DIR=$TMP/nowhere git push --force"
 }

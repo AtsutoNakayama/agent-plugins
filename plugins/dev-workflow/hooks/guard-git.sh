@@ -11,7 +11,8 @@
 # 標準入力でフックの入力（JSON）を受け取る。止めるときは理由を標準エラーに1行で出し、終了コード 2 で終わる
 # （Claude Code はコマンドを実行せず、理由を Claude に伝える）。警告するときは、フックの出力の JSON を
 # 標準出力に出し、終了コード 0 で終わる。
-# 操作の対象のリポジトリ（cd・git -C で移った先）が、導入していないリポジトリ（dw_is_set_up）なら何もしない（設計書 §1）。
+# 操作の対象のリポジトリ（cd・git -C で移った先、--git-dir・GIT_DIR などで指したリポジトリ）が、導入していないリポジトリ
+# （dw_is_set_up。bare リポジトリを含む）なら何もしない。対象が分からないときは、守りを外さないよう調べる（設計書 §1）。
 # コマンドの文字列を簡易に解析するだけなので、sh -c や git の別名（alias）を通すと見逃す。
 # 最後の守りは GitHub のルールセット（setup-repo.sh）。
 set -euo pipefail
@@ -55,11 +56,34 @@ resolve_dir() {
   (cd "$p" 2>/dev/null && pwd -P) || true
 }
 
-# git の操作の対象（ディレクトリと git のグローバルオプション）で git を実行する。
-# 使い方: git_at <コマンド>...   （git_dir と gopts を参照する）
+# git の操作の対象（ディレクトリと、git のグローバルオプション・対象を変える環境変数）で git を実行する。
+# 使い方: git_at <コマンド>...   （git_dir と gopts と genv を参照する）
 git_at() {
   [ -n "$git_dir" ] || return 1
-  (cd "$git_dir" && git ${gopts[@]+"${gopts[@]}"} "$@" 2>/dev/null)
+  (cd "$git_dir" && env ${genv[@]+"${genv[@]}"} git ${gopts[@]+"${gopts[@]}"} "$@" 2>/dev/null)
+}
+
+# 操作の対象のリポジトリが、導入したリポジトリ（dw_is_set_up）なら成功し、導入していなければ 1 を返す（設計書 §1）。
+# 対象は、コマンドと同じディレクトリ・--git-dir・--work-tree・GIT_DIR などで git rev-parse して求める。作業ツリー
+# （--show-toplevel）は、--git-dir だけを付けたときは今のディレクトリを返し、.git の中では求められないので、
+# リポジトリ（--git-common-dir）の元のルートで判断する。作業ツリーで判断できるとき（オプションも環境変数も無い）は、
+# そのワークツリーにあるチームの設定も見る。bare リポジトリは、チームの設定を置く作業ツリーが無いので、導入していないとみなす。
+# 対象が分からない（ディレクトリが分からない・git がリポジトリを見つけられない）ときは、守りを外さないよう、導入したものとみなす
+target_set_up() {
+  local common top
+  [ -n "$git_dir" ] || return 0
+  common="$(git_at rev-parse --git-common-dir || true)"
+  [ -n "$common" ] || return 0
+  [ "$(git_at rev-parse --is-bare-repository || true)" != true ] || return 1
+  if [ "${#gopts[@]}" -eq 0 ] && [ "${#genv[@]}" -eq 0 ]; then
+    top="$(git_at rev-parse --show-toplevel || true)"
+    [ -z "$top" ] || ! dw_is_set_up "$top" || return 0
+  fi
+  case "$common" in
+    /*) ;;
+    *) common="$git_dir/$common" ;;
+  esac
+  dw_is_set_up "$(cd "$common/.." 2>/dev/null && pwd -P)"
 }
 
 # 対象のリポジトリの設定から base_branch を出力する。読めなければ main
@@ -227,10 +251,13 @@ check_branch() {
 # 1つのコマンド（単語の並び）を調べる。cd ならディレクトリを移す。
 # 使い方: check_command <単語>...
 check_command() {
-  local target sub base top
-  # 先頭の環境変数の代入（FOO=1 git push）、前に付くだけのコマンド、予約語（then git push）を飛ばす
+  local target sub base
+  # 先頭の環境変数の代入（FOO=1 git push）、前に付くだけのコマンド、予約語（then git push）を飛ばす。
+  # 操作の対象を変える代入（GIT_DIR など）は、対象のリポジトリを求めるときに使う
+  genv=()
   while [ $# -gt 0 ]; do
     case "$1" in
+      GIT_DIR=* | GIT_WORK_TREE=* | GIT_COMMON_DIR=*) genv+=("$1"); shift ;;
       [A-Za-z_]*=*) shift ;;
       command | exec | time | nohup | env) shift ;;
       if | then | elif | else | while | until | do | '{' | '!') shift ;;
@@ -290,13 +317,8 @@ check_command() {
 
   case "$sub" in
     commit | push | switch | checkout | branch | worktree)
-      # 導入していないリポジトリでは何もしない。対象のリポジトリが分からないときは、守りを外さないよう、今までどおり調べる。
-      # 分からないのは、ディレクトリが分からないとき（cd - の後など）、--git-dir・--work-tree を付けたとき
-      # （--git-dir だけなら、show-toplevel は今のディレクトリを返す）、作業ツリーが無いとき（bare リポジトリ・.git の中）
-      if [ -n "$git_dir" ] && [ "${#gopts[@]}" -eq 0 ]; then
-        top="$(git_at rev-parse --show-toplevel || true)"
-        [ -z "$top" ] || dw_is_set_up "$top" || return 0
-      fi
+      # 導入していないリポジトリでは何もしない（対象が分からないときは、今までどおり調べる）
+      target_set_up || return 0
       ;;
     *) return 0 ;;
   esac
@@ -344,7 +366,7 @@ dstack=() dn=0
 # case の中の深さ（case の時点の dn を積む）
 case_dn=() cn=0
 arith_i=0
-git_dir="" gopts=()
+git_dir="" gopts=() genv=()
 # ブランチ名の警告（最後にまとめて出す）
 warnings=() nwarn=0
 
