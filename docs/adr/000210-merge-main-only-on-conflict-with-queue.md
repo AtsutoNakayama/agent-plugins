@@ -31,17 +31,19 @@ branch-update の取り込むかの判断は、strict（最新の main の取り
 * `branch-update` は、`merge_queue.enabled` で判断を分ける。キューを使うリポジトリでは、main と衝突している（`conflicts` が true か `DIRTY`）ときだけ取り込む。衝突していなければ取り込まず、キューの状態に合わせて案内する（`UNMERGEABLE` なら先に並んだ PR のマージを待つ、並んでいれば順番、外れたままなら理由と、待つ・入れ直す・対応してから入れ直すの3つ）。最新の main が要るときは、確かめてから取り込む。キューを使わないリポジトリは、これまでどおり遅れていれば取り込む。
 * 衝突しているかは、GitHub の `mergeStateStatus` だけでなく、手元でも確かめる（`branch-status.sh` の `conflicts`・`pushed_conflicts`。`git merge-tree --write-tree` で、作業ツリーとブランチは変えない）。main が進んだ直後は `mergeStateStatus` が `UNKNOWN` のことがあり、それを「衝突していない」と扱うと、衝突を見落とすため。
 * キューから外れたかは、PR のタイムラインの最後のキューの出入りのイベント（`RemovedFromMergeQueueEvent` と、その `reason`）で見る（衝突した PR はすぐにキューから外れ、`mergeQueueEntry` が null になるため）。外れた後に push したかは見ない。GitHub には push の時刻が無く（`Commit.pushedDate` は廃止された）、コミットの時刻（`committedDate`）は手元でコミットした時刻なので、外れる前に作ったコミットや手元の時計のずれで誤るため。そのため、外れた後の案内は、どれに当たるかを決めつけずに並べる。
+* 次にすること（取り込む・push する・取り込まない・判定を待つ・マージ先を聞く）は、`branch-plan.sh` が `branch-status.sh` の出力の値だけから判断の表（11行）で決め、`tests/branch-plan.bats` で表の行と境目を確かめる。SKILL.md には、その結果（`plan.action`）ごとにすることと、伝える文だけを書く。#210 では初め、この判断を SKILL.md の文章に書いていたので、テストできず、レビューの周回のたびに組み合わせの抜けが見つかった（12周のレビューで、指摘の大半がこの判断に付いた）。
 
 ### 結果として起きること
 
 * 良い点：キューの中で衝突した PR や、キューから外れた PR に、次にすることを案内できる。
 * 良い点：キューに並んでいる PR を、要らない取り込みと push でキューから外さない。
 * 悪い点：キューから外れた後の案内は、どれに当たるかを決められないので、3つを並べることになり、どれを選ぶかはユーザーが判断する。
+* 良い点：判断の組み合わせをテストで確かめられるので、判断を変えるときに、表とテストを直せば抜けが分かる。
 * 悪い点：手元で衝突を確かめるのに git 2.38 以降が要る。古い git では `conflicts`・`pushed_conflicts` が null になり、GitHub の判定とユーザーへの確認に頼る。
 
 ### 確認
 
-`tests/branch-status.bats` で、`merge_queue`（`removed` を含む）・`conflicts`・`pushed_behind`・`pushed_conflicts` の出力を確かめる。branch-update の手順（SKILL.md）はテストされないので、レビューで確かめる。
+`tests/branch-plan.bats` で、判断の表の行と境目（null・`UNKNOWN`・遅れが 0・PR が無い・キューの状態を読めない）を確かめる。`tests/branch-status.bats` で、`merge_queue`（`removed` を含む）・`conflicts`・`pushed_behind`・`pushed_conflicts`・`plan` の出力を確かめる。branch-update の手順（SKILL.md）は、`plan.action` ごとの手順だけなのでテストせず、レビューで確かめる（このリポジトリの観点 `decision-in-script` が、SKILL.md に組み合わせの判断が増えていないかを見る）。
 
 ## 各案の長所と短所
 
