@@ -116,6 +116,17 @@ frontmatter() { awk 'NR == 1 && $0 == "---" { on = 1; next } on && $0 == "---" {
   fi
 }
 
+@test "task-next は、親の Issue を候補に入れず、開いている子を案内する（設計書 §4）" {
+  # 親の Issue に着手したセッションが、親として進めるか子に着手し直すかを聞いて止まった（#142）
+  f="$SKILLS/task-next/SKILL.md"
+  grep -q "\`parent\`" "$f" || fail "出力の parent の見方が書かれていません"
+  grep -q '待ちでも親でもないもの' "$f" || fail "並列にできないものから、親の Issue が除かれていません"
+  step2="$(awk '/^### 2\./ { on = 1; next } on' "$f")"
+  grep -q '\*\*親の Issue\*\*' <<<"$step2" || fail "手順2に、親の Issue の伝え方がありません"
+  grep -q 'subIssues' <<<"$step2" || fail "親の開いている子を読む手順がありません"
+  grep -q '親を閉じる' <<<"$step2" || fail "開いている子が無い親を閉じるよう伝えることが書かれていません"
+}
+
 @test "review は、局所の指摘でも水平展開の要否を判定し、反映のときに同じ場所も直す（設計書 §7）" {
   f="$SKILLS/review/SKILL.md"
   grep -q '水平展開の要否' "$f" || fail "手順4に水平展開の要否の判定がありません"
