@@ -286,8 +286,7 @@ approvals_now="$(jq '.rules[] | select(.type == "pull_request") | .parameters.re
 # もう一度動かすので、動かないとキューのチェックが「待ち」のまま残ってマージされない。キューを使うかを決める
 # 材料にするため、キューを使わないときも確かめる（警告はキューを使うときだけ）。必須のチェックは、このルールセットのものと、
 # 組織などのほかのルールセットが base_branch に求めるもの（rules/branches）と、古いブランチ保護が求めるものを合わせる
-other_rules="$(gh api --paginate "repos/$repo_nwo/rules/branches/$(jq -rn --arg b "$branch" '$b | @uri')?per_page=100" 2>/dev/null)" \
-  || other_rules='[]'
+other_rules="$(dw_branch_rules "$repo_nwo" "$branch")" || other_rules='[]'
 other_checks="$(dw_required_checks "$other_rules" "$(dw_classic_required_checks "$repo_nwo" "$branch")" "$ruleset_id" 2>/dev/null)" \
   || other_checks='[]'
 all_checks="$(jq -c --argjson o "$other_checks" '[.rules[] | select(.type == "required_status_checks")

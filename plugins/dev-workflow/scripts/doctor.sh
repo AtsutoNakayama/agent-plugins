@@ -139,7 +139,7 @@ fi
 # 必須のチェックの有無は、名前の一覧（required。ルールセットと古いブランチ保護を合わせる）だけで決め、strict かは、
 # 名前のあるルールセットのルール（check_rules）だけで見る。ルールがあっても名前が1つも無ければ、何も求めていない
 if $gh_auth && [ -n "$repo_root" ] && [ -n "$base_branch" ] \
-  && rules="$(gh api --paginate "repos/{owner}/{repo}/rules/branches/$(jq -rn --arg b "$base_branch" '$b | @uri')?per_page=100" 2>/dev/null)" \
+  && rules="$(dw_branch_rules '{owner}/{repo}' "$base_branch")" \
   && required="$(dw_required_checks "$rules" "$(dw_classic_required_checks '{owner}/{repo}' "$base_branch")" 2>/dev/null)" \
   && merge="$(jq -ser --argjson required "$required" "$DW_JQ_CHECK_RULES"'
     # --paginate はページごとに配列を出力するので、1つにまとめる

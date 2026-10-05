@@ -177,6 +177,13 @@ dw_team_config() {
 DW_JQ_CHECK_RULES='def check_rules: [.[] | select(.type == "required_status_checks"
   and ((.parameters.required_status_checks // []) | length > 0))];'
 
+# ブランチに効いているルールセットのルール（組織のルールセットも含む）を出力する。--paginate のページごとの配列が
+# 並ぶので、使う側で jq -s の add でまとめる。読めなければ非0を返す（どう扱うかは呼び出し側で決める）。
+# 使い方: dw_branch_rules <owner/repo（{owner}/{repo} でもよい）> <ブランチ>
+dw_branch_rules() {
+  gh api --paginate "repos/$1/rules/branches/$(jq -rn --arg b "$2" '$b | @uri')?per_page=100" 2>/dev/null
+}
+
 # 古いブランチ保護（ルールセットでない）が求める必須のチェックの名前の一覧（JSON の配列）を出力する。
 # rules/branches には出ないので、ブランチの情報（branches/<ブランチ> の protection）から読む。
 # 読めなければ（保護が無い・権限が無いなど）[] を出力する。
