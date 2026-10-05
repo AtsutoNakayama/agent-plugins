@@ -155,7 +155,7 @@ agent-plugins/
 
 ## 7. レビュー
 
-- 観点は1ファイルに1観点の Markdown で書き、3つの層を足し合わせる：プラグインに同梱する共通の観点 / `~/.claude/dev-workflow/review/` / `<repo>/.claude/dev-workflow/review/`。ユーザーの層（`~/.claude/dev-workflow/review/`）は、導入したリポジトリの中でだけ使う（§1）。`review-perspective-add` は、導入していないリポジトリでユーザーの層に作るときは、そこでは使われないことを警告する。
+- 観点は1ファイルに1観点の Markdown で書き、3つの層を足し合わせる：プラグインに同梱する共通の観点 / `~/.claude/dev-workflow/review/` / `<repo>/.claude/dev-workflow/review/`。ユーザーの層（`~/.claude/dev-workflow/review/`）は、導入したリポジトリの中でだけ使う（§1）。`review-perspective-add` は、導入していないリポジトリ（リポジトリの外は除く）でユーザーの層に作るときは、そこでは使われないことを警告する。
 - 観点ファイルは frontmatter に `title`（一覧に出す1行）を書き、本文にサブエージェントへの指示を書く。観点の名前はファイル名で、同じ名前なら上位の層（リポジトリ → ユーザー → プラグイン）のファイルを使う。上位の層で `enabled: false` と書くと、下位の層の観点を止められる。
 - 観点ファイルの frontmatter には、実行する条件を書ける：`types`（変更の type がこのどれかのとき。type は Issue の type ラベル、Issue が無いか1つに決まらなければブランチ名の type。type が分からなければ外す）、`paths`（差分のファイルがこのパターンに当たるとき。`.gitignore` や GitHub Actions と同じ書き方にするため、git の pathspec の glob で当て、`!` で除外できる）、`issue: required`（Issue があるときだけ）、`base_ahead: required`（マージ先が基点より進んでいるときだけ）。複数書けば、すべてに当てはまるときだけ実行する。書かなければ毎回実行する。当てはまらない観点は、サブエージェントを起動する前に外す（当てはまらない変更でも観点ごとに Issue や差分を読むコストがかかり、観点が増えるほど無駄が増えるため）。外した観点とその理由はユーザーに伝える。
 - 観点を外すかどうかは、スクリプトのルールだけで決める。基点・マージ先・Issue の番号・type は `review-perspectives.sh --auto` が設定とブランチ名と Issue から決めて出力し、review スキルはその結果どおりに起動する（スキルの文章の解釈で入力を組み立てると、読み違いや渡し忘れが起こるため）。観点の本文では、条件で決まることを判断し直さない。Issue を読めない・マージ先を最新にできないときは警告して続け、マージ先が無いときはレビューを止める。
