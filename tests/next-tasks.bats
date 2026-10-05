@@ -412,6 +412,22 @@ JSON
   assert_equal "$(out_of '[.in_progress[].number]')" '[21]'
 }
 
+@test "PR を出した後でサブ Issue が付いた Issue は、着手中として PR のファイルとの重なりを見る" {
+  # 親でも、自分の PR があれば作業が進んでいるので、着手中から外すと重なりを見逃す
+  # 親の本文の領域は子の作業をまとめたものなので、PR が無い親（#21）は領域があっても数えない
+  setup_fake_gh
+  item 10 Todo $'## 変更するファイル・領域\n- docs/'
+  item 20 "In Progress" $'## 変更するファイル・領域\n- tests/' "" me/demo OPEN 2
+  item 21 "In Progress" $'## 変更するファイル・領域\n- docs/' "" me/demo OPEN 1
+  write_page
+  echo '[{"number": 50, "headRefName": "feat/20-x", "closingIssuesReferences": [], "files": [{"path": "docs/a.md"}]}]' >"$FIX/pr-list.json"
+  run_script next-tasks.sh
+  assert_success
+  assert_equal "$(out_of '[.in_progress[] | [.number, .paths]]')" '[[20,["docs/a.md"]]]'
+  assert_equal "$(out_of '[.todo[0].conflicts_with_active[].issue]')" '[20]'
+  assert_equal "$(out_of '.active_unknown')" '[]'
+}
+
 @test "着手中の Issue に領域か PR があれば、警告は付かない" {
   setup_fake_gh
   item 10 Todo $'## 変更するファイル・領域\n- docs/'
