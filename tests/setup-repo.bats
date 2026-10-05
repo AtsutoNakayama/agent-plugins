@@ -6,7 +6,7 @@ load test_helper
 
 # 偽の gh。
 # gh api <パス>（GET）は、リポジトリなら repo.json、ルールセットの一覧なら rulesets.json、
-# ルールセット1件なら ruleset.json を返す。ブランチ（.../branches/<名前>）は $FIX/branches/<名前> があれば返し、無ければ 404 にする。
+# ルールセット1件なら ruleset.json を返す。ブランチ（.../branches/<名前>）は $FIX/branches/<名前> があればその中身（空なら {}）を返し、無ければ 404 にする。
 # gh api -X <メソッド> <パス> --input - は「<メソッド> <パス> <本文>」を $CALLS に1行ずつ記録し、
 # $FIX/<メソッド>.json があれば返す。FAKE_FAIL に指定したメソッド（GET を含む）は 403 で失敗する。
 # gh repo view は、リポジトリを指定すれば repo-view.json、指定しなければ here.json を返す。
@@ -66,7 +66,9 @@ case "$1 $2" in
         done | jq -s .
         ;;
       */branches/*)
-        if [ -f "$FIX/branches/${2##*/branches/}" ]; then echo '{}'
+        b="$FIX/branches/${2##*/branches/}"
+        if [ -s "$b" ]; then cat "$b"
+        elif [ -f "$b" ]; then echo '{}'
         else echo 'gh: Branch not found (HTTP 404)' >&2; exit 1; fi
         ;;
       orgs/*)
@@ -634,6 +636,21 @@ workflow() {
   assert_success
   assert_equal "$(jq -c .merge_queue.merge_group <<<"$json")" \
     '{"not_running":[{"check":"org-check","workflows":[".github/workflows/org.yml"]}],"unknown":[]}'
+}
+
+@test "古いブランチ保護が求める必須のチェックも確かめる" {
+  setup_fake_gh
+  settled_repo
+  owned_by Organization public
+  existing_ruleset
+  workflow ci.yml merge_group lint-result
+  workflow legacy.yml pull_request legacy-check
+  mkdir -p "$FIX/branches"
+  echo '{"name": "main", "protection": {"enabled": true, "required_status_checks": {"contexts": ["legacy-check"]}}}' >"$FIX/branches/main"
+  run_setup --merge-queue --required-check lint-result --dry-run
+  assert_success
+  assert_equal "$(jq -c .merge_queue.merge_group <<<"$json")" \
+    '{"not_running":[{"check":"legacy-check","workflows":[".github/workflows/legacy.yml"]}],"unknown":[]}'
 }
 
 @test "ワークフローを読めなくても、キューを使うときは警告して設定は続ける" {
