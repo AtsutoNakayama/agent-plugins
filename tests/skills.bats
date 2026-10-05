@@ -181,5 +181,9 @@ frontmatter() { awk 'NR == 1 && $0 == "---" { on = 1; next } on && $0 == "---" {
 @test "ワークツリーの無いタスクを、task-finish は Issue を閉じて終え、task-cancel は Issue を閉じるだけにする" {
   grep -q '### 4. ワークツリーの無いタスクを終える' "$SKILLS/task-finish/SKILL.md"
   grep -q 'gh issue close <番号> --reason completed' "$SKILLS/task-finish/SKILL.md"
+  # ブランチ名で見つからなくても、Issue を閉じる PR が開いていれば閉じない
+  grep -q 'closedByPullRequestsReferences' "$SKILLS/task-finish/SKILL.md"
+  # shellcheck disable=SC2016 # バッククォートはスキルの本文の文字で、展開させない
+  grep -q '開いている（`OPEN`）PR があれば、閉じずに止める' "$SKILLS/task-finish/SKILL.md"
   grep -q 'ワークツリーを作らずに着手した' "$SKILLS/task-cancel/SKILL.md"
 }

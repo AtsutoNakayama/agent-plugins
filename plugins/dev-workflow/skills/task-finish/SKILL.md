@@ -47,6 +47,8 @@ PR が閉じる Issue（`Closes #N`）は `issues`（`number` と `state`）に�
 
 ### 4. ワークツリーの無いタスクを終える
 
-ブランチが手元にもリモートにも無いときだけ行う。`gh issue view <番号> --json number,title,state,url` で Issue を読む。既に閉じていれば、片付けるものも閉じるものも無いと伝えて終える。
+ブランチが手元にもリモートにも無いときだけ行う。`gh issue view <番号> --json number,title,state,url,closedByPullRequestsReferences` で Issue を読む。既に閉じていれば、片付けるものも閉じるものも無いと伝えて終える。
 
-開いていれば、片付けるもの（ワークツリー・ブランチ）が無いことを伝え、AskUserQuestion で「Issue #12 を完了として閉じる」「開いたままにする」を選んでもらう。Issue の番号とタイトルは、質問の中にも入れる（設計書 §8）。選択肢の説明には、選ぶと実際に何が起きるか（「Issue #12 を完了（completed）として閉じる。Project の自動化が有効なら Done に移る」など）を書き、コマンドやスクリプト名といった内部の手順は書かない。閉じると言われたら `gh issue close <番号> --reason completed` を実行し、Issue の URL を添えて伝える。Project の自動化（Item closed）が有効なら、閉じた Issue は Done の列に移る。結果（調査の結論など）を Issue に残していなければ、閉じる前にコメントで残すよう添える。やめることにしたタスクなら、完了ではないので task-cancel を使うよう伝える。
+ブランチ名だけでは、ワークツリーを作らずに着手したタスクとは言い切れない（規約に合わない名前のブランチで作業し、PR を出していることもある）。`closedByPullRequestsReferences` の PR ごとに `gh pr view <url> --json number,state,headRefName,url` で状態を読み、開いている（`OPEN`）PR があれば、閉じずに止める。その PR の番号・URL・ブランチを伝え、マージされたら GitHub が Issue を閉じること、そのブランチの片付けは `/dev-workflow:task-finish` でブランチ名を指定してできることを伝える。
+
+開いている PR が無ければ、片付けるもの（ワークツリー・ブランチ）が無いことを伝え、AskUserQuestion で「Issue #12 を完了として閉じる」「開いたままにする」を選んでもらう。Issue の番号とタイトルは、質問の中にも入れる（設計書 §8）。選択肢の説明には、選ぶと実際に何が起きるか（「Issue #12 を完了（completed）として閉じる。Project の自動化が有効なら Done に移る」など）を書き、コマンドやスクリプト名といった内部の手順は書かない。閉じると言われたら `gh issue close <番号> --reason completed` を実行し、Issue の URL を添えて伝える。Project の自動化（Item closed）が有効なら、閉じた Issue は Done の列に移る。結果（調査の結論など）を Issue に残していなければ、閉じる前にコメントで残すよう添える。やめることにしたタスクなら、完了ではないので task-cancel を使うよう伝える。
