@@ -253,6 +253,10 @@ frontmatter() { awk 'NR == 1 && $0 == "---" { on = 1; next } on && $0 == "---" {
   grep -q '{"findings": ' "$AGENT" || fail "agent の定義に、findings と notes の形がありません"
   grep -q '"suggestion"' "$AGENT" || fail "agent の定義に、指摘の項目（file・line・summary・detail・suggestion）がありません"
   grep -q '`notes`' "$AGENT" || fail "agent の定義に、notes の説明がありません"
+  grep -q '問題は `notes` に書かない' "$AGENT" \
+    || fail "agent の定義に、問題を notes に入れない決まりがありません（伝言は番号が付かず選べない）"
+  grep -q '「〜とだけ返す」と決めていても、その文は `notes` に入れ' "$AGENT" \
+    || fail "agent の定義に、観点ファイルが返し方を決めていても形を変えない決まりがありません"
   f="$SKILLS/review/SKILL.md"
   if grep -n '"suggestion"' "$f"; then
     fail "review の SKILL.md に、返す JSON の形式が残っています（agent の定義だけに書く）"
