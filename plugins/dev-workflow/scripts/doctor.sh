@@ -149,17 +149,17 @@ if $gh_auth && [ -n "$repo_root" ] && [ -n "$base_branch" ] \
     queue) check merge-queue true warn "${base_branch} へのマージはマージキューを通します" ;;
     strict) check merge-queue true warn "${base_branch} へのマージは、PR が最新の ${base_branch} を取り込んでいることを求めます（strict）" ;;
     none) check merge-queue false warn "${base_branch} へのマージに、マージキューも最新の ${base_branch} の取り込み（strict）も求めていません。古い ${base_branch} で通った CI のままマージすると壊れることがあります。/dev-workflow:repo-setup で設定してください" ;;
-    *)
-      # 必須のチェックが無いと、CI が通らなくてもマージできる。キューも strict も意味がないので、そちらは知らせない。
-      # CI の無いリポジトリでは毎回の警告になるので、チームの設定で求めないことにしていれば警告しない
-      team_config="$repo_root/.claude/dev-workflow/config.json"
-      if [ -f "$team_config" ] && [ "$(jq -r '.require_status_checks' "$team_config" 2>/dev/null)" = false ]; then
-        check required-checks true warn "${base_branch} へのマージに必須のチェックはありません（設定の require_status_checks が false）"
-      else
-        check required-checks false warn "${base_branch} へのマージに必須のチェックがありません。CI が通らなくてもマージできます。/dev-workflow:repo-setup で必須のチェックを設定してください。CI が無いなら、.claude/dev-workflow/config.json に \"require_status_checks\": false を書くと、この警告は出なくなります"
-      fi
-      ;;
+    # no-checks（キューも必須のチェックも無い）は、キューも strict も意味がないので知らせない（下で必須のチェックが無いことを知らせる）
   esac
+  # 必須のチェックが無いと、キューを使っていても、CI が通らなくてもマージできる。CI の無いリポジトリでは
+  # 毎回の警告になるので、チームの設定で求めないことにしていれば警告しない
+  if ! jq -se 'add // [] | any(.[]; .type == "required_status_checks")' <<<"$rules" >/dev/null 2>&1; then
+    if [ "$(dw_team_config "$repo_root/.claude/dev-workflow/config.json" require_status_checks 2>/dev/null)" = false ]; then
+      check required-checks true warn "${base_branch} へのマージに必須のチェックはありません（設定の require_status_checks が false）"
+    else
+      check required-checks false warn "${base_branch} へのマージに必須のチェックがありません。CI が通らなくてもマージできます。/dev-workflow:repo-setup で必須のチェックを設定してください。CI が無いなら、.claude/dev-workflow/config.json に \"require_status_checks\": false を書くと、この警告は出なくなります"
+    fi
+  fi
   # キューを使っていれば、必須のチェックのワークフローが merge_group のイベントで動くかを確かめる。動かないと、
   # キューのチェックが「待ち」のまま残り、PR がマージされない。確かめられないときは飛ばす
   if [ "$merge" = queue ]; then

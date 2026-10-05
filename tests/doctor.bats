@@ -244,7 +244,7 @@ merge_check() { jq -c '.checks[] | select(.name == "merge-queue") | [.ok, .level
 # 使い方: required_check → required-checks の確認の [ok, level, detail]。確認が無ければ空
 required_check() { jq -c '.checks[] | select(.name == "required-checks") | [.ok, .level, .detail]' <<<"$output"; }
 
-@test "必須のチェックが無ければ、止めずに repo-setup で設定するよう知らせる（キューと strict は知らせない）" {
+@test "必須のチェックが無ければ、キューを使っていても、止めずに repo-setup で設定するよう知らせる" {
   fake_gh
   export FAKE_SCOPES="project" FAKE_RULES='[{"type": "pull_request", "parameters": {}}]'
   run_script doctor.sh
@@ -256,6 +256,11 @@ required_check() { jq -c '.checks[] | select(.name == "required-checks") | [.ok,
   [[ "$detail" == *'"require_status_checks": false'* ]]
   # 必須のチェックが無ければ、キューも strict も意味がないので知らせない
   assert_equal "$(merge_check)" ""
+  # キューを使っていても、必須のチェックが無ければ知らせる
+  export FAKE_RULES='[{"type": "pull_request", "parameters": {}}, {"type": "merge_queue", "parameters": {}}]'
+  run_script doctor.sh
+  assert_equal "$(jq -c '.[0:2]' <<<"$(required_check)")" '[false,"warn"]'
+  assert_equal "$(merge_check)" '[true,"warn","main へのマージはマージキューを通します"]'
   # 必須のチェックがあれば知らせない
   export FAKE_RULES='[{"type": "required_status_checks", "parameters": {"strict_required_status_checks_policy": true}}]'
   run_script doctor.sh
