@@ -251,16 +251,23 @@ frontmatter() { awk 'NR == 1 && $0 == "---" { on = 1; next } on && $0 == "---" {
     || fail "再レビュー（手順8）で、独自の観点を agent で起動することが書かれていません"
 }
 
-@test "review は、観点が配列でない結果を返したら、指摘が0件のときも表の後でも、その文をそのまま伝える（設計書 §7）" {
+# shellcheck disable=SC2016 # バッククォートはスキルの本文の文字で、展開させない
+@test "perspective-reviewer は findings と notes の1つの形で返し、review は notes を手順4で伝える（設計書 §7）" {
+  agent="$BATS_TEST_DIRNAME/../plugins/dev-workflow/agents/perspective-reviewer.md"
+  grep -q '{"findings": ' "$agent" || fail "agent の定義に、findings と notes の形がありません"
+  grep -q '`notes`' "$agent" || fail "agent の定義に、notes の説明がありません"
   f="$SKILLS/review/SKILL.md"
-  step4="$(awk '/^### 4\./ { on = 1; next } /^### 5\./ { on = 0 } on' "$f")"
-  grep -q '^- 指摘が1つも無ければ.*配列でない結果を返した観点' <<<"$step4" \
-    || fail "手順4の、指摘が無いときに伝えることに、配列でない結果が入っていません"
-  grep -q '^- 表の後に.*配列でない結果を返した観点' <<<"$step4" \
-    || fail "手順4の、表の後に添えることに、配列でない結果が入っていません"
+  if grep -n '配列でない' "$f"; then
+    fail "review の SKILL.md に、配列でない返事の扱いが残っています（返事は findings と notes の1つの形）"
+  fi
   step3="$(awk '/^### 3\./ { on = 1; next } /^### 4\./ { on = 0 } on' "$f")"
-  grep -q 'コードブロック.*の中や前置きの文の後にあっても、その配列を指摘として読む' <<<"$step3" \
-    || fail "手順3に、コードブロックや前置きに包まれた配列も指摘として読むことが書かれていません"
+  grep -q 'JSON として読めない返事は、指摘にはせず、返事の全文を観点からの伝言として扱う' <<<"$step3" \
+    || fail "手順3に、JSON として読めない返事の扱いが書かれていません"
+  step4="$(awk '/^### 4\./ { on = 1; next } /^### 5\./ { on = 0 } on' "$f")"
+  grep -q '^- 指摘が1つも無ければ.*観点からの伝言' <<<"$step4" \
+    || fail "手順4の、指摘が無いときに伝えることに、観点からの伝言が入っていません"
+  grep -q '^- 表の後に.*観点からの伝言' <<<"$step4" \
+    || fail "手順4の、表の後に添えることに、観点からの伝言が入っていません"
   step8="$(awk '/^### 8\./ { on = 1; next } /^### 9\./ { on = 0 } on' "$f")"
   grep -q '^- 新しい指摘が無ければ.*手順4の「指摘が1つも無ければ」のとおり' <<<"$step8" \
     || fail "手順8の、新しい指摘が無いときに、手順4のとおり伝えることが書かれていません"
