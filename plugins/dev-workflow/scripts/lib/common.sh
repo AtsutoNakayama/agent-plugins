@@ -232,6 +232,9 @@ dw_review_model_layers() {
   local pair name f v
   for pair in "team:$1/.claude/dev-workflow/config.json" "local:$(dw_local_config_file "$1")"; do
     name="${pair%%:*}" f="${pair#*:}"
+    [ -f "$f" ] || continue
+    # 壊れたファイルで止めるため、$(...) の外で確かめる（中で止めても、そのサブシェルが終わるだけになる）
+    dw_check_json "$f"
     v="$(dw_review_model_of "$f")" || continue
     printf '%s\t%s\t%s\n' "$name" "$f" "$v"
   done

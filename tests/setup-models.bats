@@ -142,3 +142,11 @@ json_of() { printf '%s\n' "$1" | LC_ALL=C sed -n '/^{/,$p'; }
   run_script setup/setup-models.sh --review-model opus --scope team
   assert_equal "$(jq -c .ignored <<<"$output")" null
 }
+
+@test "リポジトリの層の設定ファイルが壊れていれば、何も書かずに止まる" {
+  echo '{bad' >"$LOCAL"
+  run_script setup/setup-models.sh --review-model opus --scope team
+  assert_failure 2
+  assert_output --partial "JSON のオブジェクトとして読めません: $REPO/$LOCAL"
+  [ ! -e "$TEAM" ]
+}
