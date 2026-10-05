@@ -227,7 +227,7 @@ merge_check() { jq -c '.checks[] | select(.name == "merge-queue") | [.ok, .level
 @test "base_branch にマージキューと strict のどちらが効いているかを示す" {
   fake_gh
   export FAKE_SCOPES="project"
-  export FAKE_RULES='[{"type": "required_status_checks", "parameters": {"strict_required_status_checks_policy": false}}, {"type": "merge_queue", "parameters": {}}]'
+  export FAKE_RULES='[{"type": "required_status_checks", "parameters": {"strict_required_status_checks_policy": false, "required_status_checks": [{"context": "ci"}]}}, {"type": "merge_queue", "parameters": {}}]'
   run_script doctor.sh
   assert_success
   assert_equal "$(merge_check)" '[true,"warn","main へのマージはマージキューを通します"]'
@@ -265,7 +265,8 @@ required_check() { jq -c '.checks[] | select(.name == "required-checks") | [.ok,
   export FAKE_RULES='[{"type": "pull_request", "parameters": {}}, {"type": "merge_queue", "parameters": {}}]'
   run_script doctor.sh
   assert_equal "$(jq -c '.[0:2]' <<<"$(required_check)")" '[false,"warn"]'
-  assert_equal "$(merge_check)" '[true,"warn","main へのマージはマージキューを通します"]'
+  # キューも必須のチェックが無ければ意味がないので、キューの案内は出さない
+  assert_equal "$(merge_check)" ""
   # 必須のチェックのルールがあっても、名前が1つも無ければ何も求めていないので知らせる
   export FAKE_RULES='[{"type": "required_status_checks", "parameters": {"strict_required_status_checks_policy": true, "required_status_checks": []}}]'
   run_script doctor.sh
@@ -324,7 +325,7 @@ required_check() { jq -c '.checks[] | select(.name == "required-checks") | [.ok,
 
 @test "マージキューの確認は設定の base_branch を見る（/ を含む名前はエンコードする）" {
   fake_gh
-  export FAKE_SCOPES="project" FAKE_RULES='[{"type": "merge_queue", "parameters": {}}]' FAKE_RULES_LOG="$TMP/rules-path"
+  export FAKE_SCOPES="project" FAKE_RULES="$QUEUE_RULES" FAKE_RULES_LOG="$TMP/rules-path"
   echo '{"base_branch": "release/v1"}' >.claude/dev-workflow/config.json
   run_script doctor.sh
   assert_equal "$(cat "$TMP/rules-path")" 'repos/{owner}/{repo}/rules/branches/release%2Fv1?per_page=100'
@@ -333,7 +334,7 @@ required_check() { jq -c '.checks[] | select(.name == "required-checks") | [.ok,
 
 @test "マージキューの確認は、個人の設定の base_branch ではなく、チームの設定のブランチを見る" {
   fake_gh
-  export FAKE_SCOPES="project" FAKE_RULES='[{"type": "merge_queue", "parameters": {}}]' FAKE_RULES_LOG="$TMP/rules-path"
+  export FAKE_SCOPES="project" FAKE_RULES="$QUEUE_RULES" FAKE_RULES_LOG="$TMP/rules-path"
   echo '{"base_branch": "mine"}' >.claude/dev-workflow/config.local.json
   echo '{"base_branch": "user"}' >"$WORKFLOW_USER_DIR/config.json"
   run_script doctor.sh
@@ -343,7 +344,7 @@ required_check() { jq -c '.checks[] | select(.name == "required-checks") | [.ok,
 @test "マージキューの確認は、ルールの一覧を全ページまとめて見る" {
   fake_gh
   export FAKE_SCOPES="project"
-  FAKE_RULES="$(printf '%s\n' '[{"type": "required_status_checks", "parameters": {"strict_required_status_checks_policy": false}}]' \
+  FAKE_RULES="$(printf '%s\n' '[{"type": "required_status_checks", "parameters": {"strict_required_status_checks_policy": false, "required_status_checks": [{"context": "ci"}]}}]' \
     '[{"type": "merge_queue", "parameters": {}}]')"
   export FAKE_RULES
   run_script doctor.sh

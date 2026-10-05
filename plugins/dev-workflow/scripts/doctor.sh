@@ -144,8 +144,8 @@ if $gh_auth && [ -n "$repo_root" ] && [ -n "$base_branch" ] \
   && merge="$(jq -ser --argjson required "$required" "$DW_JQ_CHECK_RULES"'
     # --paginate はページごとに配列を出力するので、1つにまとめる
     add // []
-    | if any(.[]; .type == "merge_queue") then "queue"
-    elif $required == [] then "no-checks"
+    | if $required == [] then "no-checks"
+    elif any(.[]; .type == "merge_queue") then "queue"
     elif any(check_rules[]; .parameters.strict_required_status_checks_policy) then "strict"
     elif check_rules != [] then "none"
     else "classic" end' <<<"$rules" 2>/dev/null)"; then
@@ -153,7 +153,7 @@ if $gh_auth && [ -n "$repo_root" ] && [ -n "$base_branch" ] \
     queue) check merge-queue true warn "${base_branch} へのマージはマージキューを通します" ;;
     strict) check merge-queue true warn "${base_branch} へのマージは、PR が最新の ${base_branch} を取り込んでいることを求めます（strict）" ;;
     none) check merge-queue false warn "${base_branch} へのマージに、マージキューも最新の ${base_branch} の取り込み（strict）も求めていません。古い ${base_branch} で通った CI のままマージすると壊れることがあります。/dev-workflow:repo-setup で設定してください" ;;
-    # no-checks（キューも必須のチェックも無い）は、キューも strict も意味がないので知らせない（下で必須のチェックが無いことを知らせる）
+    # no-checks（必須のチェックが無い）は、キューがあっても、キューも strict も意味がないので知らせない（下で必須のチェックが無いことを知らせる）
     # classic（必須のチェックが古いブランチ保護にだけある）は、ブランチの情報から strict が分からないので知らせない
   esac
   # 必須のチェックが無いと、キューを使っていても、CI が通らなくてもマージできる。CI の無いリポジトリでは
