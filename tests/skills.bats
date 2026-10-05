@@ -187,3 +187,27 @@ frontmatter() { awk 'NR == 1 && $0 == "---" { on = 1; next } on && $0 == "---" {
     fi
   done
 }
+
+# shellcheck disable=SC2016 # バッククォートはスキルの本文の文字で、展開させない
+@test "review は、設定 review.model があるときだけ、観点と /code-review をそのモデルのサブエージェントで動かす（設計書 §7）" {
+  f="$SKILLS/review/SKILL.md"
+  step3="$(awk '/^### 3\./ { on = 1; next } /^### 4\./ { on = 0 } on' "$f")"
+  grep -q 'の `model` が null でなければ、Agent ツールの `model` にその値を渡す' <<<"$step3" \
+    || fail "手順3に、観点のサブエージェントへ model を渡すことが書かれていません"
+  grep -q '「`/code-review` を任せるサブエージェントへの指示」' <<<"$step3" \
+    || fail "手順3に、/code-review をサブエージェントに任せることが書かれていません"
+  grep -q 'null なら、手順3はセッションと同じモデルで動かす' "$f" \
+    || fail "設定が null のときにセッションと同じモデルで動かすことが書かれていません"
+  step8="$(awk '/^### 8\./ { on = 1; next } /^### 9\./ { on = 0 } on' "$f")"
+  grep -q '手順3のとおりサブエージェントに任せる' <<<"$step8" \
+    || fail "再レビュー（手順8）でも /code-review をサブエージェントに任せることが書かれていません"
+}
+
+@test "repo-setup は、レビューに使うモデルを決めていなければ、使うかと保存する層を聞き、使わないことも保存する" {
+  f="$SKILLS/repo-setup/SKILL.md"
+  step2="$(awk '/^### 2\./ { on = 1; next } /^### 3\./ { on = 0 } on' "$f")"
+  grep -q 'review.decided' <<<"$step2" || fail "手順2に、決めてあれば聞かないことが書かれていません"
+  grep -q -- '--review-model off' <<<"$step2" || fail "手順2に、使わないことも保存することが書かれていません"
+  grep -q -- '--models-scope' <<<"$step2" || fail "手順2に、保存する層を渡すことが書かれていません"
+  grep -q 'models.actions' "$f" || fail "手順3の予定に、レビューのモデルの変更が入っていません"
+}
