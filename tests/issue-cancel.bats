@@ -117,7 +117,7 @@ writes() { grep -oE '^(issue-comment|issue-close|pr-comment|pr-close|api-delete)
   setup_cancel
   run_script issue-cancel.sh --issue 17 --reason "重複です" --duplicate-of '#'
   assert_failure 64
-  assert_output --partial "--duplicate-of には数字を指定してください: #"
+  assert_output --partial "--duplicate-of には Issue の番号を指定してください: #"
   assert_equal "$(writes)" ""
 }
 
@@ -128,7 +128,7 @@ writes() { grep -oE '^(issue-comment|issue-close|pr-comment|pr-close|api-delete)
   assert_output --partial "--duplicate-of に閉じる Issue 自身（#17）は指定できません"
   run_script issue-cancel.sh --issue 17 --reason "重複です" --duplicate-of abc
   assert_failure 64
-  assert_output --partial "--duplicate-of には数字を指定してください: abc"
+  assert_output --partial "--duplicate-of には Issue の番号を指定してください: abc"
 }
 
 @test "Project と Story Point には触れない" {
@@ -248,7 +248,7 @@ writes() { grep -oE '^(issue-comment|issue-close|pr-comment|pr-close|api-delete)
   setup_cancel
   run_script issue-cancel.sh --issue abc --reason "やらないことにしました"
   assert_failure 64
-  assert_output --partial "--issue には数字を指定してください: abc"
+  assert_output --partial "--issue には Issue の番号を指定してください: abc"
 }
 
 @test "--branch を付けると、Issue → PR（コメントして閉じる）→ リモートのブランチの順に片付ける" {

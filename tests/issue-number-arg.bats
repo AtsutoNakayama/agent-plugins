@@ -41,8 +41,7 @@ same_as_plain() {
   for args in "task-start.sh --slug x" "status-set.sh --to start" "issue-cancel.sh --reason x" "pr-create.sh --body-file /nonexistent" "review-perspectives.sh --base HEAD --target HEAD"; do
     # shellcheck disable=SC2086 # 単語に分けて渡すのが目的
     run_script ${args%% *} --issue '#17' ${args#* }
-    refute_output --partial "数字を指定してください"
-    refute_output --partial "Issue の番号にしてください"
+    refute_output --partial "Issue の番号を指定してください"
   done
 }
 
@@ -52,18 +51,18 @@ same_as_plain() {
     # shellcheck disable=SC2086 # 単語に分けて渡すのが目的
     run_script ${args%% *} --issue '#' ${args#* }
     assert_failure 64
-    assert_output --partial "--issue には数字を指定してください: #"
+    assert_output --partial "--issue には Issue の番号を指定してください: #"
   done
   run_script review-perspectives.sh --base HEAD --target HEAD --issue '#'
   assert_failure 64
-  assert_output --partial "--issue には数字を指定してください: #"
+  assert_output --partial "--issue には Issue の番号を指定してください: #"
 }
 
 @test "issue-cancel.sh の --duplicate-of も、# だけや ## で始まる値は拒否し、#5 は 5 と同じに扱う" {
   setup_fake_gh
   run_script issue-cancel.sh --issue 17 --reason x --duplicate-of '##5'
   assert_failure 64
-  assert_output --partial "--duplicate-of には数字を指定してください"
+  assert_output --partial "--duplicate-of には Issue の番号を指定してください"
   run_script issue-cancel.sh --issue 17 --reason x --duplicate-of '#'
   assert_failure 64
   same_as_plain issue-cancel.sh --reason x --duplicate-of 5
@@ -73,7 +72,7 @@ same_as_plain() {
   setup_fake_gh
   run_script branch-name.sh --issue '#abc' --slug x
   assert_failure 64
-  assert_output --partial "--issue には数字を指定してください"
+  assert_output --partial "--issue には Issue の番号を指定してください"
   run_script branch-name.sh --issue '##17' --slug x
   assert_failure 64
 }

@@ -189,7 +189,7 @@ agent-plugins/
 
 - 不具合の修正（type が `fix`）では、直す前に、同じ原因の他の箇所を、同じ書き方・同じ前提でリポジトリを検索して探し、見つかった分も同じ変更で直してテストを足す。この手順は CONTRIBUTING.md の「テストのルール」と、SessionStart フックが渡す流れ（`defaults/task-flow.md`）に書き、review の水平展開（§7）と同じ考え方を、レビューの前の実装の段階にも持ち込む。
 - どのスキルも、依頼の内容から自動で呼ばれてよい（`disable-model-invocation` は付けない）。
-- Issue の番号を取るスキル（`task-start`・`task-status`・`task-finish`・`task-cancel`）は、`/dev-workflow:task-start 12` のように引数で番号を受け取れる。`12` でも `#12` でもよい。frontmatter の `argument-hint` に書く。`task-finish` は、規約に合わない名前のブランチも片付けられるよう、番号でない値をブランチ名として受け取る（`argument-hint` は `[Issue番号|ブランチ名]`）。引数が無ければ依頼の文章から読み、それでも分からなければ聞く。スクリプトの `--issue`（`issue-cancel.sh` の `--duplicate-of` も）は、先頭の `#` を1つだけ外して受け取る（`#` だけの値は、番号が無いものとして拒否する）。
+- Issue の番号を取るスキル（`task-start`・`task-status`・`task-finish`・`task-cancel`）は、`/dev-workflow:task-start 12` のように引数で番号を受け取れる。`12` でも `#12` でもよい。frontmatter の `argument-hint` に書く。`task-finish` は、規約に合わない名前のブランチも片付けられるよう、番号でない値をブランチ名として受け取る（`argument-hint` は `[Issue番号|ブランチ名]`）。引数が無ければ依頼の文章から読み、それでも分からなければ聞く。スクリプトの `--issue`（`issue-cancel.sh` の `--duplicate-of`、`issue-create.sh` の `--blocked-by`・`--parent` も）は、先頭の `#` を1つだけ外して受け取り、先頭の 0 をそろえる（`017` と `17` は同じ Issue として扱い、ブランチ名も `17` になる）。`#` だけの値と、0（Issue #0 は無い）は、番号が無いものとして拒否する。この受け取り方は `lib/common.sh` の `dw_issue_number` にまとめ、スクリプトごとに書かない（書き方が食い違って、0 をそろえないスクリプトが残ったため）。
 - その代わり、次の操作の前には、必ず AskUserQuestion で使用者の確認を取る。確認の前に、何が起きるか（下書きや dry-run の結果）を見せる。
   - AI が決めた内容（Issue や PR の文章、Story Point の見積もり）を GitHub に残す操作
   - 取り消しにくく、スクリプトが安全を確かめていない操作（push、リポジトリの設定の変更など）
