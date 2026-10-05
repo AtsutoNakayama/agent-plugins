@@ -98,8 +98,7 @@ if [ -n "$value" ]; then
   [ -z "$over" ] || dw_warn "$over"
   # 個人の設定はコミットしないので、git に無視されていなければ知らせる（setup-all.sh が次にやることに出す）
   if [ "$scope" = local ]; then
-    local_root="${target%/.claude/dev-workflow/config.local.json}"
-    if git -C "$local_root" check-ignore -q .claude/dev-workflow/config.local.json 2>/dev/null; then
+    if dw_local_config_ignored "$repo_root"; then
       ignored=true
     else
       ignored=false

@@ -94,8 +94,8 @@ if [ -n "$repo_root" ]; then
   local_root="${main_root:-$repo_root}"
   old_location "$local_root/.claude/workflow.local.json" "$local_root/.claude/dev-workflow/config.local.json"
   # .gitignore が古い名前だけを無視していると、移した個人の設定がコミットされうる
-  if { [ -f "$local_root/.claude/workflow.local.json" ] || [ -f "$local_root/.claude/dev-workflow/config.local.json" ]; } \
-    && ! git -C "$local_root" check-ignore -q .claude/dev-workflow/config.local.json 2>/dev/null; then
+  if { [ -f "$local_root/.claude/workflow.local.json" ] || [ -f "$(dw_local_config_file "$repo_root")" ]; } \
+    && ! dw_local_config_ignored "$repo_root"; then
     check local-ignored false warn "個人の設定が git に無視されていません。.gitignore に .claude/dev-workflow/config.local.json を足してください"
   fi
 fi

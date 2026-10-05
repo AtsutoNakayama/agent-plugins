@@ -215,6 +215,15 @@ dw_local_config_file() {
   printf '%s\n' "$f"
 }
 
+# 個人の上書き（dw_local_config_file のファイル）が、.gitignore などで git に無視されるかを確かめる。
+# 既にコミットしてあるファイルでも、無視の設定に当たるかで判断する（--no-index。当たらなければ .gitignore に足すよう案内するため）
+# 使い方: dw_local_config_ignored <リポジトリのルート>
+dw_local_config_ignored() {
+  local f
+  f="$(dw_local_config_file "$1")"
+  git -C "${f%/.claude/dev-workflow/config.local.json}" check-ignore -q --no-index .claude/dev-workflow/config.local.json 2>/dev/null
+}
+
 # 設定ファイルが review.model を決めていれば（null も「使わないと決めた」として）、その値の JSON を出力する。
 # 決めていなければ（ファイルもキーも無い）何も出さずに 1 を返す。JSON のオブジェクトとして読めなければ止まる
 # 使い方: dw_review_model_of <設定ファイル>

@@ -131,6 +131,17 @@ labels_check() { jq -c '.checks[] | select(.name == "labels") | [.ok, .level, .d
   assert_equal "$(jq '[.checks[] | select(.name == "local-ignored")] | length' <<<"$output")" 0
 }
 
+@test "コミット済みの個人の設定でも、.gitignore に書いてあれば足すよう促さない" {
+  fake_gh
+  export FAKE_SCOPES="project"
+  echo '{}' >.claude/dev-workflow/config.local.json
+  git add .claude/dev-workflow/config.local.json
+  git -c user.name=t -c user.email=t@example.com commit -q -m local
+  echo '.claude/dev-workflow/config.local.json' >.gitignore
+  run_script doctor.sh
+  assert_equal "$(jq '[.checks[] | select(.name == "local-ignored")] | length' <<<"$output")" 0
+}
+
 @test "古い置き場所に Markdown の無いディレクトリがあるだけなら、促さない" {
   fake_gh
   export FAKE_SCOPES="project"

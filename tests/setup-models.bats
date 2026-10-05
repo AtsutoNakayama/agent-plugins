@@ -150,3 +150,14 @@ json_of() { printf '%s\n' "$1" | LC_ALL=C sed -n '/^{/,$p'; }
   assert_output --partial "JSON のオブジェクトとして読めません: $REPO/$LOCAL"
   [ ! -e "$TEAM" ]
 }
+
+@test "コミット済みの config.local.json でも、.gitignore に書いてあれば無視されているとみなす" {
+  echo '{}' >"$LOCAL"
+  git add "$LOCAL"
+  git -c user.name=t -c user.email=t@example.com commit -q -m local
+  echo .claude/dev-workflow/config.local.json >.gitignore
+  run_script setup/setup-models.sh --review-model opus --scope local
+  assert_success
+  refute_output --partial "無視されていません"
+  assert_equal "$(jq -c .ignored <<<"$output")" true
+}
