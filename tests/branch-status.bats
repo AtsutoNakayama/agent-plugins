@@ -201,32 +201,34 @@ run_status() {
   assert_equal "$(grep -c '^PrQueue ' "$CALLS")" 0
 }
 
-# キューから外れた PR の応答。$1 は最後のキューの出入りのイベント（JSON）、$2 は PR の先頭のコミットの時刻
+# キューから外れた PR の応答。$1 は最後のキューの出入りのイベント（JSON）
 queue_removed_fixture() {
   echo '[{"number": 5, "url": "https://github.com/me/demo/pull/5", "mergeStateStatus": "CLEAN", "isCrossRepository": false}]' >"$FIX/pr-list.json"
-  jq -n --argjson ev "$1" --arg head "$2" '{data: {resource: {isMergeQueueEnabled: true, mergeQueueEntry: null,
-    commits: {nodes: [{commit: {committedDate: $head}}]}, timelineItems: {nodes: [$ev]}}}}' >"$FIX/PrQueue.json"
+  jq -n --argjson ev "$1" '{data: {resource: {isMergeQueueEnabled: true, mergeQueueEntry: null,
+    timelineItems: {nodes: [$ev]}}}}' >"$FIX/PrQueue.json"
 }
 
 @test "衝突してキューから外れたままの PR は、外れた理由と時刻を removed に出す（state は null でも見分けられる）" {
   setup_branch
-  queue_removed_fixture '{"__typename": "RemovedFromMergeQueueEvent", "reason": "merge_conflict", "createdAt": "2026-10-04T16:36:30Z"}' 2026-10-04T16:00:00Z
+  queue_removed_fixture '{"__typename": "RemovedFromMergeQueueEvent", "reason": "merge_conflict", "createdAt": "2026-10-04T16:36:30Z"}'
   run_status
   assert_success
   assert_equal "$(jq -c '.pr | [.merge_state, .merge_queue]' <<<"$output")" \
     '["CLEAN",{"enabled":true,"state":null,"position":null,"removed":{"reason":"merge_conflict","at":"2026-10-04T16:36:30Z"}}]'
 }
 
-@test "キューから外れた後に新しいコミットが入っていれば、removed は null" {
+@test "外れた後に push したかは見ない（コミットの時刻は手元でコミットした時刻なので、外れた時刻と比べない）" {
   setup_branch
-  queue_removed_fixture '{"__typename": "RemovedFromMergeQueueEvent", "reason": "merge_conflict", "createdAt": "2026-10-04T16:36:30Z"}' 2026-10-04T17:00:00Z
+  queue_removed_fixture '{"__typename": "RemovedFromMergeQueueEvent", "reason": "merge_conflict", "createdAt": "2026-10-04T16:36:30Z"}'
+  # 外れた時刻より新しいコミットがあっても、removed は残る
+  jq '.data.resource.commits = {nodes: [{commit: {committedDate: "2026-10-04T17:00:00Z"}}]}' "$FIX/PrQueue.json" >"$FIX/q" && mv "$FIX/q" "$FIX/PrQueue.json"
   run_status
-  assert_equal "$(jq -c .pr.merge_queue.removed <<<"$output")" null
+  assert_equal "$(jq -r .pr.merge_queue.removed.reason <<<"$output")" merge_conflict
 }
 
 @test "キューから外れた後に入れ直していれば（最後のイベントが入れたもの）、removed は null" {
   setup_branch
-  queue_removed_fixture '{"__typename": "AddedToMergeQueueEvent"}' 2026-10-04T16:00:00Z
+  queue_removed_fixture '{"__typename": "AddedToMergeQueueEvent"}'
   run_status
   assert_equal "$(jq -c .pr.merge_queue.removed <<<"$output")" null
 }

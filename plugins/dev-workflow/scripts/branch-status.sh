@@ -21,8 +21,8 @@
 #                         MERGEABLE・UNMERGEABLE・LOCKED）と順番（1 が先頭）で、並んでいなければ null。
 #                         キューに並んだ PR は、merge_state が CLEAN でも、先に並んだ PR と衝突すると state が UNMERGEABLE になり、
 #                         すぐにキューから外れる。removed は、PR がキューから外れたままのときの、外れた理由と時刻（{reason, at}。
-#                         reason は GitHub の値で、衝突なら merge_conflict）。外れた後にキューへ入れ直したか、PR に新しい
-#                         コミットが入っていれば（外れた理由に対応した後なので）null。取得できなければ merge_queue は null になる
+#                         reason は GitHub の値で、衝突なら merge_conflict）。外れた後にキューへ入れ直していれば null。
+#                         外れた後に push したかは見ない（理由に対応済みかは分からない）。取得できなければ merge_queue は null になる
 set -euo pipefail
 
 # shellcheck source=lib/common.sh
@@ -82,8 +82,10 @@ fi
 # マージキューの状態は gh pr list にも REST にも無いので GraphQL で読む（設計書 §10）。PR の URL から引くので、
 # リポジトリの所有者と名前を別に調べなくてよい。取得できなければ merge_queue は null にする。
 # 衝突した PR はすぐにキューから外れて mergeQueueEntry が null になるので、外れたことはタイムラインの最後の
-# キューの出入りのイベントで見る。最後が外れたイベントで、その後に PR の先頭のコミットが作られていなければ、外れたままとみなす
-# （強制 push は使わないので、外れた後の対応のコミットは外れた時刻より新しい）
+# キューの出入りのイベントで見る。キューに並んでおらず、最後が外れたイベントなら、外れたままとみなす。
+# 外れた後に push したかは見ない。GitHub には push の時刻が無く（Commit.pushedDate は廃止）、コミットの時刻
+# （committedDate）は手元でコミットした時刻なので、外れる前に作ったコミットや手元の時計のずれで誤る。
+# push の後でも PR はキューから外れたままなので、branch-update は、対応済みなら入れ直すよう案内する
 if [ "$pr" != null ]; then
   queue=null
   # shellcheck disable=SC2016 # GraphQL の変数（$url）を bash に展開させないため、シングルクォートで書く
@@ -92,19 +94,16 @@ if [ "$pr" != null ]; then
         ... on PullRequest {
           isMergeQueueEnabled
           mergeQueueEntry { state position }
-          commits(last: 1) { nodes { commit { committedDate } } }
           timelineItems(itemTypes: [ADDED_TO_MERGE_QUEUE_EVENT, REMOVED_FROM_MERGE_QUEUE_EVENT], last: 1) {
             nodes { __typename ... on RemovedFromMergeQueueEvent { reason createdAt } }
           }
         }
       }
     }' "$(jq -c '{url}' <<<"$pr")" 2>/dev/null)"; then
-    # 時刻はどちらも UTC の ISO 8601（…Z）なので、文字列のまま比べられる
     queue="$(jq -c '.data.resource // null | if . then
         (.timelineItems.nodes[0] // null) as $ev
-        | (.commits.nodes[0].commit.committedDate // "") as $head
         | {enabled: .isMergeQueueEnabled, state: .mergeQueueEntry.state, position: .mergeQueueEntry.position,
-           removed: (if .mergeQueueEntry == null and $ev.__typename == "RemovedFromMergeQueueEvent" and $ev.createdAt > $head
+           removed: (if .mergeQueueEntry == null and $ev.__typename == "RemovedFromMergeQueueEvent"
                      then {reason: $ev.reason, at: $ev.createdAt} else null end)}
       else null end' <<<"$res" 2>/dev/null || echo null)"
   fi
