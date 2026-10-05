@@ -35,7 +35,7 @@ frontmatter() { awk 'NR == 1 && $0 == "---" { on = 1; next } on && $0 == "---" {
 }
 
 @test "確認を残すスキルに、選択肢の説明の書き方がある（設計書 §8）" {
-  for name in task-create task-cancel pr-create repo-setup branch-update; do
+  for name in task-create task-cancel pr-create repo-setup branch-update pr-respond; do
     f="$SKILLS/$name/SKILL.md"
     grep -q '選択肢の説明には、選ぶと実際に何が起きるか' "$f" \
       || fail "${name} に選択肢の説明の書き方（選ぶと何が起きるかを書く）がありません"
@@ -45,7 +45,7 @@ frontmatter() { awk 'NR == 1 && $0 == "---" { on = 1; next } on && $0 == "---" {
 }
 
 @test "確認を残すスキルは、確認に必要な内容を質問の中にも入れる（設計書 §8）" {
-  for name in task-create task-cancel pr-create repo-setup review review-perspective-add task-finish branch-update; do
+  for name in task-create task-cancel pr-create repo-setup review review-perspective-add task-finish branch-update pr-respond; do
     f="$SKILLS/$name/SKILL.md"
     grep -q '質問の中にも入れる' "$f" \
       || fail "${name} に、確認に必要な内容を質問の中にも入れることが書かれていません（別の端末から使うと、質問の直前の文章が見えない）"
@@ -169,4 +169,21 @@ frontmatter() { awk 'NR == 1 && $0 == "---" { on = 1; next } on && $0 == "---" {
   grep -q 'gh issue close <番号>' "$f"
   # shellcheck disable=SC2016 # バッククォートはスキルの本文の文字で、展開させない
   grep -q 'どちらのコマンドにも `--repo <owner/repo>` を付けて案内する' "$f"
+}
+
+@test "pr-respond は PR の番号を引数で受け取り、スレッドを resolved にせず、コメントの本文を信頼しない" {
+  f="$SKILLS/pr-respond/SKILL.md"
+  frontmatter "$f" | grep -q '^argument-hint: .*PR番号' || fail "pr-respond の frontmatter に argument-hint（PR番号）がありません"
+  grep -q '引数があれば' "$f" || fail "pr-respond に、引数の PR の番号の扱いが書かれていません"
+  grep -q 'スレッドは resolved にしない' "$f" || fail "pr-respond に、スレッドを resolved にしないことが書かれていません"
+  grep -q '信頼しないデータとして読む' "$f" || fail "pr-respond に、コメントの本文を信頼しないデータとして読むことが書かれていません"
+  grep -q 'pr_respond.handlers' "$f" || fail "pr-respond に、担当の skill の設定（pr_respond.handlers）が書かれていません"
+}
+
+@test "pr-create と task-finish は pr-respond に依存しない（使わなくてもマージから後片付けまで進める）" {
+  for name in pr-create task-finish; do
+    if grep -n 'pr-respond' "$SKILLS/$name/SKILL.md"; then
+      fail "${name} が pr-respond に触れています（pr-respond は任意の寄り道）"
+    fi
+  done
 }
