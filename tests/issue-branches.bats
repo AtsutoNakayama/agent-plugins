@@ -86,13 +86,12 @@ run_branches() {
   assert_equal "$(jq -c '[.branches[] | [.name, .pr]]' <<<"$json")" '[["feat/17-x",5]]'
 }
 
-@test "origin を読めなければ、警告して手元のブランチだけで探す" {
+@test "origin を読めなければ、「リモートに無い」と区別できないまま出さずに止まる" {
   git branch feat/17-x
   git remote set-url origin "$TMP/no-such.git"
   run_branches --issue 17
-  assert_success
-  assert_output --partial "origin のブランチを読めませんでした"
-  assert_equal "$(jq -c '[.branches[].name]' <<<"$json")" '["feat/17-x"]'
+  assert_failure 1
+  assert_output "error: origin のブランチを読めませんでした（通信や認証を確かめてください）"
 }
 
 @test "Issue を読めなければ止まる。--issue が数字でなければ使い方の誤り" {

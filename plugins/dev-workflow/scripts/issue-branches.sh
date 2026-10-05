@@ -6,7 +6,7 @@
 #
 # 探すもの:
 #   - 名前で：手元のブランチと origin のブランチのうち、branch.pattern に当てた Issue の番号が N のもの
-#     （origin を読めなければ警告して、手元だけで探す）
+#     （origin を読めなければ止まる。「リモートに無い」と区別できないまま出すと、使う側が片付けを誤るため）
 #   - PR で：Issue に紐付く PR（Closes #N など。gh issue view の closedByPullRequestsReferences）。
 #     規約に合わない名前のブランチで作業していても見つかる。Issue の側から読むので、PR の件数の上限を受けない。
 #     マージせずに閉じた PR は、作業が残っていないので除く
@@ -49,12 +49,11 @@ is_ours() { [ "$(dw_parse_branch "$config" "$1" | cut -d'|' -f2)" = "$issue" ]; 
 
 # --- 名前で探す -------------------------------------------------------------------
 local_names="$(git -C "$main_root" for-each-ref --format='%(refname:short)' refs/heads/)"
-if remote_refs="$(git -C "$main_root" ls-remote --heads origin 2>/dev/null)"; then
-  remote_names="$(sed -n 's|^[0-9a-f]*[[:space:]]*refs/heads/||p' <<<"$remote_refs")"
-else
-  dw_warn "origin のブランチを読めませんでした。手元のブランチだけで探します"
-  remote_names=""
-fi
+# 読めないまま続けると、どのブランチも「リモートに無い」と出て、task-cancel が PR とリモートのブランチを残したり、
+# origin にだけあるブランチを見落として「着手していない」と判断したりする
+remote_refs="$(git -C "$main_root" ls-remote --heads origin 2>/dev/null)" \
+  || dw_die "origin のブランチを読めませんでした（通信や認証を確かめてください）"
+remote_names="$(sed -n 's|^[0-9a-f]*[[:space:]]*refs/heads/||p' <<<"$remote_refs")"
 named='[]'
 while IFS= read -r b; do
   [ -n "$b" ] && is_ours "$b" && named="$(jq -c --arg b "$b" '. + [$b]' <<<"$named")"

@@ -32,7 +32,7 @@ Project からは外さず、Story Point も変えない。後からボードで
 
 ### 2. やめた作業のブランチを探す
 
-`issue-branches.sh --issue <番号>` で、Issue の作業のブランチを探す。`branches` に、名前（`<type>/<番号>-…`）で見つかった手元・リモートのブランチと、Issue に紐付く PR のブランチが出る（規約に合わない名前のブランチで作業していても、PR から見つかる）。各ブランチの `local`（手元にあるか）・`remote`（origin にあるか）・`worktree`・`pr` で、手順4の引数を決める（`remote` が true なら `--branch` を付け、`local` が true か `worktree` があれば `cleanup.sh` を実行する）。
+`issue-branches.sh --issue <番号>` で、Issue の作業のブランチを探す。`branches` に、名前（`<type>/<番号>-…`）で見つかった手元・リモートのブランチと、Issue に紐付く PR のブランチが出る（規約に合わない名前のブランチで作業していても、PR から見つかる）。各ブランチの `local`（手元にあるか）・`remote`（origin にあるか）・`worktree`・`pr` で、手順4の引数を決める（`remote` が true なら `--branch` を付け、`local` が true か `worktree` があれば `cleanup.sh` を実行する）。止まったら（origin や Issue を読めない）、標準エラーの1行のメッセージを伝えて終える。ブランチが無いと決めつけて、Issue だけを閉じない。
 
 - 紐付く PR がマージ済み（`prs` の `state` が `MERGED`）のブランチは、作業が既に base_branch に入っているので、取りやめの対象にしない。そのことを手順5の確認に書く
 - フォークや別のリポジトリからの開いている PR（`prs` の `fork` が true）は、このスキルでは閉じられない。PR の番号と URL を手順5の確認に書き、閉じるならユーザーに閉じてもらう
