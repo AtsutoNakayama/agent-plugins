@@ -65,7 +65,7 @@ base_ahead: required
 - レビューを終えるときに、レビューが見落としてユーザーが出した指摘があれば、それを観点に残すか（既にある観点を直すか、新しい観点を作るか）を尋ねます。反映しなかった指摘に、今後も要らないという理由（例：「この書き方はこのリポジトリでは許容」）を述べたときは、今後指摘しないようにするかを尋ねます。どちらも、選んだときだけ観点ファイルを作ったり直したりします。一般的なバグや、その場限りの好みは観点にしません。
 - 今後指摘しないものは、その観点ファイルの「指摘しないこと」に書きます。`/code-review` の指摘は、上の層に `code-review.md`（`builtin: code-review`）を置き、本文の「## 指摘しないこと」の節に書きます。`/code-review` そのものは変わらず、`/dev-workflow:review` が一覧にまとめるときにこの節と照らして外し、外した件数を伝えます。
 - 同梱の観点を使わないときは、上の層に同じ名前のファイルを置き、frontmatter に `enabled: false` と書きます（本文と `title` は省けます）。
-- 使われる観点は `plugins/dev-workflow/scripts/review-perspectives.sh` で確かめられます。引数なしでは、層を合わせた観点の一覧（条件で外す前）が出ます。今の変更で使われる観点を見るには、`--auto` を付けます（review スキルと同じく、基点・マージ先・Issue・type をブランチから決め、`context` に出します。設定の `review.max_rounds` が1以上の整数でなければ止まります）。形式の誤ったファイルは警告を出して使いません。そのファイルと同じ名前の観点は、下の層にあっても使いません（`enabled: false` の書き間違いで、止めたつもりの観点が動かないようにするため）。
+- 使われる観点は `plugins/dev-workflow/scripts/review-perspectives.sh` で確かめられます。引数なしでは、層を合わせた観点の一覧（条件で外す前）が出ます。今の変更で使われる観点を見るには、`--auto` を付けます（review スキルと同じく、基点・マージ先・Issue・type をブランチから決め、`context` に出します。設定の `review.max_rounds` が1以上の整数でないときと、`review.model` が null か使えるモデルでないときは止まります）。形式の誤ったファイルは警告を出して使いません。そのファイルと同じ名前の観点は、下の層にあっても使いません（`enabled: false` の書き間違いで、止めたつもりの観点が動かないようにするため）。
 
 同梱の観点：
 
@@ -149,6 +149,8 @@ plugins/dev-workflow/scripts/setup/setup-all.sh
 
 作ったファイル（テンプレート、`.claude/dev-workflow/config.json`）はコミットされません。main は守られるので、PR でマージしてください。
 
+`/dev-workflow:repo-setup` では、レビューに使うモデルを決めていなければ、使うかどうかも聞かれます（下の「レビューに使うモデル」）。
+
 ### ラベル
 
 ```bash
@@ -222,6 +224,27 @@ plugins/dev-workflow/scripts/setup/setup-repo.sh --no-merge-queue
 - `--merge-queue`・`--no-merge-queue` は、`setup-all.sh` にも渡せます。どちらも付けなければ、キューを今のまま使う・使わないままにします。
 - 必須のチェックを求めるワークフローは、`merge_group` のイベントでも動くようにしてください（`on: merge_group`）。動かないと、キューのチェックが「待ち」のまま残ってマージされません。`setup-repo.sh` は、base_branch の `.github/workflows/` を読んで、必須のチェックのジョブがあるワークフローが `merge_group` で動くかを確かめ、出力の `merge_queue.merge_group` に出します（`--dry-run` でも、キューを使わないときも確かめます）。チェックの名前は、GitHub がジョブのチェックに付ける名前（`name:` があればその値、無ければジョブの ID）と突き合わせるので、どのジョブとも対応しない名前（外部のアプリのチェックなど）は確かめられません。`${{ }}` の式を含む `name:` のジョブ（matrix の値を名前に入れたものなど）とも突き合わせないので、そのチェックも確かめられません。確かめたいときは、式を含まない名前のジョブ（CI 全体の結果をまとめる門番のジョブなど）を必須のチェックにしてください。キューを使うときは、動かないチェックと、確かめられないチェックを警告しますが、止めはしません。キューを使わないときは、警告せずに結果を出力に出すだけです。キューを使い始めた後は、`doctor.sh` が同じことを確かめます。
 - `doctor.sh` は、main にマージキューと最新の main の取り込みのどちらが効いているかを表示します。
+
+### レビューに使うモデル
+
+`/dev-workflow:review` のレビュー（観点ごとのサブエージェントと `/code-review`）を、セッションとは別のモデルで動かせます。使うかどうかは任意で、既定では使いません（いつもセッションと同じモデルで動きます）。セッションより下のモデルにして費用を抑えることも、セッションを Sonnet にしたままレビューだけ Opus で深く見ることもできます。
+
+```bash
+# このリポジトリで、自分のレビューを Opus で動かす（opus・sonnet・haiku・fable から選べます。config.local.json に書きます）
+plugins/dev-workflow/scripts/setup/setup-models.sh --review-model opus --scope local
+
+# チームで、レビューをセッションと同じモデルで動かすと決める（.claude/dev-workflow/config.json に書きます）
+plugins/dev-workflow/scripts/setup/setup-models.sh --review-model off --scope team
+
+# 今の設定と、どの層で決めてあるかを確かめる
+plugins/dev-workflow/scripts/setup/setup-models.sh
+```
+
+- 書く層は、`local`（`.claude/dev-workflow/config.local.json`。自分だけ）か `team`（`.claude/dev-workflow/config.json`。コミットしてチームで共有します）です。設定ファイルの `review.model` を直接書いてもかまいません。
+- 設定は、そのリポジトリにだけ効きます。`~/.claude/dev-workflow/config.json` に書いた `review.model` は、警告を出して使いません。
+- 契約や組織の制限で使えないモデルを指定すると、Claude Code が別のモデルに置き換えて動かします。
+- 対象はレビューだけです。commit などの短いスキルは、別のモデルに任せる手間でかえって費用が増えるので、いつもセッションと同じモデルで動きます。
+- `--review-model`・`--models-scope` は、`setup-all.sh` にも渡せます。
 
 ## 開発
 
