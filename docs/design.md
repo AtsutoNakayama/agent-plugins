@@ -177,7 +177,7 @@ agent-plugins/
 | `commit` | 規約に沿ったコミット。実装中に論理的な区切りごとに呼ぶ | なし（手元のコミットだけ） |
 | `adr-create` | 設計上の判断を、MADR 4.0.0 の書式の ADR として残す。判断に合うテンプレートを選び、中身まで書く | なし（作るのは手元のファイルだけ） |
 | `pr-create` | push と PR 作成。Issue の「やること」のうち差分で済んだ項目にチェックを付ける | push と PR の作成、Issue のチェック（1回の確認で行う） |
-| `branch-update` | PR のブランチに、設定済みの `base_branch` の最新状態を取り込む。遅れを調べ（`branch-status.sh`）、`origin/<base_branch>` を merge し（rebase と強制 push は使わない）、衝突を直し、リポジトリのテストとチェックを通してから push し、CI が通り直るのを待つ。マージキューの中で先に並んだ PR とだけ衝突している（`merge_queue.state` が `UNMERGEABLE`）ときは取り込まず、その PR のマージを待つよう案内する。キューを使うリポジトリでは、CI が通った後に PR をキューへ入れ直すよう伝える（入れるのは人） | push（取り込んだコミットとチェックの結果を見せる）。判断できない衝突は聞く |
+| `branch-update` | PR のブランチに、設定済みの `base_branch` の最新状態を取り込む。遅れを調べ（`branch-status.sh`）、`origin/<base_branch>` を merge し（rebase と強制 push は使わない）、衝突を直し、リポジトリのテストとチェックを通してから push し、CI が通り直るのを待つ。マージキューの中で先に並んだ PR とだけ衝突した（`merge_queue.state` が `UNMERGEABLE`、またはキューから外れた理由（`merge_queue.removed.reason`）が `merge_conflict`）ときは取り込まず、その PR のマージを待つよう案内する。PR がキューに並んでいる間は、push するとキューから外れるので、取り込まずにキューでの順番を伝える。キューを使うリポジトリでは、CI が通った後に PR をキューへ入れ直すよう伝える（入れるのは人） | push（取り込んだコミットとチェックの結果を見せる）。判断できない衝突は聞く |
 | `task-cancel` | やらない Issue を、理由と参照先をコメントして not planned か duplicate で閉じる。着手していれば、PR を閉じ、リモートと手元のブランチ・ワークツリーを削除する。親の Issue なら、開いている子孫を一緒に取りやめるか残すかを選ばせる | 閉じる・削除する（理由のコメントと、失う作業を含めて1回で確認する） |
 | `task-finish` | ワークツリーとローカルブランチを削除し、main を最新にして（`git pull --ff-only`）、PR が閉じる Issue が閉じたかを伝える | なし（作業が失われるときは `cleanup.sh` が何も消さずに止まる。git が無視するファイルを消すときだけ確認を取る） |
 | `repo-setup` | 初期設定を対話的に実行し、設定ファイルを作る | ラベル・Project・リポジトリの設定の変更 |
@@ -273,7 +273,7 @@ Todo が増えたとき、どれから着手するか、同時に進めてよい
     - Todo の Issue を Project 上の並び順で読む（`next-tasks.sh`）。gh にも REST にも、項目の並び（`orderBy: POSITION`）を指定する手段が無く、返る順は起票順になる。
     - Project の詳細（`setup-project.sh`）。紐付け済みのリポジトリと組み込みの自動化（workflows）は、gh にも REST にも無い。Status の選択肢を足す操作（下）に要る項目の一覧も、同じクエリでまとめて取る。
     - 単一選択の項目の選択肢を足す（`setup-project.sh` の Status 列）。gh にも REST にも、既存の項目を変える操作が無い。
-    - PR のマージキューの状態（`branch-status.sh`）。`gh pr list`・`gh pr view` の `--json` にも REST にも、キューが有効か（`isMergeQueueEnabled`）とキューでの状態・順番（`mergeQueueEntry`）が無い。PR は URL で引く（`resource(url:)`）。
+    - PR のマージキューの状態（`branch-status.sh`）。`gh pr list`・`gh pr view` の `--json` にも REST にも、キューが有効か（`isMergeQueueEnabled`）とキューでの状態・順番（`mergeQueueEntry`）、キューから外れたイベント（タイムラインの `RemovedFromMergeQueueEvent`）が無い。PR は URL で引く（`resource(url:)`）。
 - **gh は新しいものを前提にする**。古い gh のための回り道は書かず、要る機能が無い gh では止まって更新を促す（`common.sh` の `DW_GH_MIN_VERSION`。`doctor.sh` も更新を促す）。
 
 | プラグイン側（`plugins/dev-workflow/scripts/`） | 役割 |
@@ -290,7 +290,7 @@ Todo が増えたとき、どれから着手するか、同時に進めてよい
 | `adr-create.sh` | ADR をテンプレートから作る（ファイル名の決定、`date` と `issue` の記入）。`--supersedes` で置き換える ADR の `status` の行だけを書き換える。同じファイル名があれば上書きせずに止まる |
 | `pr-create.sh` | PR を作る。`--check` で文を指定した Issue のチェックリストの項目にだけチェックを付ける（既にある PR に push するときも付ける。ほかの行は変えない）。項目は番号ではなく文で指す。確認を待つ間に項目が増減しても別の項目に付かないようにし、Markdown の解析（コードブロックの判定など）を誤ったときも、別の項目に付けずに止まるようにするため |
 | `issue-cancel.sh` | 理由をコメントし、Issue を not planned か duplicate で閉じる。`--branch` で、そのブランチの開いている PR を閉じ、リモートのブランチを削除する。`--sub-issues close\|keep` で、親を閉じるときに開いている子孫を閉じるか残すかを決める（開いている子孫があるのに無ければ止まる）。理由が空、または違う理由で既に閉じていれば何もせずに止まる |
-| `branch-status.sh` | 作業用のブランチの、base_branch に対する遅れ・先行、追跡しているファイルの未コミットの変更（未追跡のファイルは除く）、origin のブランチとのずれ、開いている PR のマージ状態（`merge_state`）とマージキューの状態（`merge_queue`。キューが有効か・並んでいるときの状態と順番。GraphQL で読む）を調べる。変更はしない（origin からの取得だけ行う） |
+| `branch-status.sh` | 作業用のブランチの、base_branch に対する遅れ・先行、追跡しているファイルの未コミットの変更（未追跡のファイルは除く）、origin のブランチとのずれ、開いている PR のマージ状態（`merge_state`）とマージキューの状態（`merge_queue`。キューが有効か・並んでいるときの状態と順番・キューから外れたままのときの理由。GraphQL で読む）を調べる。変更はしない（origin からの取得だけ行う） |
 | `merge-group-check.sh` | 必須のチェックを出すワークフローが、マージキューの merge_group のイベントでも動くかを確かめる（base_branch のワークフローを API で読み、チェックの名前とジョブを突き合わせる）。何も変えない。`setup-repo.sh` と `doctor.sh` が使う |
 | `cleanup.sh` | マージを確認し、ワークツリーとブランチを削除し、main を最新にし、PR が閉じる Issue の状態（`issues`）を出す。未コミットの変更や git が無視するファイルがあれば、何も消さずに止まる（無視するファイルは `--remove-ignored` で消せる）。`--abandon` では、マージの確認・main の更新・Issue の状態の確認を飛ばし、失うものを一覧にして削除する |
 

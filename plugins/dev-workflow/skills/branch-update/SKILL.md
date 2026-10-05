@@ -11,7 +11,7 @@ main が進んだ PR は、最新の main を取り込んで CI が通り直る�
 
 スクリプト（JSON を出力する）:
 
-- `${CLAUDE_PLUGIN_ROOT}/scripts/branch-status.sh`：origin から `base_branch` を取得し、ブランチの遅れ（`behind`）・先行（`ahead`）、追跡しているファイルの未コミットの変更（`dirty`。未追跡のファイルは除く）、origin のブランチとのずれ（`unpushed`・`unpulled`）、開いている PR のマージ状態（`pr.merge_state`）と、マージキューの状態（`pr.merge_queue`。マージ先でキューが有効か（`enabled`）、キューに並んでいるときの状態（`state`）と順番（`position`））を調べる。何も変更しない（`--help` で使い方）
+- `${CLAUDE_PLUGIN_ROOT}/scripts/branch-status.sh`：origin から `base_branch` を取得し、ブランチの遅れ（`behind`）・先行（`ahead`）、追跡しているファイルの未コミットの変更（`dirty`。未追跡のファイルは除く）、origin のブランチとのずれ（`unpushed`・`unpulled`）、開いている PR のマージ状態（`pr.merge_state`）と、マージキューの状態（`pr.merge_queue`。マージ先でキューが有効か（`enabled`）、キューに並んでいるときの状態（`state`）と順番（`position`）、キューから外れたままのときの理由と時刻（`removed`））を調べる。何も変更しない（`--help` で使い方）
 
 ## 手順
 
@@ -19,7 +19,8 @@ main が進んだ PR は、最新の main を取り込んで CI が通り直る�
 
 取り込むのは今のブランチ（HEAD）なので、取り込む作業用のブランチのワークツリーの中で `branch-status.sh` を実行する（調べるのは今のブランチだけ。別のブランチに取り込むときは、そのブランチのワークツリーに移ってから行う）。
 
-- `pr.merge_queue.state` が `UNMERGEABLE` で、`pr.merge_state` が `DIRTY` でなければ、PR は main とは衝突しておらず、キューの中で先に並んだ PR と衝突している（GitHub の PR の画面では CLEAN に見える）。今の main を取り込んでも直らないので、取り込まずに終える。「キューの中で先に並んだ PR と衝突しているので、その PR が main にマージされるのを待ってから、もう一度取り込んでください（そのときは main と衝突します）」と伝える。衝突した PR はキューから外れることも添える。`up_to_date` の値にかかわらず、「すでに最新です」とは伝えない
+- `pr.merge_queue.state` が `UNMERGEABLE` か、`pr.merge_queue.removed.reason` が `merge_conflict` で、`pr.merge_state` が `DIRTY` でなければ、PR は main とは衝突しておらず、キューの中で先に並んだ PR と衝突した（GitHub の PR の画面では CLEAN に見える。衝突した PR はすぐにキューから外れるので、`state` が null で `removed` だけが残っていることが多い）。今の main を取り込んでも直らないので、取り込まずに終える。「キューの中で先に並んだ PR と衝突して、キューから外れました。その PR が main にマージされるのを待ってから、もう一度取り込んでください（そのときは main と衝突します）。その PR がマージされずにキューから外れたなら、取り込まずに、もう一度キューに入れてください」と伝える。`up_to_date` の値にかかわらず、「すでに最新です」とは伝えない
+- `pr.merge_queue.removed` があって、理由（`reason`）が `merge_conflict` でなければ（CI の失敗など）、PR はその理由でキューから外れたままなので、理由を伝える。取り込みが要るかは、下の分岐で決める（「すでに最新です」と伝えるときも、キューから外れたままであることと、理由に対応してからもう一度キューに入れることを添える）
 - `pr.merge_queue.state` がそれ以外（`QUEUED`・`AWAITING_CHECKS`・`MERGEABLE`・`LOCKED`）で、`pr.merge_state` が `DIRTY` でなければ、PR はキューに並んでいて、キューが最新の main と組み合わせて確かめるので、取り込む必要は無い。push すると PR はキューから外れるので、取り込まずに、キューの何番目（`position`）にいるかを伝えて終える
 - `up_to_date` が true で、`pr.merge_state` が `BEHIND` でなければ、何もせずに「すでに最新です」と伝えて終える。マージできない理由は別にある（`BLOCKED` ならチェックの失敗や承認待ち、`DIRTY` なら衝突）ので、その状態も伝える
 - `up_to_date` が true なのに `pr.merge_state` が `BEHIND` のときは、調べている間に `base_branch` が進んだか、PR のマージ先が設定の `base_branch` と違う。もう一度 `branch-status.sh` を実行し、それでも `BEHIND` なら、「PR のマージ先と設定の `base_branch` が違う可能性がある」ことを伝えて、どちらに取り込むかユーザーに聞く
