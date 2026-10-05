@@ -19,10 +19,19 @@ setup_branch() {
   git commit -q -m "feat: work"
 }
 
+# origin の main を進める別の作業場所（$TMP/other）を用意する。無ければ clone し、あれば origin の main を取り込む
+other_clone() {
+  if [ -d "$TMP/other" ]; then
+    git -C "$TMP/other" pull -q origin main
+  else
+    git clone -q "$TMP/origin.git" "$TMP/other"
+  fi
+}
+
 # origin の main に、別の PR がマージされたことにする（main を n 個進める）
 advance_main() {
   local i
-  git clone -q "$TMP/origin.git" "$TMP/other"
+  other_clone
   for i in $(seq 1 "$1"); do
     echo "$i" >"$TMP/other/main-$i.txt"
     git -C "$TMP/other" add .
@@ -33,8 +42,7 @@ advance_main() {
 
 # origin の main に、ブランチの work.txt と衝突する変更（work.txt を別の内容で作る）がマージされたことにする
 conflict_main() {
-  [ -d "$TMP/other" ] || git clone -q "$TMP/origin.git" "$TMP/other"
-  git -C "$TMP/other" pull -q origin main
+  other_clone
   echo other >"$TMP/other/work.txt"
   git -C "$TMP/other" add work.txt
   git -C "$TMP/other" commit -q -m "main: work"
