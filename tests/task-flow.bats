@@ -194,3 +194,36 @@ pos() {
   run grep -cE '^- .*/dev-workflow:task-create` を呼び' "$DEFAULT"
   assert_output 1
 }
+
+@test "フックの出力に、スキルの外でも、答えを選んでもらう質問は AskUserQuestion で出し、内容を質問の中にも入れることが書いてある" {
+  # この項（「- スキルの外でも」の行と、その下の小項目）だけを取り出して確かめる（ほかの項の語句に当たらないように）
+  item="$(awk '/^- スキルの外でも/ { on = 1; print; next } on && /^  - / { print; next } { on = 0 }' "$DEFAULT")"
+  [ -n "$item" ] || fail "項が見つかりません"
+  run_hook
+  assert_success
+  assert_output --partial "$item"
+  # 言い換えで壊れないよう、要の語句だけを確かめる
+  # shellcheck disable=SC2016 # バッククォートは流れの本文の文字で、展開させない
+  for phrase in \
+    'ファイルを変えない依頼（質問への回答・調査）でも' \
+    'AskUserQuestion で出します' \
+    'はい・いいえの確認も含みます' \
+    '確認を取るかどうかの線引きは変えません' \
+    '選択肢の無い問い' \
+    'AskUserQuestion を使えない実行（`claude -p` など）には、この項は当てはまりません' \
+    '削除するもの' \
+    '選ぶと実際に何が起きるか' \
+    '選択肢がコマンドや確かめ方そのもののとき' \
+    '質問の中（' \
+    '複数選択の質問では preview を使えない' \
+    '/remote-control'; do
+    [[ "$item" == *"$phrase"* ]] || fail "項に「${phrase}」がありません"
+  done
+  # 流れが要らない依頼でも、この項は当てはまる（要らないのは番号の付いた段階だけ）
+  assert_output --partial 'この流れ（番号の付いた段階）は要りません'
+  # ファイルを変える作業の流れ（番号の付いた段階）の中ではなく、流れの外の項目にちょうど1つ書く
+  run grep -cF 'AskUserQuestion で出します' "$DEFAULT"
+  assert_output 1
+  run grep -cE '^- スキルの外でも.*AskUserQuestion で出します' "$DEFAULT"
+  assert_output 1
+}
