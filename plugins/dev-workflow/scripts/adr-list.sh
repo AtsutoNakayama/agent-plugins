@@ -128,9 +128,12 @@ if [ "$state" != read ]; then
   exit 0
 fi
 # Issue のチェックリストの ADR の項目から、pending・done・declined・judge を決める。
-# Issue の JSON（本文を含む）は大きいことがあるので、引数ではなく標準入力で渡す（引数1つの長さには上限がある）
-dw_read_issue "$issue" body | jq --argjson out "$out" "$DW_JQ_MD_SCAN"'
-  def adr_item: test("ADR[\\s　]*に残す");
+# Issue を読めなければ、dw_read_issue がここで止める。Issue の JSON（本文を含む）は大きいことがあるので、
+# 引数ではなく標準入力で渡す（引数1つの長さには上限がある）
+issue_json="$(dw_read_issue "$issue" body)"
+jq --argjson out "$out" "$DW_JQ_MD_SCAN"'
+  # \s は全角の空白にも当たる
+  def adr_item: test("ADR\\s*に残す");
   # 「ADR に残す」が、閉じた取り消し線（GitHub と同じく ~~ か ~ で囲む）の内側にだけあれば、取り消した項目（断った記録）とみなす
   def struck: [.text | splits("~~?")] as $p
     | ([range(1; ($p | length) - 1; 2) | $p[.]] | any(adr_item))
@@ -142,4 +145,4 @@ dw_read_issue "$issue" body | jq --argjson out "$out" "$DW_JQ_MD_SCAN"'
       if any($t[]; (struck | not) and (.checked | not)) then "pending"
       elif any($t[]; (struck | not) and .checked) then "done"
       elif ($t | length) > 0 then "declined"
-      else "judge" end)'
+      else "judge" end)' <<<"$issue_json"
