@@ -665,6 +665,8 @@ silent() {
   denied "main の上ではコミットしません" "pushd $TMP/wt && dirs -- -c; popd; git commit -m x" \
     "pushd $TMP/wt && dirs -x -c; popd; git commit -m x" "pushd $TMP/wt && dirs -cl; popd; git commit -m x" \
     "pushd $TMP/wt && dirs +1x -c; popd; git commit -m x"
+  # 番号の頭には、符号を1つ付けられる
+  allowed "pushd $TMP/wt && dirs +-0 -c && popd; git commit -m x"
 }
 
 @test "( ) の中で積んだ・戻した場所は、括弧の外に効かない" {
@@ -780,8 +782,9 @@ EOF
   # builtin・cd・nohup に不正なオプションがあると、シェルは失敗して、移らない・実行しない
   denied "main の上ではコミットしません" "builtin -x cd $TMP/wt; git commit -m x" "cd -x $TMP/wt; git commit -m x"
   allowed "cd -P $TMP/wt && git commit -m x" "cd -L -P $TMP/wt && git commit -m x" "nohup --help git commit -m x"
-  # cd -e・-@ は bash 4.3 から。bash 3.2 に合わせて、失敗するものとして扱う
-  denied "main の上ではコミットしません" "cd -e $TMP/wt; git commit -m x" "cd -@ $TMP/wt; git commit -m x"
+  # cd -e は bash 4.3 から（bash 4.3 以降に合わせて、移るものとして扱う）。-@ は拡張属性に対応したシステムだけなので、失敗として扱う
+  allowed "cd -e $TMP/wt && git commit -m x"
+  denied "main の上ではコミットしません" "cd -@ $TMP/wt; git commit -m x"
   denied "main の上ではコミットしません" "cd $TMP/wt && builtin cd $REPO && git commit -m x" \
     "cd $TMP/wt && builtin -- cd $REPO && git commit -m x"
 }
