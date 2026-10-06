@@ -19,8 +19,8 @@ items="$(jq -s '.' \
   <(item 12 "README に使い方を書く" Todo "## やること${nl}- [ ] 使い方の節を書く${nl}${nl}## 変更するファイル・領域${nl}- README.md${nl}${nl}## 依存${nl}- なし") \
   <(item 13 "設定ファイルの読み込みを速くする" Todo "## やること${nl}- [ ] 読み込みをキャッシュする${nl}${nl}## 変更するファイル・領域${nl}- src/config/${nl}${nl}## 依存${nl}- なし") \
   <(item 10 "認証 API を作る" "In Progress" "## やること${nl}- [ ] API を作る${nl}${nl}## 変更するファイル・領域${nl}- src/auth/${nl}${nl}## 依存${nl}- なし"))"
-fake_gh 'api graphql TodoItems' "$(jq -n --argjson nodes "$items" \
+fake_gh_read 'api graphql TodoItems' "$(jq -n --argjson nodes "$items" \
   '{data: {repositoryOwner: {projectV2: {items: {pageInfo: {hasNextPage: false, endCursor: null}, nodes: $nodes}}}}}')"
-fake_gh 'api --paginate repos/me/demo/issues/*/dependencies/blocked_by*' '[]'
-fake_gh 'pr list*' '[]'
+fake_gh_read 'api --paginate repos/me/demo/issues/*/dependencies/blocked_by*' '[]'
+fake_gh_read 'pr list*' '[]'
 fake_gh_writes

@@ -25,6 +25,6 @@ fake_issue 2 "別れの挨拶を出すスクリプトを足す" feat "## やる�
 
 ## 依存
 - なし"
-fake_gh 'pr list*' '[]'
-fake_gh 'pr view*' 'no pull requests found for branch "feat/2-add-farewell"' 1
+fake_gh_read 'pr list*' '[]'
+fake_gh_read 'pr view*' 'no pull requests found for branch "feat/2-add-farewell"' 1
 fake_gh_writes

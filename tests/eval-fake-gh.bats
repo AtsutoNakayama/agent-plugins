@@ -3,7 +3,7 @@
 
 load test_helper
 
-# 表は、ケースの準備と同じ処理（scaffold.bash の fake_gh_init・fake_gh）で作る
+# 表は、ケースの準備と同じ処理（scaffold.bash の fake_gh_init・fake_gh_read・fake_gh_write）で作る
 load ../plugins/dev-workflow/evals/lib/scaffold
 
 setup() {
@@ -17,35 +17,67 @@ run_fake_gh() {
   run "${TEST_BASH:-bash}" "$FAKE_GH" "$@" </dev/null
 }
 
-@test "表のパターンに合う呼び出しに応答を返し、引数を記録する" {
-  fake_gh 'issue list*' '[{"number": 1}]'
+# 標準入力から JSON を渡して gh api graphql を呼ぶ。使い方: graphql_stdin <JSON> [gh の引数（api graphql の後）]...
+graphql_stdin() {
+  local body="$1"
+  shift
+  # shellcheck disable=SC2016 # 子の bash に展開させるため、シングルクォートで渡す
+  run "${TEST_BASH:-bash}" -c 'printf "%s" "$1" | "$0" "${@:2}"' "$FAKE_GH" "$body" api graphql "$@"
+}
+
+writes() { cat .fake-gh/writes; }
+nwrites() { wc -l <.fake-gh/writes | tr -d ' '; }
+
+@test "read の行に当たる呼び出しに応答を返し、calls に記録して、writes には記録しない" {
+  fake_gh_read 'issue list*' '[{"number": 1}]'
   run_fake_gh issue list --state open --json number
   assert_success
   assert_output '[{"number": 1}]'
   assert_equal "$(cat .fake-gh/calls)" "issue list --state open --json number"
+  assert_equal "$(writes)" ""
 }
 
-@test "合うパターンが複数あれば、上の行を使う" {
-  fake_gh 'issue view 1 *' '{"number": 1}'
-  fake_gh 'issue view *' '{"number": 0}'
-  run_fake_gh issue view 1 --json number
+@test "write の行に当たる呼び出しは、応答を返し、writes にも記録する" {
+  fake_gh_write 'issue create*' 'https://github.com/me/demo/issues/99'
+  run_fake_gh issue create --title t
   assert_success
+  assert_output 'https://github.com/me/demo/issues/99'
+  assert_equal "$(writes)" "issue create --title t"
+}
+
+@test "どの行にも当たらない呼び出しは、書き込みとして記録してから失敗する" {
+  fake_gh_read 'issue list*' '[]'
+  run_fake_gh pr status
+  assert_failure
+  assert_output --partial "応答が用意されていない呼び出しです: gh pr status"
+  assert_equal "$(cat .fake-gh/calls)" "pr status"
+  assert_equal "$(writes)" "pr status"
+}
+
+@test "合うパターンが複数あれば、上の行を使う（read か write も上の行で決まる）" {
+  fake_gh_read 'issue view 1 *' '{"number": 1}'
+  fake_gh_write 'issue view *' '{"number": 0}'
+  run_fake_gh issue view 1 --json number
   assert_output '{"number": 1}'
+  assert_equal "$(nwrites)" 0
   run_fake_gh issue view 2 --json number
   assert_output '{"number": 0}'
+  assert_equal "$(nwrites)" 1
 }
 
 @test "-q と --jq の式を応答に当てる" {
-  fake_gh 'repo view*' '{"nameWithOwner": "me/demo"}'
+  fake_gh_read 'repo view*' '{"nameWithOwner": "me/demo"}'
   run_fake_gh repo view --json nameWithOwner -q .nameWithOwner
   assert_success
   assert_output "me/demo"
   run_fake_gh repo view --json nameWithOwner --jq .nameWithOwner
   assert_output "me/demo"
+  run_fake_gh repo view --json nameWithOwner --jq=.nameWithOwner
+  assert_output "me/demo"
 }
 
 @test "終了コードが 0 でない応答は、標準エラーに出して、その終了コードで終わる" {
-  fake_gh 'pr view*' 'no pull requests found' 1
+  fake_gh_read 'pr view*' 'no pull requests found' 1
   run "${TEST_BASH:-bash}" -c "\"$FAKE_GH\" pr view 2>/dev/null"
   assert_failure 1
   assert_output ""
@@ -53,24 +85,91 @@ run_fake_gh() {
   assert_output "no pull requests found"
 }
 
-@test "gh api graphql は操作名で当て、操作名と変数を記録する" {
-  fake_gh 'api graphql TodoItems' '{"data": {}}'
-  run "${TEST_BASH:-bash}" -c "printf '%s' '{\"query\": \"query TodoItems(\$n: Int!) { x }\", \"variables\": {\"n\": 4}}' | \"$FAKE_GH\" api graphql --input -"
+@test "gh api graphql は、クエリの渡し方によらず、操作名で表を引く" {
+  fake_gh_read 'api graphql TodoItems' '{"data": {"r": 1}}'
+  fake_gh_write 'api graphql *' '{"data": {}}'
+  # shellcheck disable=SC2016 # GraphQL の変数（$n）なので展開させない
+  graphql_stdin '{"query": "query TodoItems($n: Int!) { x }", "variables": {"n": 4}}' --input -
   assert_success
-  assert_output '{"data": {}}'
-  assert_equal "$(cat .fake-gh/calls)" 'api graphql TodoItems {"n":4}'
+  assert_output '{"data": {"r": 1}}'
+  printf '%s' '{"query": "mutation FromFile { x }"}' >m.json
+  printf '%s' 'mutation FromAt { x }' >m.graphql
+  run_fake_gh api graphql --input m.json
+  run_fake_gh api graphql --raw-field=query='mutation Raw { x }'
+  run_fake_gh api graphql -F query=@m.graphql
+  run_fake_gh api -H 'X-Github-Next-Global-ID: 1' graphql -fquery='mutation Attached { x }'
+  assert_equal "$(head -n 1 .fake-gh/calls)" 'api graphql TodoItems {"n":4}'
+  assert_equal "$(cut -d' ' -f3 .fake-gh/writes | tr '\n' ' ')" "FromFile Raw FromAt Attached "
 }
 
-@test "合うパターンが無い呼び出しは、記録してから失敗する" {
-  fake_gh 'issue list*' '[]'
-  run_fake_gh pr create --title t
+@test "gh api graphql は、複数行の mutation でも、操作名が分からなくても、read の行に当たらなければ書き込みとする" {
+  fake_gh_read 'api graphql TodoItems' '{"data": {}}'
+  fake_gh_write 'api graphql *' '{"data": {}}'
+  run_fake_gh api graphql -f query='mutation {
+  updateProjectV2ItemFieldValue(input:
+    {projectId: "P"}) { projectV2Item { id } }
+}'
+  assert_success
+  # -f の @ は、ファイルとして読まない（gh と同じ）。操作名は分からない
+  run_fake_gh api graphql -f query=@m.graphql
+  assert_success
+  assert_equal "$(nwrites)" 2
+  assert_equal "$(cut -d' ' -f1-3 .fake-gh/writes | sort -u)" "api graphql "
+}
+
+@test "gh api graphql の記録は、variables がオブジェクトでなくても残り、-f・-F の値も残す" {
+  fake_gh_write 'api graphql *' '{"data": {}}'
+  graphql_stdin '{"query": "mutation SetField { x }", "variables": []}' --input -
+  assert_success
+  run_fake_gh api graphql -f query='mutation AddItem { x }' -F itemId=IT1 -F number=5
+  assert_success
+  assert_equal "$(writes)" "$(printf '%s\n' 'api graphql SetField {}' 'api graphql AddItem {} itemId=IT1 number=5')"
+}
+
+@test "gh api は、graphql が値のオプションにあっても、エンドポイントが graphql でなければ REST として扱う" {
+  fake_gh_write 'api -X POST repos/me/demo/labels*' '{}'
+  run_fake_gh api -X POST repos/me/demo/labels -f name=x -H graphql
+  assert_success
+  assert_equal "$(writes)" "api -X POST repos/me/demo/labels -f name=x -H graphql"
+}
+
+@test "gh issue view・gh pr view は、番号・#番号・URL の指定を番号にそろえ、オプションの位置によらず表を引く" {
+  fake_gh_read 'issue view 7' '{"title": "seven"}'
+  fake_gh_read 'issue view 7 *' '{"title": "seven"}'
+  fake_gh_read 'pr view 2 *' '{"title": "two"}'
+  local args
+  for args in "7" "#7" "https://github.com/me/demo/issues/7" "https://github.com/me/demo/issues/7/" \
+    "https://github.com/me/demo/issues/7#issuecomment-1" "7 --json title" "--json title 7" "-R me/demo 7 --json title"; do
+    # shellcheck disable=SC2086 # 引数に分けるため、クォートしない
+    run_fake_gh issue view $args
+    assert_success
+    assert_equal "$(jq -r .title <<<"$output")" "seven"
+  done
+  for args in "2 --json title" "#2 --json title" "https://github.com/me/demo/pull/2 --json title"; do
+    # shellcheck disable=SC2086
+    run_fake_gh pr view $args
+    assert_success
+    assert_equal "$(jq -r .title <<<"$output")" "two"
+  done
+  # 70 は 7 の行に当たらない
+  run_fake_gh issue view 70
   assert_failure
-  assert_output --partial "応答が用意されていない呼び出しです: gh pr create --title t"
-  assert_equal "$(cat .fake-gh/calls)" "pr create --title t"
+  assert_equal "$(nwrites)" 1
+}
+
+@test "標準入力で本文を渡す呼び出しは、標準入力を読み捨てる（パイプの書き手が失敗しない）" {
+  fake_gh_write 'issue edit*' ''
+  fake_gh_write 'api -X POST*' '{}'
+  # shellcheck disable=SC2016 # 子の bash に展開させるため、シングルクォートで渡す
+  run "${TEST_BASH:-bash}" -c 'set -o pipefail; head -c 1000000 /dev/zero | tr "\0" a | "$0" issue edit 1 --body-file -' "$FAKE_GH"
+  assert_success
+  # shellcheck disable=SC2016
+  run "${TEST_BASH:-bash}" -c 'set -o pipefail; head -c 1000000 /dev/zero | tr "\0" a | "$0" api -X POST repos/me/demo/issues --input -' "$FAKE_GH"
+  assert_success
 }
 
 @test "下のディレクトリ（ワークツリーなど）から呼んでも、上の .fake-gh を使う" {
-  fake_gh 'issue list*' '[]'
+  fake_gh_read 'issue list*' '[]'
   mkdir -p .claude/worktrees/feat/1-x
   cd .claude/worktrees/feat/1-x
   run_fake_gh issue list
@@ -84,82 +183,4 @@ run_fake_gh() {
   run_fake_gh issue list
   assert_failure
   assert_output --partial ".fake-gh/routes が見つかりません"
-}
-
-@test "読むだけの呼び出しは .fake-gh/writes に記録しない" {
-  fake_gh '*' '{}'
-  run_fake_gh repo view --json nameWithOwner
-  run_fake_gh issue view 1 --json body
-  run_fake_gh -R me/demo issue list --state open
-  run_fake_gh pr list --head x
-  run_fake_gh project item-list 4 --owner me
-  run_fake_gh api user
-  run_fake_gh api --paginate "repos/me/demo/issues/1/dependencies/blocked_by?per_page=100"
-  run_fake_gh api -X GET repos/me/demo/issues/1
-  run_fake_gh search issues login
-  run_fake_gh auth status
-  run_fake_gh --version
-  run_fake_gh auth token
-  run_fake_gh pr checkout 2
-  run_fake_gh repo clone me/demo
-  run_fake_gh api -X HEAD repos/me/demo
-  run_fake_gh api --method get repos/me/demo
-  assert_equal "$(cat .fake-gh/writes)" ""
-  assert_equal "$(wc -l <.fake-gh/calls | tr -d ' ')" 16
-}
-
-@test "書き込む呼び出しは .fake-gh/writes に記録する（REST・サブコマンド・-R の後）" {
-  fake_gh '*' '{}'
-  run_fake_gh api -X POST repos/me/demo/issues --input -
-  run_fake_gh api --method=patch repos/me/demo/labels/x
-  run_fake_gh api -XDELETE repos/me/demo/git/refs/heads/x
-  run_fake_gh api repos/me/demo/issues/1/comments -f body=x
-  run_fake_gh issue create --title t
-  run_fake_gh -R me/demo issue close 1
-  run_fake_gh --repo me/demo pr merge 2
-  run_fake_gh pr close 2
-  run_fake_gh project item-edit --id x
-  run_fake_gh label create x
-  # 値を続けて書いた -f / -F も本文（gh は POST で送る）
-  run_fake_gh api repos/me/demo/issues/1/comments -fbody=x
-  run_fake_gh api repos/me/demo/issues/1/sub_issues -Fsub_issue_id=1
-  run_fake_gh api repos/me/demo/issues/1/comments --raw-field=body=x
-  # 知らない語は、読むだけと分からないので書き込み
-  run_fake_gh issue unknown-verb 1
-  assert_equal "$(wc -l <.fake-gh/writes | tr -d ' ')" 14
-  assert_equal "$(head -n 1 .fake-gh/writes)" "api -X POST repos/me/demo/issues --input -"
-}
-
-@test "gh api graphql は、mutation なら書き込み、query なら読むだけとして記録する" {
-  fake_gh 'api graphql *' '{"data": {}}'
-  run "${TEST_BASH:-bash}" -c "printf '%s' '{\"query\": \"query TodoItems { x }\"}' | \"$FAKE_GH\" api graphql --input -"
-  assert_success
-  assert_equal "$(cat .fake-gh/writes)" ""
-  run "${TEST_BASH:-bash}" -c "printf '%s' '{\"query\": \"mutation SetField { x }\"}' | \"$FAKE_GH\" api graphql --input -"
-  assert_success
-  run_fake_gh api graphql -f 'query=mutation AddItem { x }' -F itemId=IT1
-  assert_success
-  assert_equal "$(cat .fake-gh/writes)" "$(printf '%s\n' 'api graphql SetField {}' 'api graphql AddItem {"itemId":"IT1"}')"
-}
-
-@test "gh api graphql は、クエリをどの形で渡しても読み、読めなければ書き込みとみなす" {
-  fake_gh 'api graphql *' '{"data": {}}'
-  printf '%s' '{"query": "mutation FromFile { x }"}' >m.json
-  printf '%s' 'mutation FromAt { x }' >m.graphql
-  run_fake_gh api graphql --input m.json
-  run_fake_gh api graphql --raw-field=query='mutation Raw { x }'
-  run_fake_gh api graphql -F query=@m.graphql
-  run_fake_gh api -H 'X-Github-Next-Global-ID: 1' graphql -fquery='mutation Attached { x }'
-  run_fake_gh api graphql --input missing.json
-  assert_equal "$(head -n 4 .fake-gh/writes | cut -d' ' -f3 | tr '\n' ' ')" "FromFile Raw FromAt Attached "
-  # 読めないクエリは、操作名が分からないまま書き込みとして記録する
-  assert_equal "$(tail -n 1 .fake-gh/writes)" "api graphql  {}"
-  # 読むだけのクエリは、graphql の位置によらず GraphQL として扱い、書き込みにしない
-  : >.fake-gh/writes
-  run_fake_gh api -H 'X: 1' graphql -f query='query TodoItems { x }'
-  assert_success
-  run_fake_gh api graphql -f query='{ viewer { login } }'
-  assert_success
-  assert_equal "$(cat .fake-gh/writes)" ""
-  assert_equal "$(tail -n 2 .fake-gh/calls | head -n 1)" "api graphql TodoItems {}"
 }

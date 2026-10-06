@@ -83,7 +83,7 @@ scaffold() {
 }
 
 @test "fake_gh_writes の後、issue-create.sh が起票まで進み、書き込みとして記録される" {
-  scaffold "eval_repo && fake_gh 'label list*' '[]' && fake_gh_writes"
+  scaffold "eval_repo && fake_gh_read 'label list*' '[]' && fake_gh_writes"
   assert_success
   printf '本文' >"$TMP/body.md"
   # Project が未設定という警告（標準エラー）は見ない

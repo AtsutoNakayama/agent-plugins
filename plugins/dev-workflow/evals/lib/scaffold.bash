@@ -6,7 +6,10 @@
 # 使い方（ケースの fixture.sh）:
 #   . "$(dirname "$0")/../lib/scaffold.bash"
 #   eval_repo '{"project": {"owner": "me", "number": 4}}'
-#   fake_gh 'issue list*' '[]'
+#   fake_gh_read 'issue list*' '[]'
+#
+# 偽の gh は、表で読むだけ（fake_gh_read）と宣言した呼び出しのほかを、すべて書き込みとして .fake-gh/writes に記録する。
+# ケースで Claude が使う読むだけの呼び出しは、fake_gh_read で表に足す（足さないと、書き込みとして数えられる）。
 
 # 作業用のディレクトリを、dev-workflow を導入した git リポジトリ（main に最初のコミットが1つ）にする。
 # origin は作業用のディレクトリの中の bare のリポジトリ（.fake-remote.git）で、main を push してある（origin/main がある）。
@@ -37,10 +40,10 @@ eval_repo() {
   git remote add origin "$PWD/.fake-remote.git"
   git push -q -u origin main
   fake_gh_init
-  fake_gh 'repo view*' '{"nameWithOwner": "me/demo", "url": "https://github.com/me/demo", "defaultBranchRef": {"name": "main"}}'
-  fake_gh '--version*' 'gh version 2.96.0 (2026-07-02)'
-  fake_gh 'api user*' '{"login": "me"}'
-  fake_gh 'auth status*' 'github.com: Logged in to github.com account me'
+  fake_gh_read 'repo view*' '{"nameWithOwner": "me/demo", "url": "https://github.com/me/demo", "defaultBranchRef": {"name": "main"}}'
+  fake_gh_read '--version*' 'gh version 2.96.0 (2026-07-02)'
+  fake_gh_read 'api user*' '{"login": "me"}'
+  fake_gh_read 'auth status*' 'github.com: Logged in to github.com account me'
 }
 
 # 偽の gh の表（.fake-gh/）を、空にして作る（tests/eval/bin/fake-gh.sh の表と記録の形式を参照）。
@@ -53,17 +56,24 @@ fake_gh_init() {
   : >.fake-gh/writes
 }
 
-# 偽の gh の応答を、表の最後に足す（先に足したものが優先される）。
-# 応答が空なら、何も出力しない（空の行も出さない）。
-# 使い方: fake_gh <パターン（bash の case のパターン。引数を空白でつないだ文字列に当てる）> <応答> [終了コード（既定 0）]
-fake_gh() {
+# 偽の gh の応答を、表の最後に足す（先に足したものが優先される）。fake_gh_read は読むだけの呼び出し、fake_gh_write は
+# 書き込む呼び出し（呼ばれると .fake-gh/writes に記録される）。応答が空なら、何も出力しない（空の行も出さない）。
+# パターンは bash の case のパターンで、偽の gh が作る鍵に当てる。鍵はふつう引数を空白でつないだ文字列で、
+# gh api graphql と gh issue view・gh pr view だけ形をそろえる（tests/eval/bin/fake-gh.sh の .fake-gh/routes の説明）。
+# 使い方: fake_gh_read <パターン> <応答> [終了コード（既定 0）]
+#         fake_gh_write <パターン> <応答> [終了コード（既定 0）]
+fake_gh_read() { fake_gh_route read "$@"; }
+fake_gh_write() { fake_gh_route write "$@"; }
+
+# 使い方: fake_gh_route <read か write> <パターン> <応答> [終了コード（既定 0）]
+fake_gh_route() {
   local n
   n="$(($(wc -l <.fake-gh/routes) + 1))"
-  if [ -n "$2" ]; then printf '%s\n' "$2" >".fake-gh/res/${n}"; else : >".fake-gh/res/${n}"; fi
-  printf '%s\t%s\t%s\n' "$1" "res/${n}" "${3:-0}" >>.fake-gh/routes
+  if [ -n "$3" ]; then printf '%s\n' "$3" >".fake-gh/res/${n}"; else : >".fake-gh/res/${n}"; fi
+  printf '%s\t%s\t%s\t%s\n' "$2" "res/${n}" "${4:-0}" "$1" >>.fake-gh/routes
 }
 
-# Issue を1つ、gh issue view で読めるようにする。偽の gh は、Issue の指定（番号・#番号・URL）を番号にそろえ、
+# Issue を1つ、gh issue view で読めるようにする（読むだけ）。偽の gh は、Issue の指定（番号・#番号・URL）を番号にそろえ、
 # 番号を先頭に並べ直してから表を引くので、どの指定でも、オプションが番号の前後どちらにあっても答える。
 # 使い方: fake_issue <番号> <タイトル> <type ラベル> <本文>
 fake_issue() {
@@ -72,29 +82,29 @@ fake_issue() {
     '{number: $n, title: $t, body: $b, state: "OPEN", url: "https://github.com/me/demo/issues/\($n)",
       labels: [{name: $l}], assignees: [], parent: null, subIssues: {nodes: [], totalCount: 0},
       subIssuesSummary: {total: 0, completed: 0, percentCompleted: 0}}')"
-  fake_gh "issue view $1" "$json"
-  fake_gh "issue view $1 *" "$json"
+  fake_gh_read "issue view $1" "$json"
+  fake_gh_read "issue view $1 *" "$json"
 }
 
-# GitHub に書き込む gh の呼び出しに、成功したように答える。書き込んだかは、偽の gh が .fake-gh/writes に記録するので、
-# grader はそれが空かを確かめる（ここに無い書き込みも記録される）。ここでは、Claude が確認を取らずに書き込もうとしたときに、
+# GitHub に書き込む gh の呼び出しに、成功したように答える（fake_gh_write）。書き込んだかは、偽の gh が .fake-gh/writes に
+# 記録するので、grader はそれが空かを確かめる（表に無い呼び出しも書き込みとして記録される）。ここでは、Claude が確認を取らずに書き込もうとしたときに、
 # エラーで止まらず、書き込んだと思って進むようにする（止まると、書き込もうとしたことが返答から読み取りにくくなる）。
 # プラグインのスクリプトが使う呼び出し（issue-create.sh の REST での起票など）と、Claude が直接使いそうなサブコマンドに答える
 fake_gh_writes() {
   # issue-create.sh は、応答の labels に type ラベルがあるかを確かめるので、type ラベルを全部入れておく
-  fake_gh 'api -X POST repos/me/demo/issues --input*' '{"number": 99, "id": 9900, "node_id": "I_99", "html_url": "https://github.com/me/demo/issues/99", "labels": [{"name": "feat"}, {"name": "fix"}, {"name": "refactor"}, {"name": "perf"}, {"name": "test"}, {"name": "docs"}, {"name": "build"}, {"name": "ci"}, {"name": "chore"}, {"name": "breaking"}]}'
-  fake_gh 'api -X POST *' '{}'
-  fake_gh 'api -X PATCH *' '{}'
-  fake_gh 'api -X DELETE *' ''
-  fake_gh 'issue create*' 'https://github.com/me/demo/issues/99'
-  fake_gh 'pr create*' 'https://github.com/me/demo/pull/98'
-  fake_gh 'issue edit*' ''
-  fake_gh 'issue comment*' ''
-  fake_gh 'issue close*' ''
-  fake_gh 'pr edit*' ''
-  fake_gh 'pr comment*' ''
-  fake_gh 'pr close*' ''
-  fake_gh 'pr merge*' ''
-  fake_gh 'project item-add*' '{"id": "IT99"}'
-  fake_gh 'project item-edit*' '{}'
+  fake_gh_write 'api -X POST repos/me/demo/issues --input*' '{"number": 99, "id": 9900, "node_id": "I_99", "html_url": "https://github.com/me/demo/issues/99", "labels": [{"name": "feat"}, {"name": "fix"}, {"name": "refactor"}, {"name": "perf"}, {"name": "test"}, {"name": "docs"}, {"name": "build"}, {"name": "ci"}, {"name": "chore"}, {"name": "breaking"}]}'
+  fake_gh_write 'api -X POST *' '{}'
+  fake_gh_write 'api -X PATCH *' '{}'
+  fake_gh_write 'api -X DELETE *' ''
+  fake_gh_write 'issue create*' 'https://github.com/me/demo/issues/99'
+  fake_gh_write 'pr create*' 'https://github.com/me/demo/pull/98'
+  fake_gh_write 'issue edit*' ''
+  fake_gh_write 'issue comment*' ''
+  fake_gh_write 'issue close*' ''
+  fake_gh_write 'pr edit*' ''
+  fake_gh_write 'pr comment*' ''
+  fake_gh_write 'pr close*' ''
+  fake_gh_write 'pr merge*' ''
+  fake_gh_write 'project item-add*' '{"id": "IT99"}'
+  fake_gh_write 'project item-edit*' '{}'
 }

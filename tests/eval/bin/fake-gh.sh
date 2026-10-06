@@ -1,27 +1,24 @@
 #!/usr/bin/env bash
 # claude plugin eval のケースで使う偽の gh（同じディレクトリの gh は、このファイルへのシンボリックリンク。
 # 本体は、shellcheck の対象にするため、拡張子の付いたこのファイルにしてある）。GitHub に触れずに、ケースの準備のスクリプト
-# （plugins/dev-workflow/evals/lib/scaffold.bash の fake_gh）が作業用のディレクトリに置いた表で答える。
+# （plugins/dev-workflow/evals/lib/scaffold.bash の fake_gh_read・fake_gh_write）が作業用のディレクトリに置いた表で答える。
 # tests/eval/run.sh が、このディレクトリを PATH の先頭に足す。eval のサンドボックスの中からは、PATH にあるディレクトリしか
 # 見えないので、本体も gh と同じディレクトリに置く。
 #
 # 表と記録は、今のディレクトリから上に辿って最初に見つかる .fake-gh/ に置く（ワークツリーの中で呼ばれても、作業用のリポジトリのものを使う）
-#   .fake-gh/routes  1行に1つ「<パターン>\t<応答のファイル>\t<終了コード>」。パターンは bash の case のパターンで、表を引く鍵に当てる。
-#                    上から最初に合うものを使う。鍵は、ふつうは引数を空白でつないだ文字列で、次の2つだけ形をそろえる
-#                    - gh api graphql：「api graphql <操作名>」
-#                    - gh issue view：「issue view <番号> <残りの引数>」（#番号・URL の指定は番号にし、番号を先頭に並べ直す）
-#   .fake-gh/calls   呼ばれるたびに、引数を空白でつないだ1行を足す（graphql は「api graphql <操作名> <変数の JSON>」）
-#   .fake-gh/writes  GitHub に書き込む呼び出しなら、calls と同じ1行をここにも足す（grader は、これが空かで「書き込まなかった」を確かめる）
+#   .fake-gh/routes  1行に1つ「<パターン>\t<応答のファイル>\t<終了コード>\t<read か write>」。パターンは bash の case のパターンで、
+#                    表を引く鍵に当てる。上から最初に合うものを使う。鍵は、ふつうは引数を空白でつないだ文字列で、次の形だけそろえる
+#                    - gh api graphql：「api graphql <操作名>」（操作名はクエリの query / mutation の後の名前。分からなければ空）
+#                    - gh issue view・gh pr view：「<issue か pr> view <番号> <残りの引数>」（#番号・URL の指定は番号にし、先頭に並べ直す）
+#   .fake-gh/calls   呼ばれるたびに、引数を空白でつないだ1行を足す（graphql は「api graphql <操作名> <変数の JSON> <-f・-F の値>」）
+#   .fake-gh/writes  書き込みなら、calls と同じ1行をここにも足す（grader は、これが空かで「書き込まなかった」を確かめる）
 # 応答のファイルは .fake-gh/ からの相対パス。終了コードが 0 でなければ、応答を標準エラーに出して、その終了コードで終わる。
 # -q / --jq があれば、応答に jq -r で当てる。合うパターンが無ければ、記録してから失敗する（足りない応答に気付けるように）。
 #
-# 書き込みかどうかは、ここで1か所で決める（ケースごとに正規表現を書くと、スクリプトの実際の呼び方とずれて見逃すため）。
-# 読むだけと確かに分かる呼び出しだけを読むだけにし、それ以外（知らない形・読み取れない形）はすべて書き込みとみなす。
-# gh の引数の書き方は多いので、知っている形だけを書き込みとして拾うと、知らない形をすり抜けさせてしまうため。
-#   gh api（graphql）  引数のどこかに graphql があれば GraphQL。クエリを読めて、それが query（か無名の { … }）のときだけ読むだけ
-#   gh api（REST）     -X / --method が GET・HEAD のとき、または指定が無く、本文も無いときだけ読むだけ。
-#                      -f…・-F…・--field…・--raw-field…・--input… で始まる引数が1つでもあれば、本文がある（gh は POST で送る）
-#   それ以外           最初の2つの語（-R / --repo とその値は飛ばす）が、読むだけのもの（view・list・status・checkout など）のときだけ読むだけ
+# 書き込みかどうかは、gh の引数を解釈して決めず、表で決める。表で read と宣言した行に当たった呼び出しだけを読むだけにし、
+# それ以外（write の行に当たったもの、どの行にも当たらないもの）はすべて書き込みとして記録する。
+# gh の引数の書き方は多く（GraphQL のクエリの渡し方、-f・-F の書き方など）、解釈して判定すると、知らない形をすり抜けさせるため。
+# Claude が読むだけの呼び出しをして、表に無ければ、書き込みとして記録される。読むだけなら、ケースの表に read で足す。
 set -euo pipefail
 
 dir="$PWD"
@@ -31,125 +28,108 @@ while [ ! -f "$dir/.fake-gh/routes" ]; do
 done
 base="$dir/.fake-gh"
 
-# --- 1. 引数を読む ---------------------------------------------------------------
-# -q / --jq の式と、gh api の -X / --method・本文（-f・-F など）・GraphQL かどうか
-q="" method="" has_body=false graphql=false stdin_input=false input_file="" fields=() prev=""
-for a in "$@"; do
-  case "$prev" in
-    -q | --jq) q="$a" ;;
-    -X | --method) method="$a" ;;
-    -f | -F | --field | --raw-field) fields+=("$a") ;;
-    --input) if [ "$a" = - ]; then stdin_input=true; else input_file="$a"; fi ;;
+# 値を取るオプション（その次の引数は、位置の引数として数えない）
+takes_value() {
+  case "$1" in
+    -R | --repo | -X | --method | -H | --header | -f | -F | --field | --raw-field | --input | -q | --jq | -t | --template \
+      | -p | --preview | --hostname | --cache | --json | -b | --body | --body-file | -T | --title | -l | --label | -s | --state) return 0 ;;
   esac
+  return 1
+}
+
+# --- 1. 引数を読む ---------------------------------------------------------------
+# -q / --jq の式、--input のファイル、-f・-F の値（GraphQL のクエリと変数）、位置の引数、標準入力を読むか
+q="" stdin_input=false input_file="" stdin_used=false stdin_read=false fields=() pos=() prev=""
+for a in "$@"; do
+  if [ -n "$prev" ]; then
+    case "$prev" in
+      -q | --jq) q="$a" ;;
+      -f | --raw-field) fields+=("f:$a") ;;
+      -F | --field) fields+=("F:$a") ;;
+      --input) if [ "$a" = - ]; then stdin_input=true; else input_file="$a"; fi ;;
+    esac
+    [ "$a" != - ] || stdin_used=true
+    prev=""
+    continue
+  fi
   case "$a" in
     --jq=*) q="${a#--jq=}" ;;
-    -X?*) method="${a#-X}" ;;
-    --method=*) method="${a#--method=}" ;;
-    -f?* | -F?*) fields+=("${a#-?}") ;;
-    --field=* | --raw-field=*) fields+=("${a#*=}") ;;
+    -f?*) fields+=("f:${a#-f}") ;;
+    -F?*) fields+=("F:${a#-F}") ;;
+    --raw-field=*) fields+=("f:${a#--raw-field=}") ;;
+    --field=*) fields+=("F:${a#--field=}") ;;
     --input=-) stdin_input=true ;;
     --input=*) input_file="${a#--input=}" ;;
+    *=-) stdin_used=true ;;
+    -) stdin_used=true ;;
+    -*) takes_value "$a" && prev="$a" ;;
+    *) pos+=("$a") ;;
   esac
-  case "$a" in -f* | -F* | --field* | --raw-field* | --input*) has_body=true ;; esac
-  [ "$a" != graphql ] || graphql=true
-  prev="$a"
 done
-[ "${1:-}" = api ] || graphql=false
-method="$(printf '%s' "$method" | tr '[:lower:]' '[:upper:]')"
+p0="${pos[0]:-}" p1="${pos[1]:-}" p2="${pos[2]:-}"
 
-# 最初の2つの語（-R / --repo とその値は飛ばす）
-words=() skip=false
-for a in "$@"; do
-  if $skip; then skip=false; continue; fi
-  case "$a" in
-    -R | --repo) skip=true ;;
-    -*) ;;
-    *) words+=("$a") ;;
-  esac
-  [ "${#words[@]}" -lt 2 ] || break
-done
-w0="${words[0]:-}" w1="${words[1]:-}"
-
-# --- 2. 書き込みか、表を引く鍵、記録する行を決める -------------------------------------
-write=true
+# --- 2. 表を引く鍵と、記録する行を決める ---------------------------------------------
 key="$*"
 line="$*"
-if $graphql; then
+if [ "$p0" = api ] && [ "$p1" = graphql ]; then
   # スクリプトは、クエリと変数を JSON にして --input - で渡す（dw_gql）。ファイルや -f query=… で渡されたときも読む
   body='{}'
   if $stdin_input; then
     body="$(cat)"
+    stdin_read=true
   elif [ -n "$input_file" ] && [ -f "$input_file" ]; then
     body="$(cat "$input_file")"
   fi
-  query="$(jq -r '.query // ""' <<<"$body" 2>/dev/null || true)"
-  vars="$(jq -c '.variables // {}' <<<"$body" 2>/dev/null || echo '{}')"
+  query="$(jq -r '.query // "" | strings' <<<"$body" 2>/dev/null || true)"
+  vars="$(jq -c '.variables | objects' <<<"$body" 2>/dev/null || true)"
+  extra=""
   for f in ${fields[@]+"${fields[@]}"}; do
     case "$f" in
-      query=@*) if [ -f "${f#query=@}" ]; then query="$(cat "${f#query=@}")"; else query=""; fi ;;
-      query=*) query="${f#query=}" ;;
-      *=*) vars="$(jq -c --arg k "${f%%=*}" --arg v "${f#*=}" '. + {($k): $v}' <<<"$vars")" ;;
+      # -F は @ファイル を読む（gh と同じ）。-f の値はそのまま
+      F:query=@*) query="$(cat "${f#F:query=@}" 2>/dev/null || true)" ;;
+      ?:query=*) query="${f#?:query=}" ;;
+      *) extra="${extra} ${f#?:}" ;;
     esac
   done
-  op="$(printf '%s\n' "$query" | grep -oE '(query|mutation|subscription) [A-Za-z_][A-Za-z0-9_]*' | head -n 1 | cut -d' ' -f2 || true)"
+  op="$(printf '%s\n' "$query" | grep -oE '(query|mutation|subscription)[[:space:]]+[A-Za-z_][A-Za-z0-9_]*' | head -n 1 | awk '{print $2}' || true)"
   key="api graphql ${op}"
-  line="$key $vars"
-  # 読めて、query（か、操作の種類を省いた { … }）で始まるときだけ読むだけ
-  if printf '%s\n' "$query" | grep -qE '^[[:space:]]*(query([^A-Za-z0-9_]|$)|\{)'; then write=false; fi
-elif [ "$w0" = api ]; then
-  # 送る本文は読まない（書き込みかは引数で決まる）。書き手が詰まらないよう、標準入力は読み捨てる
-  if $stdin_input; then cat >/dev/null; fi
-  case "$method" in
-    GET | HEAD) write=false ;;
-    "") $has_body || write=false ;;
-  esac
-else
-  case "$w0" in
-    "" | search | status | browse | help | version | auth | completion | config) write=false ;;
-  esac
-  case "$w1" in
-    view | list | status | diff | checks | field-list | item-list | get | download | watch | checkout | clone | token) write=false ;;
-  esac
-  # gh issue view は、Issue の指定（番号・#番号・URL）を番号にそろえ、先頭に並べ直して表を引く（オプションの位置によらず当てるため）
-  if [ "$w0 $w1" = "issue view" ]; then
-    ref="" rest=() seen=0 prev=""
-    for a in "$@"; do
-      if [ "$seen" -lt 2 ]; then
-        case "$a" in issue | view) seen=$((seen + 1)); prev="$a"; continue ;; esac
-      fi
-      case "$prev" in
-        -R | --repo | --json | -q | --jq | -t | --template) rest+=("$a"); prev="$a"; continue ;;
-      esac
-      case "$a" in
-        -*) rest+=("$a") ;;
-        *) if [ -z "$ref" ]; then ref="$a"; else rest+=("$a"); fi ;;
-      esac
-      prev="$a"
-    done
-    ref="${ref#\#}"
-    ref="${ref##*/issues/}"
-    key="issue view ${ref}${rest[0]+ ${rest[*]}}"
-  fi
+  line="$key ${vars:-"{}"}${extra}"
+elif [ "$p1" = view ] && { [ "$p0" = issue ] || [ "$p0" = pr ]; }; then
+  # Issue・PR の指定（番号・#番号・URL）を番号にそろえ、先頭に並べ直して表を引く（オプションの位置や指定の仕方によらず当てるため）
+  num="$(printf '%s\n' "$p2" | sed -E 's#^.*/(issues|pull)/([0-9]+).*$#\2#; s/^#//')"
+  rest=() seen=false prev=""
+  for a in "$@"; do
+    if [ -n "$prev" ]; then rest+=("$a"); prev=""; continue; fi
+    case "$a" in
+      -*) rest+=("$a"); takes_value "$a" && prev="$a" ;;
+      "$p0" | "$p1") ;;
+      *) if ! $seen && [ "$a" = "$p2" ]; then seen=true; else rest+=("$a"); fi ;;
+    esac
+  done
+  key="${p0} view ${num}${rest[0]+ ${rest[*]}}"
 fi
+# 送られた本文は使わないが、書き手が詰まらないよう、標準入力を読み捨てる（--input - や --body-file - など）
+if { $stdin_input || $stdin_used; } && ! $stdin_read; then cat >/dev/null; fi
 
-echo "$line" >>"$base/calls"
-if $write; then echo "$line" >>"$base/writes"; fi
-
-# --- 3. 表を引いて答える -------------------------------------------------------------
-while IFS="$(printf '\t')" read -r pat file code; do
+# --- 3. 表を引いて、記録して答える -----------------------------------------------------
+kind=write file="" code=1
+while IFS="$(printf '\t')" read -r pat f c k; do
   [ -n "$pat" ] || continue
   # shellcheck disable=SC2254 # パターンとして当てるため、クォートしない
   case "$key" in
-    $pat)
-      if [ "${code:-0}" != 0 ]; then
-        cat "$base/$file" >&2
-        exit "$code"
-      fi
-      if [ -n "$q" ]; then jq -r "$q" "$base/$file"; else cat "$base/$file"; fi
-      exit 0
-      ;;
+    $pat) file="$f" code="${c:-0}" kind="${k:-write}"; break ;;
   esac
 done <"$base/routes"
 
-echo "fake gh: 応答が用意されていない呼び出しです: gh ${key}" >&2
-exit 1
+echo "$line" >>"$base/calls"
+[ "$kind" = read ] || echo "$line" >>"$base/writes"
+
+if [ -z "$file" ]; then
+  echo "fake gh: 応答が用意されていない呼び出しです: gh ${key}" >&2
+  exit 1
+fi
+if [ "$code" != 0 ]; then
+  cat "$base/$file" >&2
+  exit "$code"
+fi
+if [ -n "$q" ]; then jq -r "$q" "$base/$file"; else cat "$base/$file"; fi

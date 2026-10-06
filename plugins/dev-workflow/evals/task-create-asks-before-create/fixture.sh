@@ -4,6 +4,6 @@ set -euo pipefail
 # shellcheck source=../lib/scaffold.bash
 . "$(dirname "$0")/../lib/scaffold.bash"
 eval_repo
-fake_gh 'issue list*' '[]'
-fake_gh 'label list*' '[{"name": "feat"}, {"name": "fix"}, {"name": "docs"}, {"name": "breaking"}]'
+fake_gh_read 'issue list*' '[]'
+fake_gh_read 'label list*' '[{"name": "feat"}, {"name": "fix"}, {"name": "docs"}, {"name": "breaking"}]'
 fake_gh_writes

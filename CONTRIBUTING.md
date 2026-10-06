@@ -137,7 +137,7 @@ docker run --rm -v "$root:$root" -v "$top:$top" -w "$top" bash:3.2 sh -c '
 
 bats のテストは、スクリプトの出力と、SKILL.md に手順が書いてあるかを確かめますが、Claude がその手順どおりに動くかは確かめません。そこで、[`claude plugin eval`](https://code.claude.com/docs/en/plugin-evals) で Claude に実際に依頼を実行させて、振る舞いを採点するケースを `plugins/dev-workflow/evals/` に置いています。確認を取る場面など、スキルの手順を変えたときは、関係するケースを手元で実行して確かめます。上の「テストとチェック」とは違い、PR を出す前に必ず通すものではありません。
 
-ケースは、承認の前に GitHub に書き込まないか（task-create・pr-create）、何も変えないか（task-next）、fix の作業で同じ原因の箇所も直すか（タスクの進め方）を確かめます。どのケースも、作業用の git リポジトリを準備のスクリプト（各ケースの `fixture.sh`）で作り、GitHub には触れません。`gh` は偽物（`tests/eval/bin/gh`）に置き換え、準備のスクリプトが置いた表で答えます。
+ケースは、承認の前に GitHub に書き込まないか（task-create・pr-create）、何も変えないか（task-next）、fix の作業で同じ原因の箇所も直すか（タスクの進め方）を確かめます。どのケースも、作業用の git リポジトリを準備のスクリプト（各ケースの `fixture.sh`）で作り、GitHub には触れません。`gh` は偽物（`tests/eval/bin/gh`）に置き換え、準備のスクリプトが置いた表で答えます。表では、読むだけの呼び出しを `fake_gh_read` で宣言します。宣言していない呼び出しは、すべて GitHub への書き込みとして記録され、「書き込まなかった」を確かめる grader で落ちます（`plugins/dev-workflow/evals/lib/scaffold.bash`）。
 
 ```bash
 tests/eval/run.sh --model sonnet                                        # 全部のケースを、プラグインあり・なしで3回ずつ

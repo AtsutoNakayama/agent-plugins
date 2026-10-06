@@ -37,5 +37,5 @@ Hello, Yamada!
 
 ## 依存
 - なし"
-fake_gh 'pr list*' '[]'
+fake_gh_read 'pr list*' '[]'
 fake_gh_writes
