@@ -202,6 +202,22 @@ step() { awk -v n="$2" -v end="$3" 'on && ($0 ~ /^###? / || (end != "" && $0 ~ e
   grep -q 'task-start.sh --issue <番号> --no-worktree' "$f" || fail "作らないときの実行のしかたがありません"
 }
 
+@test "task-start は、ワークツリーを作るかを聞く前に、着手中の Issue との重なりを task-next と同じ判定で確かめる" {
+  # task-next を通らずに着手すると、着手中の Issue と同じファイルを変える Issue に、気付かずに着手していた（#241）
+  f="$SKILLS/task-start/SKILL.md"
+  overlap="$(step "$f" 3)"
+  grep -q 'next-tasks.sh --issue <番号>' <<<"$overlap" || fail "手順3で next-tasks.sh --issue を使っていません"
+  grep -q '3. 着手中のタスクとの重なりを確かめる' "$f" || fail "重なりを確かめる手順がありません"
+  grep -q '4. ワークツリーを作るかを決める' "$f" || fail "重なりを確かめた後に、ワークツリーを作るかを決めていません"
+  ask="$(step "$f" 4)"
+  # 重なるときは「今は着手しない」も選べ、選んだら重なる Issue への依存を足す
+  grep -q '「今は着手しない」' <<<"$ask" || fail "重なるときの「今は着手しない」の選択肢がありません"
+  grep -q 'issue-depend.sh --issue <番号> --blocked-by' <<<"$ask" || fail "今は着手しないときに依存を足していません"
+  # ワークツリーを作るかが依頼で決まっていても、重なるときは聞く
+  grep -q '重なる着手中の Issue があるときは、聞かずに進めない' <<<"$ask" || fail "質問を飛ばすときに、重なりがあっても聞くことが書かれていません"
+  grep -q '重なるか分からない' <<<"$ask" || fail "重なるか分からないときの伝え方がありません"
+}
+
 # shellcheck disable=SC2016 # バッククォートはスキルの本文の文字で、展開させない
 @test "ワークツリーの無いタスクを、task-finish は Issue を閉じて終え、task-cancel は Issue を閉じるだけにする" {
   grep -q '### 4. ワークツリーの無いタスクを終える' "$SKILLS/task-finish/SKILL.md"
