@@ -155,6 +155,11 @@ fake_issue() {
     >"$FIX/issue-$1.json"
 }
 
+# fake_issue で作った Issue の本文を置き換える。使い方: fake_issue_body <番号> <本文>
+fake_issue_body() {
+  jq --arg b "$2" '. + {body: $b}' "$FIX/issue-$1.json" >"$TMP/i.json" && mv "$TMP/i.json" "$FIX/issue-$1.json"
+}
+
 # Project P4 での Issue の項目と今の列。使い方: issue_item <列名 | none（列が空） | absent（Project に無い）>
 issue_item() {
   jq -n --arg s "$1" '{data: {repository: {issue: {url: "https://github.com/me/demo/issues/17", projectItems: {nodes: (

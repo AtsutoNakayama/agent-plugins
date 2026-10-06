@@ -11,11 +11,6 @@ setup() {
   for n in 151 7 9; do fake_issue "$n" '["feat"]'; done
 }
 
-# 使い方: issue_body <番号> <本文>
-issue_body() {
-  jq --arg b "$2" '. + {body: $b}' "$FIX/issue-$1.json" >"$TMP/i.json" && mv "$TMP/i.json" "$FIX/issue-$1.json"
-}
-
 # ADR を1つ書く。使い方: write_adr <パス> <front matter の行（改行区切り。空なら front matter なし）> [見出し]
 write_adr() {
   mkdir -p "$(dirname "$1")"
@@ -211,7 +206,7 @@ write_adr() {
 }
 
 @test "proposal：adr.suggest が false なら disabled、その Issue の ADR があれば exists で、どちらも Issue を読まない" {
-  issue_body 151 "$(printf -- '- [ ] 判断を ADR に残す')"
+  fake_issue_body 151 "$(printf -- '- [ ] 判断を ADR に残す')"
   echo '{"adr": {"suggest": false}}' >.claude/dev-workflow/config.json
   run_script adr-list.sh --issue 151
   assert_success
@@ -226,7 +221,7 @@ write_adr() {
 
 @test "proposal：ADR の項目が無ければ judge（ADR を含まない項目と、コードブロックの中の項目は数えない）" {
   # shellcheck disable=SC2016 # ``` はコードブロックの囲みで、展開させない
-  issue_body 151 "$(printf -- '## やること\n- [ ] 実装する\n```\n- [ ] 判断を ADR に残す\n```')"
+  fake_issue_body 151 "$(printf -- '## やること\n- [ ] 実装する\n```\n- [ ] 判断を ADR に残す\n```')"
   run_script adr-list.sh --issue 151
   assert_success
   assert_equal "$(jq -c '[.proposal, .adr_tasks]' <<<"$output")" '["judge",[]]'
@@ -234,7 +229,7 @@ write_adr() {
 }
 
 @test "proposal：取り消し線もチェックも無い ADR の項目があれば pending（ほかの項目が断った記録やチェック済みでも）" {
-  issue_body 151 "$(printf -- '- [ ] ~~一つ目を ADR に残す~~（不要）\n- [x] 二つ目を ADR に残す\n- [ ] 三つ目を ADR に残す')"
+  fake_issue_body 151 "$(printf -- '- [ ] ~~一つ目を ADR に残す~~（不要）\n- [x] 二つ目を ADR に残す\n- [ ] 三つ目を ADR に残す')"
   run_script adr-list.sh --issue 151
   assert_success
   assert_equal "$(jq -c .proposal <<<"$output")" '"pending"'
@@ -242,19 +237,19 @@ write_adr() {
 }
 
 @test "proposal：取り消し線の無い ADR の項目がすべてチェック済みなら done" {
-  issue_body 151 "$(printf -- '- [ ] ~~一つ目を ADR に残す~~（不要）\n- [x] 二つ目を ADR に残す')"
+  fake_issue_body 151 "$(printf -- '- [ ] ~~一つ目を ADR に残す~~（不要）\n- [x] 二つ目を ADR に残す')"
   run_script adr-list.sh --issue 151
   assert_success
   assert_equal "$(jq -c .proposal <<<"$output")" '"done"'
 }
 
 @test "proposal：ADR の項目が取り消し線だけなら（チェックがあっても）declined" {
-  issue_body 151 "$(printf -- '- [ ] ~~一つ目を ADR に残す~~（不要）\n- [x] ~~二つ目を ADR に残す~~')"
+  fake_issue_body 151 "$(printf -- '- [ ] ~~一つ目を ADR に残す~~（不要）\n- [x] ~~二つ目を ADR に残す~~')"
   run_script adr-list.sh --issue 151
   assert_success
   assert_equal "$(jq -c .proposal <<<"$output")" '"declined"'
   # 途中だけの取り消し線は、断った記録とみなさない
-  issue_body 151 "$(printf -- '- [ ] 判断を ~~ADR~~ に残す')"
+  fake_issue_body 151 "$(printf -- '- [ ] 判断を ~~ADR~~ に残す')"
   run_script adr-list.sh --issue 151
   assert_equal "$(jq -c .proposal <<<"$output")" '"pending"'
 }

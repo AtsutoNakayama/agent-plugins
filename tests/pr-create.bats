@@ -315,7 +315,7 @@ set_pr_opened() {
 # 使い方: set_issue_body <本文>  Issue #17（type は feat）の本文を、指定した文字列にそのまま置き換える
 set_issue_body() {
   fake_issue 17 '["feat"]'
-  jq --arg b "$1" '. + {body: $b}' "$FIX/issue-17.json" >"$TMP/i.json" && mv "$TMP/i.json" "$FIX/issue-17.json"
+  fake_issue_body 17 "$1"
 }
 
 # Issue #17 の本文を、チェックリストを含むものにする（改行は \r\n。最後の行の後にも改行を置く）
