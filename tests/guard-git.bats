@@ -443,6 +443,56 @@ silent() {
   git clone -q --mirror "$REPO" "$TMP/mirror2.git"
   denied "強制 push" "cd $TMP/mirror2.git && git push --mirror ../elsewhere.git"
 }
+@test "CDPATH を export していても、--git-dir・.git の中・ワークツリーで、対象のリポジトリを求められる" {
+  git init -q -b main "$TMP/other"
+  git worktree add -q "$TMP/wt" -b feat/1-x
+  export CDPATH=.
+  denied "強制 push" \
+    "cd $TMP/other && git --git-dir=$REPO/.git push --force" \
+    "cd $REPO/.git && git push --force" \
+    "cd $TMP/wt && git push --force"
+  silent "git --git-dir=$TMP/other/.git push --force"
+}
+
+@test "--git-dir・GIT_DIR の値の先頭の ~・\$HOME を展開して、対象のリポジトリを求める" {
+  export HOME="$TMP"
+  git init -q -b main "$TMP/other"
+  # 導入していないリポジトリは止めない
+  # shellcheck disable=SC2016
+  silent 'GIT_DIR=~/other/.git git push --force' 'git --git-dir=$HOME/other/.git push --force' 'git --git-dir ${HOME}/other/.git push --force'
+  # 導入したリポジトリは守る
+  # shellcheck disable=SC2016
+  denied "強制 push" 'cd ~/other && GIT_DIR=~/repo/.git git push --force' 'cd ~/other && git --git-dir=$HOME/repo/.git push --force'
+}
+
+@test "ワークツリーの git のディレクトリを GIT_DIR で指したときは、今のディレクトリのワークツリーではなく、HEAD にコミットしたチームの設定で判断する" {
+  git worktree add -q "$TMP/wt" -b develop
+  mkdir -p "$TMP/wt/.claude/dev-workflow"
+  echo '{"base_branch": "develop"}' >"$TMP/wt/.claude/dev-workflow/config.json"
+  git -C "$TMP/wt" add .claude/dev-workflow/config.json
+  git -C "$TMP/wt" commit -q -m setup
+  # 今のディレクトリ（REPO）の base_branch は main。対象（wt）は develop の上で、base_branch は develop
+  denied "develop の上ではコミットしません" "GIT_DIR=$REPO/.git/worktrees/wt git commit -m x"
+}
+
+@test "ルートが分からない対象は、HEAD にコミットしたチームの設定、ユーザーの層の順に base_branch を読み、ブランチ名は確かめない" {
+  git init -q -b develop --separate-git-dir "$TMP/sep.git" "$TMP/sep"
+  mkdir -p "$TMP/sep/.claude/dev-workflow"
+  echo '{"base_branch": "develop"}' >"$TMP/sep/.claude/dev-workflow/config.json"
+  git -C "$TMP/sep" add .claude/dev-workflow/config.json
+  git -C "$TMP/sep" commit -q -m setup
+  echo '{"base_branch": "release"}' >"$WORKFLOW_USER_DIR/config.json"
+  # チームの設定（develop）がユーザーの層（release）より優先される
+  denied "develop の上ではコミットしません" "cd $TMP && git --git-dir=$TMP/sep.git commit -m x"
+  silent "cd $TMP && git --git-dir=$TMP/sep.git push origin main" "cd $TMP && git --git-dir=$TMP/sep.git switch -c foo"
+  # チームの設定が base_branch を決めていなければ、ユーザーの層の値を使う
+  echo '{}' >"$REPO/.claude/dev-workflow/config.json"
+  git add .claude/dev-workflow/config.json
+  git commit -q -m setup
+  git clone -q --mirror "$REPO" "$TMP/mirror.git"
+  denied "release へは push しません" "cd $TMP/mirror.git && git push origin release"
+}
+
 @test "対象のリポジトリが見つからないときは、守りを外さないよう調べる" {
   mkdir "$TMP/plain"
   denied "強制 push" "cd $TMP/plain && git push --force" "cd $TMP/plain && GIT_DIR=$TMP/nowhere git push --force"

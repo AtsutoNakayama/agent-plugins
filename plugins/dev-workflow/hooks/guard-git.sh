@@ -69,22 +69,24 @@ git_at() {
 #   troot  対象のリポジトリの作業ツリーの一番上。確かめられなければ空
 # オプションも環境変数も無ければ、--show-toplevel（git がそのコマンドで使う作業ツリー）がそのままルート。
 # --git-dir・GIT_DIR などがあると、--show-toplevel は今のディレクトリを返すことがある（作業ツリーを指定しないとき）ので、
-# その場所で git が同じリポジトリを見つけるかで確かめ（dw_toplevel_if_repo）、だめならリポジトリのメインのワークツリー（dw_repo_main_root）。
-# .git の中など、--show-toplevel が答えないときも同じ
+# その場所で git が同じリポジトリを見つけるかで確かめ（dw_root_if_repo）、だめならリポジトリのメインのワークツリー（dw_repo_main_root）。
+# .git の中など、--show-toplevel が答えないときも同じ。ワークツリー（git worktree add）の git のディレクトリを指したときは、
+# 同じリポジトリの別のワークツリーと見分けられないので、ルートは分からないものとする。git は1回だけ起動する
 target_resolve() {
-  local c top
+  local out gd c top
   trepo="" troot=""
   [ -n "$git_dir" ] || return 0
-  c="$(git_at rev-parse --git-common-dir || true)"
-  [ -n "$c" ] || return 0
+  out="$(git_at rev-parse --git-dir --git-common-dir --show-toplevel || true)"
+  { IFS= read -r gd; IFS= read -r c; IFS= read -r top; } <<<"$out" || true
+  [ -n "${gd:-}" ] && [ -n "${c:-}" ] || return 0
   trepo="$(dw_abs_dir "$git_dir" "$c" || true)"
   [ -n "$trepo" ] || return 0
-  top="$(git_at rev-parse --show-toplevel || true)"
-  if [ "${#gopts[@]}" -eq 0 ] && [ "${#genv[@]}" -eq 0 ] && [ -n "$top" ]; then
+  if [ "${#gopts[@]}" -eq 0 ] && [ "${#genv[@]}" -eq 0 ] && [ -n "${top:-}" ]; then
     troot="$top"
     return 0
   fi
-  troot="$(dw_toplevel_if_repo "$top" "$trepo" || dw_repo_main_root "$trepo" || true)"
+  [ "$(dw_abs_dir "$git_dir" "$gd" || true)" = "$trepo" ] || return 0
+  troot="$(dw_root_if_repo "${top:-}" "$trepo" || dw_repo_main_root "$trepo" || true)"
 }
 
 # 操作の対象が、導入したリポジトリなら成功し、導入していなければ 1 を返す（設計書 §1）。target_resolve の後に呼ぶ。
@@ -101,17 +103,34 @@ target_set_up() {
   git_at cat-file -e "HEAD:.claude/dev-workflow/config.json"
 }
 
-# 対象のリポジトリの base_branch を出力する。読めなければ main。target_resolve の後に呼ぶ。
-# ルートが分かれば、そのリポジトリの設定（config.sh）から、分からなければ、HEAD にコミットされたチームの設定から読む。
-# 今のディレクトリのリポジトリの設定やユーザーの層は、対象と違うことがあるので読まない
+# 対象のリポジトリの base_branch を出力する。読めなければ main。target_resolve・target_set_up の後（導入したリポジトリのとき）に呼ぶ。
+# ルートが分かれば、そのリポジトリの設定（config.sh。導入したリポジトリなのでユーザーの層も合わせる）から読む。
+# ルートが分からなければ、HEAD にコミットされたチームの設定、ユーザーの層の順に読む（導入したものとして調べているので、
+# ユーザーの層も効かせる）。今のディレクトリのリポジトリの設定は、対象と違うことがあるので、代わりに読まない
 base_branch() {
   local base=""
   if [ -n "$troot" ]; then
     base="$( (cd "$troot" && WORKFLOW_REPO_ROOT="$troot" "$BASH" "$DW_SCRIPTS_DIR/config.sh" '.base_branch // empty') 2>/dev/null || true)"
-  elif [ -n "$trepo" ]; then
-    base="$(git_at show "HEAD:.claude/dev-workflow/config.json" | jq -r '.base_branch // empty | strings' 2>/dev/null || true)"
+  else
+    [ -z "$trepo" ] || base="$(git_at show "HEAD:.claude/dev-workflow/config.json" | jq -r '.base_branch // empty | strings' 2>/dev/null || true)"
+    [ -n "$base" ] || base="$(jq -r '.base_branch // empty | strings' "$(dw_user_dir)/config.json" 2>/dev/null || true)"
   fi
   printf '%s\n' "${base:-main}"
+}
+
+# コマンドの文字列の値の先頭にある ~・$HOME・${HOME} を展開する（シェルが展開する前の文字列を見ているため）。
+# --git-dir・--work-tree・GIT_DIR などの値に使う。ほかの変数は展開しない（対象が分からなければ、守りを外さないよう調べる）
+# 使い方: expand_home <値>
+expand_home() {
+  # ~ と $HOME はシェルが展開する前の文字として比べる
+  # shellcheck disable=SC2088,SC2016
+  case "$1" in
+    '~' | '$HOME' | '${HOME}') printf '%s\n' "$HOME" ;;
+    '~/'*) printf '%s\n' "$HOME/${1#\~/}" ;;
+    '$HOME/'*) printf '%s\n' "$HOME/${1#\$HOME/}" ;;
+    '${HOME}/'*) printf '%s\n' "$HOME/${1#\$\{HOME\}/}" ;;
+    *) printf '%s\n' "$1" ;;
+  esac
 }
 
 # git push の引数を調べる。使い方: check_push <引数>...
@@ -277,7 +296,7 @@ check_command() {
   genv=()
   while [ $# -gt 0 ]; do
     case "$1" in
-      GIT_DIR=* | GIT_WORK_TREE=* | GIT_COMMON_DIR=*) genv+=("$1"); shift ;;
+      GIT_DIR=* | GIT_WORK_TREE=* | GIT_COMMON_DIR=*) genv+=("${1%%=*}=$(expand_home "${1#*=}")"); shift ;;
       [A-Za-z_]*=*) shift ;;
       command | exec | time | nohup | env) shift ;;
       if | then | elif | else | while | until | do | '{' | '!') shift ;;
@@ -319,14 +338,14 @@ check_command() {
         ;;
       --git-dir | --work-tree)
         [ $# -ge 2 ] || return 0
-        gopts+=("$1" "$2")
+        gopts+=("$1" "$(expand_home "$2")")
         shift 2
         ;;
       -c | --namespace | --config-env)
         [ $# -ge 2 ] || return 0
         shift 2
         ;;
-      --git-dir=* | --work-tree=*) gopts+=("$1"); shift ;;
+      --git-dir=* | --work-tree=*) gopts+=("${1%%=*}=$(expand_home "${1#*=}")"); shift ;;
       -*) shift ;;
       *) break ;;
     esac

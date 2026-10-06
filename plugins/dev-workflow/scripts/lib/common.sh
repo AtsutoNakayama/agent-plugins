@@ -34,58 +34,78 @@ dw_repo_root() {
   fi
 }
 
-# <基準のディレクトリ> からの相対パス（絶対パスでもよい）のディレクトリを、実体の絶対パスにして出力する。無ければ失敗する。
-# --path-format=absolute は git 2.31 以降にしか無いので、git が返す相対パスは、これで絶対パスにする
+# <基準のディレクトリ（絶対パス）> からの相対パス（絶対パスでもよい）のディレクトリを、実体の絶対パスにして出力する。
+# 無ければ失敗する。--path-format=absolute は git 2.31 以降にしか無いので、git が返す相対パスは、これで絶対パスにする。
+# 相対パスのまま cd すると、CDPATH が設定されているときに cd がパスを出力するので、絶対パスにしてから cd する
 # 使い方: dw_abs_dir <基準のディレクトリ> <パス>
 dw_abs_dir() {
-  case "$2" in
-    /*) (cd "$2" 2>/dev/null && pwd -P) ;;
-    *) (cd "$1" 2>/dev/null && cd "$2" 2>/dev/null && pwd -P) ;;
+  local p="$2"
+  case "$p" in
+    /*) ;;
+    *) p="$1/$p" ;;
   esac
+  (cd "$p" 2>/dev/null && pwd -P)
 }
 
-# <ディレクトリ> で git が見つけるリポジトリ（--git-common-dir。ワークツリーなら元のリポジトリ）を、実体の絶対パスで出力する。
-# リポジトリが無ければ失敗する
-# 使い方: dw_common_dir <ディレクトリ>
-dw_common_dir() {
-  local c
-  c="$(git -C "$1" rev-parse --git-common-dir 2>/dev/null)" && [ -n "$c" ] || return 1
-  dw_abs_dir "$1" "$c"
+# <ディレクトリ> で git が見つけるリポジトリの、git のディレクトリ・リポジトリ（--git-common-dir。ワークツリーなら元のリポジトリ）・
+# 作業ツリーの一番上を、実体の絶対パスで1行ずつ出力する（作業ツリーが無い bare リポジトリや .git の中では、3行目は空）。
+# git は1回だけ起動する。リポジトリが無ければ失敗する
+# 使い方: dw_repo_paths <ディレクトリ>
+dw_repo_paths() {
+  local out gd c top
+  out="$(git -C "$1" rev-parse --git-dir --git-common-dir --show-toplevel 2>/dev/null || true)"
+  { IFS= read -r gd; IFS= read -r c; IFS= read -r top; } <<<"$out" || true
+  [ -n "${gd:-}" ] && [ -n "${c:-}" ] || return 1
+  printf '%s\n%s\n%s\n' "$(dw_abs_dir "$1" "$gd" || true)" "$(dw_abs_dir "$1" "$c" || true)" "${top:-}"
 }
 
-# <ディレクトリ> で git が <リポジトリ>（dw_common_dir の値）を見つけるなら、その作業ツリーの一番上を出力する。違えば失敗する。
-# git の内部の配置から考えたルートの候補が、本当にそのリポジトリの作業ツリーかを確かめるのに使う
-# 使い方: dw_toplevel_if_repo <ディレクトリ（空なら失敗）> <リポジトリ>
-dw_toplevel_if_repo() {
-  [ -n "$1" ] && [ "$(dw_common_dir "$1" || true)" = "$2" ] || return 1
-  git -C "$1" rev-parse --show-toplevel 2>/dev/null
+# <ディレクトリ> で git が <リポジトリ>（--git-common-dir の実体の絶対パス）を見つけるなら、その作業ツリーの一番上を出力する。
+# 違えば失敗する。git の内部の配置から考えたルートの候補が、本当にそのリポジトリのものかを確かめるのに使う。
+# 3つ目の引数に bare を渡すと、作業ツリーが無くても（bare リポジトリ＋ワークツリーの配置の、.git ファイルを置いたディレクトリなど）、
+# そのディレクトリを出力する
+# 使い方: dw_root_if_repo <ディレクトリ（空なら失敗）> <リポジトリ> [bare]
+dw_root_if_repo() {
+  local gd c top
+  [ -n "$1" ] || return 1
+  { IFS= read -r gd; IFS= read -r c; IFS= read -r top; } <<<"$(dw_repo_paths "$1" || true)" || true
+  [ -n "${c:-}" ] && [ "$c" = "$2" ] || return 1
+  if [ -n "${top:-}" ]; then
+    printf '%s\n' "$top"
+  elif [ "${3:-}" = bare ]; then
+    dw_abs_dir / "$1"
+  else
+    return 1
+  fi
 }
 
-# <リポジトリ>（dw_common_dir の値）のメインのワークツリーのルートを出力する。分からなければ失敗する。
-# 候補は、リポジトリの親（普通のリポジトリの <ルート>/.git）と core.worktree（サブモジュールの <上のリポジトリ>/.git/modules/<名前>）で、
-# どちらも dw_toplevel_if_repo で確かめる。--separate-git-dir で作ったリポジトリや bare リポジトリは、
-# git がメインのワークツリーを記録していないので分からない
-# 使い方: dw_repo_main_root <リポジトリ>
+# <リポジトリ>（--git-common-dir の実体の絶対パス）のメインのワークツリーのルートを出力する。分からなければ失敗する。
+# 候補は、リポジトリの親（普通のリポジトリの <ルート>/.git、bare リポジトリ＋ワークツリーの <ルート>/.bare）と
+# core.worktree（サブモジュールの <上のリポジトリ>/.git/modules/<名前>）で、どちらも dw_root_if_repo で確かめる。
+# --separate-git-dir で作ったリポジトリや bare のミラーは、git がメインのワークツリーを記録していないので分からない。
+# bare を渡すと、作業ツリーが無い候補も返す（dw_root_if_repo）
+# 使い方: dw_repo_main_root <リポジトリ> [bare]
 dw_repo_main_root() {
   local wt
-  dw_toplevel_if_repo "$(dirname "$1")" "$1" && return 0
+  dw_root_if_repo "$(dirname "$1")" "$1" "${2:-}" && return 0
   wt="$(git --git-dir="$1" config core.worktree 2>/dev/null || true)"
-  [ -n "$wt" ] && dw_toplevel_if_repo "$(dw_abs_dir "$1" "$wt" || true)" "$1"
+  [ -n "$wt" ] && dw_root_if_repo "$(dw_abs_dir "$1" "$wt" || true)" "$1" "${2:-}"
 }
 
 # メインのワークツリーのルート。コミットしないファイル（*.local.json）の置き場所で、task-start・cleanup がワークツリーを作り・消す場所。
 # <リポジトリのルート> がワークツリー（git worktree add で作ったもの）でなければ、そのルートがメインのワークツリー。
-# ワークツリーなら dw_repo_main_root で求め、分からなければ失敗する（推測した別の場所で操作しないため）
+# ワークツリーなら dw_repo_main_root で求め（bare リポジトリ＋ワークツリーの配置では、.git ファイルを置いたディレクトリ）、
+# 分からなければ失敗する（推測した別の場所で操作しないため）
 # 使い方: dw_main_root <リポジトリのルート>
 dw_main_root() {
-  local common gitdir
-  common="$(dw_common_dir "$1")" || return 1
-  gitdir="$(git -C "$1" rev-parse --git-dir 2>/dev/null)" || return 1
-  if [ "$(dw_abs_dir "$1" "$gitdir" || true)" = "$common" ]; then
-    git -C "$1" rev-parse --show-toplevel 2>/dev/null
-    return
+  local gd c top
+  { IFS= read -r gd; IFS= read -r c; IFS= read -r top; } <<<"$(dw_repo_paths "$1" || true)" || true
+  [ -n "${c:-}" ] || return 1
+  if [ "$gd" = "$c" ]; then
+    [ -n "${top:-}" ] || return 1
+    printf '%s\n' "$top"
+    return 0
   fi
-  dw_repo_main_root "$common"
+  dw_repo_main_root "$c" bare
 }
 
 # このプラグインを導入したリポジトリ（チームの設定 .claude/dev-workflow/config.json があるリポジトリ）なら成功する。

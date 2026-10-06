@@ -77,3 +77,27 @@ make_submodule() {
   run_fn dw_is_set_up "$TMP/super"
   assert_failure
 }
+
+@test "dw_main_root は、bare リポジトリ＋ワークツリーの配置で、.git ファイルを置いたディレクトリを返す" {
+  git clone -q --bare "$REPO" "$TMP/proj/.bare"
+  echo 'gitdir: ./.bare' >"$TMP/proj/.git"
+  git -C "$TMP/proj" worktree add -q "$TMP/proj/main" main
+  git -C "$TMP/proj" worktree add -q "$TMP/proj/feat" -b feat/1-x
+  run_fn dw_main_root "$TMP/proj/main"
+  assert_success
+  assert_output "$TMP/proj"
+  run_fn dw_main_root "$TMP/proj/feat"
+  assert_success
+  assert_output "$TMP/proj"
+}
+
+@test "dw_main_root・dw_is_set_up は、CDPATH を export していても動く" {
+  git worktree add -q "$TMP/wt" -b feat/1-x
+  mark_set_up
+  export CDPATH=.
+  run_fn dw_main_root "$TMP/wt"
+  assert_success
+  assert_output "$REPO"
+  run_fn dw_is_set_up "$TMP/wt"
+  assert_success
+}
