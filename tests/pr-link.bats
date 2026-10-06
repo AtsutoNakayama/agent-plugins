@@ -47,6 +47,21 @@ silent() {
   done
 }
 
+# 移った先を確かめるために、Issue 23 のブランチのワークツリー（$TMP/wt）を作る
+make_wt() {
+  fake_issue 23 '["feat"]'
+  git worktree add -q -b feat/23-x "$TMP/wt"
+}
+
+# 移った先のブランチ（feat/23-x）の Issue・PR・CI を出し、移る前のブランチ（feat/17-demo）のものは出さない。
+# 使い方: shows_wt <コマンド> [cwd]
+shows_wt() {
+  run_hook "$1" "" "${2:-$PWD}"
+  [ "$status" -eq 0 ] || fail "止めてしまった（$status）: $1 / $output"
+  [[ "$(jq -r .systemMessage <<<"$output")" == *"Issue #23: https://github.com/me/demo/issues/23"* ]] || fail "移った先の Issue が無い: $1 / $output"
+  [[ "$output" != *"issues/17"* ]] || fail "移る前の Issue を出した: $1 / $output"
+}
+
 @test "hooks.json は Bash の後にフックを呼び、呼ぶスクリプトがある" {
   jq -e '.hooks.PostToolUse[0].matcher == "Bash"' "$HOOKS/hooks.json"
   run jq -r '.hooks.PostToolUse[0].hooks[0].command' "$HOOKS/hooks.json"
@@ -118,9 +133,19 @@ silent() {
   silent "git worktree add ../wt"
 }
 
-@test "作るブランチの名前に Issue の番号が無い、または名前を拾えないときは、今のブランチの Issue を出さない" {
-  # guard-git.sh が警告する書き方でも、拾えなければ何も出さない（間違った Issue を出さないため）
-  silent "git branch scratch" "git switch -c scratch" "git switch -cfeat/23-x" "git branch --set-upstream-to origin/main feat/23-x"
+@test "作るブランチの名前に Issue の番号が無い、またはブランチを作らないときは、今のブランチの Issue を出さない" {
+  fake_issue 23 '["feat"]'
+  silent "git branch scratch" "git switch -c scratch" "git branch --set-upstream-to origin/main feat/23-x"
+}
+
+@test "guard-git.sh が名前を確かめる書き方（-cname・-qc name・--create=name）でも、作るブランチの Issue を出す" {
+  fake_issue 23 '["feat"]'
+  local c
+  for c in "git switch -cfeat/23-x" "git switch -qc feat/23-x" "git switch --create=feat/23-x" "git checkout -qbfeat/23-x" \
+    "git branch -f feat/23-x"; do
+    shows "$c" "Issue #23: https://github.com/me/demo/issues/23"
+    [[ "$output" != *"issues/17"* ]] || fail "今のブランチの Issue を出した: $c / $output"
+  done
 }
 
 @test "task-start.sh 経由では、出力の Issue の番号を使う（main の上からでも出す）" {
@@ -218,6 +243,12 @@ https://github.com/me/demo/pull/42"
   shows "git commit -m 'document --dry-run'" "Issue #17: https://github.com/me/demo/issues/17"
 }
 
+@test "1つのコマンドで同じブランチに何度も commit・push しても、Issue と PR は1回だけ調べる" {
+  shows "git commit -m x && git push && git commit -m y && git push" "Issue #17: https://github.com/me/demo/issues/17" "PR を作る:"
+  assert_equal "$(called issue-view)" 1
+  assert_equal "$(called pr-list)" 1
+}
+
 @test "同じリンクも、連続で毎回出す" {
   shows "git commit -m x" "Issue #17: https://github.com/me/demo/issues/17"
   shows "git commit -m x" "Issue #17: https://github.com/me/demo/issues/17"
@@ -303,4 +334,49 @@ https://github.com/me/demo/pull/42"
   run_hook "gh issue create --title x" "https://github.com/me/demo/issues/50"
   assert_success
   assert_output ""
+}
+
+@test "git -C で指したリポジトリのブランチの Issue・PR・CI を出す" {
+  make_wt
+  shows_wt "git -C ../wt push"
+  [[ "$output" == *"PR を作る: https://github.com/me/demo/pull/new/feat/23-x"* ]]
+  assert_equal "$(args pr-list 1)" "--head feat/23-x --state open --json url,isCrossRepository -q map(select(.isCrossRepository | not)) | .[0].url // empty"
+  shows_wt "git -C $TMP/wt commit -m x"
+}
+
+@test "cd で移った先のブランチの Issue を出す（cwd は、コマンドを実行した後のディレクトリ）" {
+  make_wt
+  # 外側の cd で移ると、Claude Code は cwd を移った先に引き継ぐので、cwd は既に移った先にある。相対パスの cd はたどり直さない
+  shows_wt "cd ../wt && git push" "$TMP/wt"
+  shows_wt "cd ../wt; git commit -m x" "$TMP/wt"
+  # 絶対パスへの cd は、cwd に関係なく移った先で判断する（プロジェクトの外へ移ると、Claude Code が cwd を戻すため）
+  shows_wt "cd $TMP/wt && git push"
+  # $HOME・~ も展開する。絶対パスへ移った後の相対パスの cd はたどる
+  HOME="$REPO" shows_wt "cd \$HOME/../wt && cd . && git push"
+  HOME="$TMP/wt" shows_wt "cd ~ && cd ../wt && git push"
+  # ( ) の中の cd は外に効かないので、cwd は移る前のまま。移った先をたどる
+  shows_wt "(cd ../wt && git push)"
+  # ( ) を出た後は、移る前のディレクトリに戻る
+  echo '[{"url": "https://github.com/me/demo/pull/42", "isCrossRepository": false}]' >"$FIX/pr-list.json"
+  : >"$CALLS"
+  run_hook "(cd ../wt && git commit -m x) && git push"
+  [ "$status" -eq 0 ]
+  [[ "$(jq -r .systemMessage <<<"$output")" == *"Issue #23: https://github.com/me/demo/issues/23"* ]]
+  [[ "$(jq -r .systemMessage <<<"$output")" == *"Issue #17: https://github.com/me/demo/issues/17"* ]]
+  assert_equal "$(args pr-list 1)" "--head feat/17-demo --state open --json url,isCrossRepository -q map(select(.isCrossRepository | not)) | .[0].url // empty"
+}
+
+@test "引用符やヒアドキュメントの中の git には反応しない" {
+  silent "echo \"git push\"" "echo 'git commit -m x'" "cat <<'EOF'
+git push
+EOF"
+  shows "git commit -m \"git push の説明\"" "Issue #17: https://github.com/me/demo/issues/17"
+  [ "$(called pr-list)" -eq 0 ]
+}
+
+@test "導入していないリポジトリへ移った git の操作では、何も出さない" {
+  fake_issue 23 '["feat"]'
+  git init -q -b feat/23-x "$TMP/other"
+  silent "git -C ../other commit -m x" "(cd ../other && git push)"
+  [ "$(called issue-view)" -eq 0 ]
 }
