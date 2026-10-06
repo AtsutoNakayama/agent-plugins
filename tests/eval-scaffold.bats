@@ -51,6 +51,18 @@ scaffold() {
   assert_equal "$(jq -c '[.number, .title, .labels[0].name, .state, .body]' <<<"$output")" '[7,"タイトル","fix","OPEN","## やること"]'
 }
 
+@test "fake_issue の Issue は、番号・#番号・URL のどれで指定しても、オプションの前後どちらでも読める" {
+  scaffold "eval_repo && fake_issue 7 'タイトル' fix '## やること' && fake_issue 70 '別' feat ''"
+  assert_success
+  local args
+  for args in "7" "#7" "https://github.com/me/demo/issues/7" "7 --json title" "--json title 7" "-R me/demo 7 --json title"; do
+    # shellcheck disable=SC2086 # 引数に分けるため、クォートしない
+    run gh issue view $args
+    assert_success
+    assert_equal "$(jq -r .title <<<"$output")" "タイトル"
+  done
+}
+
 @test "fake_gh_writes の後、起票や PR の作成に成功したように答え、書き込みとして記録する" {
   scaffold "eval_repo && fake_gh_writes"
   assert_success
