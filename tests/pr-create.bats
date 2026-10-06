@@ -406,7 +406,73 @@ fake_issue_tasks() {
   fake_issue_tasks
   FAKE_FAIL=edit run_pr --issue 17 --body-file "$TMP/body.md" --check 四つ目
   assert_failure 1
-  assert_output --partial "PR #42 はできていますが、Issue #17 にチェックを付けられませんでした（もう一度実行すれば付けます）"
+  assert_output --partial "PR #42 はできていますが、Issue #17 のチェックリストを変えられませんでした（もう一度実行すれば変えます）"
+}
+
+@test "--add-task で、最初のチェックリストのまとまりの最後に、同じ改行で項目を足す" {
+  setup_branch
+  fake_issue_tasks
+  run_pr --issue 17 --body-file "$TMP/body.md" --add-task "~~判断を ADR に残す~~（不要）" --dry-run
+  assert_success
+  assert_equal "$(jq -c '[.added, .actions[-1]]' <<<"$json")" \
+    '[["~~判断を ADR に残す~~（不要）"],"Issue #17 のチェックリストに項目「~~判断を ADR に残す~~（不要）」を足す"]'
+  assert_equal "$(called edit)" 0
+  run_pr --issue 17 --body-file "$TMP/body.md" --add-task "~~判断を ADR に残す~~（不要）" --check 四つ目
+  assert_success
+  # 五つ目（まとまりの最後の項目）の後、空行の前に \r\n で足し、チェックも同じ1回の書き換えで付ける。
+  # ほかの行（コードブロックの中・最後の改行を含む）は変えない
+  # shellcheck disable=SC2016 # ``` はコードブロックの囲みで、展開させない
+  printf '## やること\r\n- [ ] 一つ目 [ ] を含む\r\n- [x] 二つ目\r\n  * [ ] 三つ目（入れ子）\r\n1. [x] 四つ目\r\n- [ ] ~~五つ目~~\r\n- [ ] ~~判断を ADR に残す~~（不要）\r\n\r\n```md\r\n- [ ] コードブロックの中\r\n```\r\n- [ ]\r\n- [] 項目ではない\r\n' >"$TMP/expected"
+  run cmp "$TMP/expected" "$TMP/issue-edit-body"
+  assert_success
+  assert_equal "$(called edit)" 1
+}
+
+@test "--add-task は、まとまりの最初の項目の字下げに合わせ、見出しの手前で止める" {
+  setup_branch
+  set_issue_body "$(printf -- '## やること\n  - [ ] a\n    続きの行\n  - [ ] b\n## 完了条件\n- [ ] c')"
+  run_pr --issue 17 --body-file "$TMP/body.md" --add-task x --add-task y --add-task x
+  assert_success
+  assert_equal "$(jq -c .added <<<"$json")" '["x","y"]'
+  assert_equal "$(cat "$TMP/issue-edit-body")" "$(printf -- '## やること\n  - [ ] a\n    続きの行\n  - [ ] b\n  - [ ] x\n  - [ ] y\n## 完了条件\n- [ ] c')"
+}
+
+@test "--add-task は、文が同じ項目が既にあれば足さない（もう一度実行しても重ならない）" {
+  setup_branch
+  set_issue_body "$(printf -- '- [ ] a\n- [ ] ~~x~~（不要）')"
+  run_pr --issue 17 --body-file "$TMP/body.md" --add-task "~~x~~（不要）"
+  assert_success
+  assert_equal "$(jq -c .added <<<"$json")" '[]'
+  assert_equal "$(called edit)" 0
+}
+
+@test "--add-task は、チェックリストが無ければ本文の最後に足し、最後の改行は残す" {
+  setup_branch
+  set_issue_body "$(printf '## 背景\r\n説明')"$'\r\n'
+  run_pr --issue 17 --body-file "$TMP/body.md" --add-task x
+  assert_success
+  assert_equal "$(od -c "$TMP/issue-edit-body" | tail -3)" "$(printf '## 背景\r\n説明\r\n- [ ] x\r\n' | od -c | tail -3)"
+  set_issue_body ""
+  run_pr --issue 17 --body-file "$TMP/body.md" --add-task x
+  assert_success
+  assert_equal "$(cat "$TMP/issue-edit-body")" "- [ ] x"
+}
+
+@test "既にある PR に push するときも、--add-task の項目を足す" {
+  setup_branch
+  set_issue_body "$(printf -- '- [ ] a')"
+  echo '[{"number": 7, "url": "https://github.com/me/demo/pull/7", "isCrossRepository": false}]' >"$FIX/pr-list.json"
+  run_pr --issue 17 --body-file "$TMP/body.md" --add-task b
+  assert_success
+  assert_equal "$(called pr-create)" 0
+  assert_equal "$(cat "$TMP/issue-edit-body")" "$(printf -- '- [ ] a\n- [ ] b')"
+}
+
+@test "--add-task の文に改行があれば止まる" {
+  setup_branch
+  run_pr --issue 17 --body-file "$TMP/body.md" --add-task "$(printf 'a\nb')"
+  assert_failure 64
+  assert_output --partial "改行は使えません"
 }
 
 @test "長い囲みのコードブロックは、中の短い囲みや情報文字列付きの囲みでは閉じない" {
