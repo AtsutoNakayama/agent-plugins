@@ -122,37 +122,61 @@ dw_issue_branches() {
       | .[] | "\(.name)\t\(.l)\t\(.r)\t\(.confirmed)"'
 }
 
-# ブランチの作業の状態を「<状態><TAB><PR の番号>」で出力する（今のリポジトリの PR だけを見る。フォークの同じ名前の PR は除く）。
-#   open    開いている PR がある（作業は続いている）
-#   merged  マージ済みの PR があり、ブランチの先端がその PR の最後のコミットに含まれる（作業はすべて base_branch に入った）。
-#           cleanup.sh がマージを確かめる基準と同じ。ブランチが手元にも origin にも無ければ、失うものが無いので merged とする
-#   none    どちらでもない（PR が無い、またはマージの後に PR に入っていないコミットがある・確かめられない）。作業が残っているものとして扱う
-# PR を読めなければ止まる。
-# 使い方: dw_branch_state <メインのワークツリー> <ブランチ>
-dw_branch_state() {
-  local prs pr n oid tip
-  prs="$(gh pr list --head "$2" --state all --json number,state,mergedAt,headRefOid,headRefName,isCrossRepository)" \
-    || dw_die "${2} の PR を読めませんでした"
-  # --head はブランチ名だけで探すので、フォークの同じ名前のブランチからの PR を除く
-  prs="$(jq -c --arg b "$2" 'map(select(.headRefName == $b and (.isCrossRepository | not)))' <<<"$prs")"
-  n="$(jq -r 'map(select(.state == "OPEN")) | .[0].number // empty' <<<"$prs")"
-  if [ -n "$n" ]; then printf 'open\t%s\n' "$n"; return 0; fi
-  pr="$(jq -c 'map(select(.state == "MERGED")) | sort_by(.mergedAt) | last // empty' <<<"$prs")"
-  if [ -z "$pr" ]; then printf 'none\t\n'; return 0; fi
-  n="$(jq -r .number <<<"$pr")"
-  oid="$(jq -r .headRefOid <<<"$pr")"
-  # 先端は手元のブランチ、無ければ origin のブランチ
-  tip="$(git -C "$1" rev-parse -q --verify "refs/heads/$2^{commit}" 2>/dev/null \
-    || git -C "$1" ls-remote origin "refs/heads/$2" 2>/dev/null | cut -f1)"
-  if [ -z "$tip" ] || [ "$tip" = "$oid" ]; then printf 'merged\t%s\n' "$n"; return 0; fi
-  # 先端が PR の最後のコミットに含まれるか。PR のコミットが手元に無ければ refs/pull/<番号>/head から取る（cleanup.sh と同じ）
-  if { git -C "$1" cat-file -e "${oid}^{commit}" 2>/dev/null || git -C "$1" fetch -q origin "refs/pull/$n/head" 2>/dev/null; } \
-    && git -C "$1" cat-file -e "${tip}^{commit}" 2>/dev/null \
-    && git -C "$1" merge-base --is-ancestor "$tip" "$oid" 2>/dev/null; then
-    printf 'merged\t%s\n' "$n"
-  else
-    printf 'none\t%s\n' "$n"
+# Issue の作業のブランチと、Issue を閉じる開いている PR を、JSON の {branches, candidates, open_prs} で出力する
+# （issue-branches.sh と task-start.sh --no-worktree が使う。何も変えない）。
+#   branches    確かなブランチ（dw_issue_branches）。[{name, local, remote, worktree（無ければ null）}]。
+#               マージ済みかは見ない（マージの確かめは、厳密に確かめる cleanup.sh に任せる）
+#   candidates  名前が似ているだけのブランチ（from: name）と、Issue を閉じる PR（開いている・マージ済み。今のリポジトリのもの）の
+#               ブランチのうち、手元か origin に残っているもの（from: pr）。[{name, local, remote, worktree, from, pr}]
+#   open_prs    Issue を閉じる PR のうち開いているもの（フォークや別のリポジトリの PR も含む）。[{number, url, branch}]
+# origin・PR を読めなければ止まる。
+# 使い方: dw_issue_work <メインのワークツリー> <Issue の番号> <設定の JSON> <Issue の JSON（closedByPullRequestsReferences を含む）>
+dw_issue_work() {
+  local found branches='[]' candidates='[]' open_prs='[]' b is_local is_remote confirmed wt nwo="" url pr_repo pr head
+  # $(...) の中で呼ばれると set -e は効かないので、止まったときは明示的に抜ける
+  found="$(dw_issue_branches "$1" "$2" "$3")" || exit $?
+  while IFS="$(printf '\t')" read -r b is_local is_remote confirmed; do
+    [ -n "$b" ] || continue
+    wt=""
+    if [ "$is_local" = true ]; then wt="$(dw_live_worktree_of "$1" "$b")"; fi
+    if [ "$confirmed" = true ]; then
+      branches="$(jq -c --arg b "$b" --argjson l "$is_local" --argjson r "$is_remote" --arg w "$wt" \
+        '. + [{name: $b, local: $l, remote: $r, worktree: (if $w == "" then null else $w end)}]' <<<"$branches")"
+    else
+      candidates="$(jq -c --arg b "$b" --argjson l "$is_local" --argjson r "$is_remote" --arg w "$wt" \
+        '. + [{name: $b, local: $l, remote: $r, worktree: (if $w == "" then null else $w end), from: "name", pr: null}]' <<<"$candidates")"
+    fi
+  done <<<"$found"
+  # Issue を閉じる PR（closedByPullRequestsReferences は状態を返さないので、PR ごとに読む）。
+  # 開いているものは open_prs に、今のリポジトリの PR のブランチは、まだ出していなければ候補に足す。
+  # リポジトリの名前は、Issue を閉じる PR があるときだけ読む
+  if jq -e '(.closedByPullRequestsReferences // []) | length > 0' <<<"$4" >/dev/null; then
+    nwo="$(gh repo view --json nameWithOwner -q .nameWithOwner)" || dw_die "リポジトリの名前を読めませんでした"
   fi
+  while IFS="$(printf '\t')" read -r url pr_repo; do
+    [ -n "$url" ] || continue
+    pr="$(gh pr view "$url" --json number,url,state,headRefName,isCrossRepository)" || dw_die "PR ${url} を読めませんでした"
+    open_prs="$(jq -c --argjson p "$pr" \
+      'if $p.state == "OPEN" then . + [{number: $p.number, url: $p.url, branch: $p.headRefName}] else . end' <<<"$open_prs")"
+    head="$(jq -r 'select((.state == "OPEN" or .state == "MERGED") and (.isCrossRepository | not)) | .headRefName' <<<"$pr")"
+    [ -n "$head" ] && [ "$pr_repo" = "$nwo" ] || continue
+    if jq -e --arg h "$head" 'any(.[]; .name == $h)' <<<"$branches" >/dev/null \
+      || jq -e --arg h "$head" 'any(.[]; .name == $h)' <<<"$candidates" >/dev/null; then
+      continue
+    fi
+    is_local=false
+    if git -C "$1" show-ref --verify --quiet "refs/heads/$head"; then is_local=true; fi
+    is_remote=false
+    if dw_remote_has_branch "$1" "$head"; then is_remote=true; fi
+    # 手元にも origin にも無いブランチ（マージして片付け終えたものなど）は、片付けるものが無いので候補に出さない
+    [ "$is_local" = true ] || [ "$is_remote" = true ] || continue
+    wt=""
+    if [ "$is_local" = true ]; then wt="$(dw_live_worktree_of "$1" "$head")"; fi
+    candidates="$(jq -c --arg b "$head" --argjson l "$is_local" --argjson r "$is_remote" --arg w "$wt" --argjson n "$(jq .number <<<"$pr")" \
+      '. + [{name: $b, local: $l, remote: $r, worktree: (if $w == "" then null else $w end), from: "pr", pr: $n}]' <<<"$candidates")"
+  done < <(jq -r '.closedByPullRequestsReferences // [] | .[]
+    | [.url, (if .repository then "\(.repository.owner.login)/\(.repository.name)" else "" end)] | @tsv' <<<"$4")
+  jq -n --argjson b "$branches" --argjson c "$candidates" --argjson o "$open_prs" '{branches: $b, candidates: $c, open_prs: $o}'
 }
 
 # ブランチを使っているワークツリーの場所。ディレクトリが無い（手で消して記録だけが残った）ものは、無いものとして空を返す。

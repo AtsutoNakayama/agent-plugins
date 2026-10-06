@@ -207,11 +207,10 @@ frontmatter() { awk 'NR == 1 && $0 == "---" { on = 1; next } on && $0 == "---" {
     grep -q '`candidates`（候補）' "$SKILLS/$name/SKILL.md" || fail "${name} に、候補を分けて扱うことが書かれていません"
   done
   grep -q '取りやめで片付ける対象は、`branches`' "$SKILLS/task-cancel/SKILL.md"
-  grep -q '`state` が `merged` のブランチは' "$SKILLS/task-cancel/SKILL.md"
-  # 確かなブランチがすべてマージ済みで Issue が開いていれば、片付けた後に閉じるかを聞く（再び開いた Issue をワークツリー無しで続けたとき）
-  grep -q '確かなブランチがすべて `state` が `merged`' "$SKILLS/task-finish/SKILL.md"
   # --no-worktree で候補の警告が出たら、決めつけずに伝える
   grep -q '「Issue #N に関係するかもしれないブランチ（…）があります」の警告' "$SKILLS/task-start/SKILL.md"
+  # 終わった作業のブランチで止まったら、先に task-finish で片付けるよう案内する
+  grep -q '先に task-finish でそのブランチを片付けてから' "$SKILLS/task-start/SKILL.md"
   # shellcheck disable=SC2016 # バッククォートはスキルの本文の文字で、展開させない
   grep -q '`open_prs` がある：Issue を閉じる PR が開いている' "$SKILLS/task-finish/SKILL.md"
   grep -q '「別の名前のブランチで作業した」' "$SKILLS/task-finish/SKILL.md"

@@ -7,9 +7,8 @@
 #   --slug TEXT      ブランチ名の短い説明（英語）。branch-name.sh で整える
 #   --no-worktree    リポジトリを変えないタスク（調査・Issue の整理など）。1 と 2 を飛ばし、
 #                    割り当てと列の移動だけを行う（branch と worktree は null）。
-#                    Issue に作業の残っているブランチ（branch.pattern に合い番号が一致し、先端がマージ済みの PR に含まれないもの）が
-#                    あれば、作らずに着手せず止まる（終了コード 2）。名前が似ているだけのブランチや Issue を閉じる PR のブランチは、
-#                    警告するだけ（issue-branches.sh）。
+#                    Issue に確かなブランチ（branch.pattern に合い番号が一致するもの。マージ済みでも）があれば、作らずに着手せず
+#                    止まる（終了コード 2）。名前が似ているだけのブランチや Issue を閉じる PR のブランチは、警告するだけ（dw_issue_work）。
 #                    後からリポジトリを変えることになったら、--slug を付けてもう一度実行すれば作れる
 #   --dry-run        変更せず、行う予定の操作だけを出力する
 #
@@ -77,8 +76,14 @@ actions='[]'
 note() { actions="$(jq -c --arg a "$1" '. + [$a]' <<<"$actions")"; }
 
 # --- Issue ----------------------------------------------------------------------
-# PR の番号なら止まる（dw_read_issue。--no-worktree では、PR を割り当てたり列を移したりしてしまうため）
-issue_json="$(dw_read_issue "$issue" number,title,state,assignees,subIssuesSummary)"
+# PR の番号なら止まる（dw_read_issue。--no-worktree では、PR を割り当てたり列を移したりしてしまうため）。
+# --no-worktree では、Issue を閉じる PR のブランチも見るので closedByPullRequestsReferences も読む（gh 2.73.0 から読める）
+fields=number,title,state,assignees,subIssuesSummary
+if $no_worktree; then
+  dw_require_gh_version "$DW_GH_MIN_VERSION" "Issue を閉じる PR を読む（gh issue view --json closedByPullRequestsReferences）"
+  fields="$fields,closedByPullRequestsReferences"
+fi
+issue_json="$(dw_read_issue "$issue" "$fields")"
 [ "$(jq -r .state <<<"$issue_json")" = OPEN ] || dw_die "Issue #${issue} は閉じています" 2
 # 親の Issue は子をまとめるだけで、親そのものの作業は無い（設計書 §4）。ブランチ・割り当て・列の移動のどれも行わない
 sub_total="$(jq -r '.subIssuesSummary.total // 0' <<<"$issue_json")"
@@ -86,17 +91,16 @@ sub_total="$(jq -r '.subIssuesSummary.total // 0' <<<"$issue_json")"
   || dw_die "Issue #${issue} は親の Issue（子の Issue が ${sub_total} 件）なので、着手しません。子の Issue に着手してください" 2
 title="$(jq -r .title <<<"$issue_json")"
 
-# ワークツリーを作らずに着手するときも、Issue に作業の残っているブランチがあれば止まる。黙って着手すると base_branch の上で
-# 作業させ、後で task-finish がそのブランチで行き止まるため。ブランチは issue-branches.sh で探す（task-finish・task-cancel と
-# 同じ判定）。止めるのは、確かなブランチのうち作業が残っているもの（state が merged でない）だけにする（マージ済みで残った
-# ブランチは作業が main に入っているので、追加の調査で着手し直すのを妨げない）。候補は関係の無いブランチもありうるので、警告するだけ
+# ワークツリーを作らずに着手するときも、Issue に確かなブランチがあれば止まる。黙って着手すると base_branch の上で作業させ、
+# 後で task-finish がそのブランチで行き止まるため。マージ済みかは見ない（終わった作業のブランチなら、先に task-finish で片付けてもらう。
+# 片付けは、マージを厳密に確かめる cleanup.sh が行う）。ブランチは task-finish・task-cancel と同じ dw_issue_work で探し、
+# 上で読んだ Issue をそのまま使う。候補（名前が似ている・Issue を閉じる PR のブランチ）は関係の無いブランチもありうるので、警告するだけ
 if $no_worktree; then
-  # 先に変数で受ける（origin・Issue・PR を読めなければ止まる）
-  found="$("$BASH" "$DW_SCRIPTS_DIR/issue-branches.sh" --issue "$issue")"
-  list="$(jq -r '[.branches[] | select(.state != "merged")
-    | .name + (if .worktree then "（ワークツリー \(.worktree)）" else "" end)] | join("、")' <<<"$found")"
+  # 先に変数で受ける（origin・PR を読めなければ止まる）
+  found="$(dw_issue_work "$main_root" "$issue" "$config" "$issue_json")"
+  list="$(jq -r '[.branches[] | .name + (if .worktree then "（ワークツリー \(.worktree)）" else "" end)] | join("、")' <<<"$found")"
   [ -z "$list" ] \
-    || dw_die "Issue #${issue} には既にブランチ ${list} があります。ワークツリーを作らずに着手せず、そのブランチで作業してください" 2
+    || dw_die "Issue #${issue} には既にブランチ ${list} があります。ワークツリーを作らずに着手せず、そのブランチで作業してください（終わった作業のブランチなら、先に task-finish で片付けてください）" 2
   others="$(jq -r '[.candidates[].name] | join("、")' <<<"$found")"
   [ -z "$others" ] \
     || dw_warn "Issue #${issue} に関係するかもしれないブランチ（${others}）があります。この Issue の作業なら、そのブランチで作業してください"

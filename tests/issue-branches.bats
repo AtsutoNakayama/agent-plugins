@@ -72,40 +72,6 @@ names() { jq -c --arg k "${1:-branches}" '[.[$k][] | [.name, .local, .remote]]' 
   assert_equal "$(jq -c '[[.branches[].name], [.candidates[].name]]' <<<"$json")" '[[],["release/1-0-x"]]'
 }
 
-# 使い方: pr_list <番号>:<状態>:<ブランチ>:<最後のコミット>[:<フォークか>]... → gh pr list --head の応答（$FIX/pr-list.json）
-pr_list() {
-  local spec n state branch oid fork out='[]'
-  for spec in "$@"; do
-    IFS=: read -r n state branch oid fork <<<"$spec"
-    out="$(jq -c --argjson n "$n" --arg s "$state" --arg b "$branch" --arg o "$oid" --argjson f "${fork:-false}" \
-      '. + [{number: $n, state: $s, headRefName: $b, headRefOid: $o, isCrossRepository: $f,
-             mergedAt: (if $s == "MERGED" then "2026-10-01T00:00:00Z" else null end)}]' <<<"$out")"
-  done
-  echo "$out" >"$FIX/pr-list.json"
-}
-
-@test "確かなブランチに作業の状態を付ける（先端がマージ済みの PR に含まれれば merged、開いた PR があれば open、ほかは none）" {
-  base="$(git rev-parse HEAD)"
-  git branch feat/17-a                           # 先端がマージ済みの PR の最後のコミットと同じ
-  git branch feat/17-b
-  git -C . worktree add -q "$TMP/wt-b" feat/17-b
-  git -C "$TMP/wt-b" commit -q --allow-empty -m "マージの後の作業"   # マージの後に PR に入っていないコミットがある
-  git branch feat/17-c                           # 開いている PR がある
-  git branch feat/17-d                           # フォークの同じ名前のマージ済みの PR だけ
-  pr_list "9:MERGED:feat/17-a:$base" "10:MERGED:feat/17-b:$base" "11:OPEN:feat/17-c:$base" "3:MERGED:feat/17-d:$base:true"
-  run_branches --issue 17
-  assert_success
-  assert_equal "$(jq -c '[.branches[] | [.name, .state, .pr]]' <<<"$json")" \
-    '[["feat/17-a","merged",9],["feat/17-b","none",10],["feat/17-c","open",11],["feat/17-d","none",null]]'
-}
-
-@test "確かなブランチの PR を読めなければ、マージ済みかを決めつけずに止まる" {
-  git branch feat/17-x
-  FAKE_FAIL=pr-list run_branches --issue 17
-  assert_failure 1
-  assert_output --partial "feat/17-x の PR を読めませんでした"
-}
-
 @test "設定で branch.pattern の形を変えても、その形で確かなブランチを見つける" {
   jq '. + {branch: {pattern: "{type}-{issue_number}-{slug}"}}' .claude/dev-workflow/config.json >"$TMP/c" \
     && mv "$TMP/c" .claude/dev-workflow/config.json
@@ -242,4 +208,12 @@ pr_list() {
   run_branches --issue 17
   assert_success
   assert_equal "$(jq -c '[[.branches[].name], [.candidates[] | [.name, .from]]]' <<<"$json")" '[["feat/17-x"],[["wip/17-try","name"]]]'
+}
+
+@test "Issue を閉じる PR のブランチが origin にだけ残っていても、候補に出す" {
+  git push -q origin main:refs/heads/old-work
+  link_prs 6:MERGED:old-work 7:MERGED:gone-work
+  run_branches --issue 17
+  assert_success
+  assert_equal "$(jq -c '[.candidates[] | [.name, .local, .remote, .from, .pr]]' <<<"$json")" '[["old-work",false,true,"pr",6]]'
 }

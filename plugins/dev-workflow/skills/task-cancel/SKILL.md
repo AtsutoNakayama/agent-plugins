@@ -17,7 +17,7 @@ Project からは外さず、Story Point も変えない。後からボードで
 スクリプト（どれも JSON を出力する）:
 
 - `${CLAUDE_PLUGIN_ROOT}/scripts/issue-cancel.sh`：理由のコメント、not planned か duplicate で閉じる操作、PR を閉じてリモートのブランチを削除する操作、親を閉じるときに開いている子孫を閉じる（`--sub-issues close`）か残す（`--sub-issues keep`）操作（`--help` で使い方）
-- `${CLAUDE_PLUGIN_ROOT}/scripts/issue-branches.sh`：Issue の作業のブランチを、確かなブランチ（`branches`。作業の状態 `state` も出す）と候補（`candidates`。名前が似ている・Issue を閉じる PR のブランチ）に分けて探し、Issue を閉じる開いている PR を出す。何も変えない（`--help` で使い方）
+- `${CLAUDE_PLUGIN_ROOT}/scripts/issue-branches.sh`：Issue の作業のブランチを、確かなブランチ（`branches`）と候補（`candidates`。名前が似ている・Issue を閉じる PR のブランチ）に分けて探し、Issue を閉じる開いている PR を出す。何も変えない（`--help` で使い方）
 - `${CLAUDE_PLUGIN_ROOT}/scripts/cleanup.sh`：`--abandon` で、手元のワークツリーとブランチを削除する。失うものを `lost` に出す（`--help` で使い方）
 
 ## 手順
@@ -34,7 +34,6 @@ Project からは外さず、Story Point も変えない。後からボードで
 
 `issue-branches.sh --issue <番号>` で、Issue の作業のブランチを探す。取りやめで片付ける対象は、`branches`（`branch.pattern` に合い番号が一致する、手元と origin の確かなブランチ。先頭に 0 が付いた古い名前も含む）だけにする。名前が似ているだけのブランチと、Issue を閉じる PR のブランチは `candidates`（候補）に分けて出るが、関係の無いブランチ（`backup/2024-01-15` など）や、`Closes #17, #18` の PR の別の Issue のブランチもありうるので、片付けない。`branches` の各ブランチの `local`（手元にあるか）・`remote`（origin にあるか）・`worktree` で、手順4の引数を決める（`remote` が true なら `--branch` を付け、`local` が true か `worktree` があれば `cleanup.sh` を実行する）。止まったら（PR の番号・無い番号・gh が古い・origin や Issue を読めない）、標準エラーの1行のメッセージを伝えて終える。ブランチが無いと決めつけて、Issue だけを閉じない。
 
-- `state` が `merged` のブランチは、先端がマージ済みの PR に含まれ、作業が既に base_branch に入っているので、取りやめの対象にしない。そのことを手順5の確認に書く（捨てると、マージ済みのコミットが失うものとして並ぶため）。`none`（マージの後に足したコミットなど、作業が残っている）と `open` は対象にする
 - 複数あれば、どれを片付けるかユーザーに聞く（スクリプトは1回に1つのブランチを扱うので、選んだブランチごとに手順4と手順6を行う）
 - `candidates`（候補）と、`open_prs`（Issue を閉じる、開いている PR）のうちブランチが `branches` に無いもの（規約に合わない名前のブランチやフォークの PR）は、このスキルでは片付けも閉じもしない。名前・PR の番号と URL を手順5の確認に書き、片付けるならユーザーに片付けてもらう（別の Issue の作業かもしれないため）
 - 見つからなければ、着手していないか、ワークツリーを作らずに着手した（task-start の `--no-worktree`）ので、片付ける作業は無い。Issue を閉じるだけにする
