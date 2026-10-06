@@ -592,15 +592,18 @@ gc_popd() {
   fi
 }
 
-# dirs -c はスタックを空にする
+# dirs -c はスタックを空にする。bash の dirs は、オプションを1語ずつ（-c・-l・-p・-v）と +N・-N だけ受け付け、
+# まとめ書き（-cl）・ほかのオプション・-- の後ろの語があると失敗して、スタックを変えない
 gc_dirs() {
-  local w
+  local w clear=false
   for w in "$@"; do
     case "$w" in
-      [+-][0-9]*) ;;
-      -*c*) pstack="" ;;
+      -c) clear=true ;;
+      -l | -p | -v | [+-][0-9]*) ;;
+      *) return 0 ;;
     esac
   done
+  ! $clear || pstack=""
 }
 
 # env -S の値を、env と同じく語に分けて、配列 gc_split に入れる。空白で区切り、'…' の中は \\ と \' だけを解き、
@@ -698,10 +701,11 @@ gc_command() {
         shift "$gc_nopt"
         ;;
       builtin)
-        # builtin -- cd も、組み込みの cd を実行する
+        # builtin -- cd も、組み込みの cd を実行する。builtin はオプションを取らないので、-- 以外があれば失敗する
         shift
         gc_skip_opts "" "" "$@"
         shift "$gc_nopt"
+        [ "${#gc_optn[@]}" -eq 0 ] || return 0
         ;;
       command)
         shift
@@ -713,11 +717,12 @@ gc_command() {
         done
         ;;
       nohup)
-        # nohup -- git push も、git を実行する
+        # nohup -- git push も、git を実行する。nohup は --help・--version しか取らず、そのときはコマンドを実行しない
         ext=true
         shift
         gc_skip_opts "" "" "$@"
         shift "$gc_nopt"
+        [ "${#gc_optn[@]}" -eq 0 ] || return 0
         ;;
       exec)
         ext=true
@@ -791,10 +796,17 @@ gc_command() {
   esac
   case "$1" in
     cd)
-      # cd -L・-P などのオプションを飛ばす（- は前の場所、-- の後ろは - で始まっても行き先）
+      # cd のオプション（-L・-P・-e・-@）を飛ばす（- は前の場所、-- の後ろは - で始まっても行き先）。
+      # ほかのオプションがあれば、cd は失敗して移らない
       shift
       gc_skip_opts "" "" "$@"
       shift "$gc_nopt"
+      for k in ${gc_optn[@]+"${gc_optn[@]}"}; do
+        case "$k" in
+          -L | -P | -e | -@) ;;
+          *) return 0 ;;
+        esac
+      done
       if [ $# -gt 0 ]; then gc_cd "$1"; else gc_cd; fi
       return 0
       ;;
