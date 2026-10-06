@@ -175,10 +175,12 @@ pos() {
   assert_output --partial "続きは次のファイルを読んでください: $WORKFLOW_USER_DIR/task-flow.md）"
 }
 
-@test "既定の流れに、ワークツリーが要らないタスク（リポジトリを変えない）の進め方が書いてある" {
-  grep -q 'ワークツリーとブランチを作らずに着手できます' "$DEFAULT"
+@test "フックの出力に、ワークツリーが要らないタスク（リポジトリを変えない）の進め方が書いてある" {
+  run_hook
+  assert_success
+  assert_output --partial 'ワークツリーとブランチを作らずに着手できます'
   # shellcheck disable=SC2016 # バッククォートは流れの本文の文字で、展開させない
-  grep -q 'もう一度 `/dev-workflow:task-start` でワークツリーを作ってから変えます' "$DEFAULT"
+  assert_output --partial 'もう一度 `/dev-workflow:task-start` でワークツリーを作ってから変えます'
 }
 
 @test "既定の流れに、Issue の分け方を提案する前に task-create の手順を読むことが書いてある" {
