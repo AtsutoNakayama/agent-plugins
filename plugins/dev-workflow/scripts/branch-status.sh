@@ -19,8 +19,9 @@
 #                         up_to_date が true でこれが 1 以上なら、手元では取り込み済みで、まだ push していない。
 #                         origin にブランチが無ければ null
 #   pushed_conflicts      origin/<ブランチ>（push 済みのブランチ）に origin/<base> を取り込むと衝突するか。conflicts と同じく
-#                         手元で確かめる。手元で取り込み済みで、まだ push していないとき、GitHub から見た PR が main と衝突して
-#                         いるかが、merge_state が UNKNOWN でも分かる。pushed_behind が 0 なら false。origin にブランチが無いか、
+#                         手元で確かめる。GitHub から見た PR が main と衝突しているかが、merge_state が UNKNOWN でも分かる
+#                         （手元で取り込み済みで、まだ push していないときや、push していないコミットで手元だけ衝突しない
+#                         とき）。pushed_behind が 0 なら false。origin にブランチが無いか、
 #                         確かめられないときは null
 #   pr                    そのブランチの開いている PR（number・url・merge_state・merge_queue）。無ければ null
 #                         merge_state は GitHub の mergeStateStatus（BEHIND・DIRTY・BLOCKED・CLEAN など）。

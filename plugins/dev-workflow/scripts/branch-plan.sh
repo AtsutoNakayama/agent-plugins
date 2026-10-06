@@ -23,7 +23,7 @@
 #     1. P で、pushed_conflicts が true か merge_state が DIRTY  → push
 #     2. P で、pushed_conflicts が null で merge_state が UNKNOWN → recheck（fallback: push）
 #     3. P で、それ以外                                          → none（merged_not_pushed。fallback: push）
-#     4. conflicts が true か、merge_state が DIRTY で behind が 1 以上 → merge（conflict）
+#     4. conflicts か pushed_conflicts が true か、merge_state が DIRTY で behind が 1 以上 → merge（conflict）
 #     5. merge_state が DIRTY（behind は 0）                     → ask_base
 #     6. conflicts が null で merge_state が UNKNOWN             → recheck（fallback: merge）
 #     7. それ以外                                                → none（no_conflict。fallback: behind が 1 以上なら merge）
@@ -68,7 +68,7 @@ jq -c '
         if .pushed_conflicts == true or $state == "DIRTY" then plan("push"; "merged_not_pushed")
         elif .pushed_conflicts == null and $state == "UNKNOWN" then plan("recheck"; "merge_state_unknown") + {fallback: "push"}
         else plan("none"; "merged_not_pushed") + {queue: $guide, fallback: "push"} end
-      elif .conflicts == true or ($state == "DIRTY" and .behind >= 1) then plan("merge"; "conflict")
+      elif .conflicts == true or .pushed_conflicts == true or ($state == "DIRTY" and .behind >= 1) then plan("merge"; "conflict")
       elif $state == "DIRTY" then plan("ask_base"; "base_mismatch")
       elif .conflicts == null and $state == "UNKNOWN" then plan("recheck"; "merge_state_unknown") + {fallback: "merge"}
       else plan("none"; "no_conflict") + {queue: $guide, fallback: (if .behind >= 1 then "merge" else null end)} end

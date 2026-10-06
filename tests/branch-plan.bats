@@ -56,6 +56,11 @@ check_plan() {
   # 手元で衝突しなくても、確かめられなくても、GitHub が DIRTY と言い、遅れていれば取り込む
   check_plan "$BEHIND | .pr.merge_state = \"DIRTY\"" "merge conflict - -"
   check_plan "$BEHIND | .conflicts = null | .pr.merge_state = \"DIRTY\"" "merge conflict - -"
+  # 手元では push していないコミットのおかげで衝突しなくても、GitHub が見る push 済みのブランチが衝突するなら、
+  # GitHub の判定がまだ（UNKNOWN）か古く（CLEAN）ても取り込む
+  check_plan "$BEHIND | .pushed_behind = 2 | .pushed_conflicts = true | .pr.merge_state = \"UNKNOWN\"" "merge conflict - -"
+  check_plan "$BEHIND | .pushed_behind = 2 | .pushed_conflicts = true" "merge conflict - -"
+  check_plan "$BEHIND | .conflicts = null | .pushed_behind = 2 | .pushed_conflicts = true | .pr.merge_state = \"UNKNOWN\"" "merge conflict - -"
 }
 
 @test "キューを使う 5：遅れていないのに DIRTY なら、マージ先を聞く" {
