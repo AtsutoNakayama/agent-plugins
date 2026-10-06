@@ -529,6 +529,20 @@ DW_SUB_ISSUE_DEPTH_GUIDE=2
 # shellcheck disable=SC2034
 DW_BREAKING_LABEL=breaking
 
+# 設定の adr.dir（ADR の置き場所）を読み、末尾の / を外して出力する。リポジトリのルートからの相対パスでなければ
+# （空・/ で始まる・.. を含む）終了コード 2 で止まる。ADR を作る側と探す側で、置き場所の扱いを食い違わせないため。
+# $(...) の中で呼ぶと、set -e のスクリプトはそのまま止まる。
+# 使い方: dir="$(dw_adr_dir <config.sh の出力の JSON>)"
+dw_adr_dir() {
+  local d
+  d="$(jq -r '[.adr.dir?][0] // ""' <<<"$1")" || dw_die "設定を読めません（config.sh で確かめてください）" 2
+  d="${d%/}"
+  case "$d" in
+    "" | /* | .. | ../* | */.. | */../*) dw_die "adr.dir はリポジトリのルートからの相対パスにしてください（/ で始めない・.. を使わない）: ${d}" 2 ;;
+  esac
+  printf '%s\n' "$d"
+}
+
 # レビューのサブエージェントに指定できるモデル（設定の review.model。Agent ツールの model が受け付ける別名）。
 # 設定が null ならサブエージェントはセッションと同じモデルで動く（設計書 §7）。source した側で使う
 # shellcheck disable=SC2034

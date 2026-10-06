@@ -93,11 +93,8 @@ name="$(printf '%s' "$name" | LC_ALL=C tr '[:upper:]' '[:lower:]' \
 
 repo_root="$(dw_repo_root || true)"
 [ -n "$repo_root" ] || dw_die "git のリポジトリの中ではありません" 2
-adr_dir="$("$BASH" "$DW_SCRIPTS_DIR/config.sh" .adr.dir)" || dw_die "設定を読めません" 2
-adr_dir="${adr_dir%/}"
-case "$adr_dir" in
-  "" | null | /* | .. | ../* | */.. | */../*) dw_die "adr.dir はリポジトリのルートからの相対パスにしてください（/ で始めない・.. を使わない）: ${adr_dir}" 2 ;;
-esac
+config="$("$BASH" "$DW_SCRIPTS_DIR/config.sh")" || dw_die "設定を読めません（config.sh で確かめてください）" 2
+adr_dir="$(dw_adr_dir "$config")"
 
 base="$(printf '%06d-%s' "$issue" "$name")"
 rel="$adr_dir/$base.md"

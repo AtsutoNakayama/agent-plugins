@@ -66,7 +66,7 @@ TEMPLATES="$(cd "$BATS_TEST_DIRNAME/../plugins/dev-workflow/templates/adr" && pw
 }
 
 @test "adr.dir が絶対パスや .. を含むときは止まる" {
-  for d in /tmp/adr ../adr a/../../adr; do
+  for d in /tmp/adr ../adr a/../../adr "" /; do
     echo "{\"adr\": {\"dir\": \"$d\"}}" >.claude/dev-workflow/config.json
     run_script adr-create.sh --issue 9 --name x --template minimal
     assert_failure 2
@@ -248,4 +248,11 @@ FAKE
   run_script adr-create.sh --issue 1 --name x --template full --date
   assert_failure 64
   [ ! -e docs/adr ] || fail "ディレクトリを作っています"
+}
+
+@test "設定を読めなければ止まる" {
+  echo '{' >.claude/dev-workflow/config.json
+  run_script adr-create.sh --issue 1 --name x --template full
+  assert_failure 2
+  assert_output --partial "設定を読めません"
 }

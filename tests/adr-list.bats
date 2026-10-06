@@ -104,7 +104,7 @@ write_adr() {
 }
 
 @test "adr.dir が絶対パスや .. を含むときは止まる" {
-  for d in /tmp/adr .. ../adr docs/.. docs/../adr; do
+  for d in /tmp/adr .. ../adr docs/.. docs/../adr "" /; do
     echo "{\"adr\": {\"dir\": \"$d\"}}" >.claude/dev-workflow/config.json
     run_script adr-list.sh
     assert_failure 2
@@ -151,4 +151,11 @@ write_adr() {
   run_script adr-list.sh
   assert_failure 2
   assert_output --partial "リポジトリの中ではありません"
+}
+
+@test "設定を読めなければ止まる" {
+  echo '{' >.claude/dev-workflow/config.json
+  run_script adr-list.sh
+  assert_failure 2
+  assert_output --partial "設定を読めません"
 }

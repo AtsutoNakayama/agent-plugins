@@ -42,11 +42,7 @@ done
 repo_root="$(dw_repo_root || true)"
 [ -n "$repo_root" ] || dw_die "git のリポジトリの中ではありません" 2
 config="$("$BASH" "$DW_SCRIPTS_DIR/config.sh")" || dw_die "設定を読めません（config.sh で確かめてください）" 2
-adr_dir="$(jq -r '[.adr.dir?][0] // ""' <<<"$config")"
-adr_dir="${adr_dir%/}"
-case "$adr_dir" in
-  "" | /* | .. | ../* | */.. | */../*) dw_die "adr.dir はリポジトリのルートからの相対パスにしてください（/ で始めない・.. を使わない）: ${adr_dir}" 2 ;;
-esac
+adr_dir="$(dw_adr_dir "$config")"
 # 書いていない（null を含む）なら提案する。true・false 以外は、提案するかを決められないので止める。
 # false を既定値に置き換えないよう、// は使わない
 suggest="$(jq -c '[.adr.suggest?][0] | if . == null then true else . end' <<<"$config")"
