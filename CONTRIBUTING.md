@@ -4,7 +4,7 @@
 
 ## 環境の準備
 
-必要なもの：`git`、`gh`、`jq`、`shellcheck`（CI と同じ版）、`bats`（bats-core）、`actionlint`（shellcheck と actionlint は、無ければ Docker で実行できます。下の「テストとチェック」）。bats を並列に実行するなら GNU `parallel` も使います
+必要なもの：`git`、`gh`、`jq`、`shellcheck`（CI と同じ版）、`bats`（bats-core）、`actionlint`（shellcheck と actionlint は、無ければ Docker で実行できます。下の「テストとチェック」）。bats を並列に実行するなら GNU `parallel` も使います。スキルの振る舞いを eval で確かめるなら、Claude Code（v2.1.269 以降）と、Linux では `bubblewrap`・`socat` も使います（下の「スキルの振る舞いを eval で確かめる」）
 
 テストの補助ライブラリ（bats-support・bats-assert）は git submodule で同梱しています。
 
@@ -132,3 +132,22 @@ docker run --rm -v "$root:$root" -v "$top:$top" -w "$top" bash:3.2 sh -c '
 - bats 本体は新しい bash（apk で入れる `/bin/bash`）で動かし、対象のスクリプトだけ bash 3.2（イメージの `/usr/local/bin/bash`）で動かします。イメージでは `/usr/local/bin` が PATH の先にあるので、`PATH` を並べ替えないと bats 本体も bash 3.2 で動き、日本語のテスト名を扱えずに失敗します。
 - コンテナの中はファイルの持ち主が違うので、`safe.directory` を設定しないと git がリポジトリを使えません。
 - ワークツリーの `.git` はファイルで、元のリポジトリの `.git/worktrees/` を指しています。ワークツリーだけをマウントすると `fatal: not a git repository` になるので、上のように元のリポジトリ全体とワークツリーを、どちらも同じパスでマウントします（ワークツリーがリポジトリの外にあっても動きます）。ワークツリーでは、先に `git submodule update --init` も実行しておきます。
+
+### スキルの振る舞いを eval で確かめる
+
+bats のテストは、スクリプトの出力と、SKILL.md に手順が書いてあるかを確かめますが、Claude がその手順どおりに動くかは確かめません。そこで、[`claude plugin eval`](https://code.claude.com/docs/en/plugin-evals) で Claude に実際に依頼を実行させて、振る舞いを採点するケースを `plugins/dev-workflow/evals/` に置いています。確認を取る場面など、スキルの手順を変えたときは、関係するケースを手元で実行して確かめます。上の「テストとチェック」とは違い、PR を出す前に必ず通すものではありません。
+
+ケースは、承認の前に GitHub に書き込まないか（task-create・pr-create）、何も変えないか（task-next）、fix の作業で同じ原因の箇所も直すか（タスクの進め方）を確かめます。どのケースも、作業用の git リポジトリを準備のスクリプト（各ケースの `fixture.sh`）で作り、GitHub には触れません。`gh` は偽物（`tests/eval/bin/gh`）に置き換え、準備のスクリプトが置いた表で答えます。
+
+```bash
+tests/eval/run.sh --model sonnet                                        # 全部のケースを、プラグインあり・なしで3回ずつ
+tests/eval/run.sh --model sonnet --tag task-create --runs 1 --ablation none  # 1つの場面を1回だけ（ケースを直している間）
+```
+
+- `tests/eval/run.sh` は、偽の gh を PATH の先頭に足し、準備のスクリプト（`--scaffold`）と Bash・Edit・Write の使用を許して、`claude plugin eval` を実行します。ほかのオプションはそのまま渡します（`claude plugin eval --help`）。
+- 実行のたびに本物のモデルを呼ぶので、使っているプランの使用量（API キーなら料金）を消費します。全部のケースを既定のとおり動かすと、ケースの数 × 3回 × 2（プラグインあり・なし）だけ Claude を動かします。sonnet では1回あたり $0.1〜0.2 ほど（一覧の価格での見積もり）です。
+- 結果は毎回少し揺れます。点が下がったら、出力の `Report:` のレポートで、どの grader が何を理由に落ちたかを見ます。結果は `plugins/dev-workflow/evals/results/` に出ます（git の対象外です）。
+- Bash を許したケースは、Claude Code のサンドボックスの中でしか動きません。Linux では `bubblewrap` と `socat` を入れておきます（入っていないと、実行を断られます）。Ubuntu 24.04 以降では、AppArmor の設定も要ります（[サンドボックスのドキュメント](https://code.claude.com/docs/en/sandboxing)）。
+- 最初の実行では、このディレクトリを信頼するかを聞かれます。
+
+CI でも、Actions の画面から手で起動して実行できます（`.github/workflows/eval.yml`。シークレット `CLAUDE_CODE_OAUTH_TOKEN` を使います）。プランの使用量を消費するので、PR や push では自動で動かしません。必須のチェックでもありません。結果のレポートは、実行の artifact（`eval-results`）に残ります。
