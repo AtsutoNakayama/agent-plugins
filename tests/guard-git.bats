@@ -227,6 +227,22 @@ silent() {
     "{ cd $TMP/wt; } && git commit -m x" "if true; then cd $TMP/wt; fi; git commit -m x"
 }
 
+@test "case のパターンの | ( ) はパイプやサブシェルではなく、パターンの語はコマンドとして調べない" {
+  git worktree add -q -b feat/21-x "$TMP/wt"
+  export HOME="$TMP/wt"
+  denied "main の上ではコミットしません" "cd $TMP/wt; case x in a|x) cd $REPO && git commit -m x;; esac" \
+    "cd $TMP/wt; case x in a|x) cd $REPO;; esac; git commit -m x" "case x in a) :;; cd) :;; esac; git commit -m x" \
+    "cd $TMP/wt; case x in (a|x) cd $REPO;; esac; git commit -m x"
+  # time case も case として入れ子を数える（( ) の中のパターンの ) で、括弧を閉じない）
+  denied "main の上ではコミットしません" "( time case x in x) cd $TMP/wt;; esac ); git commit -m x"
+  allowed "time case x in x) cd $TMP/wt;; esac; git commit -m x"
+}
+
+@test "function f { } の { } も、複合コマンドとして入れ子を数える" {
+  git worktree add -q -b feat/21-x "$TMP/wt"
+  denied "main の上ではコミットしません" "{ function f { :; }; cd $TMP/wt; } | cat; git commit -m x"
+}
+
 @test "語の無いコマンド（(( ))）の後でも、パイプラインと並びの区切りを正しく読む" {
   git worktree add -q -b feat/21-x "$TMP/wt"
   # (( )) で終わるパイプラインの後の cd を戻さない。&& (( )) の後の改行では、新しい並びを始める

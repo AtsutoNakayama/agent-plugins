@@ -908,47 +908,36 @@ gc_arith_end() {
   return 1
 }
 
-# case と esac を数える。case の時点の括弧の深さを積み、パターンの ) で括弧を閉じないようにする
-gc_track_case() {
-  local w
-  for w in "$@"; do
-    case "$w" in
-      if | then | elif | else | while | until | do | '{' | '!') ;;
-      'case')
-        case_dn[cn]=$dn
-        cn=$((cn + 1))
-        return 0
-        ;;
-      'esac')
-        [ "$cn" -eq 0 ] || cn=$((cn - 1))
-        return 0
-        ;;
-      *) return 0 ;;
-    esac
-  done
-}
-
-# 読んだ語を1つのコマンドとして終え、case と esac を数え、複合コマンドの入れ子を追ってから調べる（gc_command）。
-# 語が無ければ何もしない
+# 読んだ語を1つのコマンドとして終え、先頭の予約語で入れ子の段を上げ下げしてから調べる（gc_command）。
+# case のパターンを読んでいる間の語（a|b) の a・b）は、コマンドではないので調べない。語が無ければ何もしない
 gc_end_command() {
+  local run_cmd=true
   gc_flush_word
   skip_word=false
   if [ "$nwords" -gt 0 ]; then
-    gc_track_case "${words[@]}"
-    gc_track_levels "${words[@]}"
-    gc_command "${words[@]}"
+    gc_track_words "${words[@]}"
+    ! $run_cmd || gc_command "${words[@]}"
   fi
   words=() nwords=0
 }
 
-# --- パイプラインと & -----------------------------------------------------------------
-# パイプラインの各コマンド（2つ以上つないだとき）と、& でバックグラウンドで動かす並び（&&・|| でつないだもの）は、
-# シェルではサブシェルで動くので、その中で移った場所と積んだスタックは外に効かない。ただし、それが分かるのは | や & を
-# 読んだ時なので、入れ子の段（lvl。{ }・if〜fi・while/until/for/select〜done・case〜esac・( ) で深くなる）ごとに、
-# 今のコマンドの始まり（lv_e*）と並びの始まり（lv_l*）の場所・スタック・anchored を覚えておき、分かった時に戻す。
-# 区切りは、語の有無ではなく区切りの記号で判断する（(( )) のように語の無いコマンドもあるため）。
+# --- 入れ子の段、パイプラインと & ---------------------------------------------------------
+# 入れ子の段（lvl。0 が一番外）は、( )・複合コマンド（{ }・if〜fi・while/until/for/select〜done）・case〜esac で
+# 1つ深くなる。段ごとに、次のものを持つ（添え字が段）。
+#   lv_kind        top・paren（( )）・group（複合コマンド）・case
+#   lv_pat         case の段で、パターンを読んでいるか（case … in の後と ;;・;&・;;& の後から、) まで）。
+#                  パターンの中の |・(・) は、パイプやサブシェルではない
+#   lv_sd・lv_sp   ( の時点の場所とスタック（( ) の中で移った・積んだ分は外に効かないので、) で戻す）
+#   lv_e*・lv_l*   今のコマンドの始まりと、並び（&&・|| でつないだもの）の始まりの、場所・スタック・anchored
+#   lv_pipe        パイプラインの2つ目以降のコマンドか
+# dn は、開いている ( ) の数（after の決まりで、( ) の中かを見る）。
+# パイプラインの各コマンド（2つ以上つないだとき）と、& でバックグラウンドで動かす並びは、シェル（bash）ではサブシェルで
+# 動くので、その中で移った場所と積んだスタックは外に効かない。それが分かるのは | や & を読んだ時なので、覚えておいた
+# 始まりへ戻す。区切りは、語の有無ではなく区切りの記号で判断する（(( )) のように語の無いコマンドもあるため）。
 # after では、( ) と違い、パイプラインや & の中も外側と同じ規則でたどる（終わるまでサブシェルと分からないため）。
 
+# 場所・スタック・anchored を戻す。使い方: gc_restore <場所> <スタック> <anchored>
+gc_restore() { gc_dir="$1" pstack="$2" anchored="$3"; }
 # 今の段の、コマンドの始まりを覚える
 gc_mark_elem() { lv_ed[lvl]="$gc_dir" lv_ep[lvl]="$pstack" lv_ea[lvl]="$anchored"; }
 # 今の段の、並び（とコマンド）の始まりを覚える
@@ -959,30 +948,61 @@ gc_mark_list() {
 # パイプラインを終える。2つ以上つないだときは、最後のコマンドもサブシェルなので、その始まりへ戻す
 gc_end_pipe() {
   if "${lv_pipe[lvl]}"; then
-    gc_dir="${lv_ed[lvl]}" pstack="${lv_ep[lvl]}" anchored="${lv_ea[lvl]}"
+    gc_restore "${lv_ed[lvl]}" "${lv_ep[lvl]}" "${lv_ea[lvl]}"
     lv_pipe[lvl]=false
   fi
 }
-# 段を1つ深くする（複合コマンドや ( の始まり）
+# 今の段が、case のパターンを読んでいるところか
+gc_in_pattern() { [ "${lv_kind[lvl]}" = case ] && "${lv_pat[lvl]}"; }
+# 段を1つ深くする。使い方: gc_level_push <paren・group・case>
 gc_level_push() {
   lvl=$((lvl + 1))
-  lv_pipe[lvl]=false
+  lv_kind[lvl]="$1" lv_pipe[lvl]=false lv_pat[lvl]=false
+  case "$1" in
+    paren)
+      lv_sd[lvl]="$gc_dir" lv_sp[lvl]="$pstack"
+      dn=$((dn + 1))
+      ;;
+    case) lv_pat[lvl]=true ;;
+  esac
   gc_mark_list
 }
-# 段を1つ浅くする（複合コマンドや ) の終わり）。中の最後のパイプラインを終える
+# 段を1つ浅くする。中の最後のパイプラインを終え、( ) なら ( の時点の場所とスタックに戻す
 gc_level_pop() {
   [ "$lvl" -gt 0 ] || return 0
   gc_end_pipe
+  if [ "${lv_kind[lvl]}" = paren ]; then
+    gc_dir="${lv_sd[lvl]}" pstack="${lv_sp[lvl]}"
+    dn=$((dn - 1))
+  fi
   lvl=$((lvl - 1))
 }
-# コマンドの先頭の予約語から、複合コマンドの始まり（段を深くする）と終わり（浅くする）を読む
-gc_track_levels() {
-  local w
+# コマンドの先頭の予約語から、複合コマンドと case の始まり（段を深くする）と終わり（浅くする）を読む。
+# case のパターンを読んでいる間は、esac のほかは語をコマンドとして調べない（run_cmd を false にする。gc_end_command が読む）
+gc_track_words() {
+  local w fname=false
+  if gc_in_pattern; then
+    run_cmd=false
+    [ "$1" != 'esac' ] || gc_level_pop
+    return 0
+  fi
   for w in "$@"; do
+    if $fname; then
+      # function <名前> の名前
+      fname=false
+      continue
+    fi
     case "$w" in
       # 予約語は、bash 3.2 が case のパターンとして読めるよう、引用符で囲む
-      '{' | 'if' | 'while' | 'until' | 'for' | 'select' | 'case') gc_level_push ;;
-      '}' | 'fi' | 'done' | 'esac') gc_level_pop ;;
+      '{' | 'if' | 'while' | 'until' | 'for' | 'select') gc_level_push group ;;
+      # case の後ろは、調べる語・in・パターン
+      'case')
+        gc_level_push case
+        return 0
+        ;;
+      '}' | 'fi' | 'done') [ "${lv_kind[lvl]}" != group ] || gc_level_pop ;;
+      'esac') [ "${lv_kind[lvl]}" != case ] || gc_level_pop ;;
+      'function') fname=true ;;
       'then' | 'elif' | 'else' | 'do' | '!' | 'time') ;;
       *) return 0 ;;
     esac
@@ -1231,15 +1251,12 @@ gc_scan() {
   local word="" in_word=false skip_word=false
   local words=() nwords=0
   local hd_delims=() hd_strip=() hd_n=0
-  # ( ) の中の cd は外に効かないので、( の時点のディレクトリを積んでおき、) で戻す
-  local dstack=() dn=0
-  # pushd で積んだ場所（gc_pushd の前のコメント）。( の時点のものを pstack_save に積んでおき、) で戻す
-  local pstack="" pstack_save=() dl=() entry="" idx=0
-  # case の中の深さ（case の時点の dn を積む）
-  local case_dn=() cn=0
+  # pushd で積んだ場所（gc_pushd の前のコメント）
+  local pstack="" dl=() entry="" idx=0
   local arith_i=0
-  # 入れ子の段と、段ごとのコマンド・並びの始まり（gc_mark_list の前のコメント）。&&・||・| の後ろか（joined）
-  local lvl=0 lv_ed=() lv_ep=() lv_ea=() lv_ld=() lv_lp=() lv_la=() lv_pipe=(false) joined=false
+  # 入れ子の段と、段ごとの情報（gc_restore の前のコメント）。dn は開いている ( ) の数。&&・||・| の後ろか（joined）
+  local lvl=0 dn=0 lv_kind=(top) lv_pat=(false) lv_pipe=(false) lv_sd=() lv_sp=() joined=false
+  local lv_ed=() lv_ep=() lv_ea=() lv_ld=() lv_lp=() lv_la=()
   gc_mark_list
 
   while [ "$i" -lt "$len" ]; do
@@ -1271,8 +1288,14 @@ gc_scan() {
         gc_end_pipe
         gc_mark_list
         joined=false
-        # case の ;& と ;;& の & は、バックグラウンドではない
-        if [ "${rest:1:1}" = '&' ]; then i=$((i + 2)); else i=$((i + 1)); fi
+        case "${rest:1:1}" in
+          ';' | '&')
+            # case の ;;・;&・;;& の後ろは、次のパターン（;& と ;;& の & は、バックグラウンドではない）
+            [ "${lv_kind[lvl]}" != case ] || lv_pat[lvl]=true
+            if [ "${rest:1:2}" = ';&' ]; then i=$((i + 3)); else i=$((i + 2)); fi
+            ;;
+          *) i=$((i + 1)) ;;
+        esac
         ;;
       '&')
         case "${rest:1:1}" in
@@ -1289,7 +1312,7 @@ gc_scan() {
             # 並びごとバックグラウンド（サブシェル）で動くので、並びの始まりへ戻す
             gc_end_command
             gc_end_pipe
-            gc_dir="${lv_ld[lvl]}" pstack="${lv_lp[lvl]}" anchored="${lv_la[lvl]}"
+            gc_restore "${lv_ld[lvl]}" "${lv_lp[lvl]}" "${lv_la[lvl]}"
             gc_mark_list
             joined=false
             i=$((i + 1))
@@ -1298,42 +1321,44 @@ gc_scan() {
         ;;
       '|')
         gc_end_command
-        if [ "${rest:1:1}" = '|' ]; then
+        if gc_in_pattern; then
+          # case のパターンの a|b) の | は、パイプではない
+          i=$((i + 1))
+        elif [ "${rest:1:1}" = '|' ]; then
           gc_end_pipe
           gc_mark_elem
+          joined=true
           i=$((i + 2))
         else
           # パイプラインのコマンドはサブシェルで動くので、今のコマンドの始まりへ戻す。|& は標準エラーもつなぐパイプ
-          gc_dir="${lv_ed[lvl]}" pstack="${lv_ep[lvl]}" anchored="${lv_ea[lvl]}"
+          gc_restore "${lv_ed[lvl]}" "${lv_ep[lvl]}" "${lv_ea[lvl]}"
           lv_pipe[lvl]=true
+          joined=true
           if [ "${rest:1:1}" = '&' ]; then i=$((i + 2)); else i=$((i + 1)); fi
         fi
-        joined=true
         ;;
       '(')
         gc_end_command
-        if [ "${rest:1:1}" = '(' ] && gc_arith_end; then
+        if gc_in_pattern; then
+          # case のパターンの前に付ける ( （(a) …）は、サブシェルではない
+          i=$((i + 1))
+        elif [ "${rest:1:1}" = '(' ] && gc_arith_end; then
           # (( ... )) は算術式なので、コマンドとして調べない（中の << もシフト演算）
           i=$arith_i
           joined=false
         else
-          dstack[dn]="$gc_dir"
-          pstack_save[dn]="$pstack"
-          dn=$((dn + 1))
-          gc_level_push
+          gc_level_push paren
           i=$((i + 1))
         fi
         ;;
       ')')
         gc_end_command
-        # case のパターンの ) （a) など）は括弧を閉じない
-        if [ "$cn" -gt 0 ] && [ "$dn" -eq "${case_dn[cn - 1]}" ]; then
-          :
-        elif [ "$dn" -gt 0 ]; then
+        if gc_in_pattern; then
+          # case のパターンの終わり。ここから枝のコマンド
+          lv_pat[lvl]=false
+          gc_mark_list
+        elif [ "${lv_kind[lvl]}" = paren ]; then
           gc_level_pop
-          dn=$((dn - 1))
-          gc_dir="${dstack[dn]}"
-          pstack="${pstack_save[dn]}"
         fi
         i=$((i + 1))
         ;;
