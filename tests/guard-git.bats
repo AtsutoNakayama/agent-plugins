@@ -703,7 +703,8 @@ EOF
     "timeout 5 cd $TMP/wt; git commit -m x"
   # builtin・command・time は、シェルの組み込みの cd を実行する
   allowed "command cd $TMP/wt && git commit -m x" "time cd $TMP/wt && git commit -m x" "builtin cd $TMP/wt && git commit -m x"
-  denied "main の上ではコミットしません" "cd $TMP/wt && builtin cd $REPO && git commit -m x"
+  denied "main の上ではコミットしません" "cd $TMP/wt && builtin cd $REPO && git commit -m x" \
+    "cd $TMP/wt && builtin -- cd $REPO && git commit -m x"
 }
 
 @test "cd \"\" は移らない（引数の無い cd だけが \$HOME へ移る）" {

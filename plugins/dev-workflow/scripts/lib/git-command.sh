@@ -707,7 +707,11 @@ gc_command() {
         gc_skip_opts "" "" "$@"
         shift "$gc_nopt"
         ;;
-      builtin) shift ;;
+      builtin)
+        # builtin -- cd も、組み込みの cd を実行する
+        shift
+        [ "${1:-}" != -- ] || shift
+        ;;
       command)
         shift
         gc_skip_opts "" "" "$@"
