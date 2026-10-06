@@ -13,7 +13,8 @@
 # 標準出力に出し、終了コード 0 で終わる。
 # 操作の対象のリポジトリ（cd・git -C で移った先、--git-dir・GIT_DIR などで指したリポジトリ）が、導入していないリポジトリ
 # なら何もしない（gc_target・target_set_up）。git がリポジトリを見つけられないときは、守りを外さないよう調べる（設計書 §1）。
-# コマンドの文字列の解析は、pr-link.sh と共有する（scripts/lib/git-command.sh）。sh -c や git の別名（alias）を通すと見逃す。
+# コマンドの文字列の解析は、pr-link.sh と共有する（scripts/lib/git-command.sh）。sh -c・timeout などを前に付けたコマンドや
+# git の別名（alias）を通すと見逃す。popd は戻る先を追わないので、pushd した先で判断する。
 # 最後の守りは GitHub のルールセット（setup-repo.sh）。
 # 関数は gc_scan のコールバック（check_git）から呼ぶので、直接の呼び出しが無い（SC2329）
 # shellcheck disable=SC2329
