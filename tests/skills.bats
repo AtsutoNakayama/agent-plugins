@@ -235,6 +235,68 @@ step() { awk -v n="$2" -v end="$3" 'on && ($0 ~ /^###? / || (end != "" && $0 ~ e
   grep -q 'pr_respond.handlers' "$f" || fail "pr-respond に、担当の skill の設定（pr_respond.handlers）が書かれていません"
 }
 
+# shellcheck disable=SC2016 # バッククォートはスキルの本文の文字で、展開させない
+@test "branch-update は、衝突を直すどの場面でも、両立できると判断した衝突も含めて、直す前に直し方の方針の確認を取る（設計書 §8・ADR 000237）" {
+  # 両立できると判断した衝突を確かめずに直し、push の前の確認の時点で直したコミットが既にできていた（#237）
+  # 文の言い回しに縛られないよう、箇条（見出しの語や選択肢の名前）で場所を決め、その中の要の語だけを確かめる
+  f="$SKILLS/branch-update/SKILL.md"
+  # 使い方: has <名前> <本文> <語>... → 本文にどの語もあること（固定の文字列として探す）
+  has() {
+    local name="$1" text="$2"; shift 2
+    [ -n "$text" ] || fail "${name}がありません"
+    for term in "$@"; do
+      grep -qF -e "$term" <<<"$text" || fail "${name}に「${term}」がありません"
+    done
+  }
+  # 確認の手順は1つの節にまとめ、衝突を直す場面はどれもそこに従う（場面ごとに規則を書くと、抜ける場面が出る）
+  conf="$(awk '$0 == "## 衝突の直し方の確認" { on = 1; next } on && /^## / { exit } on' "$f")"
+  has "「## 衝突の直し方の確認」の節" "$conf" '両立できると判断した衝突も含めて' '直す前'
+  has "手順1の pull" "$(grep -F 'git pull --no-rebase' <<<"$(step "$f" 1)")" '「衝突の直し方の確認」'
+  has "手順2" "$(step "$f" 2)" '「衝突の直し方の確認」'
+  has "手順3" "$(step "$f" 3)" '「衝突の直し方の確認」' '「直し方を変えるとき」'
+  # 場面：pull・merge・手順3（push として進めたときの前の取り込みの分も）
+  has "節の場面" "$conf" 'git pull --no-rebase' '`origin/<base_branch>`' '`push` として進めた'
+  # 箇条ごとの要の語
+  bullet() { grep -e "^- \*\*$1\*\*" <<<"$conf"; }
+  option() { grep -e "^ *- 「$1」：" <<<"$conf"; }
+  has "箇条「読む」" "$(bullet 読む)" 'まだファイルを直さない'
+  has "箇条「判断できない衝突を聞く」" "$(bullet 判断できない衝突を聞く)" 'AskUserQuestion' '先に' '「取り込みをやめる」' 'ほかの答えによらず'
+  has "箇条「方針の確認」" "$(bullet 方針の確認)" 'AskUserQuestion' 'ほかの質問と混ぜない' '省いて' '「Other」' 'この確認に入れる'
+  has "箇条「直す」" "$(bullet 直す)" '「判断できない衝突を聞く」' '「方針の確認」' '省かない' 'どの質問の「取り込みをやめる」' '直し終えたファイルも元に戻る' 'git checkout -m <ファイル>'
+  has "箇条「コミットする」" "$(bullet コミットする)" 'git add' 'git rev-parse --git-path MERGE_MSG'
+  has "選択肢「この方針で直す」" "$(option この方針で直す)" 'push はまだしない'
+  has "選択肢「直し方を変える」" "$(option 直し方を変える)" '「判断できない衝突を聞く」' '「方針の確認」'
+  has "選択肢「取り込みをやめる」" "$(option 取り込みをやめる | head -n 1)" 'git merge --abort' '「抜けたとき」'
+  has "選択肢「この直し方に変える」" "$(option この直し方に変える)" 'テストとチェックをもう一度'
+  has "選択肢「変えずに止める」" "$(option 変えずに止める | head -n 1)" '「抜けたとき」'
+  # 判断できない衝突は先に聞き、方針の確認は後で取り、その後に直して、コミットする
+  undecided="$(grep -n -m1 '^- \*\*判断できない衝突を聞く\*\*' <<<"$conf" | cut -d: -f1)"
+  ask="$(grep -n -m1 '^- \*\*方針の確認\*\*' <<<"$conf" | cut -d: -f1)"
+  fix="$(grep -n -m1 '^- \*\*直す\*\*' <<<"$conf" | cut -d: -f1)"
+  add="$(grep -n -m1 '^- \*\*コミットする\*\*' <<<"$conf" | cut -d: -f1)"
+  [ "$undecided" -lt "$ask" ] || fail "判断できない衝突を聞くのが、方針の確認より後にあります"
+  [ "$ask" -lt "$fix" ] || fail "方針の確認が、直すより後にあります"
+  [ "$fix" -lt "$add" ] || fail "直すのが、コミットするより後にあります"
+  # 「両立」と書いた行に、確かめずに直す書き方が無い
+  if grep '両立できる' "$f" | grep -v -e '方針' -e '確認'; then
+    fail "両立できる衝突を、方針の確認を取らずに直す書き方があります"
+  fi
+  if grep '両立' "$f" | grep -e '確認せず' -e '確認を取らず' -e '確かめず' -e '聞かず' -e 'そのまま直す'; then
+    fail "両立できる衝突を、確かめずに直す書き方があります"
+  fi
+  # 抜けたときは push・CI・キューの案内をせず、手元に残ったものを伝える。手順6はそこを参照する
+  exits="$(awk '/^\*\*抜けたとき\*\*/ { on = 1 } on' <<<"$conf")"
+  has "「抜けたとき」" "$(head -n 1 <<<"$exits")" 'push・CI・キュー' '伝えない'
+  has "抜けたときの「取り込みをやめる」" "$(grep -e '^- 「取り込みをやめる」：' <<<"$exits")" '衝突したまま' 'fast-forward'
+  stop_line="$(grep -e '^- 「変えずに止める」：' <<<"$exits")"
+  has "抜けたときの「変えずに止める」" "$stop_line" 'push していない' 'そのときの状態で決まる'
+  if grep -E 'push( するか)?から進む|取り込みから進む' <<<"$stop_line"; then
+    fail "変えずに止めた後の次の動きを、決めつけて伝えています（次にすることはそのときの状態で決まる）"
+  fi
+  has "手順6" "$(step "$f" 6)" '「抜けたとき」'
+  has "手順4（push の前の確認）" "$(step "$f" 4)" '直し方を変えたなら' '`push` として進めた' '方針や前の取り込みの直し方から変えたところ'
+}
+
 @test "pr-create と task-finish は pr-respond に依存しない（使わなくてもマージから後片付けまで進める）" {
   for name in pr-create task-finish; do
     if grep -n 'pr-respond' "$SKILLS/$name/SKILL.md"; then
