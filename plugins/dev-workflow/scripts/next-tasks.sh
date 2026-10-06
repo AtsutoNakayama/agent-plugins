@@ -8,6 +8,8 @@
 # 着手中（start の列と、設定されていれば pr_opened の列）の Issue の開いている PR が変えているファイルで見る
 # （パスの一方がもう一方の接頭辞なら重なる）。
 # 領域が分からない Issue は、並列にできる組に入れない。「.」「*」「**」はリポジトリ全体として、全部と重なる。
+# 領域が「なし」だけの Issue（調査など、リポジトリのファイルを変えないタスク）は、領域が空と分かっているものとして、
+# どれとも重ならないとする（着手中でも警告しない。ワークツリーを作らずに着手したタスクには、領域も PR も無いため）。
 # パスと判断できない行（日本語の文・途中のグロブ）は areas_ignored に出す。着手中の Issue に領域も PR も無いときは、
 # 重なるか分からないので、Todo の各 Issue に warnings を付け、その番号を active_unknown に出す。
 # サブ Issue を持つ親の Issue は、作業を子の Issue で進めるので、parent にして候補に入れない。着手中の列にある親は、
@@ -86,7 +88,8 @@ done
 
 # 本文の見出し（## <見出し>）の次の行から、次の見出しまでを行の配列にする
 # 領域は、箇条書きの1行から、バッククォートで囲んだ最初の語（無ければ最初の空白までの語）をパスとして取る
-#   - 「不明」「なし」で始まる行は、領域が無いものとして数えない
+#   - 「不明」「なし」で始まる行は、領域が無いものとして数えない。「なし」の行があり、ほかに領域も「不明」の行も無ければ、
+#     ファイルを変えない Issue（no_files）として、領域が空と分かっているものとする
 #   - 末尾の /** や /* は外す（ディレクトリ全体）。「.」「*」「**」はリポジトリ全体
 #   - 日本語の句読点・括弧を含む語や、途中にグロブ（* ? [）がある語は、パスとして判断できないので areas に入れず
 #     areas_ignored に出す（スキルが使う人に伝える）
@@ -98,8 +101,9 @@ defs='
         if ($l | test("^## ")) then .on = ($l | test("^##[ \t]*" + $h + "[ \t]*$"))
         elif .on then .out += [$l] else . end) | .out;
   def deps: [section("依存")[] | scan("#([0-9]+)") | .[0] | tonumber] | unique;
-  def area_tokens: [section("変更するファイル・領域")[] | select(test("^[ \t]*[-*][ \t]+"))
-      | sub("^[ \t]*[-*][ \t]+(\\[[ xX]\\][ \t]+)?"; "")
+  def area_lines: [section("変更するファイル・領域")[] | select(test("^[ \t]*[-*][ \t]+"))
+      | sub("^[ \t]*[-*][ \t]+(\\[[ xX]\\][ \t]+)?"; "")];
+  def area_tokens: [area_lines[]
       | (capture("`(?<p>[^`]+)`").p // split("[ \t\u3000]"; null)[0] // "")
       | sub("^\\./(?=.)"; "") | sub("(/\\*+)+/?$"; "") | sub("/+$"; "")
       | if test("^(\\.|\\*+)$") then "." else . end
@@ -107,12 +111,13 @@ defs='
   def unjudgeable: test("[（）、。：]|[*?\\[]");
   def areas: [area_tokens[] | select(unjudgeable | not)] | unique;
   def areas_ignored: [area_tokens[] | select(unjudgeable)] | unique;
+  def no_files: (area_tokens | length) == 0 and any(area_lines[]; test("^なし")) and (any(area_lines[]; test("^不明")) | not);
 '
 
 repo_issue_dir="repos/$repo_nwo/issues"
-todo="$(jq -c "$defs"'[.[] | select(.status == $todo) | . + {areas: areas, areas_ignored: areas_ignored, body_deps: deps} | del(.body)]' \
+todo="$(jq -c "$defs"'[.[] | select(.status == $todo) | . + {areas: areas, areas_ignored: areas_ignored, body_deps: deps, no_files: no_files} | del(.body)]' \
   --arg todo "$todo_col" <<<"$issues")"
-active="$(jq -c "$defs"'[.[] | select(.status | IN($active[])) | {number, title, parent, areas: areas} ]' \
+active="$(jq -c "$defs"'[.[] | select(.status | IN($active[])) | {number, title, parent, areas: areas, no_files: no_files} ]' \
   --argjson active "$active_cols" <<<"$issues")"
 
 # 各 Todo の Issue の依存関係（blocked by）を読み、本文の依存と合わせて、閉じているかを調べる
@@ -158,9 +163,9 @@ jq -n --argjson todo "$todo" --argjson active "$active" --argjson deps "$deps" -
   # 親を残すかは、PR のファイルの数ではなく、PR があるかで決める（ファイルが空の PR もある）
   ($active | map(. as $i | [$prs[] | select(pr_issues | index($i.number))] as $own
     | . + {pr_files: ([$own[].files[]?.path] | unique)}
-    | select((.parent | not) or ($own | length > 0)) | if .parent then .areas = [] else . end
+    | select((.parent | not) or ($own | length > 0)) | if .parent then .areas = [] | .no_files = false else . end
     | .paths = ((.areas + .pr_files) | unique)
-    | .area_known = (.paths | length > 0) | del(.parent))) as $act
+    | .area_known = ((.paths | length > 0) or .no_files) | del(.parent, .no_files))) as $act
   | ([$act[] | select(.area_known | not) | .number]) as $active_unknown
   | ($todo | map(. as $t
       | ($deps[] | select(.number == $t.number).blockers) as $bl
@@ -168,7 +173,7 @@ jq -n --argjson todo "$todo" --argjson active "$active" --argjson deps "$deps" -
                                                           else ($fetched[.number | tostring] // "open") end))})
           | map(select(.state != "closed")))}
       | .waiting = (.blocked_by | length > 0)
-      | .area_known = (.areas | length > 0)
+      | .area_known = ((.areas | length > 0) or .no_files)
       | .warnings = ($active_unknown | map("着手中の #\(.) は PR も領域も無く、重なるか分からない"))
       | .conflicts_with_active = [$act[] | select(ov($t.areas; .paths) | length > 0) | {issue: .number, paths: ov($t.areas; .paths)}])) as $items
   | ([$items[] | select((.waiting or .parent) | not)]) as $ready
@@ -183,7 +188,7 @@ jq -n --argjson todo "$todo" --argjson active "$active" --argjson deps "$deps" -
   | {repo: $repo, project: {owner: $owner, number: $number},
      next: ($plan.sel[0].number // null),
      parallel: [$plan.sel[].number],
-     todo: ($items | to_entries | map(.value + {position: (.key + 1)} | . as $i
+     todo: ($items | to_entries | map(.value + {position: (.key + 1)} | del(.no_files) | . as $i
         | . + ((($plan.out[] | select(.number == $i.number)) // {parallel: false, reason: (if $i.parent then "親の Issue（作業は子の Issue で進める）" else "待ち（依存が終わっていない）" end)}) | del(.number)))),
      active_unknown: $active_unknown,
      in_progress: $act}'

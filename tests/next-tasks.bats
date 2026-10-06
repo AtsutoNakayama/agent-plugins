@@ -594,3 +594,28 @@ JSON
 
 called() { grep -c "^$1 " "$CALLS" || true; }
 args() { grep "^$1 " "$CALLS" | sed -n "${2:-1}p" | cut -d' ' -f2-; }
+
+@test "領域が「なし」の着手中の Issue（ファイルを変えないタスク）は、重なるか分からないと警告しない" {
+  # ワークツリーを作らずに着手したタスクには領域も PR も無く、Todo の全部の Issue に「重なるか分からない」と警告していた
+  setup_fake_gh
+  item 10 Todo $'## 変更するファイル・領域\n- docs/'
+  item 20 "In Progress" $'## 変更するファイル・領域\n- なし'
+  write_page
+  run_script next-tasks.sh
+  assert_success
+  assert_equal "$(out_of '[.active_unknown, .todo[0].warnings, .todo[0].conflicts_with_active]')" '[[],[],[]]'
+  assert_equal "$(out_of '[.in_progress[] | [.number, .area_known, .paths]]')" '[[20,true,[]]]'
+}
+
+@test "領域が「なし」の Todo の Issue は、どれとも重ならないものとして並列にできる。「不明」は今までどおり" {
+  setup_fake_gh
+  item 10 Todo $'## 変更するファイル・領域\n- plugins/'
+  item 11 Todo $'## 変更するファイル・領域\n- なし'
+  item 12 Todo $'## 変更するファイル・領域\n- 不明'
+  item 13 Todo $'## 変更するファイル・領域\n- なし\n- 不明'
+  write_page
+  run_script next-tasks.sh
+  assert_success
+  assert_equal "$(out_of '.parallel')" '[10,11]'
+  assert_equal "$(out_of '[.todo[] | [.number, .area_known]]')" '[[10,true],[11,true],[12,false],[13,false]]'
+}

@@ -258,3 +258,11 @@ frontmatter() { awk 'NR == 1 && $0 == "---" { on = 1; next } on && $0 == "---" {
 @test "task-start は、既にブランチがあって --no-worktree が止まったら、そのワークツリーで作業するよう案内する" {
   grep -q '「Issue #N には既にブランチ … があります」で止まったら' "$SKILLS/task-start/SKILL.md"
 }
+
+@test "「変更するファイル・領域」の書き方に、ファイルを変えないタスクの「なし」がある（task-create・Issue テンプレート・task-start）" {
+  grep -q 'リポジトリのファイルを変えないタスクなら「- なし」と書く' "$SKILLS/task-create/SKILL.md"
+  for f in "$BATS_TEST_DIRNAME/../plugins/dev-workflow/templates/ISSUE_TEMPLATE/task.md" "$BATS_TEST_DIRNAME/../.github/ISSUE_TEMPLATE/task.md"; do
+    grep -q 'リポジトリのファイルを変えないタスクなら「なし」と書きます' "$f" || fail "$f に「なし」の書き方がありません"
+  done
+  grep -q '「変更するファイル・領域」が「- なし」なら、変えないタスクとして書かれている' "$SKILLS/task-start/SKILL.md"
+}
