@@ -133,13 +133,13 @@ else
   dw_warn "project.number が未設定なので、Project には追加しません（setup-project.sh --write-config で設定できます）"
 fi
 
-# 依存する Issue の「番号:id」（空白区切り）。依存関係の登録（REST）には node id ではなく数値の id を使う
+# 依存する Issue の「番号:id」（空白区切り）。依存関係の登録（REST）には node id ではなく数値の id を使う。
+# PR の番号は無い Issue として扱う（dw_issue_ref。issue-depend.sh と同じ）
 blocking=""
 for n in $blocked_by; do
-  # REST の issues は PR も返すので、PR の番号は無い Issue として扱う
-  id="$(dw_gh_find gh api "repos/$repo_nwo/issues/$n" | jq -r 'if . == null or .pull_request then empty else .id end')"
-  [ -n "$id" ] || dw_die "依存する Issue #${n} がありません（${repo_nwo}）"
-  blocking="${blocking:+$blocking }$n:$id"
+  ref="$(dw_issue_ref "$repo_nwo" "$n")"
+  [ -n "$ref" ] || dw_die "依存する Issue #${n} がありません（${repo_nwo}）"
+  blocking="${blocking:+$blocking }$n:${ref%% *}"
 done
 
 # 親の Issue があるか（PR は除く）と、親子の深さが上限を超えないかを確かめる
@@ -228,7 +228,7 @@ fi
 
 # --- 4. 依存関係（blocked by）を登録する -----------------------------------------
 for pair in $blocking; do
-  gh api -X POST "repos/$repo_nwo/issues/$issue_number/dependencies/blocked_by" -F issue_id="${pair#*:}" >/dev/null \
+  dw_add_blocked_by "$repo_nwo" "$issue_number" "${pair#*:}" \
     || fail_after_create "#${pair%%:*} への依存（blocked by）を登録できませんでした"
 done
 

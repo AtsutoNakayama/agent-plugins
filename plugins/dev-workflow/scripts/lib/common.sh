@@ -559,6 +559,41 @@ DW_JQ_MD_SCAN='
     | {items, headings};
 '
 
+# Issue の本文の節（「## <見出し>」の行から、次の「## 」の行の前まで）を読む jq の関数。依存を読む next-tasks.sh と、
+# 依存を書く issue-depend.sh とで、節の見つけ方をそろえる（食い違うと、書いた依存が読まれない）。
+# 見出しは「## 」（## と空白）で始まる行だけで、見出しの文字は前後の空白と行末の \r を無視して比べる。同じ見出しの節が
+# 複数あれば、全部を読む。入力は .body を持つ Issue。source した側で使う
+#   body_lines：本文を行の配列にする（\r は残す）
+#   section_ranges($h)：見出しが $h の節ごとに、{head（見出しの行番号）, end（節の次の行番号）}。中身は head+1 から end-1 まで
+#   section($h)：見出しが $h の節の中身の行（\r は外す）
+#   deps：「依存」の節にある #N の番号（重複は除く）
+# 使い方: jq "$DW_JQ_ISSUE_SECTIONS"' deps'
+# shellcheck disable=SC2016,SC2034 # jq のプログラムなので、$ は展開しない
+DW_JQ_ISSUE_SECTIONS='
+  def body_lines: (.body // "") | split("\n");
+  def section_ranges($h): body_lines as $l
+    | [range(0; $l | length) | select($l[.] | test("^## "))] as $hs
+    | [range(0; $hs | length) as $i
+        | select($l[$hs[$i]] | gsub("\r"; "") | test("^##[ \t]*" + $h + "[ \t]*$"))
+        | {head: $hs[$i], end: ($hs[$i + 1] // ($l | length))}];
+  def section($h): body_lines as $l | [section_ranges($h)[] as $r | $l[$r.head + 1:$r.end][] | gsub("\r"; "")];
+  def deps: [section("依存")[] | scan("#([0-9]+)") | .[0] | tonumber] | unique;
+'
+
+# 同じリポジトリの Issue を REST で読み、「数値の id 状態（open か closed）」を出力する。依存関係（blocked by）の登録には、
+# node id ではなく数値の id を使う。REST の issues は PR も返すので、PR の番号と無い番号（404・410）は、何も出力しない。
+# 認証・通信などほかの失敗は、dw_gh_find が理由を伝えて止まる。issue-create.sh と issue-depend.sh で使う
+# 使い方: ref="$(dw_issue_ref <OWNER/NAME> <番号>)"; [ -n "$ref" ] || <無いときの処理>
+dw_issue_ref() {
+  dw_gh_find gh api "repos/$1/issues/$2" | jq -r 'if . == null or .pull_request then empty else "\(.id) \(.state)" end'
+}
+
+# Issue <番号> の依存関係（blocked by）に、数値の id <依存する Issue の id> を登録する。失敗したら 0 以外を返す（gh の理由は標準エラー）
+# 使い方: dw_add_blocked_by <OWNER/NAME> <番号> <依存する Issue の id> || <失敗したときの処理>
+dw_add_blocked_by() {
+  gh api -X POST "repos/$1/issues/$2/dependencies/blocked_by" -F issue_id="$3" >/dev/null
+}
+
 # awk のプログラムの先頭に足し、行末の CR と、ファイルの先頭の BOM（Windows のエディタが付ける）を外す。
 # 改行が \r\n のファイルや BOM 付きのファイルでも、front matter の区切りの --- などを見分けるため。
 # 読んだ行を書き戻す処理では使わない（外した CR と BOM が書き戻されなくなるため）。source した側で使う

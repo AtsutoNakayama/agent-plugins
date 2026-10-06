@@ -101,7 +101,7 @@ while :; do
   after="$next_after"
 done
 
-# 本文の見出し（## <見出し>）の次の行から、次の見出しまでを行の配列にする
+# 本文の節は、issue-depend.sh と同じ読み方（DW_JQ_ISSUE_SECTIONS の section・deps）で読む
 # 領域は、箇条書きの1行から、バッククォートで囲んだ最初の語（無ければ最初の空白までの語）をパスとして取る
 #   - 「不明」「なし」で始まる行は、領域が無いものとして数えない。「なし」の行（`なし` のようにバッククォートで囲んでもよい）があり、
 #     ほかに領域も「不明」の行も無ければ、ファイルを変えない Issue（no_files）として、領域が空と分かっているものとする。
@@ -111,12 +111,7 @@ done
 #     areas_ignored に出す（スキルが使う人に伝える）
 # jq の変数（$h など）を bash に展開させないため、シングルクォートで書く
 # shellcheck disable=SC2016
-defs='
-  def section($h): (.body | gsub("\r"; "") | split("\n"))
-    | reduce .[] as $l ({on: false, out: []};
-        if ($l | test("^## ")) then .on = ($l | test("^##[ \t]*" + $h + "[ \t]*$"))
-        elif .on then .out += [$l] else . end) | .out;
-  def deps: [section("依存")[] | scan("#([0-9]+)") | .[0] | tonumber] | unique;
+defs="$DW_JQ_ISSUE_SECTIONS"'
   def area_lines: [section("変更するファイル・領域")[] | select(test("^[ \t]*[-*][ \t]+"))
       | sub("^[ \t]*[-*][ \t]+(\\[[ xX]\\][ \t]+)?"; "")];
   def area_tokens: [area_lines[]
