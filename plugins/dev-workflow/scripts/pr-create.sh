@@ -116,9 +116,10 @@ has_bang() { jq -e --arg s "$1" '$s | test("^[^:]*!:")' <<<null >/dev/null; }
 has_breaking_note() { jq -e --arg b "$1" '$b | test("(^|\n)BREAKING[ -]CHANGE: *\\S")' <<<null >/dev/null; }
 
 # --- Issue のチェックリスト -----------------------------------------------------
-# 本文のチェックリストの項目を、上から順に {line（0 からの行番号）, checked, text} で出す（md_scan。lib/common.sh）
-tasks_of() { jq -c "$DW_JQ_MD_SCAN"' .body // "" | md_scan | .items' <<<"$1"; }
-tasks="$(tasks_of "$issue_json")"
+# 本文を md_scan（lib/common.sh）で読み、チェックリストの項目（items。上から順に {line（0 からの行番号）, checked, text}）と
+# 見出しの行番号（headings）を出す
+scan_of() { jq -c "$DW_JQ_MD_SCAN"' .body // "" | md_scan' <<<"$1"; }
+tasks="$(scan_of "$issue_json" | jq -c .items)"
 # 文が1つの項目にだけ当たらない --check の文を出す（無い・複数ある）
 # shellcheck disable=SC2016 # jq のプログラムなので、$ は展開しない
 unmatched_jq='map(. as $s | select([$t[] | select(.text == $s)] | length != 1))'
@@ -248,7 +249,9 @@ if ! $dry_run && [ "$(jq -n --argjson c "$to_check" --argjson a "$to_add" '$c + 
   # $( ) は末尾の改行を落とすので、本文は JSON のまま扱う
   now_json="$(gh issue view "$issue" --json body)" \
     || dw_die "PR #${pr_number} はできていますが、Issue #${issue} を読めず、チェックリストを変えられませんでした（もう一度実行すれば変えます）"
-  now_tasks="$(tasks_of "$now_json")"
+  # 項目と見出しは、読み直した本文を1回だけ読んで使う
+  now_scan="$(scan_of "$now_json")"
+  now_tasks="$(jq -c .items <<<"$now_scan")"
   [ "$(jq -c --argjson t "$now_tasks" "$unmatched_jq" <<<"$to_check")" = '[]' ] \
     || dw_die "PR #${pr_number} はできていますが、Issue #${issue} の本文のチェックリストが途中で変わり、指定した文の項目が1つだけではなくなったので、チェックを付けませんでした（項目を確かめ直してから、もう一度実行してください）" 2
   # 読み直す間に足された項目は、もう足さない
@@ -258,9 +261,8 @@ if ! $dry_run && [ "$(jq -n --argjson c "$to_check" --argjson a "$to_add" '$c + 
   # 指定した行の行頭のチェックボックスだけを [x] にし、項目の文の中の [ ] や、ほかの行（改行の \r を含む）はそのまま残す。
   # 足す項目は、最初の項目がある節（次の見出しの手前まで。コードブロックの中の見出しの形の行は見出しとみなさない）の
   # 最後の空でない行の後に、最初の項目と同じ字下げで置く
-  jq -j --argjson t "$now_tasks" --argjson c "$to_check" --argjson a "$now_add" "$DW_JQ_MD_SCAN"'
-    (.body // "" | md_scan | .headings) as $headings
-    | ($t | map(select(.text as $s | $c | index($s))) | map(.line)) as $lines
+  jq -j --argjson t "$now_tasks" --argjson headings "$(jq -c .headings <<<"$now_scan")" --argjson c "$to_check" --argjson a "$now_add" '
+    ($t | map(select(.text as $s | $c | index($s))) | map(.line)) as $lines
     | .body // "" | split("\n")
     | to_entries
     | map(if .key as $k | $lines | index($k)
