@@ -14,7 +14,8 @@
 # 操作の対象のリポジトリ（cd・pushd・popd・git -C・env -C で移った先、--git-dir・GIT_DIR などで指したリポジトリ）が、導入して
 # いないリポジトリなら何もしない（gc_target・target_set_up）。git がリポジトリを見つけられないときは、守りを外さないよう調べる（設計書 §1）。
 # コマンドの文字列の解析は、pr-link.sh と共有する（scripts/lib/git-command.sh）。timeout・env などの前に付くコマンドは飛ばすが、
-# sh -c・xargs などを通したコマンドや git の別名（alias）を通すと見逃す。
+# sh -c・xargs などを通したコマンドや git の別名（alias）を通すと見逃す。パイプラインや & で動かすコマンドの中の cd・pushd・popd も
+# 外に効いたものとして読むので、見逃したり、止めなくてよいコマンドを止めたりすることがある。
 # 最後の守りは GitHub のルールセット（setup-repo.sh）。
 # 関数は gc_scan のコールバック（check_git）から呼ぶので、直接の呼び出しが無い（SC2329）
 # shellcheck disable=SC2329

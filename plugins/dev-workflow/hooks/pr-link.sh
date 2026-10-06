@@ -20,6 +20,7 @@
 #
 # 出力は、使用者に見せる systemMessage と、Claude に渡す additionalContext（返答でも触れてもらう）の JSON。
 # git のコマンドは、guard-git.sh と同じ解析（scripts/lib/git-command.sh）で拾う。sh -c・xargs や別名を通すと見逃す。
+# パイプラインや & で動かすコマンドの中の cd・pushd・popd も、外に効いたものとして読む。
 # スクリプト（commit.sh など）と gh pr create・gh issue create は、コマンドの文字列を簡易に判定するだけなので、
 # 引用符の中の文字にも反応し、フックの入力の cwd のリポジトリで判断する。
 # 標準入力でフックの入力（JSON）を受け取る。
