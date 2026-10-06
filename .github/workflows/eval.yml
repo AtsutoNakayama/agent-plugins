@@ -1,0 +1,63 @@
+name: Eval
+
+# スキルの振る舞いを、claude plugin eval で Claude に実行させて確かめる（plugins/dev-workflow/evals/。tests/eval/run.sh で実行する）。
+# 1回ごとに Claude を何度も動かし（ケースの数 × 実行回数 × プラグインあり・なしの2つ）、シークレット CLAUDE_CODE_OAUTH_TOKEN の
+# プランの使用量を消費するので、Actions の画面から手で起動したときだけ動かす。結果は毎回少し揺れるので、必須のチェックにはしない。
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 動かすケースのタグ（例 task-create。空なら全部）
+        required: false
+        default: ""
+      runs:
+        description: ケースごとの実行回数
+        required: false
+        default: "3"
+      model:
+        description: 動かす Claude のモデル（結果を比べられるよう、固定して使う）
+        required: false
+        default: sonnet
+      ablation:
+        description: プラグインなしでも動かして差を見るか
+        type: choice
+        options: [with-without, none]
+        default: with-without
+
+permissions:
+  contents: read
+
+jobs:
+  eval:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v5
+      - name: sandbox
+        # eval は Bash を許したケースを、Claude Code のサンドボックス（bubblewrap と socat）の中でしか動かさない。
+        # Ubuntu 24.04 は AppArmor が bubblewrap の user namespace の作成を止めるので、使い捨てのランナーでは制限を外す
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y -q bubblewrap socat
+          sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+      - name: Claude Code
+        run: npm install -g @anthropic-ai/claude-code
+      - name: eval
+        env:
+          CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          TAG: ${{ inputs.tag }}
+          RUNS: ${{ inputs.runs }}
+          MODEL: ${{ inputs.model }}
+          ABLATION: ${{ inputs.ablation }}
+        # 点がしきい値（--threshold の既定 1.0）に届かないケースがあると失敗する。理由は artifact の report.html で見る
+        run: |
+          args=(--trust-plugin --no-publish --model "$MODEL" --runs "$RUNS" --ablation "$ABLATION"
+            --output-dir eval-results --json eval-results/results.json --max-cost-usd 30)
+          [ -z "$TAG" ] || args+=(--tag "$TAG")
+          tests/eval/run.sh "${args[@]}"
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: eval-results
+          path: eval-results/
+          if-no-files-found: ignore
