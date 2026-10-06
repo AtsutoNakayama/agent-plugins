@@ -314,3 +314,53 @@ body_of() { cat "$FIX/body-$1"; }
   assert_success
   assert_equal "$(jq -c .added <<<"$output")" '{"dependency":[],"body":[]}'
 }
+
+@test "「なし」の行は、箇条書きの記号・「特に」・句点が付いていても、HTML のコメントの行と並んでいても置き換える" {
+  setup_fake_gh
+  issue 10 $'## 依存\n<!-- 先に終わらせる Issue -->\n- なし。'
+  issue 11 $'## 依存\n+ 特になし'
+  issue 12 $'## 依存\n1. なし'
+  issue 5
+  for n in 10 11 12; do
+    run_script issue-depend.sh --issue "$n" --blocked-by 5
+    assert_success
+  done
+  assert_equal "$(body_of 10)" $'## 依存\n<!-- 先に終わらせる Issue -->\n- #5'
+  assert_equal "$(body_of 11)" $'## 依存\n- #5'
+  assert_equal "$(body_of 12)" $'## 依存\n- #5'
+}
+
+@test "CRLF の本文の、改行の無い最後の行の後に足すときも、CRLF にそろえる（本文の最後には改行を足さない）" {
+  setup_fake_gh
+  issue 10 $'## 依存\r\n- #3'
+  issue 11 $'## 依存\r\n- なし'
+  issue 3
+  issue 5
+  run_script issue-depend.sh --issue 10 --blocked-by 5
+  assert_success
+  assert_equal "$(body_of 10 | od -c | tr -s ' ' | tr -d '\n')" "$(printf '## 依存\r\n- #3\r\n- #5' | od -c | tr -s ' ' | tr -d '\n')"
+  run_script issue-depend.sh --issue 11 --blocked-by 5
+  assert_success
+  assert_equal "$(body_of 11 | od -c | tr -s ' ' | tr -d '\n')" "$(printf '## 依存\r\n- #5' | od -c | tr -s ' ' | tr -d '\n')"
+}
+
+@test "「依存」の節の中身が空なら、見出しの直後に足す" {
+  setup_fake_gh
+  issue 10 $'## 依存\n\n## 補足\ny'
+  issue 5
+  run_script issue-depend.sh --issue 10 --blocked-by 5
+  assert_success
+  assert_equal "$(body_of 10)" $'## 依存\n- #5\n\n## 補足\ny'
+  assert_equal "$(jq -c .added.body <<<"$output")" '[5]'
+}
+
+@test "依存する Issue が全部閉じていれば、依存関係を読まず、何も変えずに skipped_closed に出す" {
+  setup_fake_gh
+  issue 10 $'## 依存\n- なし'
+  issue 5 "" "" closed
+  FAKE_FAIL=Blocked run_script issue-depend.sh --issue 10 --blocked-by 5
+  assert_success
+  assert_line "warn: 依存する Issue #5 は閉じているので、依存に足しません"
+  assert_equal "$(grep -v '^warn:' <<<"$output" | jq -c '[.added, .skipped_closed]')" '[{"dependency":[],"body":[]},[5]]'
+  assert_equal "$(called Blocked) $(called AddBlockedBy) $(called EditBody)" '0 0 0'
+}
