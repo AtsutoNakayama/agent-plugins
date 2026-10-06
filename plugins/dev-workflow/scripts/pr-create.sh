@@ -113,30 +113,9 @@ has_bang() { jq -e --arg s "$1" '$s | test("^[^:]*!:")' <<<null >/dev/null; }
 has_breaking_note() { jq -e --arg b "$1" '$b | test("(^|\n)BREAKING[ -]CHANGE: *\\S")' <<<null >/dev/null; }
 
 # --- Issue のチェックリスト -----------------------------------------------------
-# 本文のチェックリストの項目を、上から順に {line（0 からの行番号）, checked, text} で出す。
-# GitHub と同じく、コードブロック（3つ以上の ` か ~ で囲む）の中の行は項目とみなさない。
-# 閉じるのは、開いたときと同じ文字が同じ数以上並び、後ろが空白だけの行（中の短い囲みや ```js では閉じない）。
-# ` の囲みの後ろに ` がある行（```x``` のようなインラインのコード）は囲みとみなさない。
-# リストの中のコードブロックも拾うため、囲みの字下げは問わない。
-# 複数行の HTML のコメント（行頭の <!-- から --> まで。囲みと同じく字下げは問わない）の中の行も、GitHub に表示されないので項目とみなさない。
-# GitHub と同じく、行の途中の <!--（インラインのコードや項目の補足）はコメントの始まりとみなさない
-# shellcheck disable=SC2016 # jq のプログラムなので、$ は展開しない
-tasks_jq='
-  def item: "^\\s*(?:[-*+]|[0-9]+[.)])\\s+\\[(?<c>[ xX])\\](?:\\s+(?<t>.*))?$";
-  reduce (split("\n") | to_entries[]) as $e ({fence: null, comment: false, out: []};
-    ($e.value | sub("\r$"; "")) as $l | .fence as $f
-    | if .comment then
-        (if $l | test("-->") then .comment = false else . end)
-      elif $f != null then
-        (if $l | test("^\\s*" + $f + "+\\s*$") then .fence = null else . end)
-      elif $l | test("^\\s*(`{3,}[^`]*|~{3,}.*)$") then .fence = ($l | capture("^\\s*(?<f>`{3,}|~{3,})").f)
-      elif $l | test("^\\s*<!--(?!.*-->)") then .comment = true
-      elif $l | test(item) then
-        ($l | capture(item)) as $m
-        | .out += [{line: $e.key, checked: ($m.c != " "), text: ($m.t // "" | sub("\\s+$"; ""))}]
-      else . end)
-  | .out'
-tasks="$(jq -c ".body // \"\" | $tasks_jq" <<<"$issue_json")"
+# 本文のチェックリストの項目を、上から順に {line（0 からの行番号）, checked, text} で出す（md_scan。lib/common.sh）
+tasks_of() { jq -c "$DW_JQ_MD_SCAN"' .body // "" | md_scan | .items' <<<"$1"; }
+tasks="$(tasks_of "$issue_json")"
 # 文が1つの項目にだけ当たらない --check の文を出す（無い・複数ある）
 # shellcheck disable=SC2016 # jq のプログラムなので、$ は展開しない
 unmatched_jq='map(. as $s | select([$t[] | select(.text == $s)] | length != 1))'
@@ -266,7 +245,7 @@ if ! $dry_run && [ "$(jq -n --argjson c "$to_check" --argjson a "$to_add" '$c + 
   # $( ) は末尾の改行を落とすので、本文は JSON のまま扱う
   now_json="$(gh issue view "$issue" --json body)" \
     || dw_die "PR #${pr_number} はできていますが、Issue #${issue} を読めず、チェックリストを変えられませんでした（もう一度実行すれば変えます）"
-  now_tasks="$(jq -c ".body // \"\" | $tasks_jq" <<<"$now_json")"
+  now_tasks="$(tasks_of "$now_json")"
   [ "$(jq -c --argjson t "$now_tasks" "$unmatched_jq" <<<"$to_check")" = '[]' ] \
     || dw_die "PR #${pr_number} はできていますが、Issue #${issue} の本文のチェックリストが途中で変わり、指定した文の項目が1つだけではなくなったので、チェックを付けませんでした（項目を確かめ直してから、もう一度実行してください）" 2
   # 読み直す間に足された項目は、もう足さない

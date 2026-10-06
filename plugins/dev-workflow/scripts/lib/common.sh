@@ -529,6 +529,36 @@ DW_SUB_ISSUE_DEPTH_GUIDE=2
 # shellcheck disable=SC2034
 DW_BREAKING_LABEL=breaking
 
+# Markdown の本文（文字列）を読む jq の関数 md_scan を定義する。上から順に、チェックリストの項目（items。
+# {line（0 からの行番号）, checked, text}）と、見出しの行番号（headings）を出す。
+# GitHub と同じく、コードブロック（3つ以上の ` か ~ で囲む）の中の行は、項目とも見出しともみなさない。
+# 閉じるのは、開いたときと同じ文字が同じ数以上並び、後ろが空白だけの行（中の短い囲みや ```js では閉じない）。
+# ` の囲みの後ろに ` がある行（```x``` のようなインラインのコード）は囲みとみなさない。
+# リストの中のコードブロックも拾うため、囲みの字下げは問わない。
+# 複数行の HTML のコメント（行頭の <!-- から --> まで。囲みと同じく字下げは問わない）の中の行も、GitHub に表示されないので項目とみなさない。
+# GitHub と同じく、行の途中の <!--（インラインのコードや項目の補足）はコメントの始まりとみなさない。
+# 項目の文は、前後の空白を外す。source した側で使う
+# 使い方: jq "$DW_JQ_MD_SCAN"' .body | md_scan | .items'
+# shellcheck disable=SC2016,SC2034 # jq のプログラムなので、$ は展開しない
+DW_JQ_MD_SCAN='
+  def md_scan:
+    def item: "^\\s*(?:[-*+]|[0-9]+[.)])\\s+\\[(?<c>[ xX])\\](?:\\s+(?<t>.*))?$";
+    reduce (split("\n") | to_entries[]) as $e ({fence: null, comment: false, items: [], headings: []};
+      ($e.value | sub("\r$"; "")) as $l | .fence as $f
+      | if .comment then
+          (if $l | test("-->") then .comment = false else . end)
+        elif $f != null then
+          (if $l | test("^\\s*" + $f + "+\\s*$") then .fence = null else . end)
+        elif $l | test("^\\s*(`{3,}[^`]*|~{3,}.*)$") then .fence = ($l | capture("^\\s*(?<f>`{3,}|~{3,})").f)
+        elif $l | test("^\\s*<!--(?!.*-->)") then .comment = true
+        elif $l | test(item) then
+          ($l | capture(item)) as $m
+          | .items += [{line: $e.key, checked: ($m.c != " "), text: ($m.t // "" | sub("\\s+$"; ""))}]
+        elif $l | test("^ {0,3}#{1,6}(\\s|$)") then .headings += [$e.key]
+        else . end)
+    | {items, headings};
+'
+
 # awk のプログラムの先頭に足し、行末の CR と、ファイルの先頭の BOM（Windows のエディタが付ける）を外す。
 # 改行が \r\n のファイルや BOM 付きのファイルでも、front matter の区切りの --- などを見分けるため。
 # 読んだ行を書き戻す処理では使わない（外した CR と BOM が書き戻されなくなるため）。source した側で使う
