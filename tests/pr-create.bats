@@ -605,15 +605,15 @@ fake_issue_tasks() {
 @test "--add-task は、節の最後の行が項目（- * + 1. 1)）か、字下げした項目の続きなら空行を挟まず、区切り線なら挟む" {
   setup_branch
   for last in '* [ ] a' '+ [ ] a' '1. [ ] a' '2) [ ] a' '- [ ] a\n  補足の続きの行'; do
-    set_issue_body "$(printf -- "## やること\n${last}\n## 完了条件")"
+    set_issue_body "$(printf -- '## やること\n%b\n## 完了条件' "$last")"
     run_pr --issue 17 --body-file "$TMP/body.md" --add-task NEW
     assert_success
-    assert_equal "$(cat "$TMP/issue-edit-body")" "$(printf -- "## やること\n${last}\n- [ ] NEW\n## 完了条件")"
+    assert_equal "$(cat "$TMP/issue-edit-body")" "$(printf -- '## やること\n%b\n- [ ] NEW\n## 完了条件' "$last")"
   done
   for hr in '* * *' '- - -' '___'; do
-    set_issue_body "$(printf -- "## やること\n- [ ] a\n${hr}\n## 完了条件")"
+    set_issue_body "$(printf -- '## やること\n- [ ] a\n%s\n## 完了条件' "$hr")"
     run_pr --issue 17 --body-file "$TMP/body.md" --add-task NEW
     assert_success
-    assert_equal "$(cat "$TMP/issue-edit-body")" "$(printf -- "## やること\n- [ ] a\n${hr}\n\n- [ ] NEW\n## 完了条件")"
+    assert_equal "$(cat "$TMP/issue-edit-body")" "$(printf -- '## やること\n- [ ] a\n%s\n\n- [ ] NEW\n## 完了条件' "$hr")"
   done
 }
