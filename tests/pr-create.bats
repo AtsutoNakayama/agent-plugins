@@ -435,8 +435,8 @@ fake_issue_tasks() {
   run_pr --issue 17 --body-file "$TMP/body.md" --add-task NEW
   assert_success
   # shellcheck disable=SC2016 # ``` はコードブロックの囲みで、展開させない
-  # 直前の行（コードブロックの閉じ）はリストの項目ではないので、空行を挟む（同じリストの続きとして表示される）
-  assert_equal "$(cat "$TMP/issue-edit-body")" "$(printf -- '## やること\n- [ ] a\n  ```sh\n  echo 1\n\n  # コメント\n  ```\n- [ ] b\n  ```\n  x\n\n  ```\n\n- [ ] NEW\n\n## 完了条件\n- [ ] c')"
+  # 直前の行（字下げした、項目の中のコードブロックの閉じ）は項目の続きなので、空行を挟まない
+  assert_equal "$(cat "$TMP/issue-edit-body")" "$(printf -- '## やること\n- [ ] a\n  ```sh\n  echo 1\n\n  # コメント\n  ```\n- [ ] b\n  ```\n  x\n\n  ```\n- [ ] NEW\n\n## 完了条件\n- [ ] c')"
 }
 
 @test "--add-task は、項目の間に空行がある並べ方でも、節の最後に足す" {
@@ -600,4 +600,20 @@ fake_issue_tasks() {
   run_pr --issue 17 --body-file "$TMP/body.md" --add-task NEW
   assert_success
   assert_equal "$(od -c "$TMP/issue-edit-body" | tail -4)" "$(printf -- '## やること\r\n- [ ] a\r\n---\r\n\r\n- [ ] NEW\r' | od -c | tail -4)"
+}
+
+@test "--add-task は、節の最後の行が項目（- * + 1. 1)）か、字下げした項目の続きなら空行を挟まず、区切り線なら挟む" {
+  setup_branch
+  for last in '* [ ] a' '+ [ ] a' '1. [ ] a' '2) [ ] a' '- [ ] a\n  補足の続きの行'; do
+    set_issue_body "$(printf -- "## やること\n${last}\n## 完了条件")"
+    run_pr --issue 17 --body-file "$TMP/body.md" --add-task NEW
+    assert_success
+    assert_equal "$(cat "$TMP/issue-edit-body")" "$(printf -- "## やること\n${last}\n- [ ] NEW\n## 完了条件")"
+  done
+  for hr in '* * *' '- - -' '___'; do
+    set_issue_body "$(printf -- "## やること\n- [ ] a\n${hr}\n## 完了条件")"
+    run_pr --issue 17 --body-file "$TMP/body.md" --add-task NEW
+    assert_success
+    assert_equal "$(cat "$TMP/issue-edit-body")" "$(printf -- "## やること\n- [ ] a\n${hr}\n\n- [ ] NEW\n## 完了条件")"
+  done
 }
