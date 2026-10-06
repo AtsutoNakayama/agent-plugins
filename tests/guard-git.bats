@@ -666,8 +666,9 @@ silent() {
   denied "main の上ではコミットしません" "pushd $TMP/wt && dirs -- -c; popd; git commit -m x" \
     "pushd $TMP/wt && dirs -x -c; popd; git commit -m x" "pushd $TMP/wt && dirs -cl; popd; git commit -m x" \
     "pushd $TMP/wt && dirs +1x -c; popd; git commit -m x"
-  # 番号の頭には、符号を1つ付けられる
-  allowed "pushd $TMP/wt && dirs +-0 -c && popd; git commit -m x"
+  # 番号の頭には、符号を1つ付けられる（dirs・pushd・popd で同じ）
+  allowed "pushd $TMP/wt && dirs +-0 -c && popd; git commit -m x" "pushd $TMP/wt && pushd +-0 && git commit -m x"
+  denied "main の上ではコミットしません" "pushd $TMP/wt && popd -+1; git commit -m x" "pushd $TMP/wt && pushd ++1 && git commit -m x"
 }
 
 @test "( ) の中で積んだ・戻した場所は、括弧の外に効かない" {

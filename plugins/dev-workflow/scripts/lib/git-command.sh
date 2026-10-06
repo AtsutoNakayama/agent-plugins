@@ -493,9 +493,23 @@ gc_dirs_set() {
 }
 
 # +N（左から）・-N（右から）を、dl の番号にして idx に入れる。範囲の外なら 1 を返す。使い方: gc_dirs_index <+N か -N>
+# 語が、pushd・popd・dirs の番号（+N・-N）の形かを返す。N の頭には、符号を1つ付けられる（+-0・-+1。bash は N を
+# 符号付きの数として読む）。使い方: gc_is_index <語>
+gc_is_index() {
+  local n="${1#[+-]}"
+  [ "$n" != "$1" ] || return 1
+  n="${n#[+-]}"
+  case "$n" in '' | *[!0-9]*) return 1 ;; esac
+}
+
 gc_dirs_index() {
   local n="${1#[+-]}"
-  case "$n" in '' | *[!0-9]*) return 1 ;; esac
+  gc_is_index "$1" || return 1
+  # N に - を付けた負の数は、0 でなければ範囲の外
+  case "$n" in
+    -*) n="${n#-}"; [ -z "${n//0/}" ] || return 1 ;;
+    +*) n="${n#+}" ;;
+  esac
   # 先頭の 0 を 8 進数と読ませない（+08）。桁が多すぎる番号は範囲の外
   [ "${#n}" -le 9 ] || return 1
   n=$((10#$n))
@@ -510,10 +524,11 @@ gc_dirs_index() {
 gc_pushd() {
   local nocd=false rot=() k
   while [ $# -gt 0 ]; do
+    ! gc_is_index "$1" || break
     case "$1" in
       -n) nocd=true; shift ;;
       --) shift; break ;;
-      - | [+-][0-9]*) break ;;
+      -) break ;;
       -*) return 0 ;;
       *) break ;;
     esac
@@ -521,26 +536,21 @@ gc_pushd() {
   [ $# -le 1 ] || return 0
   # 引数の無い pushd -n は、何もしない（シェルと同じ）
   [ $# -eq 1 ] || ! $nocd || return 0
-  if [ $# -eq 1 ]; then
-    case "$1" in
-      [+-][0-9]*) ;;
-      *)
-        if $nocd; then
-          # パスのまま積む（改行を含むパスは、1行に収まらないので不明とする）
-          case "$1" in
-            *"$nl"*) pstack="d$nl$pstack" ;;
-            *) pstack="r$1$nl$pstack" ;;
-          esac
-        else
-          # pushd "" は失敗する
-          [ -n "$1" ] || return 0
-          gc_cur_entry
-          pstack="$entry$nl$pstack"
-          gc_cd "$1"
-        fi
-        return 0
-        ;;
-    esac
+  if [ $# -eq 1 ] && ! gc_is_index "$1"; then
+    if $nocd; then
+      # パスのまま積む（改行を含むパスは、1行に収まらないので不明とする）
+      case "$1" in
+        *"$nl"*) pstack="d$nl$pstack" ;;
+        *) pstack="r$1$nl$pstack" ;;
+      esac
+    else
+      # pushd "" は失敗する
+      [ -n "$1" ] || return 0
+      gc_cur_entry
+      pstack="$entry$nl$pstack"
+      gc_cd "$1"
+    fi
+    return 0
   fi
   gc_dirs_list
   if [ $# -eq 0 ]; then
@@ -573,10 +583,10 @@ gc_pushd() {
 gc_popd() {
   local nocd=false k idx=0
   while [ $# -gt 0 ]; do
+    ! gc_is_index "$1" || break
     case "$1" in
       -n) nocd=true; shift ;;
       --) shift; break ;;
-      [+-][0-9]*) break ;;
       *) return 0 ;;
     esac
   done
@@ -608,14 +618,8 @@ gc_dirs() {
     case "$w" in
       -c) clear=true ;;
       -l | -p | -v) ;;
-      # +N・-N の N は数字だけ（+1x は失敗する）。N の頭には、符号を1つ付けられる（+-0）
-      [+-]*)
-        w="${w#[+-]}"
-        case "${w#[+-]}" in
-          '' | *[!0-9]*) return 0 ;;
-        esac
-        ;;
-      *) return 0 ;;
+      # +N・-N（gc_is_index。+1x は失敗する）
+      *) gc_is_index "$w" || return 0 ;;
     esac
   done
   ! $clear || pstack=""
