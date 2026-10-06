@@ -536,6 +536,9 @@ gc_scan_redirect() {
 gc_scan() {
   local callback="$1" cmd="$2" gc_dir="$3" after=false anchored=false
   [ "${4:-}" != after ] || after=true
+  # bash 3.2 は、関数を呼ぶたびに呼び出し元の引数を写すので、長いコマンドの文字列を引数に残すと、
+  # 下の関数を呼ぶたびに文字列の長さに比例して遅くなる。読んだら空にする
+  set --
   local len=${#cmd}
   # bash 3.2 では "${...}" の中の $'\n' の扱いが新しい bash と違うので、変数にしておく
   local nl=$'\n' tab=$'\t'

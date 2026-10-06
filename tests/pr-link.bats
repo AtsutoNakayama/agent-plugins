@@ -249,6 +249,24 @@ https://github.com/me/demo/pull/42"
   assert_equal "$(called pr-list)" 1
 }
 
+@test "長いコマンドでも速く終わる" {
+  local msg words TIMEFORMAT='%U %S' c cpu
+  msg="$(head -c 50000 /dev/zero | tr '\0' a | fold -w 76)"
+  words="$(printf 'w%d ' $(seq 1 10000))"
+  # guard-git.bats の同じテストと同じく、bats の並列の実行に左右されないよう、CPU 時間（子プロセスを含む）で測る
+  : >"$TMP/cpu"
+  SECONDS=0
+  for c in "git commit -m \"$msg\"" "echo $words; git commit -m x" \
+    "$(printf 'git commit -F - <<EOF\n%s\nEOF' "$msg")"; do
+    { time run_hook "$c"; } 2>>"$TMP/cpu"
+    [ "$status" -eq 0 ] || fail "止めてしまった（$status）: ${c:0:80}"
+    [[ "$(jq -r .systemMessage <<<"$output")" == *"Issue #17: https://github.com/me/demo/issues/17"* ]] || fail "Issue が無い: ${c:0:80}"
+  done
+  cpu="$(awk '{ t += $1 + $2 } END { printf "%.1f", t }' "$TMP/cpu")"
+  awk -v t="$cpu" 'BEGIN { exit !(t < 10) }' || fail "CPU 時間で ${cpu} 秒かかった"
+  [ "$SECONDS" -lt 120 ] || fail "壁時計で ${SECONDS} 秒かかった"
+}
+
 @test "同じリンクも、連続で毎回出す" {
   shows "git commit -m x" "Issue #17: https://github.com/me/demo/issues/17"
   shows "git commit -m x" "Issue #17: https://github.com/me/demo/issues/17"
