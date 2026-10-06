@@ -566,6 +566,52 @@ DW_JQ_MD_SCAN='
 # shellcheck disable=SC2034
 DW_AWK_STRIP_CR_BOM='{ sub(/\r$/, "") } FNR == 1 { sub(/^\357\273\277/, "") }'
 
+# YAML の1行を読む awk の関数 strip（コメントを消す）・unquote（値を囲む引用符を外し、エスケープを元の文字に戻す）・
+# trim（前後の空白を外す）。awk のプログラムの先頭に足して使う。ワークフローを読む merge-group-check.sh と、ADR の
+# front matter を読む adr-list.sh で、値の読み方を揃えるため。source した側で使う
+# 使い方: awk "$DW_AWK_YAML"' { v = unquote(strip($0)) }' <ファイル>
+# shellcheck disable=SC2016,SC2034 # awk のプログラムなので、$ は展開しない
+DW_AWK_YAML='
+    # コメント（行頭か空白の後の #）を消す。引用符の中の #（name: "Build #1" など）は残す。
+    # 引用符は、値の始まり（空白・[・, の後）に来たものだけを数える（Bob\047s のような語の中のものは除く）。
+    # 引用符の中のエスケープ（単一引用符の中の \047\047、二重引用符の中の \ の次の文字）は、引用符の終わりとみなさない。
+    # 引用符が閉じていなければ、引用符を数えずに、空白の後の # からを消す
+    function strip(s,   i, c, q, prev, cpos) {
+      sub(/\r$/, "", s)
+      q = ""; prev = " "; cpos = 0
+      for (i = 1; i <= length(s); i++) {
+        c = substr(s, i, 1)
+        if (!cpos && c == "#" && (prev == " " || prev == "\t")) cpos = i
+        if (q == "") {
+          if (c == "#" && (prev == " " || prev == "\t")) return substr(s, 1, i - 1)
+          if ((c == "\"" || c == "\047") && (prev == " " || prev == "\t" || prev == "[" || prev == ",")) q = c
+        } else if (q == "\"" && c == "\\") {
+          i++
+        } else if (c == q) {
+          if (q == "\047" && substr(s, i + 1, 1) == "\047") i++
+          else q = ""
+        }
+        prev = c
+      }
+      # 引用符が閉じていなければ、引用符を数えずに、空白の後の # からをコメントとして消す
+      if (q != "" && cpos) return substr(s, 1, cpos - 1)
+      return s
+    }
+    function unquote(s) {
+      s = trim(s)
+      if (s ~ /^".*"$/) {
+        s = substr(s, 2, length(s) - 2)
+        # \" と \\ を元の文字に戻す。\001 は \\ をいったん置いておく印
+        gsub(/\\\\/, "\001", s); gsub(/\\"/, "\"", s); gsub(/\001/, "\\", s)
+      } else if (s ~ /^\047.*\047$/) {
+        s = substr(s, 2, length(s) - 2)
+        gsub(/\047\047/, "\047", s)
+      }
+      return s
+    }
+    function trim(s) { sub(/^[ \t]+/, "", s); sub(/[ \t]+$/, "", s); return s }
+'
+
 # 設定の adr.dir（ADR の置き場所）を読み、末尾の / を外して出力する。リポジトリのルートからの相対パスでなければ
 # （空・/ で始まる・.. を含む）終了コード 2 で止まる。ADR を作る側と探す側で、置き場所の扱いを食い違わせないため。
 # $(...) の中で呼ぶと、set -e のスクリプトはそのまま止まる。

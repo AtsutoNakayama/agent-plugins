@@ -192,7 +192,8 @@ write_adr() {
 
 @test "引用符で囲んでいない値の、空白の後の # からのコメントは外す" {
   write_adr docs/adr/a.md "$(printf 'status: accepted  # 決めた\nissue: 151 # 後から残した')" "a"
-  write_adr docs/adr/b.md "$(printf 'status: \"a # b\"\nissue: #151')" "b"
+  # 引用符で囲まない #151 は、YAML ではコメント（値なし）なので、# を付けるなら囲む
+  write_adr docs/adr/b.md "$(printf 'status: \"a # b\"\nissue: \"#151\"')" "b"
   run_script adr-list.sh --issue 151
   assert_success
   assert_equal "$(jq -c '[.adrs[] | [.path, .status]]' <<<"$output")" '[["docs/adr/a.md","accepted"],["docs/adr/b.md","a # b"]]'
@@ -289,4 +290,15 @@ write_adr() {
   run_script adr-list.sh --issue 21
   assert_success
   assert_equal "$(jq -c .proposal <<<"$output")" '"disabled"'
+}
+
+@test "値の引用符の中のエスケープを元の文字に戻し、空の引用符は値なし、閉じていない引用符の後のコメントは外す" {
+  write_adr docs/adr/a.md "$(printf "status: 'won''t fix'  # c\nissue: '151'")" "a"
+  write_adr docs/adr/b.md "$(printf 'status: "see \\"X\\" # y" # z\nissue: 151')" "b"
+  write_adr docs/adr/c.md "$(printf 'status: "" # 未定\nissue: '"''")" "c"
+  write_adr docs/adr/d.md "$(printf 'status: accepted\nissue: "151 # 元の Issue')" "d"
+  run_script adr-list.sh
+  assert_success
+  assert_equal "$(jq -c '[.adrs[] | [.path, .issue, .status]]' <<<"$output")" \
+    '[["docs/adr/a.md",151,"won'"'"'t fix"],["docs/adr/b.md",151,"see \"X\" # y"],["docs/adr/c.md",null,null],["docs/adr/d.md",null,"accepted"]]'
 }

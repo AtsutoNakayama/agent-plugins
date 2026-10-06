@@ -9,7 +9,7 @@
 #
 # 置き場所の直下の *.md を読み、ファイル名の順（ロケールに左右されない文字の順）に出す（下のディレクトリは読まない）。置き場所が無ければ、ADR は無いものとする。
 # front matter（先頭の --- から次の --- まで）の issue・status と、最初の「# 」の見出しを読む。行末の CR と先頭の BOM は外して読む。
-# 値が引用符で始まれば閉じる引用符までを読み、囲んでいない値は、空白の後の # からをコメントとして外す。
+# 値は YAML の1行として読む（空白の後の # からのコメントを外し、囲む引用符を外してエスケープを元の文字に戻す）。
 # issue は数字だけ（前後の引用符・# と先頭の 0 は外す）なら番号、それ以外（無い・テンプレートのまま）は null。
 #
 # 出力:
@@ -79,19 +79,11 @@ if [ -d "$repo_root/$adr_dir" ]; then
   done
   if [ $# -gt 0 ]; then
     files="$(printf '%s\n' "$@")"
-    rows="$(cd "$repo_root" && awk "$DW_AWK_STRIP_CR_BOM"'
-      # YAML の1行の値を読む。引用符で始まる値は、閉じる引用符までを値にし、後ろ（コメントなど）は捨てる
-      # （閉じていなければ、そのまま読む）。囲んでいない値は、空白の後の # からをコメントとして外す
-      function clean(v,   q, e) {
-        sub(/^[^:]*:[ \t]*/, "", v)
-        q = substr(v, 1, 1)
-        if (q == "\"" || q == "\047") {
-          e = index(substr(v, 2), q)
-          if (e > 0) v = substr(v, 2, e - 1)
-          else sub(/[ \t]+$/, "", v)
-        } else {
-          sub(/[ \t]+#.*$/, "", v); sub(/[ \t]+$/, "", v)
-        }
+    rows="$(cd "$repo_root" && awk "$DW_AWK_STRIP_CR_BOM$DW_AWK_YAML"'
+      # YAML の1行の値を読む（strip・unquote は DW_AWK_YAML。merge-group-check.sh と同じ読み方）
+      function clean(v) {
+        sub(/^[^:]*:/, "", v)
+        v = unquote(strip(v))
         gsub(/\t/, " ", v)
         return v
       }
