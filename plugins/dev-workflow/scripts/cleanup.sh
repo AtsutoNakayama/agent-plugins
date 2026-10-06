@@ -96,7 +96,9 @@ if $abandon; then
     lose commits "$(git -C "$main_root" log --format='%h %s' "refs/heads/$branch" --not $excludes)"
   fi
 else
-  prs="$(gh pr list --head "$branch" --state all --json number,url,state,mergedAt,headRefOid,baseRefName,closingIssuesReferences)" \
+  # --head はブランチ名だけで探すので、フォークの同じ名前のブランチからの PR を除く（ほかの --head の呼び出しと同じ）
+  prs="$(gh pr list --head "$branch" --state all --json number,url,state,mergedAt,headRefOid,baseRefName,closingIssuesReferences,isCrossRepository \
+    | jq -c 'map(select(.isCrossRepository | not))')" \
     || dw_die "${branch} の PR を取得できませんでした"
   pr="$(jq -c 'map(select(.state == "MERGED")) | sort_by(.mergedAt) | last // empty' <<<"$prs")"
   if [ -z "$pr" ]; then

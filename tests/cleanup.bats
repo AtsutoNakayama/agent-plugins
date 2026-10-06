@@ -78,7 +78,7 @@ run_cleanup() {
   # 削除された origin/feat/17-x の追跡ブランチも片付ける
   run git show-ref --verify --quiet refs/remotes/origin/feat/17-x
   assert_failure
-  assert_equal "$(args pr-list)" "--head feat/17-x --state all --json number,url,state,mergedAt,headRefOid,baseRefName,closingIssuesReferences"
+  assert_equal "$(args pr-list)" "--head feat/17-x --state all --json number,url,state,mergedAt,headRefOid,baseRefName,closingIssuesReferences,isCrossRepository"
 }
 
 @test "--branch を省略すると、今のブランチを片付ける（ワークツリーの中から実行できる）" {
@@ -557,4 +557,18 @@ run_cleanup() {
   assert_equal "$(jq -c .issues <<<"$json")" '[]'
   run grep '^issue-view' "$CALLS"
   assert_failure
+}
+
+@test "フォークの同じ名前のブランチからのマージ済みの PR を、自分の PR と取り違えない（自分の PR が開いていれば止まる）" {
+  setup_branch
+  jq -n --arg oid "$(git rev-parse feat/17-x)" '[
+    {number: 5, url: "https://github.com/me/demo/pull/5", state: "OPEN", mergedAt: null, headRefOid: $oid,
+     baseRefName: "main", closingIssuesReferences: [], isCrossRepository: false},
+    {number: 3, url: "https://github.com/me/demo/pull/3", state: "MERGED", mergedAt: "2026-09-27T00:00:00Z", headRefOid: $oid,
+     baseRefName: "main", closingIssuesReferences: [{number: 99}], isCrossRepository: true}]' >"$FIX/pr-list.json"
+  run_cleanup --branch feat/17-x
+  assert_failure 2
+  assert_output --partial "PR #5 はまだマージされていません"
+  [ -d "$WT" ]
+  git show-ref --verify --quiet refs/heads/feat/17-x
 }
