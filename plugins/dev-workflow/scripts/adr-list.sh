@@ -7,7 +7,7 @@
 #   --issue N  front matter の issue が N の ADR だけを出す（#N でもよい。先頭の 0 はそろえる）
 #
 # 置き場所の直下の *.md を読み、ファイル名の順（ロケールに左右されない文字の順）に出す（下のディレクトリは読まない）。置き場所が無ければ、ADR は無いものとする。
-# front matter（先頭の --- から次の --- まで）の issue・status と、最初の「# 」の見出しを読む。
+# front matter（先頭の --- から次の --- まで）の issue・status と、最初の「# 」の見出しを読む。行末の CR と先頭の BOM は外して読む。
 # issue は数字だけ（前後の引用符・# と先頭の 0 は外す）なら番号、それ以外（無い・テンプレートのまま）は null。
 #
 # 出力:
@@ -63,7 +63,7 @@ if [ -d "$repo_root/$adr_dir" ]; then
   done
   if [ $# -gt 0 ]; then
     files="$(printf '%s\n' "$@")"
-    rows="$(cd "$repo_root" && awk '
+    rows="$(cd "$repo_root" && awk "$DW_AWK_STRIP_CR_BOM"'
       function clean(v) {
         sub(/^[^:]*:[ \t]*/, "", v); sub(/[ \t\r]+$/, "", v)
         if (v ~ /^".*"$/ || v ~ /^\047.*\047$/) v = substr(v, 2, length(v) - 2)

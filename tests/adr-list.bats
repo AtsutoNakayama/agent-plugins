@@ -170,3 +170,13 @@ write_adr() {
   assert_equal "$(jq -c '[.adrs[] | [.path, .issue, .status, .title]]' <<<"$output")" \
     '[["docs/adr/a.md",5,"accepted","A"],["docs/adr/b.md",null,null,null],["docs/adr/c.md",null,null,"front matter の無い C"],["docs/adr/d.md",null,"proposed",null]]'
 }
+
+@test "改行が \r\n の ADR と、先頭に BOM がある ADR も読む" {
+  mkdir -p docs/adr
+  printf -- '---\r\nstatus: "accepted"\r\nissue: 151\r\n---\r\n\r\n# CRLF\r\n' >docs/adr/000151-crlf.md
+  printf -- '\357\273\277---\nstatus: accepted\nissue: 151\n---\n\n# BOM\n' >docs/adr/000151-bom.md
+  run_script adr-list.sh --issue 151
+  assert_success
+  assert_equal "$(jq -c '.adrs' <<<"$output")" \
+    '[{"path":"docs/adr/000151-bom.md","issue":151,"status":"accepted","title":"BOM"},{"path":"docs/adr/000151-crlf.md","issue":151,"status":"accepted","title":"CRLF"}]'
+}

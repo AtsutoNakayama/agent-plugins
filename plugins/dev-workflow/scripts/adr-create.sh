@@ -115,7 +115,7 @@ for f in ${supersedes[@]+"${supersedes[@]}"}; do
   [ -n "$p" ] || dw_die "置き換える ADR が見つかりません: ${f}" 4
   [ "$p" != "$path" ] || dw_die "自分自身は置き換えられません: ${f}" 4
   # front matter が閉じていて、その中に status の行があること
-  awk 'NR == 1 && $0 != "---" { exit 1 } NR > 1 && $0 == "---" { closed = 1; exit !found } /^status:/ { found = 1 } END { exit !closed }' "$p" \
+  awk "$DW_AWK_STRIP_CR_BOM"' NR == 1 && $0 != "---" { exit 1 } NR > 1 && $0 == "---" { closed = 1; exit !found } /^status:/ { found = 1 } END { exit !closed }' "$p" \
     || dw_die "置き換える ADR の front matter が閉じていない、または status の行がありません: ${f}" 4
   # 書き込めないと、新しい ADR を作った後で書き換えに失敗するので、先に確かめる
   [ -w "$p" ] || dw_die "置き換える ADR に書き込めません: ${f}" 4
@@ -133,12 +133,14 @@ done
 if [ "$dry_run" = false ]; then
   mkdir -p "$repo_root/$adr_dir" 2>/dev/null || dw_die "ADR を置くディレクトリを作れません: ${adr_dir}" 1
   # front matter（先頭の --- から次の --- まで）の date と issue だけを置き換える。確かめた後に別の処理が作った
-  # ファイルも上書きしないよう、noclobber で書く
+  # ファイルも上書きしないよう、noclobber で書く。行末の CR と先頭の BOM は、見分けるときだけ外し、書く行には残す
   if ! (set -C; awk -v d="$date" -v i="$issue" '
-      NR == 1 && $0 == "---" { fm = 1; print; next }
-      fm && $0 == "---" { fm = 0 }
-      fm && /^date:/ { print "date: " d; next }
-      fm && /^issue:/ { print "issue: " i; next }
+      { l = $0; cr = sub(/\r$/, "", l) ? "\r" : "" }
+      NR == 1 { sub(/^\357\273\277/, "", l) }
+      NR == 1 && l == "---" { fm = 1; print; next }
+      fm && l == "---" { fm = 0 }
+      fm && l ~ /^date:/ { print "date: " d cr; next }
+      fm && l ~ /^issue:/ { print "issue: " i cr; next }
       { print }' "$tpl_path" >"$path") 2>/dev/null; then
     { [ -e "$path" ] || [ -L "$path" ]; } && dw_die "同じファイル名の ADR が既にあるので上書きしません: ${rel}" 3
     dw_die "ADR を書き込めません: ${rel}" 1
@@ -148,10 +150,12 @@ if [ "$dry_run" = false ]; then
   rewritten=""
   for p in ${old_paths[@]+"${old_paths[@]}"}; do
     tmp="$(mktemp "${TMPDIR:-/tmp}/adr-create.XXXXXX")"
+    # 行末の CR は、見分けるときだけ外し、書き換えた status の行にも残す（改行が \r\n の ADR の改行をそろえたままにする）
     awk -v s="superseded by $base" '
+      { l = $0; cr = sub(/\r$/, "", l) ? "\r" : "" }
       NR == 1 { fm = 1; print; next }
-      fm && $0 == "---" { fm = 0 }
-      fm && !done && /^status:/ { print "status: \"" s "\""; done = 1; next }
+      fm && l == "---" { fm = 0 }
+      fm && !done && l ~ /^status:/ { print "status: \"" s "\"" cr; done = 1; next }
       { print }' "$p" >"$tmp"
     # 元のファイルの権限を保つため、mv ではなく中身を書き戻す。途中で失敗したときは、何が変わったかを知らせる
     cat "$tmp" >"$p" || dw_die "置き換える ADR を書き換えられません: ${p#"$repo_root"/}（一部だけ書き換わっているかもしれません。作った ADR ${rel} は残っています。すでに書き換えた ADR: ${rewritten:-なし}）" 1

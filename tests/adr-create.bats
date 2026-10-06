@@ -256,3 +256,13 @@ FAKE
   assert_failure 2
   assert_output --partial "設定を読めません"
 }
+
+@test "改行が \r\n で先頭に BOM がある ADR も置き換えられ、status の行の改行と、ほかの行はそのまま残す" {
+  mkdir -p docs/adr
+  printf -- '\357\273\277---\r\nstatus: "accepted"\r\nissue: 3\r\n---\r\n\r\n# 古い\r\nstatus: 本文の行\r\n' >docs/adr/000003-old.md
+  run_script adr-create.sh --issue 11 --name new --template minimal --supersedes 000003-old.md
+  assert_success
+  printf -- '\357\273\277---\r\nstatus: "superseded by 000011-new"\r\nissue: 3\r\n---\r\n\r\n# 古い\r\nstatus: 本文の行\r\n' >"$TMP/expected"
+  run cmp "$TMP/expected" docs/adr/000003-old.md
+  assert_success
+}

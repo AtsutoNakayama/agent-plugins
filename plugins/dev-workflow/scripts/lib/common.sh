@@ -529,6 +529,13 @@ DW_SUB_ISSUE_DEPTH_GUIDE=2
 # shellcheck disable=SC2034
 DW_BREAKING_LABEL=breaking
 
+# awk のプログラムの先頭に足し、行末の CR と、ファイルの先頭の BOM（Windows のエディタが付ける）を外す。
+# 改行が \r\n のファイルや BOM 付きのファイルでも、front matter の区切りの --- などを見分けるため。
+# 読んだ行を書き戻す処理では使わない（外した CR と BOM が書き戻されなくなるため）。source した側で使う
+# 使い方: awk "$DW_AWK_STRIP_CR_BOM"' <プログラム>' <ファイル>...
+# shellcheck disable=SC2034
+DW_AWK_STRIP_CR_BOM='{ sub(/\r$/, "") } FNR == 1 { sub(/^\357\273\277/, "") }'
+
 # 設定の adr.dir（ADR の置き場所）を読み、末尾の / を外して出力する。リポジトリのルートからの相対パスでなければ
 # （空・/ で始まる・.. を含む）終了コード 2 で止まる。ADR を作る側と探す側で、置き場所の扱いを食い違わせないため。
 # $(...) の中で呼ぶと、set -e のスクリプトはそのまま止まる。
