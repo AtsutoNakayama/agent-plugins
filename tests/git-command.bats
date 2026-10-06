@@ -49,3 +49,10 @@ run_gc() {
   assert_success
   assert_output "$(printf '[a]\n[b]')"
 }
+
+@test "gc_args は、コールバックの中で gc_opt を呼んでも、外側のオプションの読み方を変えない" {
+  # コールバックの中の gc_skip_opts は、値の無い -u で終わる（gc_onext などを書き換える）
+  run_gc 'cb() { gc_skip_opts u "" -u; echo "[$1]"; }' gc_create_opts cb cC "--create=" -ca -cb
+  assert_success
+  assert_output "$(printf '[a]\n[b]')"
+}

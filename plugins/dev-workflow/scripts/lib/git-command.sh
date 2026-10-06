@@ -195,9 +195,11 @@ gc_opt() {
 gc_argn=0 gc_stop=false
 gc_args() {
   # コールバックが呼び出し元の変数（cb など）を読めるよう、作業用の変数は ga_ で始める
-  local ga_cb="$1" ga_shorts="$2" ga_longs="$3" ga_w ga_k ga_dd=false ga_next="" ga_rc ga_stop="$gc_stop"
+  # gc_opt の結果（gc_on など）と読んだ語の数は、コールバックの中の gc_args・gc_opt が書き換えるので、ga_ の変数に写して使う
+  local ga_cb="$1" ga_shorts="$2" ga_longs="$3" ga_w ga_k ga_dd=false ga_next="" ga_rc ga_stop="$gc_stop" ga_n=0
+  local ga_on=() ga_ov=() ga_oa=()
   shift 3
-  gc_argn=0 gc_stop=false
+  gc_stop=false
   for ga_w in "$@"; do
     if [ -n "$ga_next" ]; then
       "$ga_cb" opt "$ga_next" "$ga_w" next
@@ -209,16 +211,17 @@ gc_args() {
       gc_opt "$ga_w" "$ga_shorts" "$ga_longs" || ga_rc=$?
       case "$ga_rc" in
         0)
+          ga_on=(${gc_on[@]+"${gc_on[@]}"}) ga_ov=(${gc_ov[@]+"${gc_ov[@]}"}) ga_oa=(${gc_oa[@]+"${gc_oa[@]}"})
+          ga_next="$gc_onext"
           ga_k=0
-          while [ "$ga_k" -lt "${#gc_on[@]}" ] && ! $gc_stop; do
-            if "${gc_oa[ga_k]}"; then
-              "$ga_cb" opt "${gc_on[ga_k]}" "${gc_ov[ga_k]}" attached
+          while [ "$ga_k" -lt "${#ga_on[@]}" ] && ! $gc_stop; do
+            if "${ga_oa[ga_k]}"; then
+              "$ga_cb" opt "${ga_on[ga_k]}" "${ga_ov[ga_k]}" attached
             else
-              "$ga_cb" opt "${gc_on[ga_k]}" "" none
+              "$ga_cb" opt "${ga_on[ga_k]}" "" none
             fi
             ga_k=$((ga_k + 1))
           done
-          ga_next="$gc_onext"
           ;;
         1) "$ga_cb" arg "$ga_w" ;;
         2)
@@ -228,13 +231,13 @@ gc_args() {
       esac
     fi
     if $gc_stop; then
-      gc_stop="$ga_stop"
+      gc_stop="$ga_stop" gc_argn=$ga_n
       return 0
     fi
-    gc_argn=$((gc_argn + 1))
+    ga_n=$((ga_n + 1))
   done
   [ -z "$ga_next" ] || "$ga_cb" opt "$ga_next" "" missing
-  gc_stop="$ga_stop"
+  gc_stop="$ga_stop" gc_argn=$ga_n
 }
 
 # 前に付くコマンド（timeout・nice・env など）のオプションを読む（gc_args）。最初のオプションでない語で止まる
