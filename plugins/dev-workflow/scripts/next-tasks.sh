@@ -13,6 +13,7 @@
 # サブ Issue を持つ親の Issue は、作業を子の Issue で進めるので、parent にして候補に入れない。着手中の列にある親は、
 # 開いている PR が無ければ着手中として数えない（親には作業が無く、数えると、領域も PR も無いとして全部に警告が付く。
 # 本文の領域は子の作業をまとめたものなので、親では使わない）。PR を出した後で子が付いた親は、PR のファイルとの重なりを見る。
+# 保留の列（status.hold。設定されていれば）にある Issue は、今は着手できないので候補に入れず、hold に番号とタイトルを出す。
 # 出力の next と parallel は、待ちと親を除いた上からの提案。
 set -euo pipefail
 
@@ -38,6 +39,9 @@ todo_col="$(jq -r '.status.todo // empty' <<<"$config")"
 # 着手中として数える列。PR を作ると pr_opened の列へ移すリポジトリでは、レビュー中の Issue もそこにあるので含める
 active_cols="$(jq -c '[.status.start, .status.pr_opened] | map(select(. != null and . != "")) | unique' <<<"$config")"
 [ -n "$todo_col" ] || dw_die "status.todo が設定されていません" 2
+# 保留の列。設定されていなければ空で、どの Issue も保留にならない
+hold_col="$(jq -r '.status.hold // empty' <<<"$config")"
+dw_check_hold_column "$config"
 sp_name="$(jq -r '.story_point.field' <<<"$config")"
 repo_nwo="$(gh repo view --json nameWithOwner -q .nameWithOwner)"
 [ -n "$owner" ] || owner="${repo_nwo%%/*}"
@@ -58,7 +62,7 @@ query='query TodoItems($owner: String!, $number: Int!, $sp: String!, $after: Str
     }
   } } }
 }'
-# このリポジトリの開いている Issue を、Todo（todo）と着手中（start・pr_opened）だけに絞って持つ（Done の項目が多くても引数が長くならない）。
+# このリポジトリの開いている Issue を、Todo（todo）と保留（hold）と着手中（start・pr_opened）だけに絞って持つ（Done の項目が多くても引数が長くならない）。
 # 並びは Project の並びのまま
 issues='[]' after=""
 while :; do
@@ -68,13 +72,13 @@ while :; do
   page="$(dw_gh_find dw_gql "$query" "$vars")"
   jq -e '.data.repositoryOwner.projectV2.items' >/dev/null 2>&1 <<<"$page" \
     || dw_die "Project が見つかりません: ${owner}/${number}（setup-project.sh で設定してください）"
-  picked="$(jq -c --arg r "$repo_nwo" --arg todo "$todo_col" --argjson active "$active_cols" '
+  picked="$(jq -c --arg r "$repo_nwo" --arg todo "$todo_col" --arg hold "$hold_col" --argjson active "$active_cols" '
     [.data.repositoryOwner.projectV2.items.nodes[]
       | select(.content.__typename == "Issue" and .content.repository.nameWithOwner == $r and .content.state == "OPEN")
       | {number: .content.number, title: .content.title, url: .content.url, body: (.content.body // ""),
          status: (.status.name // ""), story_point: (.sp.number // null),
          sub_issues: (.content.subIssuesSummary.total // 0)} | .parent = (.sub_issues > 0)
-      | select(.status == $todo or (.status | IN($active[])))]' <<<"$page")"
+      | select(.status == $todo or ($hold != "" and .status == $hold) or (.status | IN($active[])))]' <<<"$page")"
   issues="$(jq -c --argjson p "$picked" '. + $p' <<<"$issues")"
   [ "$(jq -r '.data.repositoryOwner.projectV2.items.pageInfo.hasNextPage' <<<"$page")" = true ] || break
   # カーソルが空か前回と同じなら、同じページを読み続けてしまう（無限ループ）ので止める
@@ -114,10 +118,11 @@ todo="$(jq -c "$defs"'[.[] | select(.status == $todo) | . + {areas: areas, areas
   --arg todo "$todo_col" <<<"$issues")"
 active="$(jq -c "$defs"'[.[] | select(.status | IN($active[])) | {number, title, parent, areas: areas} ]' \
   --argjson active "$active_cols" <<<"$issues")"
+hold="$(jq -c --arg hold "$hold_col" '[.[] | select($hold != "" and .status == $hold) | {number, title, url}]' <<<"$issues")"
 
 # 各 Todo の Issue の依存関係（blocked by）を読み、本文の依存と合わせて、閉じているかを調べる
 # 依存先は別のリポジトリの Issue でもありうるので、リポジトリと番号の組で区別する（本文の #N は、このリポジトリの Issue）
-# 状態は、依存関係の API が返す（open・closed）。本文だけにある依存は、Project にある Issue（Todo・着手中）なら開いている。
+# 状態は、依存関係の API が返す（open・closed）。本文だけにある依存は、Project にある Issue（Todo・保留・着手中）なら開いている。
 # それ以外は REST で読む
 deps='[]'
 for n in $(jq -r '.[].number' <<<"$todo"); do
@@ -132,7 +137,7 @@ for n in $(jq -r '.[].number' <<<"$todo"); do
       | group_by([.repo, .number])
       | map({repo: .[0].repo, number: .[0].number, sources: (map(.source) | unique), state: (map(.state // empty) | first // null)}))}]' <<<"$deps")"
 done
-open_in_project="$(jq -c --argjson a "$active" '[.[].number] + [$a[].number]' <<<"$todo")"
+open_in_project="$(jq -c --argjson a "$active" --argjson h "$hold" '[.[].number] + [$a[].number] + [$h[].number]' <<<"$todo")"
 # 状態がまだ分からないもの（このリポジトリの本文の依存で、Project に無いもの）を REST で読む
 fetched='{}'
 for d in $(jq -r --argjson o "$open_in_project" --arg repo "$repo_nwo" \
@@ -149,7 +154,7 @@ prs="$(gh pr list --state open --limit 1000 --json number,headRefName,files,clos
   || dw_die "開いている PR を読めませんでした"
 
 jq -n --argjson todo "$todo" --argjson active "$active" --argjson deps "$deps" --argjson fetched "$fetched" \
-  --argjson in_project "$open_in_project" \
+  --argjson in_project "$open_in_project" --argjson hold "$hold" \
   --argjson prs "$prs" --arg repo "$repo_nwo" --arg owner "$owner" --argjson number "$number" '
   def ov($a; $b): [$a[] as $x | $b[] as $y
       | select($x == "." or $y == "." or $x == $y or ($x | startswith($y + "/")) or ($y | startswith($x + "/"))) | {a: $x, b: $y}];
@@ -185,5 +190,6 @@ jq -n --argjson todo "$todo" --argjson active "$active" --argjson deps "$deps" -
      parallel: [$plan.sel[].number],
      todo: ($items | to_entries | map(.value + {position: (.key + 1)} | . as $i
         | . + ((($plan.out[] | select(.number == $i.number)) // {parallel: false, reason: (if $i.parent then "親の Issue（作業は子の Issue で進める）" else "待ち（依存が終わっていない）" end)}) | del(.number)))),
+     hold: $hold,
      active_unknown: $active_unknown,
      in_progress: $act}'

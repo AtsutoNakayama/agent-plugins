@@ -322,6 +322,54 @@ JSON
   assert_equal "$(out_of '.todo[0] | [.waiting, .blocked_by[0].state]')" '[true,"open"]'
 }
 
+@test "保留の列（hold）が設定されていれば、その列の Issue を候補に入れず、番号とタイトルを hold に出す" {
+  setup_fake_gh
+  echo '{"project": {"owner": "me", "number": 4}, "status": {"hold": "On Hold"}}' >"$REPO/.claude/dev-workflow/config.json"
+  item 30 "On Hold"
+  item 10 Todo
+  item 31 "On Hold"
+  write_page
+  run_script next-tasks.sh
+  assert_success
+  assert_equal "$(out_of '[.todo[].number]')" '[10]'
+  assert_equal "$(out_of .next)" 10
+  assert_equal "$(out_of .hold)" \
+    '[{"number":30,"title":"作業 30","url":"https://github.com/me/demo/issues/30"},{"number":31,"title":"作業 31","url":"https://github.com/me/demo/issues/31"}]'
+  assert_equal "$(out_of '.in_progress')" '[]'
+}
+
+@test "保留の列（hold）が設定されていなければ、hold は空で、ほかの列の Issue は数えない" {
+  setup_fake_gh
+  item 30 "On Hold"
+  item 10 Todo
+  write_page
+  run_script next-tasks.sh
+  assert_success
+  assert_equal "$(out_of '[.todo[].number]')" '[10]'
+  assert_equal "$(out_of .hold)" '[]'
+}
+
+@test "依存先が保留の列の Issue なら、状態を読まずに待ちにする" {
+  setup_fake_gh
+  echo '{"project": {"owner": "me", "number": 4}, "status": {"hold": "On Hold"}}' >"$REPO/.claude/dev-workflow/config.json"
+  item 10 Todo $'## 依存\n- #30'
+  item 30 "On Hold"
+  write_page
+  run_script next-tasks.sh
+  assert_success
+  assert_equal "$(called GetIssue)" 0
+  assert_equal "$(out_of '.todo[0] | [.waiting, .blocked_by[0].state]')" '[true,"open"]'
+}
+
+@test "保留の列がほかの役割の列と同じ名前なら、止まる" {
+  setup_fake_gh
+  echo '{"project": {"owner": "me", "number": 4}, "status": {"hold": "In Progress"}}' >"$REPO/.claude/dev-workflow/config.json"
+  run_script next-tasks.sh
+  assert_failure 2
+  assert_output --partial "保留の列（status.hold）は、ほかの役割（status.start）と別の列名にしてください: In Progress"
+  assert_equal "$(grep -c '^TodoItems ' "$CALLS" || true)" 0
+}
+
 @test "pr_opened が設定されていなければ、ほかの列の Issue は着手中に数えない" {
   setup_fake_gh
   item 10 Todo $'## 変更するファイル・領域\n- docs/'
