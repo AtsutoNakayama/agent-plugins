@@ -13,9 +13,7 @@
 #
 # 文章のガイド（*.md）は guides.<名前> にパスの配列として入る（優先度の低い順）。
 # 導入したリポジトリ（チームの設定 2 があるリポジトリ。dw_is_set_up）でなければ、ユーザーの層（層4 と
-# ~/.claude/dev-workflow/*.md）は読まない（設計書 §1）。導入したかは detected.set_up（true / false）に出す（スキルが
-# 自分で設定ファイルを探して判定すると、メインのワークツリーを見るかどうかでフックと食い違うため）。
-# detected.set_up は、ほかの detected.* と違って設定の層では変えられない（層を合わせた後に、判定の値で置く）。
+# ~/.claude/dev-workflow/*.md）は読まない（設計書 §1）。
 set -euo pipefail
 
 # shellcheck source=lib/common.sh
@@ -24,13 +22,8 @@ dw_require jq
 
 filter="${1:-.}"
 repo_root="$(dw_repo_root || true)"
-# 導入していないリポジトリでは、ユーザーの層を読まない（空になるので飛ばす）。判定（git を起動しうる）は1回だけにする
-set_up=false
-user_dir=""
-if dw_is_set_up "$repo_root"; then
-  set_up=true
-  user_dir="$(dw_user_dir)"
-fi
+# 導入していないリポジトリでは、ユーザーの層を読まない（空になるので飛ばす）
+user_dir="$(dw_user_dir_for "$repo_root")"
 
 layers=()
 sources=()
@@ -99,7 +92,6 @@ done
 sources_json="$(printf '%s\n' ${sources[@]+"${sources[@]}"} | jq -R . | jq -sc 'map(select(. != ""))')"
 
 printf '%s\n' "${layers[@]}" \
-  | jq -s --argjson guides "$guides" --argjson sources "$sources_json" --argjson set_up "$set_up" \
-      'reduce .[] as $l ({}; . * $l) + {guides: $guides, sources: $sources}
-       | .detected = ((.detected | objects) // {}) + {set_up: $set_up}' \
+  | jq -s --argjson guides "$guides" --argjson sources "$sources_json" \
+      'reduce .[] as $l ({}; . * $l) + {guides: $guides, sources: $sources}' \
   | jq -r "$filter"

@@ -165,22 +165,13 @@ load test_helper
 @test "導入していないリポジトリやリポジトリの外では、ユーザーの層（設定とガイド）を読まない" {
   echo '{"language": "en"}' >"$WORKFLOW_USER_DIR/config.json"
   echo user >"$WORKFLOW_USER_DIR/commit.md"
-  run_script config.sh '[.language, .guides, .sources, .detected.set_up] | tojson'
+  run_script config.sh '[.language, .guides, .sources] | tojson'
   assert_success
-  assert_output "[\"ja\",{},[\"$(cd "$SCRIPTS/.." && pwd)/defaults/workflow.json\"],false]"
+  assert_output "[\"ja\",{},[\"$(cd "$SCRIPTS/.." && pwd)/defaults/workflow.json\"]]"
   cd "$TMP"
-  run_script config.sh '[.language, .guides, .detected.set_up] | tojson'
+  run_script config.sh '[.language, .guides] | tojson'
   assert_success
-  assert_output '["ja",{},false]'
-  # .claude/dev-workflow/ のディレクトリや個人の上書き（config.local.json）だけでは、導入したとみなさない
-  cd "$REPO"
-  [ -d .claude/dev-workflow ]
-  # 設定の層に set_up や detected.set_up を書いても、判定は変わらず、最上位の set_up も上書きしない
-  echo '{"set_up": "x", "detected": {"set_up": true}}' >.claude/dev-workflow/config.local.json
-  run_script config.sh '[.set_up, .detected.set_up] | tojson'
-  assert_success
-  assert_output '["x",false]'
-  rm .claude/dev-workflow/config.local.json
+  assert_output '["ja",{}]'
   # 壊れたユーザーの層も読まないので、止まらない
   echo '{broken' >"$WORKFLOW_USER_DIR/config.json"
   run_script config.sh .language
@@ -192,22 +183,12 @@ load test_helper
   echo '{"language": "en"}' >"$WORKFLOW_USER_DIR/config.json"
   echo user >"$WORKFLOW_USER_DIR/commit.md"
   mark_set_up
-  run_script config.sh '[.language, .guides.commit, .detected.set_up] | tojson'
-  assert_output "[\"en\",[\"$WORKFLOW_USER_DIR/commit.md\"],true]"
-  # チームの設定に detected.set_up を書いても、判定は変わらない
-  echo '{"detected": {"set_up": false}}' >.claude/dev-workflow/config.json
-  run_script config.sh .detected.set_up
-  assert_output true
-  # detected がオブジェクトでなくても、失敗しない
-  echo '{"detected": false}' >.claude/dev-workflow/config.json
-  run_script config.sh '[.language, .detected.set_up] | tojson'
-  assert_success
-  assert_output '["en",true]'
-  echo '{}' >.claude/dev-workflow/config.json
+  run_script config.sh '[.language, .guides.commit] | tojson'
+  assert_output "[\"en\",[\"$WORKFLOW_USER_DIR/commit.md\"]]"
   # 初期設定をコミットする前に作ったワークツリーには、チームの設定が無い
   git worktree add -q "$TMP/wt" -b feat/1-x
   cd "$TMP/wt"
   [ ! -f .claude/dev-workflow/config.json ]
-  run_script config.sh '[.language, .guides.commit, .detected.set_up] | tojson'
-  assert_output "[\"en\",[\"$WORKFLOW_USER_DIR/commit.md\"],true]"
+  run_script config.sh '[.language, .guides.commit] | tojson'
+  assert_output "[\"en\",[\"$WORKFLOW_USER_DIR/commit.md\"]]"
 }
