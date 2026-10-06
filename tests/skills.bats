@@ -4,9 +4,15 @@
 load test_helper
 
 SKILLS="$BATS_TEST_DIRNAME/../plugins/dev-workflow/skills"
+# 独自の観点をレビューする agent（review スキルが起動する）
+AGENT="$BATS_TEST_DIRNAME/../plugins/dev-workflow/agents/perspective-reviewer.md"
 
 # 使い方: frontmatter <SKILL.md> → 先頭の --- で囲まれた部分
 frontmatter() { awk 'NR == 1 && $0 == "---" { on = 1; next } on && $0 == "---" { exit } on' "$1"; }
+
+# 使い方: step <SKILL.md> <番号> [終わりの見出しの正規表現] → 「### <番号>.」の節の本文
+# （次の「## 」か「### 」の見出しの前まで。「#### 」の見出しでは終わらない。終わりの見出しを渡すと、その見出しでも終わる）
+step() { awk -v n="$2" -v end="$3" 'on && ($0 ~ /^###? / || (end != "" && $0 ~ end)) { exit } $0 ~ ("^### " n "[.]") { on = 1; next } on' "$1"; }
 
 @test "どのスキルにも name（ディレクトリ名と同じ）と description がある" {
   for f in "$SKILLS"/*/SKILL.md; do
@@ -90,7 +96,7 @@ frontmatter() { awk 'NR == 1 && $0 == "---" { on = 1; next } on && $0 == "---" {
 @test "task-create は、下書きの前に開いている Issue から重複と親の候補を探し、重複があれば起票の前に聞く" {
   f="$SKILLS/task-create/SKILL.md"
   # 手順2（下書きを作る）の中で、下書きの項目より前に探す
-  step2="$(awk '/^### 2\./ { on = 1; next } /^#### 下書きの項目/ { on = 0 } on' "$f")"
+  step2="$(step "$f" 2 '^#### 下書きの項目')"
   grep -q '重複と親の候補を探す' <<<"$step2" || fail "手順2の最初に、重複と親の候補を探す手順がありません"
   grep -qF 'gh issue list --state open' <<<"$step2" || fail "開いている Issue を読む手順がありません"
   grep -qF 'subIssuesSummary' <<<"$step2" || fail "サブ Issue の数を、開いている Issue の一覧と一緒に読んでいません"
@@ -104,7 +110,7 @@ frontmatter() { awk 'NR == 1 && $0 == "---" { on = 1; next } on && $0 == "---" {
   grep -q 'サブ Issue を持たない Issue は.*重なりとして扱う' <<<"$step2" \
     || fail "サブ Issue を持たない広い Issue を重なりとして扱うことが書かれていません"
   grep -q '明らかな親' "$f" && fail "親の候補が、探した結果ではなく「明らかな親」のままです"
-  step3="$(awk '/^### 3\./ { on = 1; next } /^### 4\./ { on = 0 } on' "$f")"
+  step3="$(step "$f" 3)"
   grep -q '手順2で探した結果' <<<"$step3" || fail "手順3の確認に、探した結果がありません"
 }
 
@@ -121,14 +127,14 @@ frontmatter() { awk 'NR == 1 && $0 == "---" { on = 1; next } on && $0 == "---" {
   f="$SKILLS/task-next/SKILL.md"
   grep -q "\`parent\`" "$f" || fail "出力の parent の見方が書かれていません"
   grep -q '待ちでも親でもないもの' "$f" || fail "並列にできないものから、親の Issue が除かれていません"
-  step2="$(awk '/^### 2\./ { on = 1; next } on' "$f")"
+  step2="$(step "$f" 2)"
   grep -q '\*\*親の Issue\*\*' <<<"$step2" || fail "手順2に、親の Issue の伝え方がありません"
   # 子の読み方・案内のしかたは task-start の手順2を参照し、書き写さない（孫や別のリポジトリの子の扱いがずれないように）
   grep -q 'task-start の手順2と同じように' <<<"$step2" || fail "親の子の案内が、task-start の手順2を参照していません"
   grep -q 'subIssues' <<<"$step2" && fail "task-start の手順2の、子の読み方を書き写しています"
   grep -q '親を閉じる' <<<"$step2" || fail "開いている子が無い親を閉じるよう伝えることが書かれていません"
   # task-start の手順2に、参照する内容（子の読み方・孫・別のリポジトリの子）がある
-  start2="$(awk '/^### 2\./ { on = 1; next } /^### 3\./ { on = 0 } on' "$SKILLS/task-start/SKILL.md")"
+  start2="$(step "$SKILLS/task-start/SKILL.md" 2)"
   grep -q 'subIssues' <<<"$start2" || fail "task-start の手順2に、子の読み方がありません"
   grep -q '孫を案内' <<<"$start2" || fail "task-start の手順2に、孫の案内がありません"
   grep -q '別のリポジトリの子' <<<"$start2" || fail "task-start の手順2に、別のリポジトリの子の扱いがありません"
@@ -140,14 +146,14 @@ frontmatter() { awk 'NR == 1 && $0 == "---" { on = 1; next } on && $0 == "---" {
   grep -q '局所の指摘でも' "$f" || fail "局所の指摘でも水平展開を判定することが書かれていません"
   grep -q '同じ誤りが残っていれば' "$f" || fail "同じ誤りが残る場所を一覧に加えることが書かれていません"
   # 手順6（反映する）の中に、水平展開の場所を直すことと再検索がある
-  step6="$(awk '/^### 6\./ { on = 1; next } /^### 7\./ { on = 0 } on' "$f")"
+  step6="$(step "$f" 6)"
   grep -q '水平展開' <<<"$step6" || fail "手順6に、水平展開の場所を直すことがありません"
   grep -q '同じ検索' <<<"$step6" || fail "手順6に、直した後の再検索がありません"
 }
 
 @test "review は、終えるときに見落としの指摘と今後も要らない指摘を観点に残すかを尋ねる（設計書 §7）" {
   f="$SKILLS/review/SKILL.md"
-  step9="$(awk '/^### 9\./ { on = 1; next } on' "$f")"
+  step9="$(step "$f" 9)"
   [ -n "$step9" ] || fail "手順9（観点に残すか確かめる）がありません"
   grep -q '見落とし' <<<"$step9" || fail "見落としの指摘を拾うことが書かれていません"
   grep -q '今後も要らない指摘' <<<"$step9" || fail "今後も要らない指摘を拾うことが書かれていません"
@@ -159,11 +165,11 @@ frontmatter() { awk 'NR == 1 && $0 == "---" { on = 1; next } on && $0 == "---" {
   grep -q '「〜を指摘しない」だけの観点は新しく作らない' <<<"$step9" || fail "指摘しないだけの観点を作らないことが書かれていません"
   grep -q -- '--builtin code-review' <<<"$step9" || fail "code-review の除外を上位の層に作ることが書かれていません"
   # 周回を終える出口（手順8）と、指摘が無い・何も選ばれないときの終わり方が、手順9へ進む
-  step8="$(awk '/^### 8\./ { on = 1; next } /^### 9\./ { on = 0 } on' "$f")"
+  step8="$(step "$f" 8)"
   grep -q '手順9へ進む' <<<"$step8" || fail "手順8で終えるときに手順9へ進むことが書かれていません"
   [ "$(grep -c '手順9へ進む' "$f")" -ge 3 ] || fail "手順4・5の終わり方が手順9へ進んでいません"
   # /code-review の指摘は、code-review の観点ファイルの「指摘しないこと」で外す
-  step4="$(awk '/^### 4\./ { on = 1; next } /^### 5\./ { on = 0 } on' "$f")"
+  step4="$(step "$f" 4)"
   grep -q '## 指摘しないこと' <<<"$step4" || fail "手順4で /code-review の指摘を除外の決まりと照らすことが書かれていません"
   grep -q '外した件数' <<<"$step4" || fail "外した件数を伝えることが書かれていません"
   # 同梱の code-review.md 自体には、除外の節を書かない（書くと全員の指摘が外れる）
@@ -209,23 +215,103 @@ frontmatter() { awk 'NR == 1 && $0 == "---" { on = 1; next } on && $0 == "---" {
 # shellcheck disable=SC2016 # バッククォートはスキルの本文の文字で、展開させない
 @test "review は、設定 review.model があるときだけ、観点と /code-review をそのモデルのサブエージェントで動かす（設計書 §7）" {
   f="$SKILLS/review/SKILL.md"
-  step3="$(awk '/^### 3\./ { on = 1; next } /^### 4\./ { on = 0 } on' "$f")"
+  step3="$(step "$f" 3)"
   grep -q 'の `model` が null でなければ、Agent ツールの `model` にその値を渡す' <<<"$step3" \
     || fail "手順3に、観点のサブエージェントへ model を渡すことが書かれていません"
   grep -q '「`/code-review` を任せるサブエージェントへの指示」' <<<"$step3" \
     || fail "手順3に、/code-review をサブエージェントに任せることが書かれていません"
   grep -q 'null なら、手順3はセッションと同じモデルで動かす' "$f" \
     || fail "設定が null のときにセッションと同じモデルで動かすことが書かれていません"
-  step8="$(awk '/^### 8\./ { on = 1; next } /^### 9\./ { on = 0 } on' "$f")"
+  step8="$(step "$f" 8)"
   grep -q '手順3のとおりサブエージェントに任せる' <<<"$step8" \
     || fail "再レビュー（手順8）でも /code-review をサブエージェントに任せることが書かれていません"
 }
 
 @test "repo-setup は、レビューに使うモデルを決めていなければ、使うかと保存する層を聞き、使わないことも保存する" {
   f="$SKILLS/repo-setup/SKILL.md"
-  step2="$(awk '/^### 2\./ { on = 1; next } /^### 3\./ { on = 0 } on' "$f")"
+  step2="$(step "$f" 2)"
   grep -q 'review.decided' <<<"$step2" || fail "手順2に、決めてあれば聞かないことが書かれていません"
   grep -q -- '--review-model off' <<<"$step2" || fail "手順2に、使わないことも保存することが書かれていません"
   grep -q -- '--models-scope' <<<"$step2" || fail "手順2に、保存する層を渡すことが書かれていません"
   grep -q 'models.actions' "$f" || fail "手順3の予定に、レビューのモデルの変更が入っていません"
+}
+
+# shellcheck disable=SC2016 # バッククォートはスキルの本文の文字で、展開させない
+@test "review は、独自の観点をプラグインの agent（ファイルを編集するツールを持たない）でレビューする（設計書 §7）" {
+  [ -f "$AGENT" ] || fail "agents/perspective-reviewer.md がありません"
+  assert_equal "$(frontmatter "$AGENT" | sed -n 's/^name: //p')" "perspective-reviewer"
+  tools="$(frontmatter "$AGENT" | sed -n 's/^tools: //p')"
+  assert_equal "$tools" "Read, Grep, Glob, Bash"
+  rule="$(grep '1つずつ実行し' "$AGENT")" || fail "agent の定義に、Bash のコマンドを1つずつ実行する決まりがありません（つなぐと承認されないことがある）"
+  for w in '`cd`' '`&&`' '`;`' '`|`'; do
+    grep -qF "$w" <<<"$rule" || fail "agent の、Bash のコマンドを1つずつ実行する決まりに ${w} がありません"
+  done
+  grep -q '観点ファイルがつないだコマンド.*1つずつに分けて' "$AGENT" \
+    || fail "agent の定義に、観点ファイルがつないだコマンドを指示したときの扱いがありません"
+  grep -q '1つずつのコマンドで確かめられなければ.*`notes`' "$AGENT" \
+    || fail "agent の定義に、分けて確かめられないときに notes に書くことがありません"
+
+  f="$SKILLS/review/SKILL.md"
+  step3="$(step "$f" 3)"
+  grep -q 'subagent_type.*dev-workflow:perspective-reviewer' <<<"$step3" \
+    || fail "手順3に、独自の観点を subagent_type で agent に任せることが書かれていません"
+  step8="$(step "$f" 8)"
+  grep -q 'dev-workflow:perspective-reviewer' <<<"$step8" \
+    || fail "再レビュー（手順8）で、独自の観点を agent で起動することが書かれていません"
+}
+
+# shellcheck disable=SC2016 # バッククォートはスキルの本文の文字で、展開させない
+@test "perspective-reviewer は findings と notes の1つの形で返し、review はどの部分も捨てずに読んで、伝言を手順4・5・7・8で伝える（設計書 §7）" {
+  grep -q '{"findings": ' "$AGENT" || fail "agent の定義に、findings と notes の形がありません"
+  grep -q '"suggestion"' "$AGENT" || fail "agent の定義に、指摘の項目（file・line・summary・detail・suggestion）がありません"
+  grep -q '`notes`' "$AGENT" || fail "agent の定義に、notes の説明がありません"
+  grep -q '問題は `notes` に書かない' "$AGENT" \
+    || fail "agent の定義に、問題を notes に入れない決まりがありません（伝言は番号が付かず選べない）"
+  grep -q 'とだけ返す」と決めていても' "$AGENT" \
+    || fail "agent の定義に、観点ファイルが返し方を決めていても形を変えない決まりがありません"
+  f="$SKILLS/review/SKILL.md"
+  if grep -n '"suggestion"' "$f"; then
+    fail "review の SKILL.md に、返す JSON の形式が残っています（agent の定義だけに書く）"
+  fi
+  step3="$(step "$f" 3)"
+  grep -q '囲まれていたり、前置き' <<<"$step3" \
+    || fail "手順3に、囲みや前置きがあっても返事の JSON を読むことが書かれていません"
+  grep -q '包まれていない配列.*`file` と `summary` を持つときだけ' <<<"$step3" \
+    || fail "手順3に、包まれていない配列を、指摘の形のときだけ読むことが書かれていません"
+  grep -q '配列の各項目を、手順4の一覧' <<<"$step3" \
+    || fail "手順3に、findings を一覧の指摘にすることが書かれていません"
+  grep -q '`notes` と、指摘として読まなかった部分.*伝言' <<<"$step3" \
+    || fail "手順3に、notes と指摘として読まなかった部分を伝言にすることが書かれていません"
+  grep -q '読めない返事は、指摘にはせず' <<<"$step3" \
+    || fail "手順3に、オブジェクトを読めない返事の扱いが書かれていません"
+  grep -q '伝言は、観点の名前を添えて' <<<"$step3" \
+    || fail "手順3に、伝言の伝え方（観点の名前を添える）が書かれていません"
+  step4="$(step "$f" 4)"
+  grep -q '^- 指摘が1つも無ければ.*観点からの伝言' <<<"$step4" \
+    || fail "手順4の、指摘が無いときに伝えることに、観点からの伝言が入っていません"
+  grep -q '^- 表の後に.*観点からの伝言' <<<"$step4" \
+    || fail "手順4の、表の後に添えることに、観点からの伝言が入っていません"
+  step5="$(step "$f" 5)"
+  grep -q '観点からの伝言.*質問の中にも入れる' <<<"$step5" \
+    || fail "手順5に、観点からの伝言を質問の中に入れることが書かれていません"
+  step7="$(step "$f" 7)"
+  grep -q 'これまでの周の観点からの伝言' <<<"$step7" \
+    || fail "手順7に、観点からの伝言を改めて伝えることが書かれていません"
+  grep -q '前の周の伝言は.*どの手順から手順9へ進むときも' <<<"$step3" \
+    || fail "手順3に、レビューを終えるときに前の周の伝言もまとめて伝えることが書かれていません"
+  step8="$(step "$f" 8)"
+  grep -q '^1\. \*\*今の周が上限に達していて.*これまでの周の観点からの伝言' <<<"$step8" \
+    || fail "手順8の上限の周の質問に、観点からの伝言が入っていません"
+  grep -q '^- 新しい指摘が無ければ.*手順4' <<<"$step8" \
+    || fail "手順8の、新しい指摘が無いときに、手順4のとおり伝えることが書かれていません"
+}
+
+@test "観点ファイルは結果の形を書かず、review-perspective-add は結果の形を決める agent を案内する（設計書 §7）" {
+  # 結果の形（findings と notes）は agent perspective-reviewer が決める。観点ファイルが返し方を書くと、agent の決まりと食い違う
+  # 「[] を返す」「JSON で返す」「とだけ返す」は拾い、「gh が返す JSON」のような文は拾わない
+  if grep -nE '(を|で|と|だけ)返す' "$BATS_TEST_DIRNAME/../plugins/dev-workflow/review/"*.md; then
+    fail "同梱の観点ファイルに、返し方が書かれています（「〜と伝える」と書けば notes で伝わる）"
+  fi
+  grep -q 'agents/perspective-reviewer.md' "$SKILLS/review-perspective-add/SKILL.md" \
+    || fail "review-perspective-add に、結果の形を決めるのが agent perspective-reviewer だと書かれていません"
 }
