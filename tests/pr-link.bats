@@ -494,6 +494,11 @@ EOF"
   shows "env FOO=1 git push" "PR を作る:"
 }
 
+@test "git push の略した --dry-run（--dry など）も dry-run とみなし、--recurse-submodules の値をリモートと読まない" {
+  silent "git push --dry origin feat/17-demo" "git push --dr"
+  shows "git push --recurse-submodules check origin feat/17-demo" "PR を作る:"
+}
+
 @test "同じコマンドに dry-run の操作があっても、実際に行った操作のリンクは出す" {
   shows "git commit -m x && git push --dry-run" "Issue #17: https://github.com/me/demo/issues/17"
   shows "git commit -m x && git push -n" "Issue #17: https://github.com/me/demo/issues/17"

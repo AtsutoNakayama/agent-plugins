@@ -149,6 +149,33 @@ silent() {
     "git push --mirror"
 }
 
+@test "git push の値を取るオプションの値（次の語）を、リモートや refspec と読まない" {
+  # main の上で refspec を書かない push。値（check）をリモートと読むと、origin を refspec と読んで通してしまう
+  denied "main へは push しません" "git push --recurse-submodules check origin" "git push --recurse-submodules check"
+  git checkout -q -b feat/21-x
+  denied "main へは push しません" \
+    "git push --recurse-submodules check origin main" \
+    "git push --recurse-submodules=check origin main" \
+    "git push --repo origin origin main" \
+    "git push --receive-pack git-receive-pack origin main" \
+    "git push --exec git-receive-pack origin main" \
+    "git push --push-option x origin main"
+  allowed "git push --recurse-submodules check origin feat/21-x"
+}
+
+@test "git push の長いオプションを略して書いても、git と同じに読む" {
+  git checkout -q -b feat/21-x
+  # --mirr・--m は --mirror、--recu は --recurse-submodules（値を取る）
+  denied "強制 push" "git push --mirr" "git push --m origin"
+  denied "main へは push しません" "git push --recu check origin main" "git push --rep origin origin main" \
+    "git push --e git-receive-pack origin main"
+  git checkout -q main
+  denied "main へは push しません" "git push --recu check origin"
+  git checkout -q feat/21-x
+  # --force-w は --force-with-lease
+  allowed "git push --force-w" "git push --force-with origin feat/21-x"
+}
+
 @test "引用符・ヒアドキュメント・コメントの中の文字は、コマンドとみなさない" {
   git checkout -q -b feat/21-x
   allowed \

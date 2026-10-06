@@ -215,13 +215,16 @@ gc_worktree_branch() {
 #   gc_push_force   強制 push（--force・-f・--mirror・+<refspec>）なら true。--force-with-lease は含めない
 #   gc_push_dry     dry-run（--dry-run・-n）なら true
 #   gc_push_refs    refspec の配列（リモートの後ろの引数）
-# 短いオプションはまとめて書ける（-fu・-nu）。値を取るオプション（--repo・--push-option・--receive-pack・--exec・-o）の値は飛ばす。
-# -- の後ろは、オプションとみなさない
+# 短いオプションはまとめて書ける（-fu・-nu）。値を取るオプション（--repo・--push-option・--receive-pack・--exec・
+# --recurse-submodules・-o）の値（次の語）は飛ばす。長いオプションは、git と同じく略して書ける（--mirr・--dry・--recu）。
+# 略した形が曖昧なとき（--forc）は、git が失敗して push しないので、どう読んでもよい。-- の後ろは、オプションとみなさない
 # 使い方: gc_push_args <引数>...
 gc_push_force=false gc_push_dry=false gc_push_refs=()
 # shellcheck disable=SC2034 # gc_push_force・gc_push_dry は呼び出し側（フック）が読む
 gc_push_args() {
   local after_dd=false expect=false w k c remote=""
+  # 略した形を、略さない名前の頭と比べる
+  local mirror=--mirror dry=--dry-run with_value=" --repo --push-option --receive-pack --exec --recurse-submodules"
   gc_push_force=false gc_push_dry=false gc_push_refs=()
   for w in "$@"; do
     if $expect; then
@@ -231,11 +234,15 @@ gc_push_args() {
     if ! $after_dd; then
       case "$w" in
         --) after_dd=true; continue ;;
-        # --mirror はすべての ref をリモートに合わせて上書き・削除する
-        --force | --mirror) gc_push_force=true; continue ;;
-        --dry-run) gc_push_dry=true; continue ;;
-        --repo | --push-option | --receive-pack | --exec) expect=true; continue ;;
-        --*) continue ;;
+        --force) gc_push_force=true; continue ;;
+        --*=*) continue ;;
+        --*)
+          # 略した形も読む（"$w" は文字として比べる）。--mirror はすべての ref をリモートに合わせて上書き・削除する
+          case "$mirror" in "$w"*) gc_push_force=true; continue ;; esac
+          case "$dry" in "$w"*) gc_push_dry=true; continue ;; esac
+          case "$with_value" in *" $w"*) expect=true ;; esac
+          continue
+          ;;
         -?*)
           # -o は値を取るので、その後ろは値
           k=1
