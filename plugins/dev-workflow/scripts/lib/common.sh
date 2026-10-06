@@ -117,7 +117,7 @@ dw_issue_branches() {
       ($c | branch_re) as $re | ("(^|/)0*" + $n + "-") as $broad
       | split("\n") | map(select(. != "") | split("\t")) | group_by(.[1])
       | map({name: .[0][1], l: any(.[]; .[0] == "L"), r: any(.[]; .[0] == "R")})
-      | map(. + {confirmed: ((((try (.name | capture($re)) catch null) // {}).issue // "") | sub("^0+"; "")) == $n})
+      | map(. + {confirmed: (((((try (.name | capture($re)) catch null) // {}).issue // "") | sub("^0+"; "")) == $n)})
       | map(select(.confirmed or (.name | test($broad))))
       | .[] | "\(.name)\t\(.l)\t\(.r)\t\(.confirmed)"'
 }
