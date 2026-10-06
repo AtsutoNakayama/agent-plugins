@@ -204,6 +204,16 @@ silent() {
   allowed "(cd $TMP/wt && git commit -m x)" "cd $TMP/wt && (git status) && git commit -m x"
 }
 
+@test "パイプラインや & で動かすコマンドは、今は外に効いたものとして読む（{ } の中の cd の後の commit を、その場所で判断する）" {
+  git worktree add -q -b feat/21-x "$TMP/wt"
+  # { } の中の cd を、コマンドごとに戻して読む誤り（パイプラインを扱いかけたときの退行）を、もう一度起こさない
+  denied "main の上ではコミットしません" "cd $TMP/wt; true | { cd $REPO; git commit -m x; }" \
+    "cd $TMP/wt; true | { cd $REPO; git commit -m x; } && :"
+  # & を含むリダイレクト（&>）、&& の後の改行、( ) の中の cd、case の ;& は、外に効く・効かないを正しく読む
+  allowed "cd $TMP/wt &> /dev/null && git commit -m x" "$(printf 'cd %s &&\ngit commit -m x' "$TMP/wt")" \
+    "true | (cd $TMP/wt; git commit -m x)" "case x in x) cd $TMP/wt ;& y) : ;; esac; git commit -m x"
+}
+
 @test "case のパターンの ) は括弧を閉じない" {
   git worktree add -q -b feat/21-x "$TMP/wt"
   denied "main の上ではコミットしません" "(case x in a) :;; esac; cd $TMP/wt); git commit -m x" \
@@ -661,6 +671,12 @@ silent() {
   local c
   c="$(cat <<'EOF'
 env -S "git push origin 'a\\'' main"
+EOF
+)"
+  denied "main へは push しません" "$c"
+  # '…' の中の \\ は \（env が受け取る値は git push origin 'a\\' main。'a\\' と main は別の語）
+  c="$(cat <<'EOF'
+env -S "git push origin 'a\\\\' main"
 EOF
 )"
   denied "main へは push しません" "$c"
