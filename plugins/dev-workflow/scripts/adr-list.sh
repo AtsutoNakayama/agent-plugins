@@ -102,13 +102,15 @@ if [ -d "$repo_root/$adr_dir" ]; then
       fm && $0 == "---" { fm = 0; next }
       fm && /^issue:/ && i == "" { i = clean($0); next }
       fm && /^status:/ && s == "" { s = clean($0); next }
-      !fm && /^# / { t = substr($0, 3); sub(/[ \t\r]+$/, "", t); gsub(/\t/, " ", t); done = 1; next }
+      # 見出しを読んだら、そのファイルの残りは読まない（nextfile が無い awk でも、done で残りの行を飛ばす）
+      !fm && /^# / { t = substr($0, 3); sub(/[ \t\r]+$/, "", t); gsub(/\t/, " ", t); done = 1; nextfile }
       END { flush() }' "$@")"
   fi
 fi
 
+# 1行目に、Issue を読まずに決まる proposal（読む必要があれば read、--issue が無ければ -）を、2行目からに出力の JSON を出す
 # shellcheck disable=SC2016 # jq の変数を bash に展開させない
-out="$(printf '%s' "$rows" | jq -R -s --arg files "$files" --arg dir "$adr_dir" --argjson suggest "$suggest" --arg want "$issue" '
+res="$(printf '%s' "$rows" | jq -r -R -s --arg files "$files" --arg dir "$adr_dir" --argjson suggest "$suggest" --arg want "$issue" '
   def nz: if . == "" then null else . end;
   # issue の値は、前後の # と先頭の 0 を外して、数字だけなら番号にする
   def num: ltrimstr("#") | if test("^[0-9]+$") and test("[1-9]") then tonumber else null end;
@@ -118,24 +120,27 @@ out="$(printf '%s' "$rows" | jq -R -s --arg files "$files" --arg dir "$adr_dir" 
   # glob の並びはロケールで変わるので、文字の順に並べ直す
   | sort_by(.path)
   | (if $want == "" then null else ($want | tonumber) end) as $n
-  | {dir: $dir, suggest: $suggest, issue: $n,
-     adrs: (if $n == null then . else map(select(.issue == $n)) end)}')"
-
-# 提案するかは、状態の組み合わせだけで決まるので、ここで決める（AI が判断するのは judge のときの差分だけ）
-proposal=null adr_tasks=null
-if [ -n "$issue" ]; then
-  if [ "$suggest" = false ]; then
-    proposal='"disabled"'
-  elif [ "$(jq '.adrs | length' <<<"$out")" -gt 0 ]; then
-    proposal='"exists"'
-  else
-    issue_json="$(dw_read_issue "$issue" body)"
-    adr_tasks="$(jq -c "$DW_JQ_MD_SCAN"' .body // "" | md_scan | .items | map(select(.text | test("ADR に残す")) | {checked, text})' <<<"$issue_json")"
-    proposal="$(jq -c 'def struck: .text | test("^~~.*ADR に残す.*~~");
-      if any(.[]; (struck | not) and (.checked | not)) then "pending"
-      elif any(.[]; (struck | not) and .checked) then "done"
-      elif length > 0 then "declined"
-      else "judge" end' <<<"$adr_tasks")"
-  fi
+  | (if $n == null then . else map(select(.issue == $n)) end) as $adrs
+  # 提案するかは、状態の組み合わせだけで決まるので、ここで決める（AI が判断するのは judge のときの差分だけ）
+  | (if $n == null then null elif $suggest == false then "disabled" elif ($adrs | length) > 0 then "exists" else "read" end) as $p
+  | ($p // "-"),
+    {dir: $dir, suggest: $suggest, issue: $n, adrs: $adrs,
+     proposal: (if $p == "read" then null else $p end), adr_tasks: null}')"
+nl='
+'
+state="${res%%"$nl"*}" out="${res#*"$nl"}"
+if [ "$state" != read ]; then
+  printf '%s\n' "$out"
+  exit 0
 fi
-jq --argjson p "$proposal" --argjson t "$adr_tasks" '. + {proposal: $p, adr_tasks: $t}' <<<"$out"
+# Issue のチェックリストの ADR の項目から、pending・done・declined・judge を決める
+issue_json="$(dw_read_issue "$issue" body)"
+jq --argjson i "$issue_json" "$DW_JQ_MD_SCAN"'
+  def struck: .text | test("^~~.*ADR に残す.*~~");
+  ($i.body // "" | md_scan | .items | map(select(.text | test("ADR に残す")) | {checked, text})) as $t
+  | .adr_tasks = $t
+  | .proposal = (
+      if any($t[]; (struck | not) and (.checked | not)) then "pending"
+      elif any($t[]; (struck | not) and .checked) then "done"
+      elif ($t | length) > 0 then "declined"
+      else "judge" end)' <<<"$out"
