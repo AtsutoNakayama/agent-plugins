@@ -1,6 +1,6 @@
 # agent-plugins
 
-全リポジトリで共通に使う Claude Code のプラグイン（開発ワークフロー用のスキル群）と、GitHub リポジトリの初期設定スクリプト。
+導入したリポジトリで共通に使う Claude Code のプラグイン（開発ワークフロー用のスキル群）と、GitHub リポジトリの初期設定スクリプト。
 
 設計は [docs/design.md](docs/design.md) を参照。
 
@@ -13,6 +13,17 @@ claude --plugin-dir plugins/dev-workflow
 # 実行環境と設定の確認
 plugins/dev-workflow/scripts/doctor.sh
 ```
+
+## 導入したリポジトリだけに効く
+
+プラグインは、導入したリポジトリ（`.claude/dev-workflow/config.json` があるリポジトリ）の中でだけ効きます。プラグインをユーザー単位でインストールしても、プロジェクト単位でインストールしても同じです。
+
+- 導入していないリポジトリでは、フック（main を守る・タスクの進め方を渡す・リンクを出す）は何もしません。
+- 導入していないリポジトリでは、`~/.claude/dev-workflow/` に置いた自分の設定・文章のガイド・レビューの観点・タスクの進め方の追記も使いません。導入したリポジトリでは、これまでどおり使います。
+- `.claude/dev-workflow/config.json` は、`/dev-workflow:repo-setup` で作られます。中身は空（`{}`）でもかまいません。ワークツリーに無くても、メインのワークツリーにあれば導入したものとみなします。
+- `doctor.sh` は、導入していないリポジトリで実行すると、このことを警告します。
+
+これまで初期設定をせずに使っていたリポジトリでは、フックとユーザーの層が効かなくなります。引き続き使うには、`/dev-workflow:repo-setup` で初期設定するか、`.claude/dev-workflow/config.json` を `{}` で作ってコミットしてください。
 
 ## スキル
 
@@ -52,7 +63,7 @@ Issue の番号を取るスキル（`task-start`・`task-status`・`task-finish`
 `/dev-workflow:review` は、次の3つの層に置いた観点ファイル（1ファイルに1観点の Markdown）を合わせて使います。同じ名前の観点があれば、上の層のファイルが使われます。
 
 1. `<repo>/.claude/dev-workflow/review/*.md`：リポジトリの観点（チームで共有する）
-2. `~/.claude/dev-workflow/review/*.md`：自分の観点（全リポジトリで使う）
+2. `~/.claude/dev-workflow/review/*.md`：自分の観点（導入したすべてのリポジトリで使う）
 3. `plugins/dev-workflow/review/*.md`：プラグインに同梱する共通の観点
 
 ```markdown
@@ -110,18 +121,18 @@ base_ahead: required
 
 ### タスクの進め方
 
-プラグインを入れると、セッションの始まり（起動・`/resume`・`/clear`・コンパクトの後）のたびに、タスクの進め方（Issue から始める → 着手 → 区切りごとのコミット → PR の前のローカルレビュー → PR →（指摘が付いたら対応）→ 後片付け、と取りやめ、リポジトリのファイルを変えないタスクの流れ（ワークツリーを作らずに着手し、`task-finish` で Issue を閉じる））と、それぞれで使うスキルを Claude に読み込ませます（`hooks/task-flow.sh`）。スキルは呼ばれたときにしか読み込まれないので、流れはいつも渡しておきます。会話が要約されても抜けません。
+導入したリポジトリでは、セッションの始まり（起動・`/resume`・`/clear`・コンパクトの後）のたびに、タスクの進め方（Issue から始める → 着手 → 区切りごとのコミット → PR の前のローカルレビュー → PR →（指摘が付いたら対応）→ 後片付け、と取りやめ、リポジトリのファイルを変えないタスクの流れ（ワークツリーを作らずに着手し、`task-finish` で Issue を閉じる））と、それぞれで使うスキルを Claude に読み込ませます（`hooks/task-flow.sh`）。スキルは呼ばれたときにしか読み込まれないので、流れはいつも渡しておきます。会話が要約されても抜けません。
 
 既定の流れは `plugins/dev-workflow/defaults/task-flow.md` です。次のファイルを置くと、既定の流れのあとに、この順で追記として渡します（後ろほど優先します）。
 
-1. `~/.claude/dev-workflow/task-flow.md`：自分の追記（全リポジトリで使う）
+1. `~/.claude/dev-workflow/task-flow.md`：自分の追記（導入したすべてのリポジトリで使う）
 2. `<repo>/.claude/dev-workflow/task-flow.md`：リポジトリの追記（チームで共有する）
 
 渡すのは合わせて 1 万文字までです。超えた分は切り、読み直すファイルを Claude に知らせます。
 
 ### git の操作を守る
 
-プラグインを入れると、Claude Code が Bash で次の git の操作をしようとしたときに止めます（`hooks/guard-git.sh`）。守るブランチは設定の `base_branch`（既定は main）です。
+導入したリポジトリでは、Claude Code が Bash で次の git の操作をしようとしたときに止めます（`hooks/guard-git.sh`）。守るブランチは設定の `base_branch`（既定は main）です。
 
 - base_branch の上での `git commit`
 - base_branch への `git push`（base_branch の上で push 先を書かずに push するときを含む）
@@ -129,11 +140,11 @@ base_ahead: required
 
 また、規約（`branch.pattern`）に合わない名前でブランチを作ろうとしたとき（`git switch -c` / `git checkout -b` / `git branch <名前>` / `git worktree add -b`）は、コマンドは止めずに、使用者と Claude に警告します。
 
-`cd` や `git -C` で移った先のリポジトリ・ブランチで判断します。コマンドの文字列を簡易に解析するだけなので、`sh -c` や git の別名を通すと見逃します。最後の守りは GitHub のルールセット（下記）です。
+`cd` や `git -C` で移った先、`--git-dir`・`GIT_DIR` などで指した先（先頭の `~`・`$HOME` は、シェルと同じく展開します）のリポジトリ・ブランチで判断し、その先が導入していないリポジトリなら止めません。守るブランチ（`base_branch`）も、その先のリポジトリの設定から読みます。bare リポジトリのように作業ツリーが分からないリポジトリは、HEAD にチームの設定がコミットされているかで判断します。git がリポジトリを見つけられないときは、止める側で調べます。コマンドの文字列を簡易に解析するだけなので、`sh -c` や git の別名を通すと見逃します。最後の守りは GitHub のルールセット（下記）です。
 
 ### PR や Issue のリンクを出す
 
-git の操作のあとに、関連する PR・Issue・CI のリンクを、使用者の画面に出します（`hooks/pr-link.sh`）。PR や Issue の画面を探さなくても、すぐ開けます。
+導入したリポジトリでは、git の操作のあとに、関連する PR・Issue・CI のリンクを、使用者の画面に出します（`hooks/pr-link.sh`）。PR や Issue の画面を探さなくても、すぐ開けます。
 
 | 操作 | 出すリンク |
 | --- | --- |
@@ -260,7 +271,7 @@ plugins/dev-workflow/scripts/setup/setup-models.sh
 ```
 
 - 書く層は、`local`（`.claude/dev-workflow/config.local.json`。自分だけ）か `team`（`.claude/dev-workflow/config.json`。コミットしてチームで共有します）です。設定ファイルの `review.model` を直接書いてもかまいません。
-- 設定は、そのリポジトリにだけ効きます。`~/.claude/dev-workflow/config.json` に書いた `review.model` は、警告を出して使いません。
+- `~/.claude/dev-workflow/config.json` に `review.model` を書くと、ほかの設定と同じく、導入したすべてのリポジトリに効きます（リポジトリの層で決めた値が優先されます）。`setup-models.sh` はユーザーの層には書きません。
 - 契約や組織の制限で使えないモデルを指定すると、Claude Code が別のモデルに置き換えて動かします。
 - 対象はレビューだけです。commit などの短いスキルは、別のモデルに任せる手間でかえって費用が増えるので、いつもセッションと同じモデルで動きます。
 - 計った結果（[設計書 §7](docs/design.md#7-レビュー)）：費用の半分ほどはセッションのモデルで動く進行役の分なので、`sonnet` に下げても、レビュー1回の費用は17%ほどしか減りません。`haiku` はトークンを多く使うので `sonnet` より得にならず、時間は倍以上かかります。セッションを Sonnet にしたままレビューだけを `opus` にすると、セッションを Opus にしたときと同じくらいの費用で、レビューを Opus で行えます。

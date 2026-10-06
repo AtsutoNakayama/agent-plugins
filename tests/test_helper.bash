@@ -24,6 +24,21 @@ test_helper_setup() {
   cd "$REPO" || return 1
 }
 
+# <リポジトリのルート>（既定は REPO）を、プラグインを導入したリポジトリにする（チームの設定を空で作る）。
+# 導入していないリポジトリでは、フックは何もせず、ユーザーの層も読まない（dw_is_set_up）
+# 使い方: mark_set_up [リポジトリのルート]
+mark_set_up() {
+  mkdir -p "${1:-$REPO}/.claude/dev-workflow"
+  [ -f "${1:-$REPO}/.claude/dev-workflow/config.json" ] || echo '{}' >"${1:-$REPO}/.claude/dev-workflow/config.json"
+}
+
+# サブモジュール（$TMP/super/sm。中身は REPO）を作る
+make_submodule() {
+  git init -q -b main "$TMP/super"
+  git -C "$TMP/super" commit -q --allow-empty -m init
+  git -C "$TMP/super" -c protocol.file.allow=always submodule add -q "$REPO" sm
+}
+
 setup() {
   test_helper_setup
 }

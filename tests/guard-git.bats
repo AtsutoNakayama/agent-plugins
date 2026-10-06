@@ -1,9 +1,17 @@
 #!/usr/bin/env bats
 # main を守るフック（hooks/guard-git.sh）。
+# bats はテストごとにサブシェルで動くので、変数（HOME など）の変更がテスト内に閉じるのは意図どおり
+# shellcheck disable=SC2030,SC2031
 
 load test_helper
 
 HOOKS="$BATS_TEST_DIRNAME/../plugins/dev-workflow/hooks"
+
+# フックは導入したリポジトリでだけ動くので、テストのリポジトリを導入したことにする
+setup() {
+  test_helper_setup
+  mark_set_up
+}
 
 # フックの入力（JSON）を作って渡す。cwd は既定で今のディレクトリ
 # 使い方: run_hook <コマンド> [cwd]
@@ -318,4 +326,218 @@ silent() {
 @test "git branch の名前の後ろに、作らないオプションがあれば確かめない" {
   silent "git branch bar -d" "git branch bar -D" "git branch 'f*' --list" "git branch bar -m baz" "git branch bar --contains main"
   warned bar "git branch bar main -f" "git branch bar -- main"
+}
+
+@test "導入していないリポジトリでは、main の上の commit・強制 push も、ブランチ名も止めない" {
+  rm .claude/dev-workflow/config.json
+  # ユーザーの層の設定も読まない（base_branch を develop にしても、develop の上の commit を止めない）
+  echo '{"base_branch": "develop"}' >"$WORKFLOW_USER_DIR/config.json"
+  silent "git commit -m x" "git push origin main" "git push --force" "git switch -c foo"
+  git switch -q -c develop
+  silent "git commit -m x"
+}
+
+@test "操作する先のリポジトリが導入したものかで判断する" {
+  git init -q -b main "$TMP/other"
+  silent "git -C $TMP/other commit -m x" "cd $TMP/other && git push --force"
+  denied "main の上ではコミットしません" "cd $TMP/other && cd $REPO && git commit -m x"
+  mark_set_up "$TMP/other"
+  denied "main の上ではコミットしません" "git -C $TMP/other commit -m x"
+}
+
+@test "ワークツリーにチームの設定が無くても、メインのワークツリーにあれば守る" {
+  # 初期設定をコミットする前に作ったワークツリーには、チームの設定が無い
+  git worktree add -q "$TMP/wt" -b feat/1-x
+  [ ! -f "$TMP/wt/.claude/dev-workflow/config.json" ]
+  denied "強制 push" "cd $TMP/wt && git push --force"
+  denied "main へは push しません" "cd $TMP/wt && git push origin feat/1-x:main"
+}
+
+@test "操作する先のディレクトリが分からないときは、今までどおり調べる" {
+  rm .claude/dev-workflow/config.json
+  denied "強制 push" "cd - && git push --force"
+}
+
+@test "--git-dir・--work-tree・GIT_DIR などで指したリポジトリや .git の中でも、その対象が導入したリポジトリかで判断する" {
+  git init -q -b main "$TMP/other"
+  # 導入したリポジトリ（REPO）を、導入していないディレクトリ（other）などから指す
+  denied "強制 push" \
+    "cd $TMP/other && git --git-dir=$REPO/.git push --force" \
+    "cd $TMP/other && git --git-dir $REPO/.git --work-tree $REPO push --force" \
+    "cd $TMP/other && GIT_DIR=$REPO/.git git push --force" \
+    "cd $TMP/other && env GIT_DIR=$REPO/.git git push --force" \
+    "cd $TMP && GIT_DIR=repo/.git GIT_WORK_TREE=repo git push --force" \
+    "cd $REPO/.git && git push --force" \
+    "cd $REPO/.git/refs && git push --force"
+  denied "main へは push しません" "cd $TMP/other && GIT_DIR=$REPO/.git git push origin main"
+  denied "main の上ではコミットしません" "cd $TMP/other && git --git-dir=$REPO/.git --work-tree=$REPO commit -m x"
+  # 導入していないリポジトリ（other）を、導入したリポジトリ（REPO）の中から指す
+  silent \
+    "git --git-dir=$TMP/other/.git push --force" \
+    "GIT_DIR=$TMP/other/.git git push --force" \
+    "cd $TMP/other/.git && git push --force" \
+    "git --git-dir=$TMP/other/.git commit -m x"
+}
+
+@test "base_branch とブランチ名の規約は、今のディレクトリではなく、操作の対象のリポジトリの設定から読む" {
+  git init -q -b develop "$TMP/dev"
+  mark_set_up "$TMP/dev"
+  echo '{"base_branch": "develop"}' >"$TMP/dev/.claude/dev-workflow/config.json"
+  git -C "$TMP/dev" commit -q --allow-empty -m init
+  # 今のディレクトリ（REPO）の base_branch は main
+  denied "develop へは push しません" \
+    "GIT_DIR=$TMP/dev/.git GIT_WORK_TREE=$TMP/dev git push origin develop" \
+    "git --git-dir $TMP/dev/.git --work-tree $TMP/dev push origin develop" \
+    "git --git-dir=$TMP/dev/.git push origin develop"
+  denied "develop の上ではコミットしません" "cd $TMP && GIT_DIR=dev/.git GIT_WORK_TREE=dev git commit -m x"
+  silent "git --git-dir=$TMP/dev/.git push origin main"
+  # 導入したリポジトリを、リポジトリの外から --git-dir で指しても、その規約でブランチ名を確かめる
+  warned foo "cd $TMP && git --git-dir=$REPO/.git switch -c foo"
+}
+
+@test "ユーザーの層の base_branch は、導入していないリポジトリを --git-dir・GIT_DIR で指したときにも効かない" {
+  echo '{"base_branch": "develop"}' >"$WORKFLOW_USER_DIR/config.json"
+  git init -q -b develop "$TMP/other"
+  git -C "$TMP/other" commit -q --allow-empty -m init
+  # 今のディレクトリ（REPO）は導入したリポジトリなので、ここではユーザーの層を読む
+  silent "git --git-dir=$TMP/other/.git commit -m x" "GIT_DIR=$TMP/other/.git git push origin develop"
+}
+
+@test "--separate-git-dir のリポジトリは、作業ツリーからはそのチームの設定で、外から指したときは HEAD にコミットしたチームの設定で判断する" {
+  git init -q -b main --separate-git-dir "$TMP/sep.git" "$TMP/sep"
+  mark_set_up "$TMP/sep"
+  denied "main の上ではコミットしません" \
+    "cd $TMP/sep && git commit -m x" \
+    "cd $TMP/sep && GIT_WORK_TREE=. git commit -m x" \
+    "cd $TMP/sep && git --work-tree=. commit -m x"
+  # 外から git のディレクトリだけで指すと、作業ツリーは分からない（git がメインのワークツリーを記録していない）
+  silent "cd $TMP && git --git-dir=$TMP/sep.git commit -m x"
+  git -C "$TMP/sep" add .claude/dev-workflow/config.json
+  git -C "$TMP/sep" commit -q -m setup
+  denied "main の上ではコミットしません" "cd $TMP && git --git-dir=$TMP/sep.git commit -m x"
+}
+
+@test "サブモジュールは、サブモジュールのチームの設定で判断する（そのワークツリーや、外から指したときも）" {
+  make_submodule
+  git -C "$TMP/super/sm" switch -q main
+  mark_set_up "$TMP/super/sm"
+  git -C "$TMP/super/sm" worktree add -q "$TMP/smwt" -b feat/1-x
+  denied "main の上ではコミットしません" \
+    "cd $TMP/super/sm && git commit -m x" \
+    "cd $TMP && GIT_DIR=super/.git/modules/sm git commit -m x"
+  # サブモジュールのワークツリーにチームの設定が無くても、メインのワークツリー（super/sm）にあれば守る
+  denied "強制 push" "cd $TMP/smwt && git push --force"
+  # 上のリポジトリ（super）は導入していない
+  silent "cd $TMP/super && git push --force"
+}
+
+@test "bare リポジトリは、HEAD にチームの設定がコミットされているかで判断する（関係のないミラーの移行は止めない）" {
+  git clone -q --mirror "$REPO" "$TMP/mirror.git"
+  silent \
+    "cd $TMP/mirror.git && git push --mirror ../elsewhere.git" \
+    "git -C $TMP/mirror.git push --force" \
+    "GIT_DIR=$TMP/mirror.git git push --mirror ../elsewhere.git"
+  # 導入したリポジトリ（チームの設定をコミットしたもの）のミラーは守る
+  git add .claude/dev-workflow/config.json
+  git commit -q -m setup
+  git clone -q --mirror "$REPO" "$TMP/mirror2.git"
+  denied "強制 push" "cd $TMP/mirror2.git && git push --mirror ../elsewhere.git"
+}
+@test "CDPATH を export していても、--git-dir・.git の中・ワークツリーで、対象のリポジトリを求められる" {
+  git init -q -b main "$TMP/other"
+  git worktree add -q "$TMP/wt" -b feat/1-x
+  export CDPATH=.
+  denied "強制 push" \
+    "cd $TMP/other && git --git-dir=$REPO/.git push --force" \
+    "cd $REPO/.git && git push --force" \
+    "cd $TMP/wt && git push --force"
+  silent "git --git-dir=$TMP/other/.git push --force"
+}
+
+@test "--git-dir・GIT_DIR の値の先頭の ~・\$HOME を展開して、対象のリポジトリを求める" {
+  export HOME="$TMP"
+  git init -q -b main "$TMP/other"
+  # 導入していないリポジトリは止めない
+  # shellcheck disable=SC2016
+  silent 'GIT_DIR=~/other/.git git push --force' 'git --git-dir=$HOME/other/.git push --force' 'git --git-dir ${HOME}/other/.git push --force'
+  # 導入したリポジトリは守る
+  # shellcheck disable=SC2016
+  denied "強制 push" 'cd ~/other && GIT_DIR=~/repo/.git git push --force' 'cd ~/other && git --git-dir=$HOME/repo/.git push --force'
+}
+
+@test "ワークツリーの git のディレクトリを GIT_DIR で指したときは、今のディレクトリのワークツリーではなく、指したワークツリーの設定で判断する" {
+  git worktree add -q "$TMP/wt" -b develop
+  mkdir -p "$TMP/wt/.claude/dev-workflow"
+  echo '{"base_branch": "develop"}' >"$TMP/wt/.claude/dev-workflow/config.json"
+  git -C "$TMP/wt" add .claude/dev-workflow/config.json
+  git -C "$TMP/wt" commit -q -m setup
+  # 今のディレクトリ（REPO）の base_branch は main。対象（wt）は develop の上で、base_branch は develop
+  denied "develop の上ではコミットしません" "GIT_DIR=$REPO/.git/worktrees/wt git commit -m x"
+}
+
+@test "ワークツリーの git のディレクトリを指したとき、そのワークツリーにチームの設定が無くても、メインのワークツリーにあれば守る" {
+  # 初期設定より前に作ったブランチのワークツリー（チームの設定がコミットされていない）
+  git worktree add -q "$TMP/wt" -b old
+  denied "強制 push" "GIT_DIR=$REPO/.git/worktrees/wt git push --force" "git --git-dir=$TMP/wt/.git push --force"
+}
+
+@test "GIT_WORK_TREE で同じリポジトリの別のワークツリーを指しても、そのワークツリーの設定では判断しない" {
+  git worktree add -q "$TMP/wt" -b feat/1-x
+  mkdir -p "$TMP/wt/.claude/dev-workflow"
+  echo '{"base_branch": "develop"}' >"$TMP/wt/.claude/dev-workflow/config.json"
+  # git のディレクトリ（HEAD）は REPO（main の上）のもの。base_branch も REPO の設定（main）で判断する
+  denied "main の上ではコミットしません" "GIT_WORK_TREE=$TMP/wt git commit -m x"
+}
+
+@test "--opt=値 の ~ はシェルが展開しないので展開せず、cd・git -C の先の \$HOME は展開する" {
+  export HOME="$TMP"
+  git init -q -b main "$TMP/other"
+  # git には ~/other/.git がそのまま渡り、リポジトリが見つからないので、守りを外さないよう調べる
+  denied "強制 push" "git --git-dir=~/other/.git push --force"
+  # 導入していないリポジトリを、cd・git -C の $HOME で指せば止めない
+  # shellcheck disable=SC2016
+  silent 'cd $HOME/other && git push --force' 'git -C ${HOME}/other push --force'
+}
+
+@test "--work-tree・GIT_WORK_TREE の値の ~・\$HOME も展開し、値が \$HOME だけでも展開する" {
+  export HOME="$TMP"
+  git init -q -b main "$TMP/other"
+  git init -q -b main --separate-git-dir "$TMP/sep.git" "$TMP/sep"
+  mark_set_up "$TMP/sep"
+  # 作業ツリーを展開して求められれば、そのルートの規約でブランチ名を確かめる
+  # shellcheck disable=SC2016
+  warned foo 'cd ~/other && git --git-dir $HOME/sep.git --work-tree ~/sep switch -c foo' \
+    'cd ~/other && GIT_DIR=$HOME/sep.git GIT_WORK_TREE=${HOME}/sep git switch -c foo'
+  # 値が $HOME だけの作業ツリー（dotfiles の bare リポジトリの使い方）
+  git init -q --bare "$TMP/dot.git"
+  # shellcheck disable=SC2016
+  silent 'git --git-dir=$HOME/dot.git --work-tree=$HOME push --force'
+  git add .claude/dev-workflow/config.json
+  git commit -q -m setup
+  git clone -q --bare "$REPO" "$TMP/dot2.git"
+  # shellcheck disable=SC2016
+  denied "強制 push" 'git --git-dir=$HOME/dot2.git --work-tree=$HOME push --force'
+}
+
+@test "ルートが分からない対象は、HEAD にコミットしたチームの設定、ユーザーの層の順に base_branch を読み、ブランチ名は確かめない" {
+  git init -q -b develop --separate-git-dir "$TMP/sep.git" "$TMP/sep"
+  mkdir -p "$TMP/sep/.claude/dev-workflow"
+  echo '{"base_branch": "develop"}' >"$TMP/sep/.claude/dev-workflow/config.json"
+  git -C "$TMP/sep" add .claude/dev-workflow/config.json
+  git -C "$TMP/sep" commit -q -m setup
+  echo '{"base_branch": "release"}' >"$WORKFLOW_USER_DIR/config.json"
+  # チームの設定（develop）がユーザーの層（release）より優先される
+  denied "develop の上ではコミットしません" "cd $TMP && git --git-dir=$TMP/sep.git commit -m x"
+  silent "cd $TMP && git --git-dir=$TMP/sep.git push origin main" "cd $TMP && git --git-dir=$TMP/sep.git switch -c foo"
+  # チームの設定が base_branch を決めていなければ、ユーザーの層の値を使う
+  echo '{}' >"$REPO/.claude/dev-workflow/config.json"
+  git add .claude/dev-workflow/config.json
+  git commit -q -m setup
+  git clone -q --mirror "$REPO" "$TMP/mirror.git"
+  denied "release へは push しません" "cd $TMP/mirror.git && git push origin release"
+}
+
+@test "対象のリポジトリが見つからないときは、守りを外さないよう調べる" {
+  mkdir "$TMP/plain"
+  denied "強制 push" "cd $TMP/plain && git push --force" "cd $TMP/plain && GIT_DIR=$TMP/nowhere git push --force"
 }

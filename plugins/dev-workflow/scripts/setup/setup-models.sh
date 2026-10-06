@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # レビューのサブエージェントに使うモデル（設定の review.model）を、このリポジトリの中の選んだ層の設定ファイルに書く。
 # 何度実行しても同じ結果になる。オプションを付けなければ、今の設定と、どの層で決めたかだけを出力する。
-# 導入したリポジトリだけに効かせるため、ユーザーの層（~/.claude/dev-workflow/config.json）には書かず、読みもしない。
+# ユーザーの層（~/.claude/dev-workflow/config.json）には書かない（ほかの導入したリポジトリにも効くため）。読むのは、
+# config.sh と同じく、導入したリポジトリ（.claude/dev-workflow/config.json があるリポジトリ）の中でだけ。
 #
 # 使い方: setup-models.sh [オプション]
 #   --review-model M   opus・sonnet・haiku・fable のどれか。off なら null を書き、セッションと同じモデルで動かす
@@ -10,7 +11,7 @@
 #                      --review-model と一緒に使う（どちらか片方だけでは止まる）
 #   --dry-run          変更せず、行う予定の操作だけを出力する
 #
-# 出力: review.model（このリポジトリの層を合わせた後の値）・review.decided（このリポジトリのどちらかの層で決めてあるか）・
+# 出力: review.model（層を合わせた後の値）・review.decided（どれかの層で決めてあるか）・
 #       review.layers（review.model を決めている層と値）・file（書く・書いたファイル）・changed・
 #       local_git（local に書くとき、そのファイルがコミットされてしまわないか。ignored・not_ignored・tracked。
 #       それ以外は null）・actions
@@ -96,10 +97,10 @@ if [ -n "$value" ]; then
   fi
   layers="$(jq -c --arg n "$scope" --arg f "$target" --argjson v "$value" \
     'map(select(.layer != $n)) + [{layer: $n, file: $f, model: $v}]
-     | sort_by({team: 0, local: 1}[.layer])' <<<"$layers")"
+     | sort_by({user: 0, team: 1, local: 2}[.layer])' <<<"$layers")"
   # 上位の層が別の値を決めていれば、書いても効かない
   over="$(jq -r --arg n "$scope" --argjson v "$value" \
-    '({team: 0, local: 1}) as $o | map(select($o[.layer] > $o[$n] and .model != $v)) | last // empty
+    '({user: 0, team: 1, local: 2}) as $o | map(select($o[.layer] > $o[$n] and .model != $v)) | last // empty
      | "\(.file) の review.model（\(.model)）が優先されるので、書いた値は効きません"' <<<"$layers")"
   [ -z "$over" ] || dw_warn "$over"
   # 個人の設定はコミットしないので、コミットされてしまうなら知らせる（setup-all.sh が次にやることに出す）

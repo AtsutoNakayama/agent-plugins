@@ -6,6 +6,12 @@
 load test_helper
 
 HOOKS="$BATS_TEST_DIRNAME/../plugins/dev-workflow/hooks"
+
+# フックは導入したリポジトリでだけ動くので、テストのリポジトリを導入したことにする
+setup() {
+  test_helper_setup
+  mark_set_up
+}
 DEFAULT="$BATS_TEST_DIRNAME/../plugins/dev-workflow/defaults/task-flow.md"
 
 # フックの入力（JSON）を作って渡す。cwd は既定で今のディレクトリ
@@ -64,24 +70,63 @@ pos() {
   assert_output "$(cat "$DEFAULT")"
 }
 
-@test "リポジトリの外では、既定の流れと個人の追記だけを出す" {
+@test "リポジトリの外では、何も出さない（個人の追記も出さない）" {
   mkdir -p "$TMP/outside"
   echo "個人の追記です" >"$WORKFLOW_USER_DIR/task-flow.md"
-  echo "チームの追記です" >"$REPO/.claude/dev-workflow/task-flow.md"
   run_hook "$TMP/outside"
   assert_success
-  assert_output --partial "$(cat "$DEFAULT")"
-  assert_output --partial "個人の追記です"
-  refute_output --partial "チームの追記です"
+  assert_output ""
 }
 
-@test "cwd が無い・読めない入力でも、既定の流れを出す" {
+@test "導入していないリポジトリでは、何も出さない（個人の追記も出さない）" {
+  git init -q "$TMP/other"
+  echo "個人の追記です" >"$WORKFLOW_USER_DIR/task-flow.md"
+  run_hook "$TMP/other"
+  assert_success
+  assert_output ""
+  # 追記の置き場所（.claude/dev-workflow/）があっても、チームの設定が無ければ導入していない
+  mkdir -p "$TMP/other/.claude/dev-workflow"
+  echo "チームの追記です" >"$TMP/other/.claude/dev-workflow/task-flow.md"
+  run_hook "$TMP/other"
+  assert_success
+  assert_output ""
+}
+
+@test "ワークツリーにチームの設定が無くても、メインのワークツリーにあれば導入したとみなす" {
+  # 初期設定をコミットする前に作ったワークツリーには、チームの設定が無い
+  git worktree add -q "$TMP/wt" -b feat/1-x
+  [ ! -f "$TMP/wt/.claude/dev-workflow/config.json" ]
+  run_hook "$TMP/wt"
+  assert_success
+  assert_output --partial "$(cat "$DEFAULT")"
+}
+
+@test "cwd が読めない入力では今のディレクトリで判断し、cwd が無いディレクトリなら何も出さない" {
   run "${TEST_BASH:-bash}" "$HOOKS/task-flow.sh" <<<'not json'
   assert_success
   assert_output --partial "$(cat "$DEFAULT")"
   run_hook "$TMP/no-such-dir"
   assert_success
-  assert_output --partial "$(cat "$DEFAULT")"
+  assert_output ""
+}
+
+@test "jq が無くても、導入していないリポジトリでは何も出さない" {
+  # jq だけを除いた PATH を作る（git・cat などは残す）
+  mkdir -p "$TMP/bin"
+  for c in git cat dirname mktemp rm; do
+    ln -s "$(command -v "$c")" "$TMP/bin/$c"
+  done
+  git init -q "$TMP/other"
+  bash="$(command -v "${TEST_BASH:-bash}")"
+  # cwd を読めないので、今のディレクトリ（Claude Code はフックをセッションのディレクトリで動かす）で判断する
+  cd "$TMP/other"
+  run env PATH="$TMP/bin" "$bash" "$HOOKS/task-flow.sh" <<<'{}'
+  assert_success
+  assert_output ""
+  cd "$REPO"
+  run env PATH="$TMP/bin" "$bash" "$HOOKS/task-flow.sh" <<<'{}'
+  assert_success
+  assert_output "$(cat "$DEFAULT")"
 }
 
 @test "1 万文字を超えたら、上限に収めて、読み直すファイルを知らせる" {

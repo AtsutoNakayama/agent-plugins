@@ -294,3 +294,13 @@ https://github.com/me/demo/pull/42"
   [ "$status" -eq 0 ]
   [[ "$(jq -r .systemMessage <<<"$output")" == *"PR: https://github.com/me/demo/pull/42"* ]]
 }
+
+@test "導入していないリポジトリでは、何も出さない" {
+  rm .claude/dev-workflow/config.json
+  silent "git push" "git commit -m x" "git switch -c feat/23-x"
+  [ "$(called issue-view)" -eq 0 ]
+  # 作った PR・Issue も出さない
+  run_hook "gh issue create --title x" "https://github.com/me/demo/issues/50"
+  assert_success
+  assert_output ""
+}

@@ -8,6 +8,7 @@
 #   2. 個人の追記                   ~/.claude/dev-workflow/task-flow.md
 #   3. チームの追記                 <repo>/.claude/dev-workflow/task-flow.md
 #
+# 導入していないリポジトリ（dw_is_set_up）では、何も出さない（設計書 §1）。
 # 毎セッション動くので、config.sh は呼ばずに2つのファイルを直接見る。
 # Claude Code はフックの出力が上限（1 万文字）を超えると先頭の一部しか渡さないので、上限に収めて、
 # 切ったときは読み直すファイルを知らせる。
@@ -21,18 +22,23 @@ set -euo pipefail
 limit=10000
 default_file="$DW_PLUGIN_ROOT/defaults/task-flow.md"
 
+input="$(cat)"
+# jq が無ければ、cwd を読まずに今のディレクトリで判断する
+cwd=""
+if command -v jq >/dev/null 2>&1; then
+  cwd="$(jq -r '.cwd // empty' <<<"$input" 2>/dev/null || true)"
+fi
+repo_root="$( (cd "${cwd:-.}" 2>/dev/null && dw_repo_root) || true)"
+# 導入していないリポジトリでは何もしない
+dw_is_set_up "$repo_root" || exit 0
+
 # jq が無ければ、既定の流れだけを出す（既定は上限より十分に短い）
 if ! command -v jq >/dev/null 2>&1; then
   cat "$default_file"
   exit 0
 fi
 
-input="$(cat)"
-cwd="$(jq -r '.cwd // empty' <<<"$input" 2>/dev/null || true)"
-repo_root="$( (cd "${cwd:-.}" 2>/dev/null && dw_repo_root) || true)"
-
-files=("$(dw_user_dir)/task-flow.md")
-[ -n "$repo_root" ] && files+=("$repo_root/.claude/dev-workflow/task-flow.md")
+files=("$(dw_user_dir_for "$repo_root")/task-flow.md" "$repo_root/.claude/dev-workflow/task-flow.md")
 
 out="$(cat "$default_file")"
 added=()

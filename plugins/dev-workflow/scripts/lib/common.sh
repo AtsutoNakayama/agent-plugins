@@ -223,17 +223,115 @@ dw_repo_root() {
   fi
 }
 
-# メインのワークツリーのルート。コミットしないファイル（*.local.json）の置き場所。
-# 使い方: dw_main_root <リポジトリのルート>
-# --path-format=absolute は git 2.31 以降にしか無いので、相対パスは自前で絶対パスにする。
-dw_main_root() {
-  local root="$1" common
-  common="$(git -C "$root" rev-parse --git-common-dir 2>/dev/null)" || return 1
-  case "$common" in
+# <基準のディレクトリ（絶対パス）> からの相対パス（絶対パスでもよい）のディレクトリを、実体の絶対パスにして出力する。
+# 無ければ失敗する。--path-format=absolute は git 2.31 以降にしか無いので、git が返す相対パスは、これで絶対パスにする。
+# 相対パスのまま cd すると、CDPATH が設定されているときに cd がパスを出力するので、絶対パスにしてから cd する
+# 使い方: dw_abs_dir <基準のディレクトリ> <パス>
+dw_abs_dir() {
+  local p="$2"
+  case "$p" in
     /*) ;;
-    *) common="$root/$common" ;;
+    *) p="$1/$p" ;;
   esac
-  (cd "$(dirname "$common")" && pwd -P)
+  (cd "$p" 2>/dev/null && pwd -P)
+}
+
+# git rev-parse --git-dir --git-common-dir --show-toplevel の出力を、<基準のディレクトリ>（rev-parse を実行した場所）から
+# 実体の絶対パスにして、git のディレクトリ・リポジトリ（--git-common-dir。ワークツリーなら元のリポジトリ）・作業ツリーの一番上を、
+# 1行ずつ出力する（作業ツリーが無い bare リポジトリや .git の中では、3行目は空）。読めなければ失敗する。
+# rev-parse を git -C で起動する dw_repo_paths と、オプションや環境変数を付けて起動する guard-git の、どちらも使う
+# 使い方: dw_parse_repo_paths <基準のディレクトリ> <rev-parse の出力>
+dw_parse_repo_paths() {
+  local gd c top
+  { IFS= read -r gd; IFS= read -r c; IFS= read -r top; } <<<"$2" || true
+  [ -n "${gd:-}" ] && [ -n "${c:-}" ] || return 1
+  gd="$(dw_abs_dir "$1" "$gd")" && c="$(dw_abs_dir "$1" "$c")" || return 1
+  printf '%s\n%s\n%s\n' "$gd" "$c" "${top:-}"
+}
+
+# <ディレクトリ> で git が見つけるリポジトリの、git のディレクトリ・リポジトリ・作業ツリーの一番上を出力する（dw_parse_repo_paths）。
+# git は1回だけ起動する。リポジトリが無ければ失敗する。
+# 環境に GIT_DIR などが export されていると、git -C はそのディレクトリのリポジトリを探さずにそれを使うので、外して起動する
+# （ルートの候補が本当にそのリポジトリのものかを確かめるのに使うため）
+# 使い方: dw_repo_paths <ディレクトリ>
+dw_repo_paths() {
+  dw_parse_repo_paths "$1" "$(env -u GIT_DIR -u GIT_WORK_TREE -u GIT_COMMON_DIR \
+    git -C "$1" rev-parse --git-dir --git-common-dir --show-toplevel 2>/dev/null || true)"
+}
+
+# <ディレクトリ> の git のディレクトリが <git のディレクトリ>（実体の絶対パス）なら、その作業ツリーの一番上を出力する。違えば失敗する。
+# git の内部の配置から考えたルートの候補が、本当にそのリポジトリ（ワークツリーなら、そのワークツリー）のものかを確かめるのに使う。
+# リポジトリ（--git-common-dir）ではなく git のディレクトリで比べるのは、同じリポジトリの別のワークツリーと見分けるため
+# （メインのワークツリーの git のディレクトリは、リポジトリと同じ）。
+# 3つ目の引数に bare を渡すと、作業ツリーが無くても（bare リポジトリ＋ワークツリーの配置の、.git ファイルを置いたディレクトリなど）、
+# そのディレクトリを出力する
+# 使い方: dw_root_if_repo <ディレクトリ（空なら失敗）> <git のディレクトリ> [bare]
+dw_root_if_repo() {
+  local gd c top
+  [ -n "$1" ] || return 1
+  { IFS= read -r gd; IFS= read -r c; IFS= read -r top; } <<<"$(dw_repo_paths "$1" || true)" || true
+  [ -n "${gd:-}" ] && [ "$gd" = "$2" ] || return 1
+  if [ -n "${top:-}" ]; then
+    printf '%s\n' "$top"
+  elif [ "${3:-}" = bare ]; then
+    dw_abs_dir / "$1"
+  else
+    return 1
+  fi
+}
+
+# <git のディレクトリ>（ワークツリーの .git/worktrees/<名前>）が記録している、そのワークツリーの一番上を出力する。
+# git はワークツリーの .git ファイルの場所を gitdir ファイルに書いているので、それを dw_root_if_repo で確かめる。分からなければ失敗する
+# 使い方: dw_worktree_root <git のディレクトリ>
+dw_worktree_root() {
+  local f
+  [ -f "$1/gitdir" ] || return 1
+  f="$(cat "$1/gitdir")"
+  dw_root_if_repo "$(dw_abs_dir "$1" "$(dirname "$f")" || true)" "$1"
+}
+
+# <リポジトリ>（--git-common-dir の実体の絶対パス）のメインのワークツリーのルートを出力する。分からなければ失敗する。
+# 候補は、リポジトリの親（普通のリポジトリの <ルート>/.git、bare リポジトリ＋ワークツリーの <ルート>/.bare）と
+# core.worktree（サブモジュールの <上のリポジトリ>/.git/modules/<名前>）で、どちらも dw_root_if_repo で確かめる。
+# --separate-git-dir で作ったリポジトリや bare のミラーは、git がメインのワークツリーを記録していないので分からない。
+# bare を渡すと、作業ツリーが無い候補も返す（dw_root_if_repo）
+# 使い方: dw_repo_main_root <リポジトリ> [bare]
+dw_repo_main_root() {
+  local wt
+  dw_root_if_repo "$(dirname "$1")" "$1" "${2:-}" && return 0
+  wt="$(git --git-dir="$1" config core.worktree 2>/dev/null || true)"
+  [ -n "$wt" ] && dw_root_if_repo "$(dw_abs_dir "$1" "$wt" || true)" "$1" "${2:-}"
+}
+
+# メインのワークツリーのルート。コミットしないファイル（*.local.json）の置き場所で、task-start・cleanup がワークツリーを作り・消す場所。
+# <リポジトリのルート> がワークツリー（git worktree add で作ったもの）でなければ、そのルートがメインのワークツリー。
+# ワークツリーなら dw_repo_main_root で求め（bare リポジトリ＋ワークツリーの配置では、.git ファイルを置いたディレクトリ）、
+# 分からなければ失敗する（推測した別の場所で操作しないため）
+# 使い方: dw_main_root <リポジトリのルート>
+dw_main_root() {
+  local gd c top
+  { IFS= read -r gd; IFS= read -r c; IFS= read -r top; } <<<"$(dw_repo_paths "$1" || true)" || true
+  [ -n "${c:-}" ] || return 1
+  if [ "$gd" = "$c" ]; then
+    [ -n "${top:-}" ] || return 1
+    printf '%s\n' "$top"
+    return 0
+  fi
+  dw_repo_main_root "$c" bare
+}
+
+# このプラグインを導入したリポジトリ（チームの設定 .claude/dev-workflow/config.json があるリポジトリ）なら成功する。
+# プラグインが効く範囲を、Claude Code で有効にした範囲（ユーザー単位なら全リポジトリ）ではなく、導入したリポジトリに限るため、
+# 導入していないリポジトリでは、フックは何もせず、ユーザーの層（~/.claude/dev-workflow/）も読まない（設計書 §1）。
+# ワークツリーに無くても、メインのワークツリー（dw_main_root）にあれば導入したとみなす（初期設定をまだコミットしていないときや、
+# 初期設定より前に作ったブランチのワークツリーで、守りが外れないようにする）
+# 使い方: dw_is_set_up <リポジトリのルート（空なら導入していない）>
+dw_is_set_up() {
+  local main
+  [ -n "${1:-}" ] || return 1
+  [ -f "$1/.claude/dev-workflow/config.json" ] && return 0
+  main="$(dw_main_root "$1" || true)"
+  [ -n "$main" ] && [ -f "$main/.claude/dev-workflow/config.json" ]
 }
 
 # ユーザーごとの設定の置き場所。
@@ -241,9 +339,24 @@ dw_user_dir() {
   printf '%s\n' "${WORKFLOW_USER_DIR:-$HOME/.claude/dev-workflow}"
 }
 
+# 導入したリポジトリ（dw_is_set_up）なら、ユーザーごとの設定の置き場所（dw_user_dir）を出力する。導入していなければ何も出さない。
+# ユーザーの層を読むスクリプトは、どれもこれで置き場所を決める（導入したかで読むかを変える判定を1か所にする）
+# 使い方: dw_user_dir_for <リポジトリのルート（空ならリポジトリの外）>
+dw_user_dir_for() {
+  dw_is_set_up "${1:-}" || return 0
+  dw_user_dir
+}
+
 # ユーザーごとのレビューの観点の置き場所。
 dw_user_review_dir() {
   printf '%s\n' "$(dw_user_dir)/review"
+}
+
+# 導入したリポジトリ（dw_is_set_up）なら、ユーザーごとのレビューの観点の置き場所（dw_user_review_dir）を出力する。
+# 導入していなければ何も出さない（dw_user_dir_for と同じ判定）
+# 使い方: dw_user_review_dir_for <リポジトリのルート（空ならリポジトリの外）>
+dw_user_review_dir_for() {
+  [ -z "$(dw_user_dir_for "${1:-}")" ] || dw_user_review_dir
 }
 
 # gh の最低限のバージョン。issue-cancel.sh の gh issue close --duplicate-of が 2.88.0 から。source した側で使う
@@ -512,13 +625,17 @@ dw_review_model_of() {
   jq -c .review.model "$1"
 }
 
-# review.model を決めている、このリポジトリの層（team・local）を、優先度の低い順に1行ずつ「<層>\t<ファイル>\t<値の JSON>」で出力する。
-# 導入したリポジトリだけに効かせるため、ユーザーの層（~/.claude/dev-workflow/config.json）は読まない（設計書 §7）。
-# どちらかの層のファイルが JSON のオブジェクトとして読めなければ、書く層でなくても止まる。
+# review.model を決めている層（user・team・local）を、優先度の低い順に1行ずつ「<層>\t<ファイル>\t<値の JSON>」で出力する。
+# ユーザーの層（~/.claude/dev-workflow/config.json）は、config.sh と同じく、導入したリポジトリ（dw_is_set_up）の中でだけ読む（設計書 §1）。
+# どれかの層のファイルが JSON のオブジェクトとして読めなければ、書く層でなくても止まる。
 # 使い方: dw_review_model_layers <リポジトリのルート>
 dw_review_model_layers() {
-  local pair name f v
-  for pair in "team:$1/.claude/dev-workflow/config.json" "local:$(dw_local_config_file "$1")"; do
+  local pairs pair name f v user_dir
+  pairs=()
+  user_dir="$(dw_user_dir_for "$1")"
+  [ -z "$user_dir" ] || pairs+=("user:$user_dir/config.json")
+  pairs+=("team:$1/.claude/dev-workflow/config.json" "local:$(dw_local_config_file "$1")")
+  for pair in "${pairs[@]}"; do
     name="${pair%%:*}" f="${pair#*:}"
     [ -f "$f" ] || continue
     # 壊れたファイルで止めるため、$(...) の外で確かめる（中で止めても、そのサブシェルが終わるだけになる）

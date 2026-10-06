@@ -24,7 +24,7 @@
 #
 # 層（下ほど優先。同じ名前の観点は上位の層のファイルが使われる）:
 #   3. プラグインに同梱する共通の観点   review/*.md
-#   2. ユーザーの観点                   ~/.claude/dev-workflow/review/*.md
+#   2. ユーザーの観点                   ~/.claude/dev-workflow/review/*.md（導入したリポジトリの中でだけ使う）
 #   1. リポジトリの観点                 <repo>/.claude/dev-workflow/review/*.md
 #
 # 観点ファイルの形式（1ファイルに1観点）:
@@ -63,7 +63,7 @@
 #   context       絞り込みに使った値（絞り込まないときは null）。base・target・ahead（マージ先が基点より
 #                 進んだコミットの数）・issue（番号か null）・type（null もある）・type_from（issue・branch・given・null）・
 #                 max_rounds（--auto のとき、設定 review.max_rounds の値。1以上の整数でなければ止まる。--auto でなければ null）・
-#                 model（--auto のとき、リポジトリの層（team・local）の設定 review.model の値。ユーザーの層の値は使わない。
+#                 model（--auto のとき、設定 review.model の値。
 #                 null か opus・sonnet・haiku・fable でなければ止まる。--auto でなければ null）
 set -euo pipefail
 
@@ -106,13 +106,8 @@ if [ "$auto" = true ]; then
   case "$max_rounds" in
     "" | null | 0 | 0[0-9]* | *[!0-9]*) dw_die "review.max_rounds は1以上の整数にしてください: ${max_rounds}" 2 ;;
   esac
-  # review.model は、導入したリポジトリだけに効かせるため、リポジトリの層（team・local）からだけ読む（設計書 §7）
-  model="$(dw_review_model_layers "$(dw_repo_root)" | tail -n 1 | cut -f 3)"
-  model="${model:-null}"
-  user_config="$(dw_user_dir)/config.json"
-  if dw_review_model_of "$user_config" >/dev/null; then
-    dw_warn "${user_config} の review.model は使いません（リポジトリの .claude/dev-workflow/config.json か config.local.json に書いてください）"
-  fi
+  # review.model もほかの設定と同じく層を合わせた値を使う（ユーザーの層は、導入したリポジトリの中でだけ効く。設計書 §7）
+  model="$(jq -c '.review.model' <<<"$config")"
   dw_review_model_ok "$model" || dw_die "review.model は null か $(dw_review_model_names) のどれかにしてください: ${model}" 2
   base_branch="$(jq -r .base_branch <<<"$config")"
   target="origin/$base_branch"
@@ -312,7 +307,9 @@ collect() {
 }
 
 collect plugin "$DW_PLUGIN_ROOT/review"
-collect user "$(dw_user_review_dir)"
+# 導入していないリポジトリでは、ユーザーの層を使わない（設計書 §1）
+user_review_dir="$(dw_user_review_dir_for "$repo_root")"
+[ -z "$user_review_dir" ] || collect user "$user_review_dir"
 [ -z "$repo_root" ] || collect repo "$repo_root/.claude/dev-workflow/review"
 
 # 優先度の低い層から順に入れ、同じ名前は後の層で置き換える

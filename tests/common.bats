@@ -102,3 +102,100 @@ run_common() {
   run_common dw_uri_path 'feat/17-x'
   assert_output 'feat/17-x'
 }
+
+@test "dw_main_root は、普通のリポジトリとそのワークツリーで、メインのワークツリーを返す" {
+  git worktree add -q "$TMP/wt" -b feat/1-x
+  run_common dw_main_root "$REPO"
+  assert_success
+  assert_output "$REPO"
+  run_common dw_main_root "$TMP/wt"
+  assert_success
+  assert_output "$REPO"
+}
+
+@test "dw_main_root は、サブモジュールとそのワークツリーで、サブモジュールの作業ツリーを返す（.git/modules を返さない）" {
+  make_submodule
+  git -C "$TMP/super/sm" worktree add -q "$TMP/smwt" -b feat/1-x
+  run_common dw_main_root "$TMP/super/sm"
+  assert_success
+  assert_output "$TMP/super/sm"
+  run_common dw_main_root "$TMP/smwt"
+  assert_success
+  assert_output "$TMP/super/sm"
+}
+
+@test "dw_main_root は、--separate-git-dir のリポジトリでは、メインのワークツリーそのものなら返し、ワークツリーからは分からないので失敗する" {
+  git init -q -b main --separate-git-dir "$TMP/sep.git" "$TMP/sep"
+  git -C "$TMP/sep" commit -q --allow-empty -m init
+  git -C "$TMP/sep" worktree add -q "$TMP/sepwt" -b feat/1-x
+  run_common dw_main_root "$TMP/sep"
+  assert_success
+  assert_output "$TMP/sep"
+  # リポジトリの親（$TMP）を返さない
+  run_common dw_main_root "$TMP/sepwt"
+  assert_failure
+  assert_output ""
+}
+
+@test "dw_repo_main_root は、リポジトリから、確かめたメインのワークツリーを返す（bare リポジトリは分からない）" {
+  run_common dw_repo_main_root "$REPO/.git"
+  assert_success
+  assert_output "$REPO"
+  make_submodule
+  run_common dw_repo_main_root "$TMP/super/.git/modules/sm"
+  assert_success
+  assert_output "$TMP/super/sm"
+  git clone -q --mirror "$REPO" "$TMP/mirror.git"
+  run_common dw_repo_main_root "$TMP/mirror.git"
+  assert_failure
+}
+
+@test "dw_is_set_up は、サブモジュールのワークツリーでは、サブモジュールのメインのワークツリーのチームの設定を見る" {
+  make_submodule
+  git -C "$TMP/super/sm" worktree add -q "$TMP/smwt" -b feat/1-x
+  run_common dw_is_set_up "$TMP/smwt"
+  assert_failure
+  mark_set_up "$TMP/super/sm"
+  run_common dw_is_set_up "$TMP/smwt"
+  assert_success
+  # 上のリポジトリ（super）は導入していない
+  run_common dw_is_set_up "$TMP/super"
+  assert_failure
+}
+
+@test "dw_main_root は、bare リポジトリ＋ワークツリーの配置で、.git ファイルを置いたディレクトリを返す" {
+  git clone -q --bare "$REPO" "$TMP/proj/.bare"
+  echo 'gitdir: ./.bare' >"$TMP/proj/.git"
+  git -C "$TMP/proj" worktree add -q "$TMP/proj/main" main
+  git -C "$TMP/proj" worktree add -q "$TMP/proj/feat" -b feat/1-x
+  run_common dw_main_root "$TMP/proj/main"
+  assert_success
+  assert_output "$TMP/proj"
+  run_common dw_main_root "$TMP/proj/feat"
+  assert_success
+  assert_output "$TMP/proj"
+}
+
+@test "dw_main_root・dw_is_set_up は、CDPATH を export していても動く" {
+  git worktree add -q "$TMP/wt" -b feat/1-x
+  mark_set_up
+  export CDPATH=.
+  run_common dw_main_root "$TMP/wt"
+  assert_success
+  assert_output "$REPO"
+  run_common dw_is_set_up "$TMP/wt"
+  assert_success
+}
+
+@test "dw_repo_paths・dw_main_root は、環境に別のリポジトリの GIT_DIR などが export されていても、指定したディレクトリを調べる" {
+  git init -q -b main "$TMP/other"
+  git worktree add -q "$TMP/wt" -b feat/1-x
+  export GIT_DIR="$TMP/other/.git" GIT_WORK_TREE="$TMP/other" GIT_COMMON_DIR="$TMP/other/.git"
+  run_common dw_main_root "$TMP/wt"
+  assert_success
+  assert_output "$REPO"
+  run_common dw_repo_paths "$REPO"
+  assert_success
+  assert_line --index 0 "$REPO/.git"
+  assert_line --index 2 "$REPO"
+}

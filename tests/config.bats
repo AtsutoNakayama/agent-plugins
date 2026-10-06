@@ -56,6 +56,7 @@ load test_helper
 }
 
 @test "ガイドはユーザー → リポジトリの順に並ぶ" {
+  mark_set_up
   mkdir -p .claude/dev-workflow
   echo user >"$WORKFLOW_USER_DIR/commit.md"
   echo repo >.claude/dev-workflow/commit.md
@@ -79,6 +80,7 @@ load test_helper
 }
 
 @test "オブジェクト以外の設定（配列・null・複数の値）はエラーになる" {
+  mark_set_up
   for body in '[]' 'null' '{"a": 1}{"b": 2}'; do
     printf '%s\n' "$body" >"$WORKFLOW_USER_DIR/config.json"
     run_script config.sh
@@ -158,4 +160,35 @@ load test_helper
   run_script config.sh .review.model
   assert_success
   assert_output "opus"
+}
+
+@test "導入していないリポジトリやリポジトリの外では、ユーザーの層（設定とガイド）を読まない" {
+  echo '{"language": "en"}' >"$WORKFLOW_USER_DIR/config.json"
+  echo user >"$WORKFLOW_USER_DIR/commit.md"
+  run_script config.sh '[.language, .guides, .sources] | tojson'
+  assert_success
+  assert_output "[\"ja\",{},[\"$(cd "$SCRIPTS/.." && pwd)/defaults/workflow.json\"]]"
+  cd "$TMP"
+  run_script config.sh '[.language, .guides] | tojson'
+  assert_success
+  assert_output '["ja",{}]'
+  # 壊れたユーザーの層も読まないので、止まらない
+  echo '{broken' >"$WORKFLOW_USER_DIR/config.json"
+  run_script config.sh .language
+  assert_success
+  assert_output ja
+}
+
+@test "導入したリポジトリでは、ユーザーの層を読む（ワークツリーにチームの設定が無くても、メインのワークツリーにあれば導入した）" {
+  echo '{"language": "en"}' >"$WORKFLOW_USER_DIR/config.json"
+  echo user >"$WORKFLOW_USER_DIR/commit.md"
+  mark_set_up
+  run_script config.sh '[.language, .guides.commit] | tojson'
+  assert_output "[\"en\",[\"$WORKFLOW_USER_DIR/commit.md\"]]"
+  # 初期設定をコミットする前に作ったワークツリーには、チームの設定が無い
+  git worktree add -q "$TMP/wt" -b feat/1-x
+  cd "$TMP/wt"
+  [ ! -f .claude/dev-workflow/config.json ]
+  run_script config.sh '[.language, .guides.commit] | tojson'
+  assert_output "[\"en\",[\"$WORKFLOW_USER_DIR/commit.md\"]]"
 }

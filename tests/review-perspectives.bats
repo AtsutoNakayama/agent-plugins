@@ -27,6 +27,7 @@ names() { jq -r "$1[].name" <<<"$output"; }
 }
 
 @test "3つの層の観点を合わせ、名前の順に出力する" {
+  mark_set_up
   perspective "$WORKFLOW_USER_DIR/review" zz-user "ユーザーの観点"
   perspective "$REPO/.claude/dev-workflow/review" aa-repo "リポジトリの観点"
   run_script review-perspectives.sh
@@ -38,6 +39,7 @@ names() { jq -r "$1[].name" <<<"$output"; }
 }
 
 @test "同じ名前の観点は上位の層のファイルを使い、上書きしたパスを残す" {
+  mark_set_up
   perspective "$WORKFLOW_USER_DIR/review" docs-sync "ユーザーの版"
   perspective "$REPO/.claude/dev-workflow/review" docs-sync "リポジトリの版"
   run_script review-perspectives.sh
@@ -119,12 +121,20 @@ EOF
   assert_equal "$(jq -r '.perspectives[] | select(.name == "bom") | .title' <<<"$output")" "BOM の観点"
 }
 
-@test "リポジトリの外でも、プラグインとユーザーの観点を出力する" {
+@test "リポジトリの外や導入していないリポジトリでは、プラグインの観点だけを出力する（ユーザーの観点は使わない）" {
   perspective "$WORKFLOW_USER_DIR/review" mine "ユーザーの観点"
   cd "$TMP"
   run_script review-perspectives.sh
   assert_success
-  jq -e '.perspectives | any(.name == "mine") and any(.layer == "plugin")' <<<"$output" >/dev/null || fail "$output"
+  jq -e '(.perspectives | any(.name == "mine") | not) and (.perspectives | any(.layer == "plugin"))' <<<"$output" >/dev/null || fail "$output"
+  cd "$REPO"
+  run_script review-perspectives.sh
+  assert_success
+  jq -e '(.perspectives | any(.name == "mine") | not) and (.perspectives | any(.layer == "plugin"))' <<<"$output" >/dev/null || fail "$output"
+  mark_set_up
+  run_script review-perspectives.sh
+  assert_success
+  jq -e '.perspectives | any(.name == "mine" and .layer == "user")' <<<"$output" >/dev/null || fail "$output"
 }
 
 @test "不明な引数は使い方の誤りにする" {
@@ -524,14 +534,19 @@ auto_branch() {
   done
 }
 
-@test "--auto は、ユーザーの層の review.model を使わず、警告する（導入したリポジトリだけに効かせる）" {
+@test "--auto は、ユーザーの層の review.model を、導入したリポジトリでだけ使う" {
   auto_branch feat/17-add-thing
   fake_issue 17 '["feat"]'
   echo '{"review": {"model": "opus"}}' >"$WORKFLOW_USER_DIR/config.json"
+  rm -f .claude/dev-workflow/config.json
   run_script review-perspectives.sh --auto
   assert_success
-  assert_output --partial "warn: $WORKFLOW_USER_DIR/config.json の review.model は使いません"
   assert_equal "$(json_of "$output" | jq -c .context.model)" null
+  mark_set_up
+  run_script review-perspectives.sh --auto
+  assert_success
+  refute_output --partial "warn:"
+  assert_equal "$(json_of "$output" | jq -r .context.model)" opus
   # リポジトリの層で決めれば、そちらを使う。local は team より優先する
   echo '{"review": {"model": "haiku"}}' >.claude/dev-workflow/config.json
   echo '{"review": {"model": "sonnet"}}' >.claude/dev-workflow/config.local.json
