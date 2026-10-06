@@ -11,8 +11,8 @@ AGENT="$BATS_TEST_DIRNAME/../plugins/dev-workflow/agents/perspective-reviewer.md
 frontmatter() { awk 'NR == 1 && $0 == "---" { on = 1; next } on && $0 == "---" { exit } on' "$1"; }
 
 # 使い方: step <SKILL.md> <番号> [終わりの見出しの正規表現] → 「### <番号>.」の節の本文
-# （既定では、次の「## 」か「### 」の見出しの前まで。「#### 」の見出しでは終わらない）
-step() { awk -v n="$2" -v end="${3:-^###? }" 'on && $0 ~ end { exit } $0 ~ ("^### " n "[.]") { on = 1; next } on' "$1"; }
+# （次の「## 」か「### 」の見出しの前まで。「#### 」の見出しでは終わらない。終わりの見出しを渡すと、その見出しでも終わる）
+step() { awk -v n="$2" -v end="$3" 'on && ($0 ~ /^###? / || (end != "" && $0 ~ end)) { exit } $0 ~ ("^### " n "[.]") { on = 1; next } on' "$1"; }
 
 @test "どのスキルにも name（ディレクトリ名と同じ）と description がある" {
   for f in "$SKILLS"/*/SKILL.md; do
@@ -308,7 +308,8 @@ step() { awk -v n="$2" -v end="${3:-^###? }" 'on && $0 ~ end { exit } $0 ~ ("^##
 
 @test "観点ファイルは結果の形を書かず、review-perspective-add は結果の形を決める agent を案内する（設計書 §7）" {
   # 結果の形（findings と notes）は agent perspective-reviewer が決める。観点ファイルが返し方を書くと、agent の決まりと食い違う
-  if grep -n 'だけ返す' "$BATS_TEST_DIRNAME/../plugins/dev-workflow/review/"*.md; then
+  # 「[] を返す」「JSON で返す」「とだけ返す」は拾い、「gh が返す JSON」のような文は拾わない
+  if grep -nE '(を|で|と|だけ)返す' "$BATS_TEST_DIRNAME/../plugins/dev-workflow/review/"*.md; then
     fail "同梱の観点ファイルに、返し方が書かれています（「〜と伝える」と書けば notes で伝わる）"
   fi
   grep -q 'agents/perspective-reviewer.md' "$SKILLS/review-perspective-add/SKILL.md" \
