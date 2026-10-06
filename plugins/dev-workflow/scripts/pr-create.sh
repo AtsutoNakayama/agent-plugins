@@ -11,7 +11,7 @@
 #   --check TEXT      Issue の本文のチェックリストの、文が TEXT（出力の tasks の text）の項目にチェックを付ける。
 #                     繰り返し指定できる。既にチェックがある項目は変えない。番号ではなく文で指すので、
 #                     確かめた後に項目が増減しても、別の項目には付かない（その文の項目がちょうど1つでなければ止まる）
-#   --add-task TEXT   Issue の本文の最初の項目がある節の最後に、チェックの無い項目「- [ ] TEXT」を足す。繰り返し指定できる。
+#   --add-task TEXT   Issue の本文の最初の項目がある節の最後に、チェックの無い項目「- [ ] TEXT」を足す（前後の空白は外す）。繰り返し指定できる。
 #                     文が TEXT の項目が既にあれば足さない（もう一度実行しても重ならない）。ADR の作成の提案を断ったことを、
 #                     取り消し線の項目（~~…~~）として残すのに使う
 #   --dry-run         push も PR の作成も Issue のチェックもせず、行う予定の操作と PR のタイトル・本文、
@@ -60,8 +60,11 @@ while [ $# -gt 0 ]; do
         --check) checks="$(jq -c --arg t "$2" '. + [$t] | unique' <<<"$checks")" ;;
         --add-task)
           case "$2" in *$'\n'* | *$'\r'*) dw_die "--add-task の文に改行は使えません" 64 ;; esac
+          # 項目の文（md_scan の text）は前後の空白を外して読むので、足す文も外しておく（同じ文の項目があるかを比べられるように）。
           # 足す順は指定した順にし、同じ文は1つにする
-          adds="$(jq -c --arg t "$2" 'if index([$t]) then . else . + [$t] end' <<<"$adds")"
+          adds="$(jq -c --arg t "$2" '($t | sub("^\\s+"; "") | sub("\\s+$"; "")) as $t
+            | if $t == "" then error("empty") elif index([$t]) then . else . + [$t] end' <<<"$adds" 2>/dev/null)" \
+            || dw_die "--add-task の文が空です" 64
           ;;
       esac
       shift 2

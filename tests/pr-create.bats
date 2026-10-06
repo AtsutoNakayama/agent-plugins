@@ -486,11 +486,26 @@ fake_issue_tasks() {
   assert_equal "$(cat "$TMP/issue-edit-body")" "$(printf -- '- [ ] a\n- [ ] b')"
 }
 
-@test "--add-task の文に改行があれば止まる" {
+@test "--add-task の文に改行（\n・\r）があるか、空白だけなら止まる" {
   setup_branch
-  run_pr --issue 17 --body-file "$TMP/body.md" --add-task "$(printf 'a\nb')"
+  for t in "$(printf 'a\nb')" "$(printf 'a\rb')"; do
+    run_pr --issue 17 --body-file "$TMP/body.md" --add-task "$t"
+    assert_failure 64
+    assert_output --partial "改行は使えません"
+  done
+  run_pr --issue 17 --body-file "$TMP/body.md" --add-task "  "
   assert_failure 64
-  assert_output --partial "改行は使えません"
+  assert_output --partial "--add-task の文が空です"
+  assert_equal "$(called edit)" 0
+}
+
+@test "--add-task の文の前後の空白は外し、同じ文の項目が既にあるかも外した文で比べる（もう一度実行しても重ならない）" {
+  setup_branch
+  set_issue_body "$(printf -- '- [ ] a\n- [ ] ~~x~~（不要）')"
+  run_pr --issue 17 --body-file "$TMP/body.md" --add-task " ~~x~~（不要） " --add-task "y "
+  assert_success
+  assert_equal "$(jq -c .added <<<"$json")" '["y"]'
+  assert_equal "$(cat "$TMP/issue-edit-body")" "$(printf -- '- [ ] a\n- [ ] ~~x~~（不要）\n- [ ] y')"
 }
 
 @test "長い囲みのコードブロックは、中の短い囲みや情報文字列付きの囲みでは閉じない" {
