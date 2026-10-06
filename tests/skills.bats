@@ -254,3 +254,7 @@ frontmatter() { awk 'NR == 1 && $0 == "---" { on = 1; next } on && $0 == "---" {
   grep -q -- '--models-scope' <<<"$step2" || fail "手順2に、保存する層を渡すことが書かれていません"
   grep -q 'models.actions' "$f" || fail "手順3の予定に、レビューのモデルの変更が入っていません"
 }
+
+@test "task-start は、既にブランチがあって --no-worktree が止まったら、そのワークツリーで作業するよう案内する" {
+  grep -q '「Issue #N には既にブランチ … があります」で止まったら' "$SKILLS/task-start/SKILL.md"
+}

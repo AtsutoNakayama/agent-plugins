@@ -386,3 +386,17 @@ run_start() {
   assert_equal "$(called edit)" 0
   assert_equal "$(called SetField)" 0
 }
+
+@test "--no-worktree でも、Issue に既にブランチがあれば着手せず、ブランチとワークツリーの場所を伝えて止まる（dry-run も同じ）" {
+  setup_fake_gh
+  setup_origin
+  git worktree add -q -b feat/17-x "$TMP/wt"
+  git push -q origin main:refs/heads/wip/17-try
+  for mode in --dry-run ""; do
+    run_start --issue 17 --no-worktree ${mode:+"$mode"}
+    assert_failure 2
+    assert_output --partial "Issue #17 には既にブランチ feat/17-x（ワークツリー $TMP/wt）、wip/17-try があります"
+  done
+  assert_equal "$(called edit)" 0
+  assert_equal "$(called SetField)" 0
+}

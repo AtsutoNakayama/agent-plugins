@@ -7,6 +7,7 @@
 #   --slug TEXT      ブランチ名の短い説明（英語）。branch-name.sh で整える
 #   --no-worktree    リポジトリを変えないタスク（調査・Issue の整理など）。1 と 2 を飛ばし、
 #                    割り当てと列の移動だけを行う（branch と worktree は null）。
+#                    Issue に既にブランチ（名前に /<番号>- を含むもの）があれば、作らずに着手せず止まる（終了コード 2）。
 #                    後からリポジトリを変えることになったら、--slug を付けてもう一度実行すれば作れる
 #   --dry-run        変更せず、行う予定の操作だけを出力する
 #
@@ -82,6 +83,20 @@ sub_total="$(jq -r '.subIssuesSummary.total // 0' <<<"$issue_json")"
 [ "$sub_total" -eq 0 ] \
   || dw_die "Issue #${issue} は親の Issue（子の Issue が ${sub_total} 件）なので、着手しません。子の Issue に着手してください" 2
 title="$(jq -r .title <<<"$issue_json")"
+
+# ワークツリーを作らずに着手するときも、Issue に既にブランチがあれば止まる。黙って着手すると base_branch の上で作業させ、
+# 後で task-finish が、そのブランチの「マージされた PR がありません」で行き止まるため
+if $no_worktree; then
+  found="$(dw_issue_branches "$main_root" "$issue")"
+  if [ -n "$found" ]; then
+    list=""
+    while IFS="$(printf '\t')" read -r b _ _; do
+      wt="$(dw_worktree_of "$main_root" "$b")"
+      list="${list:+${list}、}${b}${wt:+（ワークツリー ${wt}）}"
+    done <<<"$found"
+    dw_die "Issue #${issue} には既にブランチ ${list} があります。ワークツリーを作らずに着手せず、そのブランチで作業してください" 2
+  fi
+fi
 
 # リポジトリを変えないタスク（--no-worktree）では、ブランチもワークツリーも作らない
 branch="" path="" worktree_created=false branch_created=false
