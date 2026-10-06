@@ -30,7 +30,7 @@
 #   キューを使わない（PR が無い、キューの状態を読めないときも）
 #     8. P                                                       → push
 #     9. behind が 1 以上                                        → merge（behind）
-#    10. merge_state が BEHIND（behind は 0）                    → ask_base
+#    10. merge_state が BEHIND か DIRTY（behind は 0）           → ask_base
 #    11. それ以外                                                → none（up_to_date）
 #   queue（3・7 のとき）: キューでの状態が UNMERGEABLE なら conflict、ほかの状態なら queued、
 #   外れたまま（removed）なら removed、どれでもなければ not_queued
@@ -75,6 +75,6 @@ jq -c '
     else
       if $merged_not_pushed then plan("push"; "merged_not_pushed")
       elif .behind >= 1 then plan("merge"; "behind")
-      elif $state == "BEHIND" then plan("ask_base"; "base_mismatch")
+      elif $state == "BEHIND" or $state == "DIRTY" then plan("ask_base"; "base_mismatch")
       else plan("none"; "up_to_date") end
     end' <<<"$status"

@@ -108,16 +108,15 @@ check_plan() {
   check_plan "$NQ | $BEHIND | .conflicts = null | .pr.merge_state = \"UNKNOWN\"" "merge behind - -"
 }
 
-@test "キューを使わない 10：遅れていないのに BEHIND なら、マージ先を聞く" {
+@test "キューを使わない 10：遅れていないのに BEHIND か DIRTY なら、マージ先を聞く" {
   check_plan "$NQ | .pr.merge_state = \"BEHIND\"" "ask_base base_mismatch - -"
+  check_plan "$NQ | .pr.merge_state = \"DIRTY\"" "ask_base base_mismatch - -"
 }
 
 @test "キューを使わない 11：遅れていなければ、すでに最新" {
   check_plan "$NQ" "none up_to_date - -"
   check_plan "$NQ | .pr.merge_state = \"BLOCKED\"" "none up_to_date - -"
   check_plan "$NQ | .pr.merge_state = \"UNKNOWN\"" "none up_to_date - -"
-  # DIRTY でもマージ先は聞かない（衝突していることを伝える。SKILL.md）
-  check_plan "$NQ | .pr.merge_state = \"DIRTY\"" "none up_to_date - -"
 }
 
 @test "PR が無いとき・キューの状態を読めないときは、キューを使わないものとして決める" {
@@ -126,7 +125,7 @@ check_plan() {
   check_plan ".pr = null" "none up_to_date - -"
   check_plan ".pr.merge_queue = null | $BEHIND" "merge behind - -"
   check_plan '.pr.merge_queue = null | .pr.merge_state = "BEHIND"' "ask_base base_mismatch - -"
-  check_plan '.pr.merge_queue = null | .pr.merge_state = "DIRTY"' "none up_to_date - -"
+  check_plan '.pr.merge_queue = null | .pr.merge_state = "DIRTY"' "ask_base base_mismatch - -"
 }
 
 @test "origin にブランチが無ければ（pushed_behind が null）、取り込み済みで未 push とはみなさない" {
