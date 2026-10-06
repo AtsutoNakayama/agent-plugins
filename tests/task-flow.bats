@@ -203,12 +203,15 @@ pos() {
   assert_success
   assert_output --partial "$item"
   # 言い換えで壊れないよう、要の語句だけを確かめる
+  # shellcheck disable=SC2016 # バッククォートは流れの本文の文字で、展開させない
   for phrase in \
     'ファイルを変えない依頼（質問への回答・調査）でも' \
     'AskUserQuestion で出します' \
     'はい・いいえの確認も含みます' \
+    '確認を取るかどうかの線引きは変えません' \
     '選択肢の無い問い' \
-    'AskUserQuestion を使えない実行' \
+    'AskUserQuestion を使えない実行（`claude -p` など）には、この項は当てはまりません' \
+    '削除するもの' \
     '選ぶと実際に何が起きるか' \
     '選択肢がコマンドや確かめ方そのもののとき' \
     '質問の中（' \
