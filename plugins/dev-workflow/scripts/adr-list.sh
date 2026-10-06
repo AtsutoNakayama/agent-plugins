@@ -10,7 +10,8 @@
 # 置き場所の直下の *.md を読み、ファイル名の順（ロケールに左右されない文字の順）に出す（下のディレクトリは読まない）。置き場所が無ければ、ADR は無いものとする。
 # front matter（先頭の --- から次の --- まで）の issue・status と、最初の「# 」の見出しを読む。行末の CR と先頭の BOM は外して読む。
 # 値は YAML の1行として読む（空白の後の # からのコメントを外し、囲む引用符を外してエスケープを元の文字に戻す）。
-# issue は数字だけ（前後の引用符・# と先頭の 0 は外す）なら番号、それ以外（無い・テンプレートのまま）は null。
+# issue は数字だけ（先頭の # と 0 は外す）なら番号、それ以外（無い・テンプレートのまま）は null。# を付けるなら、引用符で
+# 囲む（"#151"）。囲まない #151 は、YAML のとおりコメントなので、値なし（null）になる。
 #
 # 出力:
 #   dir      ADR の置き場所（adr.dir。リポジトリのルートからの相対パス）
@@ -106,7 +107,7 @@ fi
 # shellcheck disable=SC2016 # jq の変数を bash に展開させない
 res="$(printf '%s' "$rows" | jq -r -R -s --arg files "$files" --arg dir "$adr_dir" --argjson suggest "$suggest" --arg want "$issue" '
   def nz: if . == "" then null else . end;
-  # issue の値は、前後の # と先頭の 0 を外して、数字だけなら番号にする
+  # issue の値は、先頭の #（引用符で囲んだ "#151" のときだけ残っている）と先頭の 0 を外して、数字だけなら番号にする
   def num: ltrimstr("#") | if test("^[0-9]+$") and test("[1-9]") then tonumber else null end;
   (reduce (split("\n")[] | select(. != "") | split("\t")) as $r ({}; .[$r[0]] = $r)) as $rows
   | [$files | split("\n")[] | select(. != "") | . as $p | ($rows[$p] // [$p])
