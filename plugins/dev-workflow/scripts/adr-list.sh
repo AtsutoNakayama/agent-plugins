@@ -23,7 +23,7 @@
 #              pending   Issue のチェックリストに、取り消し線もチェックも無い ADR の項目がある。提案ではなく、
 #                        ADR の項目が残っていて ADR がまだ無いことを伝える
 #              done      ADR の項目にチェックがある（ほかの置き場所に残したなど）。提案しない
-#              declined  ADR の項目が取り消した項目（「ADR に残す」が、閉じた ~~ と ~~ の内側にだけある）だけ。
+#              declined  ADR の項目が取り消した項目（「ADR に残す」が、閉じた取り消し線（~~ か ~）の内側にだけある）だけ。
 #                        提案を断った記録なので、提案しない
 #              judge     ADR の項目が無い。AI が差分から、ADR にすべき判断があるかを判断する
 #            ADR の項目は、Issue の本文のチェックリストの項目（md_scan）のうち、文に「ADR に残す」を含むもの
@@ -131,8 +131,8 @@ fi
 # Issue の JSON（本文を含む）は大きいことがあるので、引数ではなく標準入力で渡す（引数1つの長さには上限がある）
 dw_read_issue "$issue" body | jq --argjson out "$out" "$DW_JQ_MD_SCAN"'
   def adr_item: test("ADR[\\s　]*に残す");
-  # 「ADR に残す」が、閉じた ~~ と ~~ の内側にだけあれば、取り消した項目（断った記録）とみなす
-  def struck: [.text | splits("~~")] as $p
+  # 「ADR に残す」が、閉じた取り消し線（GitHub と同じく ~~ か ~ で囲む）の内側にだけあれば、取り消した項目（断った記録）とみなす
+  def struck: [.text | splits("~~?")] as $p
     | ([range(1; ($p | length) - 1; 2) | $p[.]] | any(adr_item))
       and ([range(0; $p | length) | select(. % 2 == 0 or . == ($p | length) - 1) | $p[.]] | any(adr_item) | not);
   (.body // "" | md_scan | .items | map(select(.text | adr_item) | {checked, text})) as $t

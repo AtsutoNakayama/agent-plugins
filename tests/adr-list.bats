@@ -342,3 +342,13 @@ write_adr() {
   assert_equal "$(jq -c '[.adrs[] | [.path, .issue, .status, .title]]' <<<"$output")" \
     '[["docs/adr/a.md",151,null,"一つ目"],["docs/adr/b.md",151,"accepted","B"]]'
 }
+
+@test "取り消し線は ~ 1つでも見て、「ADR に残す」が取り消し線の内側と外側の両方にあれば、断った記録とみなさない" {
+  # GitHub は ~1つ~ も取り消し線として表示する
+  fake_issue_body 151 "$(printf -- '- [ ] ~判断を ADR に残す~（不要）')"
+  run_script adr-list.sh --issue 151
+  assert_equal "$(jq -c .proposal <<<"$output")" '"declined"'
+  fake_issue_body 151 "$(printf -- '- [ ] ~~旧案を ADR に残す~~ 新案を ADR に残す')"
+  run_script adr-list.sh --issue 151
+  assert_equal "$(jq -c .proposal <<<"$output")" '"pending"'
+}
