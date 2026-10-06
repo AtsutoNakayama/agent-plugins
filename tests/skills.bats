@@ -266,3 +266,10 @@ frontmatter() { awk 'NR == 1 && $0 == "---" { on = 1; next } on && $0 == "---" {
   done
   grep -q '「変更するファイル・領域」が「- なし」なら、変えないタスクとして書かれている' "$SKILLS/task-start/SKILL.md"
 }
+
+@test "README に、ワークツリーの要らないタスクの流れと、task-finish にブランチ名を渡せることが書いてある" {
+  readme="$BATS_TEST_DIRNAME/../README.md"
+  grep -q 'リポジトリのファイルを変えないタスクの流れ（ワークツリーを作らずに着手し' "$readme" || fail "タスクの進め方に、ワークツリーの要らない流れがありません"
+  # shellcheck disable=SC2016 # バッククォートは README の文字で、展開させない
+  grep -q '`task-finish` は、`/dev-workflow:task-finish fix-typo` のように、番号の代わりにブランチ名も渡せます' "$readme" || fail "引数の説明に、task-finish のブランチ名がありません"
+}
