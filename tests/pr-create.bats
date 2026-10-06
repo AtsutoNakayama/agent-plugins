@@ -409,7 +409,7 @@ fake_issue_tasks() {
   assert_output --partial "PR #42 はできていますが、Issue #17 のチェックリストを変えられませんでした（もう一度実行すれば変えます）"
 }
 
-@test "--add-task で、最初のチェックリストのまとまりの最後に、同じ改行で項目を足す" {
+@test "--add-task で、最初の項目がある節の最後に、同じ改行で項目を足す（コードブロックの中の見出しでは節を終えない）" {
   setup_branch
   fake_issue_tasks
   run_pr --issue 17 --body-file "$TMP/body.md" --add-task "~~判断を ADR に残す~~（不要）" --dry-run
@@ -419,16 +419,34 @@ fake_issue_tasks() {
   assert_equal "$(called edit)" 0
   run_pr --issue 17 --body-file "$TMP/body.md" --add-task "~~判断を ADR に残す~~（不要）" --check 四つ目
   assert_success
-  # 五つ目（まとまりの最後の項目）の後、空行の前に \r\n で足し、チェックも同じ1回の書き換えで付ける。
+  # 節（次の見出しまで。無ければ本文の最後まで）の最後の空でない行の後に \r\n で足し、チェックも同じ1回の書き換えで付ける。
   # ほかの行（コードブロックの中・最後の改行を含む）は変えない
   # shellcheck disable=SC2016 # ``` はコードブロックの囲みで、展開させない
-  printf '## やること\r\n- [ ] 一つ目 [ ] を含む\r\n- [x] 二つ目\r\n  * [ ] 三つ目（入れ子）\r\n1. [x] 四つ目\r\n- [ ] ~~五つ目~~\r\n- [ ] ~~判断を ADR に残す~~（不要）\r\n\r\n```md\r\n- [ ] コードブロックの中\r\n```\r\n- [ ]\r\n- [] 項目ではない\r\n' >"$TMP/expected"
+  printf '## やること\r\n- [ ] 一つ目 [ ] を含む\r\n- [x] 二つ目\r\n  * [ ] 三つ目（入れ子）\r\n1. [x] 四つ目\r\n- [ ] ~~五つ目~~\r\n\r\n```md\r\n- [ ] コードブロックの中\r\n```\r\n- [ ]\r\n- [] 項目ではない\r\n- [ ] ~~判断を ADR に残す~~（不要）\r\n' >"$TMP/expected"
   run cmp "$TMP/expected" "$TMP/issue-edit-body"
   assert_success
   assert_equal "$(called edit)" 1
 }
 
-@test "--add-task は、まとまりの最初の項目の字下げに合わせ、見出しの手前で止める" {
+@test "--add-task は、項目の下のコードブロックに空行や見出しの形の行があっても、コードブロックの後に足す" {
+  setup_branch
+  # shellcheck disable=SC2016 # ``` はコードブロックの囲みで、展開させない
+  set_issue_body "$(printf -- '## やること\n- [ ] a\n  ```sh\n  echo 1\n\n  # コメント\n  ```\n- [ ] b\n  ```\n  x\n\n  ```\n\n## 完了条件\n- [ ] c')"
+  run_pr --issue 17 --body-file "$TMP/body.md" --add-task NEW
+  assert_success
+  # shellcheck disable=SC2016 # ``` はコードブロックの囲みで、展開させない
+  assert_equal "$(cat "$TMP/issue-edit-body")" "$(printf -- '## やること\n- [ ] a\n  ```sh\n  echo 1\n\n  # コメント\n  ```\n- [ ] b\n  ```\n  x\n\n  ```\n- [ ] NEW\n\n## 完了条件\n- [ ] c')"
+}
+
+@test "--add-task は、項目の間に空行がある並べ方でも、節の最後に足す" {
+  setup_branch
+  set_issue_body "$(printf -- '## やること\n- [ ] a\n\n- [ ] b\n\n## 完了条件\n- [ ] c')"
+  run_pr --issue 17 --body-file "$TMP/body.md" --add-task NEW
+  assert_success
+  assert_equal "$(cat "$TMP/issue-edit-body")" "$(printf -- '## やること\n- [ ] a\n\n- [ ] b\n- [ ] NEW\n\n## 完了条件\n- [ ] c')"
+}
+
+@test "--add-task は、節の最初の項目の字下げに合わせ、次の見出しの手前に足す" {
   setup_branch
   set_issue_body "$(printf -- '## やること\n  - [ ] a\n    続きの行\n  - [ ] b\n## 完了条件\n- [ ] c')"
   run_pr --issue 17 --body-file "$TMP/body.md" --add-task x --add-task y --add-task x

@@ -11,7 +11,7 @@
 #   --check TEXT      Issue の本文のチェックリストの、文が TEXT（出力の tasks の text）の項目にチェックを付ける。
 #                     繰り返し指定できる。既にチェックがある項目は変えない。番号ではなく文で指すので、
 #                     確かめた後に項目が増減しても、別の項目には付かない（その文の項目がちょうど1つでなければ止まる）
-#   --add-task TEXT   Issue の本文の最初のチェックリストの最後に、チェックの無い項目「- [ ] TEXT」を足す。繰り返し指定できる。
+#   --add-task TEXT   Issue の本文の最初の項目がある節の最後に、チェックの無い項目「- [ ] TEXT」を足す。繰り返し指定できる。
 #                     文が TEXT の項目が既にあれば足さない（もう一度実行しても重ならない）。ADR の作成の提案を断ったことを、
 #                     取り消し線の項目（~~…~~）として残すのに使う
 #   --dry-run         push も PR の作成も Issue のチェックもせず、行う予定の操作と PR のタイトル・本文、
@@ -30,8 +30,8 @@
 #      既にある PR では移さない（手で先の列に移した Issue を戻さないため）
 #   6. --check・--add-task があれば、Issue の本文を読み直し、指定した文の項目だけにチェックを付け、項目を足す
 #      （既にある PR のときも行う）。ほかの行は変えない。コードブロックと、行頭（字下げは問わない）の <!-- から --> までの
-#      HTML のコメントの中の行は、項目とみなさない。足す項目は、最初の項目から空行・見出しの手前までのまとまりの最後に、
-#      最初の項目と同じ字下げで置く（改行が \r\n なら \r\n で書く）。項目が無ければ本文の最後に置く
+#      HTML のコメントの中の行は、項目とみなさない。足す項目は、最初の項目がある節（次の見出しの手前まで）の最後の
+#      空でない行の後に、最初の項目と同じ字下げで置く（改行が \r\n なら \r\n で書く）。項目が無ければ本文の最後に置く
 set -euo pipefail
 
 # shellcheck source=lib/common.sh
@@ -251,9 +251,11 @@ if ! $dry_run && [ "$(jq -n --argjson c "$to_check" --argjson a "$to_add" '$c + 
   # 読み直す間に足された項目は、もう足さない
   now_add="$(jq -c --argjson t "$now_tasks" "$missing_jq" <<<"$to_add")"
   # 指定した行の行頭のチェックボックスだけを [x] にし、項目の文の中の [ ] や、ほかの行（改行の \r を含む）はそのまま残す。
-  # 足す項目は、最初の項目から空行・見出しの手前までのまとまりの最後の行の後に、最初の項目と同じ字下げで置く
-  jq -j --argjson t "$now_tasks" --argjson c "$to_check" --argjson a "$now_add" '
-    ($t | map(select(.text as $s | $c | index($s))) | map(.line)) as $lines
+  # 足す項目は、最初の項目がある節（次の見出しの手前まで。コードブロックの中の見出しの形の行は見出しとみなさない）の
+  # 最後の空でない行の後に、最初の項目と同じ字下げで置く
+  jq -j --argjson t "$now_tasks" --argjson c "$to_check" --argjson a "$now_add" "$DW_JQ_MD_SCAN"'
+    (.body // "" | md_scan | .headings) as $headings
+    | ($t | map(select(.text as $s | $c | index($s))) | map(.line)) as $lines
     | .body // "" | split("\n")
     | to_entries
     | map(if .key as $k | $lines | index($k)
@@ -268,7 +270,8 @@ if ! $dry_run && [ "$(jq -n --argjson c "$to_check" --argjson a "$to_add" '$c + 
       else
         . as $l
         | ($t[0].line) as $f
-        | ($f | until(. + 1 >= ($l | length) or ($l[. + 1] | sub("\r$"; "") | test("^\\s*$|^\\s*#")); . + 1)) as $last
+        | ([$headings[] | select(. > $f)] | first // ($l | length)) as $end
+        | ([range($f; $end) | select($l[.] | sub("\r$"; "") | test("\\S"))] | last) as $last
         | ($l[$f] | capture("^(?<i>\\s*)").i) as $indent
         | (if $l[$last] | endswith("\r") then "\r" else "" end) as $cr
         | $l[:$last + 1] + ($a | map($indent + "- [ ] " + . + $cr)) + $l[$last + 1:]
