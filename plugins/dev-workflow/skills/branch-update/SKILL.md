@@ -24,7 +24,7 @@ main が進んだ PR は、最新の main を取り込んで CI が通り直る�
 
 - `merge`：取り込む。下の「取り込む前の確認」をしてから、手順2へ進む
 - `push`：手元では取り込み済みで、まだ push していない（前に取り込んで直したが、push を断った・拒否された）。GitHub は push 済みの古いコミットを見ている。下の「取り込む前の確認」をしてから、手順2を飛ばして手順3へ進む（手順4・6は、`push` のときの扱いに従う）
-- `none`：取り込まずに終える。`plan.reason` ごとの文（下の表）を伝え、`plan.queue` があれば、キューの案内（下の表）を添える。`pr.merge_state` が `BLOCKED` なら、チェックの失敗や承認待ちでマージできないことも伝える。ただし、ユーザーが最新の main を求めている（CI の失敗を直すのに、main に入った変更が要るなど）ときは、AskUserQuestion で「取り込む」「取り込まずに終える」を選んでもらい、「取り込む」なら `merge` と同じように進める。`plan.queue` が `queued`（キューに並んでいる）なら、push するとキューから外れるので、選択肢の説明に、キューの何番目（`pr.merge_queue.position`）から外れるかを書く
+- `none`：取り込まずに終える。`plan.reason` ごとの文（下の表）を伝え、`plan.queue` があれば、キューの案内（下の表）を添える。マージできない理由が別にあれば、その状態も伝える（`pr.merge_state` が `BLOCKED` ならチェックの失敗や承認待ち、`DIRTY` なら衝突）。ただし、ユーザーが最新の main を求めている（CI の失敗を直すのに、main に入った変更が要るなど）ときは、AskUserQuestion で「取り込む」「取り込まずに終える」を選んでもらい、「取り込む」なら `merge` と同じように進める。`plan.queue` が `queued`（キューに並んでいる）なら、push するとキューから外れるので、選択肢の説明に、キューの何番目（`pr.merge_queue.position`）から外れるかを書く
 - `recheck`：GitHub が PR の衝突をまだ調べていて（`pr.merge_state` が `UNKNOWN`。main が進んだ直後によくなる）、手元でも確かめられなかった。数秒待って `branch-status.sh` を実行し直す。何回か実行し直しても `recheck` のままなら、AskUserQuestion で、`plan.fallback` をするか（`merge` なら取り込むか、`push` なら手元で取り込み済みの分を push するか）を選んでもらい、するならその action と同じように進める
 - `ask_base`：GitHub は遅れや衝突があると言うが、手元では設定の `base_branch` を取り込み済み。調べている間に `base_branch` が進んだか、PR のマージ先が設定の `base_branch` と違う。もう一度 `branch-status.sh` を実行し、それでも `ask_base` なら、「PR のマージ先と設定の `base_branch` が違う可能性がある」ことを伝えて、どちらに取り込むかユーザーに聞く
 
