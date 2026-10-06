@@ -546,3 +546,9 @@ silent() {
   denied "main の上ではコミットしません" "popd; git commit -m x" "popd && git commit -m x"
   denied "強制 push" "popd; git push -f"
 }
+
+@test "前に付くだけのコマンド（command・exec・time・nohup・env）を飛ばして、git を調べる" {
+  git checkout -q -b feat/21-x
+  denied "強制 push" "command git push -f" "exec git push -f" "time git push -f" "nohup git push -f" "env git push -f" \
+    "env FOO=1 git push -f" "FOO=1 nohup git push -f"
+}

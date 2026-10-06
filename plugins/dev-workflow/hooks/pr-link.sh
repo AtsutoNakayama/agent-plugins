@@ -12,7 +12,7 @@
 # 決まり（設計書 §9）:
 #   - 同じリンクも、連続で毎回出す（常に見えるようにするため）
 #   - git のコマンドは、操作の対象（cd・pushd・git -C で移った先、--git-dir・GIT_DIR で指したリポジトリ。gc_target）の
-#     リポジトリ・ブランチで判断する。外側の popd・cd - の後と、プロジェクトのルートからの相対パスへの cd の後は、
+#     リポジトリ・ブランチで判断する。popd・cd - の後と、プロジェクトのルートからの相対パスへの cd の後は、
 #     移った先が分からないので出さない（scripts/lib/git-command.sh の gc_scan の after）
 #   - Issue の番号が分からないブランチ（main など）では、ブランチから導くリンクは出さない（作った PR・Issue は出す）
 #   - gh が無い・失敗する・解析できないときは、何も出さずに通す。フックは作業を止めない（いつも終了コード 0）
@@ -100,7 +100,12 @@ on_git() {
       gc_push_args "$@"
       ! $gc_push_dry || return 0
       ;;
-    commit) ;;
+    commit)
+      # git commit --dry-run は commit しない
+      for k in "$@"; do
+        [ "$k" != --dry-run ] || return 0
+      done
+      ;;
     switch | checkout | branch | worktree)
       gc_new_branches add_new_name "$sub" "$@"
       if [ "$sub" = worktree ] && [ "${1:-}" = add ] && [ "${#new_names[@]}" -eq 0 ]; then
@@ -131,6 +136,12 @@ has 'task-start\.sh' && task_start=true
 script_push=false script_commit=false
 has 'pr-create\.sh' && script_push=true
 has 'commit\.sh' && script_commit=true
+# --dry-run を付けたスクリプトと gh pr create は、push も commit も PR・Issue の作成もしないので、それらのリンクは出さない。
+# 名前で拾うのと同じく、コマンドの文字列で調べる（引用符の中（コミットメッセージなど）の --dry-run は、取り除いてから調べる）。
+# git push・git commit の --dry-run は、on_git が git の呼び出しごとに調べる
+if printf '%s' "$cmd" | sed -E "s/\"[^\"]*\"//g; s/'[^']*'//g" | grep -Eq '(^|[[:space:]])--dry-run([[:space:]=]|$)'; then
+  task_start=false script_push=false script_commit=false created=false
+fi
 cwd_root="" cwd_repo=""
 if $created || $task_start || $script_push || $script_commit; then
   gc_git_dir="$dir" gc_gopts=() gc_genv=()
@@ -146,9 +157,6 @@ if $created || $task_start || $script_push || $script_commit; then
 fi
 
 [ "${#ev_kind[@]}" -gt 0 ] || $task_start || exit 0
-# --dry-run のコマンドは、push も commit も PR・Issue の作成もしない（スクリプトの --dry-run を含む）ので、何も出さない
-# 引用符の中（コミットメッセージなど）の --dry-run は、取り除いてから調べる
-printf '%s' "$cmd" | sed -E "s/\"[^\"]*\"//g; s/'[^']*'//g" | grep -Eq '(^|[[:space:]])--dry-run([[:space:]=]|$)' && exit 0
 
 # コマンドの標準出力（標準エラーは見ない。警告などが混ざるので）
 stdout="$(jq -r '.tool_response | if type == "object" then (.stdout // "") else (. // "" | tostring) end' <<<"$input" 2>/dev/null || true)"

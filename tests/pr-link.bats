@@ -423,9 +423,11 @@ EOF"
   CLAUDE_PROJECT_DIR="$REPO" shows_wt "cd ../wt && git push" "$TMP/wt"
 }
 
-@test "外側の popd の後は、移った先が分からないので何も出さない（( ) の中の pushd はたどる）" {
+@test "popd の後は、移った先が分からないので何も出さない（( ) の中の pushd はたどる）" {
   make_wt
   silent "pushd $TMP/wt && popd && git push" "pushd $TMP/wt; popd; git commit -m x" "popd; git push"
+  # ( ) の中の popd の後も、戻る先を追わないので、不明とする（pushd した先のリンクを出さない）
+  silent "(pushd ../wt && popd && git push)" "(cd ../wt && pushd $TMP && popd && git commit -m x)"
   [ "$(called issue-view)" -eq 0 ]
   shows_wt "(pushd ../wt && git push)"
 }
@@ -483,4 +485,18 @@ EOF"
   assert_success
   assert_equal "$(jq -r .systemMessage <<<"$output")" "$(printf '関連するリンク:\n- Issue #17: https://github.com/me/demo/issues/17')"
   assert_equal "$(called issue-view)" 1
+}
+
+@test "前に付くだけのコマンド（command・exec・time・nohup・env）を飛ばして、git を拾う" {
+  shows "time git commit -m x" "Issue #17: https://github.com/me/demo/issues/17"
+  shows "command git commit -m x" "Issue #17: https://github.com/me/demo/issues/17"
+  shows "nohup git push" "PR を作る:"
+  shows "env FOO=1 git push" "PR を作る:"
+}
+
+@test "同じコマンドに dry-run の操作があっても、実際に行った操作のリンクは出す" {
+  shows "git commit -m x && git push --dry-run" "Issue #17: https://github.com/me/demo/issues/17"
+  shows "git commit -m x && git push -n" "Issue #17: https://github.com/me/demo/issues/17"
+  shows "git commit -m x && bash \"\${CLAUDE_PLUGIN_ROOT}/scripts/pr-create.sh\" --issue 17 --dry-run" "Issue #17: https://github.com/me/demo/issues/17"
+  [ "$(called pr-list)" -eq 0 ]
 }

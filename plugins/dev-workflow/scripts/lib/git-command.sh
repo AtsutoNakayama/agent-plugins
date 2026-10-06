@@ -22,7 +22,7 @@
 #   そのため、外側の相対パスへの cd はたどらない。絶対パス（~・$HOME を含む）への cd は、始めのディレクトリに関係なく
 #   移った先が分かり、プロジェクトの外へ移って Claude Code が cwd を戻したときにも正しいので、たどる。その後の相対パスへの cd もたどる。
 #   cd sub && git push && cd .. や pushd sub && git push && popd のように、後ろでまた移ると、git push を移る前の場所で
-#   判断してしまう。外側の popd・cd - の後は、移った先を不明とする。
+#   判断してしまう。popd・cd - の後は、移った先を不明とする（pushd で積んだ場所は追わないので、( ) の中の popd も同じ）。
 #   <戻す先> には、Claude Code が cwd を戻す先（プロジェクトのルート。$CLAUDE_PROJECT_DIR）を渡す。外側の相対パスへの cd が
 #   プロジェクトの外へ出ると、Claude Code は cwd をそこへ戻すので、cwd が <戻す先> のときは、移った先を不明とする
 #   （プロジェクトの中で <戻す先> へ移ったのと見分けられないので、間違った場所より、不明とする）。
@@ -214,16 +214,15 @@ gc_worktree_branch() {
 # git push の引数を読んで、次の変数に入れる。guard-git.sh（強制 push・push 先）と pr-link.sh（dry-run）が使う。
 #   gc_push_force   強制 push（--force・-f・--mirror・+<refspec>）なら true。--force-with-lease は含めない
 #   gc_push_dry     dry-run（--dry-run・-n）なら true
-#   gc_push_remote  リモート（無ければ空）
-#   gc_push_refs    refspec の配列
+#   gc_push_refs    refspec の配列（リモートの後ろの引数）
 # 短いオプションはまとめて書ける（-fu・-nu）。値を取るオプション（--repo・--push-option・--receive-pack・--exec・-o）の値は飛ばす。
 # -- の後ろは、オプションとみなさない
 # 使い方: gc_push_args <引数>...
-gc_push_force=false gc_push_dry=false gc_push_remote="" gc_push_refs=()
+gc_push_force=false gc_push_dry=false gc_push_refs=()
 # shellcheck disable=SC2034 # gc_push_force・gc_push_dry は呼び出し側（フック）が読む
 gc_push_args() {
-  local after_dd=false expect=false w k c
-  gc_push_force=false gc_push_dry=false gc_push_remote="" gc_push_refs=()
+  local after_dd=false expect=false w k c remote=""
+  gc_push_force=false gc_push_dry=false gc_push_refs=()
   for w in "$@"; do
     if $expect; then
       expect=false
@@ -256,8 +255,8 @@ gc_push_args() {
           ;;
       esac
     fi
-    if [ -z "$gc_push_remote" ]; then
-      gc_push_remote="$w"
+    if [ -z "$remote" ]; then
+      remote="$w"
     else
       gc_push_refs+=("$w")
       case "$w" in +*) gc_push_force=true ;; esac
@@ -287,11 +286,11 @@ gc_command() {
 
   case "$1" in
     popd)
-      # 実行した後のディレクトリから始めたときは、外側の popd の後を不明とする（先頭のコメント）。
+      # 実行した後のディレクトリから始めたときは、popd の後を不明とする（先頭のコメント）。
       # それ以外は、pushd で積んだ場所を追わないので、移らないものとする
-      if $after && [ "$dn" -eq 0 ]; then
+      if $after; then
         gc_dir=""
-        anchored=true
+        [ "$dn" -gt 0 ] || anchored=true
       fi
       return 0
       ;;
