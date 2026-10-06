@@ -450,3 +450,29 @@ step() { awk -v n="$2" -v end="$3" 'on && ($0 ~ /^###? / || (end != "" && $0 ~ e
   grep -qF '1本に収まる普通の依頼は、分け方を聞かずに1つの Issue として下書きする' <<<"$draft" || fail "下書きの項目に、普通の依頼では分け方を聞かないことが書かれていません"
   grep -qF 'Story Point が 21 以上になりそうなだけのときは、ここでは分けず、手順3の分割の提案に任せる' <<<"$draft" || fail "下書きの項目に、SP が大きいだけのときの扱いが書かれていません"
 }
+
+# shellcheck disable=SC2016 # バッククォートはスキルの本文の文字で、展開させない
+@test "ADR にすべき判断の基準は adr-create の1か所にあり、task-create・pr-create はそこを読んで提案する（設計書 §8）" {
+  adr="$SKILLS/adr-create/SKILL.md"
+  grep -q '^## ADR にすべき判断$' "$adr" || fail "adr-create に基準の節がありません"
+  grep -q '^## ADR の作成の提案（task-create・pr-create）$' "$adr" || fail "adr-create に提案の決まりの節がありません"
+  # 断った記録の形は、正本と pr-create で同じにする
+  grep -qF -- '- [ ] ~~<判断の短い説明>を ADR に残す~~（不要）' "$adr" || fail "adr-create に断った記録の形がありません"
+  grep -qF -- '--add-task "~~<判断の短い説明>を ADR に残す~~（不要）"' "$SKILLS/pr-create/SKILL.md" || fail "pr-create が断った記録を足しません"
+  for s in task-create pr-create; do
+    f="$SKILLS/$s/SKILL.md"
+    grep -q 'skills/adr-create/SKILL.md` の「ADR にすべき判断」と「ADR の作成の提案」の節' "$f" || fail "$s が基準の正本を読みません"
+    grep -q 'adr-list.sh' "$f" || fail "$s が adr-list.sh で設定を確かめません"
+    grep -q '同じ質問の中で' "$f" || fail "$s が提案を確認の質問の中で行いません"
+  done
+  # 基準を写さない（正本は1か所）
+  for s in task-create pr-create; do
+    run grep -c '元に戻しにくい判断：' "$SKILLS/$s/SKILL.md"
+    assert_output 0
+  done
+  # 提案するかの状態の組み合わせは adr-list.sh の proposal で決め、pr-create はその値ごとにすることだけを書く
+  for v in disabled exists pending "done" declined judge; do
+    grep -q "| \`$v\` |" "$SKILLS/adr-create/SKILL.md" || fail "adr-create に proposal の $v がありません"
+  done
+  grep -q '出力の `proposal` に従う' "$SKILLS/pr-create/SKILL.md" || fail "pr-create が proposal に従いません"
+}

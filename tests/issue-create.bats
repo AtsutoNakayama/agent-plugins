@@ -712,3 +712,12 @@ assert_no_changes() {
   assert_equal "$(called AddItem)" 1
   assert_output --partial "Project に追加できませんでした"
 }
+
+@test "本文が長くても（引数の長さの上限を超える大きさでも）Issue を作れる" {
+  setup_fake_gh
+  # 日本語は UTF-8 で1文字3バイトなので、6万文字で 180KB ほどになる（Linux の引数1つの上限は 128KiB）
+  { printf '## 背景\n'; head -c 60000 /dev/zero | tr '\0' x | sed 's/x/あ/g'; } >body.md
+  run_create --title t --type feat --body-file body.md
+  assert_success
+  assert_equal "$(args CreateIssue | jq -r .body)" "$(cat body.md)"
+}

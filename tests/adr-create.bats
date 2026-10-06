@@ -66,7 +66,7 @@ TEMPLATES="$(cd "$BATS_TEST_DIRNAME/../plugins/dev-workflow/templates/adr" && pw
 }
 
 @test "adr.dir が絶対パスや .. を含むときは止まる" {
-  for d in /tmp/adr ../adr a/../../adr; do
+  for d in /tmp/adr ../adr a/../../adr "" /; do
     echo "{\"adr\": {\"dir\": \"$d\"}}" >.claude/dev-workflow/config.json
     run_script adr-create.sh --issue 9 --name x --template minimal
     assert_failure 2
@@ -248,4 +248,21 @@ FAKE
   run_script adr-create.sh --issue 1 --name x --template full --date
   assert_failure 64
   [ ! -e docs/adr ] || fail "ディレクトリを作っています"
+}
+
+@test "設定を読めなければ止まる" {
+  echo '{' >.claude/dev-workflow/config.json
+  run_script adr-create.sh --issue 1 --name x --template full
+  assert_failure 2
+  assert_output --partial "設定を読めません"
+}
+
+@test "改行が \r\n で先頭に BOM がある ADR も置き換えられ、status の行の改行と、ほかの行はそのまま残す" {
+  mkdir -p docs/adr
+  printf -- '\357\273\277---\r\nstatus: "accepted"\r\nissue: 3\r\n---\r\n\r\n# 古い\r\nstatus: 本文の行\r\n' >docs/adr/000003-old.md
+  run_script adr-create.sh --issue 11 --name new --template minimal --supersedes 000003-old.md
+  assert_success
+  printf -- '\357\273\277---\r\nstatus: "superseded by 000011-new"\r\nissue: 3\r\n---\r\n\r\n# 古い\r\nstatus: 本文の行\r\n' >"$TMP/expected"
+  run cmp "$TMP/expected" docs/adr/000003-old.md
+  assert_success
 }

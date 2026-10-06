@@ -529,6 +529,99 @@ DW_SUB_ISSUE_DEPTH_GUIDE=2
 # shellcheck disable=SC2034
 DW_BREAKING_LABEL=breaking
 
+# Markdown の本文（文字列）を読む jq の関数 md_scan を定義する。上から順に、チェックリストの項目（items。
+# {line（0 からの行番号）, checked, text}）と、見出しの行番号（headings）を出す。
+# GitHub と同じく、コードブロック（3つ以上の ` か ~ で囲む）の中の行は、項目とも見出しともみなさない。
+# 閉じるのは、開いたときと同じ文字が同じ数以上並び、後ろが空白だけの行（中の短い囲みや ```js では閉じない）。
+# ` の囲みの後ろに ` がある行（```x``` のようなインラインのコード）は囲みとみなさない。
+# リストの中のコードブロックも拾うため、囲みの字下げは問わない。
+# 複数行の HTML のコメント（行頭の <!-- から --> まで。囲みと同じく字下げは問わない）の中の行も、GitHub に表示されないので項目とみなさない。
+# GitHub と同じく、行の途中の <!--（インラインのコードや項目の補足）はコメントの始まりとみなさない。
+# 項目の文は、前後の空白を外す。source した側で使う
+# 使い方: jq "$DW_JQ_MD_SCAN"' .body | md_scan | .items'
+# shellcheck disable=SC2016,SC2034 # jq のプログラムなので、$ は展開しない
+DW_JQ_MD_SCAN='
+  def md_scan:
+    def item: "^\\s*(?:[-*+]|[0-9]+[.)])\\s+\\[(?<c>[ xX])\\](?:\\s+(?<t>.*))?$";
+    reduce (split("\n") | to_entries[]) as $e ({fence: null, comment: false, items: [], headings: []};
+      ($e.value | sub("\r$"; "")) as $l | .fence as $f
+      | if .comment then
+          (if $l | test("-->") then .comment = false else . end)
+        elif $f != null then
+          (if $l | test("^\\s*" + $f + "+\\s*$") then .fence = null else . end)
+        elif $l | test("^\\s*(`{3,}[^`]*|~{3,}.*)$") then .fence = ($l | capture("^\\s*(?<f>`{3,}|~{3,})").f)
+        elif $l | test("^\\s*<!--(?!.*-->)") then .comment = true
+        elif $l | test(item) then
+          ($l | capture(item)) as $m
+          | .items += [{line: $e.key, checked: ($m.c != " "), text: ($m.t // "" | sub("\\s+$"; ""))}]
+        elif $l | test("^ {0,3}#{1,6}(\\s|$)") then .headings += [$e.key]
+        else . end)
+    | {items, headings};
+'
+
+# awk のプログラムの先頭に足し、行末の CR と、ファイルの先頭の BOM（Windows のエディタが付ける）を外す。
+# 改行が \r\n のファイルや BOM 付きのファイルでも、front matter の区切りの --- などを見分けるため。
+# 読んだ行を書き戻す処理では使わない（外した CR と BOM が書き戻されなくなるため）。source した側で使う
+# 使い方: awk "$DW_AWK_STRIP_CR_BOM"' <プログラム>' <ファイル>...
+# shellcheck disable=SC2034
+DW_AWK_STRIP_CR_BOM='{ sub(/\r$/, "") } FNR == 1 { sub(/^\357\273\277/, "") }'
+
+# YAML の1行を読む awk の関数 strip（コメントを消す）・unquote（値を囲む引用符を外し、エスケープを元の文字に戻す）・
+# trim（前後の空白を外す）。awk のプログラムの先頭に足して使う。ワークフローを読む merge-group-check.sh と、ADR の
+# front matter を読む adr-list.sh で、値の読み方を揃えるため。source した側で使う
+# 使い方: awk "$DW_AWK_YAML"' { v = unquote(strip($0)) }' <ファイル>
+# shellcheck disable=SC2016,SC2034 # awk のプログラムなので、$ は展開しない
+DW_AWK_YAML='
+    # コメント（行頭か空白の後の #）を消す。引用符の中の #（name: "Build #1" など）は残す。
+    # 引用符は、値の始まり（空白・[・, の後）に来たものだけを数える（Bob\047s のような語の中のものは除く）。
+    # 引用符の中のエスケープ（単一引用符の中の \047\047、二重引用符の中の \ の次の文字）は、引用符の終わりとみなさない
+    function strip(s,   i, c, q, prev) {
+      sub(/\r$/, "", s)
+      q = ""; prev = " "
+      for (i = 1; i <= length(s); i++) {
+        c = substr(s, i, 1)
+        if (q == "") {
+          if (c == "#" && (prev == " " || prev == "\t")) return substr(s, 1, i - 1)
+          if ((c == "\"" || c == "\047") && (prev == " " || prev == "\t" || prev == "[" || prev == ",")) q = c
+        } else if (q == "\"" && c == "\\") {
+          i++
+        } else if (c == q) {
+          if (q == "\047" && substr(s, i + 1, 1) == "\047") i++
+          else q = ""
+        }
+        prev = c
+      }
+      return s
+    }
+    function unquote(s) {
+      s = trim(s)
+      if (s ~ /^".*"$/) {
+        s = substr(s, 2, length(s) - 2)
+        # \" と \\ を元の文字に戻す。\001 は \\ をいったん置いておく印
+        gsub(/\\\\/, "\001", s); gsub(/\\"/, "\"", s); gsub(/\001/, "\\", s)
+      } else if (s ~ /^\047.*\047$/) {
+        s = substr(s, 2, length(s) - 2)
+        gsub(/\047\047/, "\047", s)
+      }
+      return s
+    }
+    function trim(s) { sub(/^[ \t]+/, "", s); sub(/[ \t]+$/, "", s); return s }
+'
+
+# 設定の adr.dir（ADR の置き場所）を読み、末尾の / を外して出力する。リポジトリのルートからの相対パスでなければ
+# （空・/ で始まる・.. を含む）終了コード 2 で止まる。ADR を作る側と探す側で、置き場所の扱いを食い違わせないため。
+# $(...) の中で呼ぶと、set -e のスクリプトはそのまま止まる。
+# 使い方: dir="$(dw_adr_dir <config.sh の出力の JSON>)"
+dw_adr_dir() {
+  local d
+  d="$(jq -r '[.adr.dir?][0] // ""' <<<"$1")" || dw_die "設定を読めません（config.sh で確かめてください）" 2
+  d="${d%/}"
+  case "$d" in
+    "" | /* | .. | ../* | */.. | */../*) dw_die "adr.dir はリポジトリのルートからの相対パスにしてください（/ で始めない・.. を使わない）: ${d}" 2 ;;
+  esac
+  printf '%s\n' "$d"
+}
+
 # レビューのサブエージェントに指定できるモデル（設定の review.model。Agent ツールの model が受け付ける別名）。
 # 設定が null ならサブエージェントはセッションと同じモデルで動く（設計書 §7）。source した側で使う
 # shellcheck disable=SC2034
