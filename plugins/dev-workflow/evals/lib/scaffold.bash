@@ -63,21 +63,17 @@ fake_gh() {
   printf '%s\t%s\t%s\n' "$1" "res/${n}" "${3:-0}" >>.fake-gh/routes
 }
 
-# Issue を1つ、gh issue view で読めるようにする。番号・#番号・URL のどれで指定しても、オプションが番号の前後どちらにあっても答える
-# （1 の応答が 10 などに当たらないよう、番号の後ろは空白か終わりに限る）。
+# Issue を1つ、gh issue view で読めるようにする。偽の gh は、Issue の指定（番号・#番号・URL）を番号にそろえ、
+# 番号を先頭に並べ直してから表を引くので、どの指定でも、オプションが番号の前後どちらにあっても答える。
 # 使い方: fake_issue <番号> <タイトル> <type ラベル> <本文>
 fake_issue() {
-  local json ref
+  local json
   json="$(jq -n --argjson n "$1" --arg t "$2" --arg l "$3" --arg b "$4" \
     '{number: $n, title: $t, body: $b, state: "OPEN", url: "https://github.com/me/demo/issues/\($n)",
       labels: [{name: $l}], assignees: [], parent: null, subIssues: {nodes: [], totalCount: 0},
       subIssuesSummary: {total: 0, completed: 0, percentCompleted: 0}}')"
-  for ref in "$1" "#$1" "https://github.com/me/demo/issues/$1"; do
-    fake_gh "issue view ${ref}" "$json"
-    fake_gh "issue view ${ref} *" "$json"
-    fake_gh "issue view * ${ref}" "$json"
-    fake_gh "issue view * ${ref} *" "$json"
-  done
+  fake_gh "issue view $1" "$json"
+  fake_gh "issue view $1 *" "$json"
 }
 
 # GitHub に書き込む gh の呼び出しに、成功したように答える。書き込んだかは、偽の gh が .fake-gh/writes に記録するので、
