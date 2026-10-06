@@ -547,3 +547,16 @@ auto_branch() {
   assert_equal "$(jq -c '[.context.issue, .context.type, .context.type_from]' <<<"$output")" '[null,"fix","branch"]'
   grep -q "#21 は PR なので、Issue は無いものとして判断します" "$TMP/err" || fail "$(cat "$TMP/err")"
 }
+
+@test "--auto は、ブランチ名の番号が 0 なら止まらずに Issue は無いものとし、017 なら 17 として読む" {
+  auto_branch fix/0-bug
+  run bash -c "${TEST_BASH:-bash} '$SCRIPTS/review-perspectives.sh' --auto 2>'$TMP/err'"
+  assert_success
+  assert_equal "$(jq -c '[.context.issue, .context.type, .context.type_from]' <<<"$output")" '[null,"fix","branch"]'
+  grep -q "ブランチ名の番号 0 は Issue の番号として使えないので、Issue は無いものとして判断します" "$TMP/err" || fail "$(cat "$TMP/err")"
+  git checkout -q -b fix/017-bug
+  fake_issue 17 '["feat"]'
+  run_script review-perspectives.sh --auto
+  assert_success
+  assert_equal "$(jq -c '[.context.issue, .context.type, .context.type_from]' <<<"$output")" '[17,"feat","issue"]'
+}

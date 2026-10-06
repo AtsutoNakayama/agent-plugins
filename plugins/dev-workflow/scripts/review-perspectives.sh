@@ -121,7 +121,13 @@ if [ "$auto" = true ]; then
     || dw_die "マージ先が見つかりません: ${target}（git fetch origin ${base_branch} で取得してください）" 2
   base="$(git merge-base "$target" HEAD)" || dw_die "${target} と HEAD の基点が見つかりません" 2
   branch="$(git symbolic-ref --short -q HEAD || true)"
-  IFS='|' read -r branch_type issue <<<"$(dw_parse_branch "$config" "$branch")"
+  IFS='|' read -r branch_type branch_issue <<<"$(dw_parse_branch "$config" "$branch")"
+  # ブランチ名の番号は、先頭の 0 をそろえる（017 は 17）。Issue の番号として使えない（0 など）ときは、止まらずに Issue は無いものとする
+  issue=""
+  if [ -n "$branch_issue" ] && ! issue="$(dw_issue_number --issue "$branch_issue" 2>/dev/null)"; then
+    dw_warn "ブランチ名の番号 ${branch_issue} は Issue の番号として使えないので、Issue は無いものとして判断します"
+    issue=""
+  fi
   if [ -n "$issue" ]; then
     err="$(mktemp)"
     if ! command -v gh >/dev/null 2>&1; then
