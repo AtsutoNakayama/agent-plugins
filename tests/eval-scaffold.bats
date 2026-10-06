@@ -30,6 +30,16 @@ scaffold() {
   assert_equal "$(git status --porcelain)" ""
 }
 
+@test "eval_repo は、PATH の gh が偽物でなければ、何も作らずに失敗する（run.sh を使わずに動かしたとき）" {
+  mkdir -p "$TMP/realbin"
+  printf '#!/bin/sh\necho real\n' >"$TMP/realbin/gh"
+  chmod +x "$TMP/realbin/gh"
+  PATH="$TMP/realbin:$PATH" scaffold eval_repo
+  assert_failure
+  assert_output --partial "tests/eval/run.sh"
+  [ ! -e .git ]
+}
+
 @test "eval_repo に渡した設定を config.json に書く" {
   scaffold "eval_repo '{\"project\": {\"owner\": \"me\", \"number\": 4}}'"
   assert_success

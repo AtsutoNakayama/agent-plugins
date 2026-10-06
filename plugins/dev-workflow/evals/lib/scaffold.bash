@@ -12,8 +12,17 @@
 # origin は作業用のディレクトリの中の bare のリポジトリ（.fake-remote.git）で、main を push してある（origin/main がある）。
 # 偽の gh の表（.fake-gh/）も作り、リポジトリの名前（me/demo）・gh のバージョン・ログインしている人（me）の応答を入れる。
 # .fake-gh/ と .fake-remote.git/ は .git/info/exclude で git の対象から外す。
+# PATH の gh が偽物（tests/eval/bin/gh）でなければ、何も作らずに失敗する。run.sh を使わずに claude plugin eval を動かすと、
+# Claude が本物の gh を使い、結果に意味が無くなるため（実行の中は HOME が空なので、本物の gh は認証が無く GitHub には届かない）。
 # 使い方: eval_repo [.claude/dev-workflow/config.json の中身（既定 {}）]
 eval_repo() {
+  case "$(command -v gh || true)" in
+    */tests/eval/bin/gh) ;;
+    *)
+      echo "error: PATH の gh が偽物（tests/eval/bin/gh）ではありません。eval は tests/eval/run.sh から実行してください" >&2
+      return 1
+      ;;
+  esac
   git init -q -b main .
   # 実行のたびに HOME が空になり、git の名前とメールアドレスが無いので、リポジトリに設定する（Claude のコミットにも使う）
   git config user.name "Eval"
