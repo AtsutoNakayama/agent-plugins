@@ -1,0 +1,3 @@
+#!/usr/bin/env bash
+# claude plugin eval で使う偽の gh。処理は fake-gh.sh にある（shellcheck の対象にするため、拡張子の付いたファイルに分けてある）
+exec "$BASH" "$(dirname "$0")/fake-gh.sh" "$@"
