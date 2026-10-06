@@ -18,7 +18,6 @@ Project からは外さず、Story Point も変えない。後からボードで
 
 - `${CLAUDE_PLUGIN_ROOT}/scripts/issue-cancel.sh`：理由のコメント、not planned か duplicate で閉じる操作、PR を閉じてリモートのブランチを削除する操作、親を閉じるときに開いている子孫を閉じる（`--sub-issues close`）か残す（`--sub-issues keep`）操作（`--help` で使い方）
 - `${CLAUDE_PLUGIN_ROOT}/scripts/cleanup.sh`：`--abandon` で、手元のワークツリーとブランチを削除する。失うものを `lost` に出す（`--help` で使い方）
-- `${CLAUDE_PLUGIN_ROOT}/scripts/main-root.sh`：メインのワークツリーのルート（`main_root`）。削除するワークツリーの外へ移る先
 
 ## 手順
 
@@ -56,7 +55,7 @@ Issue の番号のブランチを、手元とリモートの両方で探す。
 
 - `issue-cancel.sh --issue <番号> --reason "<コメント>" [--duplicate-of <元の番号>] [--branch <ブランチ>] [--sub-issues close] --dry-run`：リモートにブランチがあるときだけ `--branch` を付ける。開いている子孫があるときだけ `--sub-issues close` を付ける（付けないと「開いている子の Issue（…）があります」で止まる）。閉じる PR（`pull_requests`）と、リモートのブランチを削除するか（`remote_branch_deleted`）、閉じる子孫（`sub_issues.open`）が分かる
 - 着手中の子孫（手順2でブランチが見つかったもの）ごとに、同じコメントで `issue-cancel.sh --issue <子の番号> --reason "<コメント>" [--branch <子のブランチ>] [--sub-issues close] --dry-run`（その子孫の下にも開いている Issue があるときだけ `--sub-issues close` を付ける）と、手元にブランチかワークツリーがあれば下の `cleanup.sh` を実行し、子孫の PR・ブランチ・失うものを集める
-- `cleanup.sh --branch <ブランチ> --abandon --dry-run`：手元にブランチかワークツリーがあるときだけ。メインのワークツリーで実行する（Bash では `cd "$("${CLAUDE_PLUGIN_ROOT}/scripts/main-root.sh" | jq -r .main_root)"`。`git rev-parse --git-common-dir` の親は、サブモジュールなどではメインのワークツリーではないので使わない）。消すもの（`actions`）と失うもの（`lost`）が分かる。「未コミットの変更があります」で止まったら、メインのワークツリーでそのブランチを使っていて変更がある。ユーザーにコミットするか片付けてもらってから、もう一度確かめる
+- `cleanup.sh --branch <ブランチ> --abandon --dry-run`：手元にブランチかワークツリーがあるときだけ。メインのワークツリーで実行する（`cd "$(git rev-parse --git-common-dir)/.."`）。消すもの（`actions`）と失うもの（`lost`）が分かる。「未コミットの変更があります」で止まったら、メインのワークツリーでそのブランチを使っていて変更がある。ユーザーにコミットするか片付けてもらってから、もう一度確かめる
 
 ### 5. 確認を取る
 
@@ -75,7 +74,7 @@ Issue の番号のブランチを、手元とリモートの両方で探す。
 手順5で承認されたら、Issue → PR とリモートのブランチ → 手元の順に行う。「子も一緒に取りやめる」なら、先に着手中の子孫ごとに、手順4と同じ引数で下の1と2を行ってから、親で1と2を行う（親を閉じるときに、残りの開いている子孫を閉じる）。
 
 1. 手順4と同じ引数で、`--dry-run` を付けずに `issue-cancel.sh` を実行する（「Issue だけ閉じる」なら `--branch` を付けない。「親だけ取りやめる」なら、`--sub-issues close` の代わりに `--sub-issues keep` を付ける）
-2. 「Issue だけ閉じる」でなく、手元にブランチかワークツリーがあれば、メインのワークツリー（手順4と同じく `main-root.sh` で求める）で `cleanup.sh --branch <ブランチ> --abandon` を実行する。削除するワークツリーの中にいたままだと、削除した後に今の場所が無くなるので、先に移る
+2. 「Issue だけ閉じる」でなく、手元にブランチかワークツリーがあれば、メインのワークツリーで `cleanup.sh --branch <ブランチ> --abandon` を実行する。削除するワークツリーの中にいたままだと、削除した後に今の場所が無くなるので、先に移る
 
 失敗したら、標準エラーの1行のメッセージをそのまま伝える。どのスクリプトも何度実行しても同じ結果になるので、原因を片付けた後に同じ引数でもう一度実行すれば、続きから進む。
 

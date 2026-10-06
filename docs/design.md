@@ -336,7 +336,6 @@ Todo が増えたとき、どれから着手するか、同時に進めてよい
 | `branch-status.sh` | 作業用のブランチの、base_branch に対する遅れ・先行、追跡しているファイルの未コミットの変更（未追跡のファイルは除く）、origin のブランチとのずれ、開いている PR のマージ状態（`merge_state`）を調べる。変更はしない（origin からの取得だけ行う） |
 | `merge-group-check.sh` | 必須のチェックを出すワークフローが、マージキューの merge_group のイベントでも動くかを確かめる（base_branch のワークフローを API で読み、チェックの名前とジョブを突き合わせ、ジョブの `if:` で `merge_group` を除いていないかも見る）。何も変えない。`setup-repo.sh` と `doctor.sh` が使う |
 | `cleanup.sh` | マージを確認し、ワークツリーとブランチを削除し、main を最新にし、PR が閉じる Issue の状態（`issues`）を出す。未コミットの変更や git が無視するファイルがあれば、何も消さずに止まる（無視するファイルは `--remove-ignored` で消せる）。`--abandon` では、マージの確認・main の更新・Issue の状態の確認を飛ばし、失うものを一覧にして削除する |
-| `main-root.sh` | メインのワークツリーのルート（`main_root`）を出す。task-finish・task-cancel が、削除するワークツリーの外へ移る先に使う（`lib/common.sh` の `dw_main_root`。サブモジュールや bare リポジトリ＋ワークツリーの配置でも、確かめて求める） |
 
 | 初期設定用（`plugins/dev-workflow/scripts/setup/`） | 役割 |
 |---|---|
