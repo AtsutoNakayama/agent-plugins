@@ -1,0 +1,154 @@
+#!/usr/bin/env bats
+
+load test_helper
+
+# ADR を1つ書く。使い方: write_adr <パス> <front matter の行（改行区切り。空なら front matter なし）> [見出し]
+write_adr() {
+  mkdir -p "$(dirname "$1")"
+  {
+    if [ -n "$2" ]; then
+      printf -- '---\n%s\n---\n\n' "$2"
+    fi
+    if [ -n "${3:-}" ]; then
+      printf '# %s\n\n本文\n' "$3"
+    fi
+  } >"$1"
+}
+
+@test "置き場所の ADR を、ファイル名の順に path・issue・status・title で出す" {
+  write_adr docs/adr/000162-b.md "$(printf 'status: "accepted"\ndate: 2026-10-06\nissue: 162')" "ワークツリーを作らない"
+  write_adr docs/adr/000001-a.md "$(printf 'status: proposed\nissue: 1')" "プラグインを1つにまとめる"
+  run_script adr-list.sh
+  assert_success
+  assert_equal "$(jq -c '[.dir, .suggest, .issue]' <<<"$output")" '["docs/adr",true,null]'
+  assert_equal "$(jq -c '.adrs' <<<"$output")" \
+    '[{"path":"docs/adr/000001-a.md","issue":1,"status":"proposed","title":"プラグインを1つにまとめる"},{"path":"docs/adr/000162-b.md","issue":162,"status":"accepted","title":"ワークツリーを作らない"}]'
+}
+
+@test "--issue で、front matter の issue が同じ ADR だけを出す（ファイル名ではなく front matter で見る）" {
+  write_adr docs/adr/000151-first.md "issue: 151" "一つ目"
+  write_adr docs/adr/000151-second.md "issue: 151" "二つ目"
+  write_adr docs/adr/000015-other.md "issue: 15" "別の Issue"
+  # 過去の判断を後から残した ADR は、ファイル名と issue が同じとは限らない
+  write_adr docs/adr/000200-late.md "issue: 1510" "桁が違う"
+  write_adr docs/adr/000300-backfill.md "issue: 151" "後から残した判断"
+  run_script adr-list.sh --issue "#0151"
+  assert_success
+  assert_equal "$(jq -c '.issue' <<<"$output")" 151
+  assert_equal "$(jq -c '[.adrs[].path]' <<<"$output")" \
+    '["docs/adr/000151-first.md","docs/adr/000151-second.md","docs/adr/000300-backfill.md"]'
+}
+
+@test "--issue に当たる ADR が無ければ adrs は空" {
+  write_adr docs/adr/000001-a.md "issue: 1" "a"
+  run_script adr-list.sh --issue 151
+  assert_success
+  assert_equal "$(jq -c '.adrs' <<<"$output")" '[]'
+}
+
+@test "置き場所が無ければ adrs は空" {
+  run_script adr-list.sh --issue 151
+  assert_success
+  assert_equal "$(jq -c '[.dir, .adrs]' <<<"$output")" '["docs/adr",[]]'
+}
+
+@test "issue の値の引用符・# と先頭の 0 は外し、数字でなければ null にする" {
+  write_adr docs/adr/a.md "issue: \"#007\"" "引用符と #"
+  write_adr docs/adr/b.md "issue: '7'" "一重引用符"
+  write_adr docs/adr/c.md "issue: {この判断をした Issue の番号。例：107}" "テンプレートのまま"
+  write_adr docs/adr/d.md "issue: 0" "0"
+  write_adr docs/adr/e.md "status: accepted" "issue が無い"
+  run_script adr-list.sh
+  assert_success
+  assert_equal "$(jq -c '[.adrs[].issue]' <<<"$output")" '[7,7,null,null,null]'
+  run_script adr-list.sh --issue 7
+  assert_success
+  assert_equal "$(jq -c '[.adrs[].path]' <<<"$output")" '["docs/adr/a.md","docs/adr/b.md"]'
+}
+
+@test "front matter の外の issue: は読まず、front matter の中の「# 」の行は見出しにしない" {
+  # full のテンプレートは、front matter の中に「# 以下は任意のメタデータです。…」の行がある
+  write_adr docs/adr/a.md "$(printf '# 以下は任意のメタデータです。\nstatus: accepted')" "見出し"
+  printf 'issue: 9\n' >>docs/adr/a.md
+  run_script adr-list.sh
+  assert_success
+  assert_equal "$(jq -c '.adrs' <<<"$output")" '[{"path":"docs/adr/a.md","issue":null,"status":"accepted","title":"見出し"}]'
+}
+
+@test "front matter も見出しも無いファイル（README など）は、issue・status・title を null にして出す" {
+  write_adr docs/adr/README.md "" ""
+  echo "ADR の置き場所" >docs/adr/README.md
+  : >docs/adr/empty.md
+  run_script adr-list.sh
+  assert_success
+  # 並びは文字の順（大文字が先）で、ロケールに左右されない
+  assert_equal "$(jq -c '.adrs' <<<"$output")" \
+    '[{"path":"docs/adr/README.md","issue":null,"status":null,"title":null},{"path":"docs/adr/empty.md","issue":null,"status":null,"title":null}]'
+}
+
+@test "置き場所の下のディレクトリと、.md 以外のファイルは読まない" {
+  write_adr docs/adr/sub/000151-x.md "issue: 151" "下のディレクトリ"
+  write_adr docs/adr/000151-x.txt "issue: 151" "md ではない"
+  run_script adr-list.sh --issue 151
+  assert_success
+  assert_equal "$(jq -c '.adrs' <<<"$output")" '[]'
+}
+
+@test "置き場所を adr.dir で変えられる" {
+  echo '{"adr": {"dir": "doc/decisions/"}}' >.claude/dev-workflow/config.json
+  write_adr doc/decisions/000151-x.md "issue: 151" "x"
+  write_adr docs/adr/000151-y.md "issue: 151" "y"
+  run_script adr-list.sh --issue 151
+  assert_success
+  assert_equal "$(jq -c '[.dir, [.adrs[].path]]' <<<"$output")" '["doc/decisions",["doc/decisions/000151-x.md"]]'
+}
+
+@test "adr.dir が絶対パスや .. を含むときは止まる" {
+  for d in /tmp/adr .. ../adr docs/.. docs/../adr; do
+    echo "{\"adr\": {\"dir\": \"$d\"}}" >.claude/dev-workflow/config.json
+    run_script adr-list.sh
+    assert_failure 2
+    assert_output --partial "adr.dir"
+  done
+}
+
+@test "suggest は設定の adr.suggest。書いていない・null なら true、false なら false" {
+  run_script adr-list.sh
+  assert_success
+  assert_equal "$(jq -c .suggest <<<"$output")" true
+  echo '{"adr": {"suggest": null}}' >.claude/dev-workflow/config.json
+  run_script adr-list.sh
+  assert_success
+  assert_equal "$(jq -c .suggest <<<"$output")" true
+  echo '{"adr": {"suggest": false}}' >.claude/dev-workflow/config.json
+  run_script adr-list.sh
+  assert_success
+  assert_equal "$(jq -c '[.suggest, .dir]' <<<"$output")" '[false,"docs/adr"]'
+}
+
+@test "adr.suggest が true・false でなければ止まる" {
+  for v in '"no"' 0 '[]'; do
+    echo "{\"adr\": {\"suggest\": $v}}" >.claude/dev-workflow/config.json
+    run_script adr-list.sh
+    assert_failure 2
+    assert_output --partial "adr.suggest は true か false"
+  done
+}
+
+@test "--issue に番号でない値を渡すと止まる" {
+  for v in abc 0 "#"; do
+    run_script adr-list.sh --issue "$v"
+    assert_failure 64
+  done
+  run_script adr-list.sh --issue
+  assert_failure 64
+  run_script adr-list.sh --foo
+  assert_failure 64
+}
+
+@test "git のリポジトリの外では止まる" {
+  cd "$TMP"
+  run_script adr-list.sh
+  assert_failure 2
+  assert_output --partial "リポジトリの中ではありません"
+}

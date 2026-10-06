@@ -37,7 +37,8 @@
     "scope_required": false
   },
   "adr": {
-    "dir": "docs/adr"
+    "dir": "docs/adr",
+    "suggest": true
   },
   "pr": {
     "title_pattern": "^(feat|fix|refactor|perf|test|docs|build|ci|chore|style|revert)(\\([a-z0-9-]+\\))?!?: .+",
