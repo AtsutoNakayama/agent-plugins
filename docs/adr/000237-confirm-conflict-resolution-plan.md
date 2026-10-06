@@ -45,3 +45,4 @@ branch-update は、衝突したとき、両側の意図を両立できると AI
 ## 補足
 
 * 出典：Issue #237（https://github.com/nakayama-labs/agent-plugins/issues/237）、PR #236（https://github.com/nakayama-labs/agent-plugins/pull/236）、設計書 §8
+* 関係する ADR：[000064](000064-confirmation-policy.md) の確認の線引き（AI が決めた内容を GitHub に残すときと、スクリプトが守っていない取り消しにくい操作の前だけ確認を取る）を、branch-update の衝突の直し方についてだけ変える。000064 は置き換えず、書き換えもしない。同じく 000064 の線引きを一部だけ変えた例外に [000162](000162-start-without-worktree.md) がある
