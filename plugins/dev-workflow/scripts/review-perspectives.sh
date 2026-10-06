@@ -133,22 +133,18 @@ if [ "$auto" = true ]; then
     err="$(mktemp)"
     if ! command -v gh >/dev/null 2>&1; then
       dw_warn "gh が無いので Issue #${issue} を読めません。type はブランチ名から決めます"
-    elif labels="$(gh issue view "$issue" --json url,labels 2>"$err")"; then
-      # gh issue view は PR の番号でも成功するので、URL で見分ける（PR のラベルで type を決めない）
-      case "$(jq -r .url <<<"$labels")" in
-        */pull/*)
+    elif labels="$(dw_try_read_issue "$issue" labels 2>"$err")"; then
+      type="$(jq -r --argjson t "$(jq -c .labels.types <<<"$config")" \
+        '[.labels[].name | select(. as $n | $t | index($n))] | if length == 1 then .[0] else "" end' <<<"$labels")"
+      [ -z "$type" ] || type_from=issue
+    else
+      # PR の番号・無い番号なら Issue は無いものとし、読めなければ番号は使う（dw_try_read_issue の終了コード）
+      case "$?" in
+        2)
           dw_warn "#${issue} は PR なので、Issue は無いものとして判断します"
           issue=""
           ;;
-        *)
-          type="$(jq -r --argjson t "$(jq -c .labels.types <<<"$config")" \
-            '[.labels[].name | select(. as $n | $t | index($n))] | if length == 1 then .[0] else "" end' <<<"$labels")"
-          [ -z "$type" ] || type_from=issue
-          ;;
-      esac
-    else
-      case "$(cat "$err")" in
-        *NOT_FOUND* | *"Could not resolve to"*)
+        3)
           dw_warn "Issue #${issue} が見つからないので、Issue は無いものとして判断します"
           issue=""
           ;;

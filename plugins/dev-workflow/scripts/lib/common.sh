@@ -44,26 +44,53 @@ dw_number() {
 # Issue の番号の引数を受け取る（dw_number）。使い方: issue="$(dw_issue_number <オプション名> <値>)"
 dw_issue_number() { dw_number "$1" "$2" Issue; }
 
-# Issue を読んで、指定した項目と url の JSON を出力する。gh issue view は PR の番号でも成功するので、URL で PR を見分けて止まる。
-# PR の番号・無い番号なら終了コード 2、ほかの失敗（通信・認証など）は 1 で止まる。$(...) の中で呼ぶと、set -e のスクリプトはそのまま止まる。
-# 使い方: json="$(dw_read_issue <番号> <JSON の項目（カンマ区切り。url は自動で足す）> [見つからないときの名前（既定: Issue）])"
-dw_read_issue() {
-  local json err name="${3:-Issue}"
+# Issue を読んで、種類を終了コードで返す（止まらない）。gh issue view は PR の番号でも成功するので、URL で PR を見分ける。
+#   0: Issue（指定した項目と url の JSON を出力する）  2: PR  3: 無い  1: 読めない（gh のエラーを標準エラーに出す）
+# 使い方: json="$(dw_try_read_issue <番号> <JSON の項目（カンマ区切り。url は自動で足す）>)" || rc=$?
+dw_try_read_issue() {
+  local json err
   err="$(mktemp)"
   if ! json="$(gh issue view "$1" --json "url,$2" 2>"$err")"; then
     json="$(cat "$err")"
     rm -f "$err"
     case "$json" in
-      *"Could not resolve to"* | *NOT_FOUND*)
-        dw_die "${name} #${1} が $(gh repo view --json nameWithOwner -q .nameWithOwner 2>/dev/null || echo 'このリポジトリ') にありません" 2 ;;
-      *) dw_die "${name} #${1} を読めません: $json" ;;
+      *"Could not resolve to"* | *NOT_FOUND*) return 3 ;;
     esac
+    printf '%s\n' "$json" >&2
+    return 1
   fi
   rm -f "$err"
   case "$(jq -r .url <<<"$json")" in
-    */pull/*) dw_die "#${1} は PR です。Issue の番号を指定してください" 2 ;;
+    */pull/*) return 2 ;;
   esac
   printf '%s\n' "$json"
+}
+
+# Issue を読んで、指定した項目と url の JSON を出力する（dw_try_read_issue）。PR の番号・無い番号なら終了コード 2、
+# ほかの失敗（通信・認証など）は 1 で止まる。$(...) の中で呼ぶと、set -e のスクリプトはそのまま止まる。
+# 使い方: json="$(dw_read_issue <番号> <JSON の項目（カンマ区切り。url は自動で足す）> [見つからないときの名前（既定: Issue）])"
+dw_read_issue() {
+  local json err rc=0 name="${3:-Issue}"
+  err="$(mktemp)"
+  json="$(dw_try_read_issue "$1" "$2" 2>"$err")" || rc=$?
+  case "$rc" in
+    0) rm -f "$err"; printf '%s\n' "$json" ;;
+    2)
+      rm -f "$err"
+      # どの値が PR の番号だったかを示す（既定の Issue のときは、番号だけで分かる）
+      if [ "$name" = Issue ]; then dw_die "#${1} は PR です。Issue の番号を指定してください" 2; fi
+      dw_die "${name} #${1} は PR です。Issue の番号を指定してください" 2
+      ;;
+    3)
+      rm -f "$err"
+      dw_die "${name} #${1} が $(gh repo view --json nameWithOwner -q .nameWithOwner 2>/dev/null || echo 'このリポジトリ') にありません" 2
+      ;;
+    *)
+      json="$(cat "$err")"
+      rm -f "$err"
+      dw_die "${name} #${1} を読めません: $json"
+      ;;
+  esac
 }
 
 # Issue の作業のブランチを名前で探し、「名前<TAB>手元にあるか<TAB>origin にあるか<TAB>確かか」（どれも true か false）を
