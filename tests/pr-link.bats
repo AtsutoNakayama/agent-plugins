@@ -439,6 +439,15 @@ EOF"
   shows_wt "(pushd ../wt && git push)"
 }
 
+@test "外側の場所をたどる前に積んだ場所へ、( ) の中で戻ったときは、移った先が分からないので何も出さない" {
+  make_wt
+  # 外側は wt に残るので cwd は wt だが、( ) の中の popd は、実行する前の場所（分からない）へ戻る
+  run_hook "pushd $TMP/wt && (popd && git push)" "" "$TMP/wt"
+  assert_success
+  assert_output ""
+  [ "$(called issue-view)" -eq 0 ]
+}
+
 @test "短いオプションをまとめた git push -nu も dry-run とみなし、何も出さない" {
   silent "git push -nu origin feat/17-demo" "git push -vn" "git push --porcelain -n"
   shows "git push -u origin feat/17-demo" "PR を作る:"

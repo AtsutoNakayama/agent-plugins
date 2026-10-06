@@ -55,10 +55,10 @@ gc_expand_home() {
 }
 
 # 基準のディレクトリからの相対パスを絶対パスにする（先頭の ~・$HOME は gc_expand_home で展開する）。分からなければ空を出力する。
-# 使い方: gc_resolve_dir <基準のディレクトリ（空なら不明）> <パス>
+# 使い方: gc_resolve_dir <基準のディレクトリ（空なら不明）> <パス> [no-tilde]
 gc_resolve_dir() {
   local p
-  p="$(gc_expand_home "$2")"
+  p="$(gc_expand_home "$2" "${3:-}")"
   case "$p" in
     /*) dw_abs_dir / "$p" || true ;;
     *) [ -z "$1" ] || dw_abs_dir "$1" "$p" || true ;;
@@ -372,11 +372,16 @@ gc_commit_args() {
 # --- コマンドごとの解析 -------------------------------------------------------------
 
 # cd で移る。after のときの外側の相対パスの扱いは、先頭のコメント。gc_scan の中から呼ぶ。
-# 使い方: gc_cd <行き先（空なら $HOME、- なら前の場所）>
+# 引数が無ければ $HOME へ移り、空の引数（cd ""）では移らない（シェルと同じ）。
+# 使い方: gc_cd [<行き先（- なら前の場所）>]
 gc_cd() {
-  local target="$1" to
+  local target="${1:-}" to
+  if [ $# -eq 0 ]; then
+    target="$HOME"
+  elif [ -z "$target" ]; then
+    return 0
+  fi
   case "$target" in
-    '') to="$(gc_resolve_dir "" "$HOME")" ;;
     -) to="" ;;
     *)
       # 実行した後のディレクトリから始めたときは、外側の相対パスへの cd は、絶対パスへ移るまでたどらない（先頭のコメント）
@@ -418,8 +423,13 @@ gc_cur_entry() {
 gc_goto() {
   case "$1" in
     p*)
-      gc_dir="${1#p}"
-      [ "$dn" -gt 0 ] || anchored=false
+      if [ "$dn" -gt 0 ]; then
+        # ( ) の中で戻っても、外側は戻っていないので、cwd（外側の実行した後の場所）は戻った先ではない
+        gc_dir=""
+      else
+        gc_dir="${1#p}"
+        anchored=false
+      fi
       ;;
     r*) gc_cd "${1#r}" ;;
     *)
@@ -477,6 +487,8 @@ gc_pushd() {
     esac
   done
   [ $# -le 1 ] || return 0
+  # 引数の無い pushd -n は、何もしない（シェルと同じ）
+  [ $# -eq 1 ] || ! $nocd || return 0
   if [ $# -eq 1 ]; then
     case "$1" in
       [+-][0-9]*) ;;
@@ -488,6 +500,8 @@ gc_pushd() {
             *) pstack="r$1$nl$pstack" ;;
           esac
         else
+          # pushd "" は失敗する
+          [ -n "$1" ] || return 0
           gc_cur_entry
           pstack="$entry$nl$pstack"
           gc_cd "$1"
@@ -565,14 +579,81 @@ gc_dirs() {
   done
 }
 
+# env -S の値を、env と同じく語に分けて、配列 gc_split に入れる。空白で区切り、'…' の中はそのまま読み、
+# "…" の中と外では、\ の次の文字をそのまま読む（\_ は "…" の外では区切り、中では空白。\t はタブ、\n は改行）。
+# ${VAR} などは展開しない
+# 使い方: gc_split_s <文字列>
+gc_split=()
+gc_split_s() {
+  local s="$1" i=0 c q="" w="" inw=false
+  gc_split=()
+  while [ "$i" -lt "${#s}" ]; do
+    c="${s:i:1}"
+    if [ "$q" = "'" ]; then
+      if [ "$c" = "'" ]; then q=""; else w+="$c"; fi
+    elif [ "$c" = \\ ]; then
+      i=$((i + 1))
+      case "${s:i:1}" in
+        _)
+          # "…" の外の \_ は区切り、中では空白
+          if [ -n "$q" ]; then
+            w+=" "
+          elif $inw; then
+            gc_split+=("$w")
+            w="" inw=false
+          fi
+          i=$((i + 1))
+          continue
+          ;;
+        t) w+="$tab" ;;
+        n) w+="$nl" ;;
+        *) w+="${s:i:1}" ;;
+      esac
+      inw=true
+    elif [ -n "$q" ]; then
+      if [ "$c" = '"' ]; then q=""; else w+="$c"; fi
+    else
+      case "$c" in
+        ' ' | "$tab" | "$nl")
+          if $inw; then
+            gc_split+=("$w")
+            w="" inw=false
+          fi
+          ;;
+        "'" | '"')
+          q="$c"
+          inw=true
+          ;;
+        *)
+          w+="$c"
+          inw=true
+          ;;
+      esac
+    fi
+    i=$((i + 1))
+  done
+  ! $inw || gc_split+=("$w")
+}
+
+# 操作の対象を変える環境変数（gc_genv）から、<名前> の変数を除く（env -u <名前>）
+# 使い方: gc_unset_genv <名前>
+gc_unset_genv() {
+  local e kept=()
+  for e in ${gc_genv[@]+"${gc_genv[@]}"}; do
+    [ "${e%%=*}" = "$1" ] || kept+=("$e")
+  done
+  gc_genv=(${kept[@]+"${kept[@]}"})
+}
+
 # 1つのコマンド（単語の並び）を調べる。cd・pushd・popd・dirs なら場所とスタックを変え、git ならコールバックを呼ぶ。
 # gc_scan の中から呼ぶ。
 # 使い方: gc_command <単語>...
 gc_command() {
-  local cdir="" has_cdir=false envbase ext=false k sw=() split=()
+  local cdir="" has_cdir=false envbase ext=false k split=()
   # 先頭の環境変数の代入（FOO=1 git push）、前に付くコマンドとそのオプション、予約語（then git push）を飛ばす。
   # 操作の対象を変える代入（GIT_DIR など）は、対象のリポジトリを求めるときに使う。
-  # 外部のコマンド（env・nohup・timeout・nice・exec）として実行する cd などは、シェルの場所を変えない（ext）
+  # 外部のコマンド（env・nohup・timeout・nice・exec）として実行する cd などは、シェルの場所を変えない（ext）。
+  # builtin・command・time の後ろの cd などは、シェルの組み込みのコマンドとして実行する
   gc_genv=()
   while [ $# -gt 0 ]; do
     case "$1" in
@@ -585,6 +666,7 @@ gc_command() {
         gc_skip_opts "" "" "$@"
         shift "$gc_nopt"
         ;;
+      builtin) shift ;;
       command)
         shift
         gc_skip_opts "" "" "$@"
@@ -622,23 +704,33 @@ gc_command() {
         gc_skip_opts uCSa "--unset= --chdir= --split-string= --argv0= --ignore-environment" "$@"
         shift "$gc_nopt"
         # env の後ろの - は -i と同じ
-        [ "${1:-}" != - ] || shift
+        if [ "${1:-}" = - ]; then
+          gc_genv=()
+          shift
+        fi
         if $has_cdir; then envbase="$cdir"; else envbase="$gc_dir"; fi
         split=()
         k=0
         while [ "$k" -lt "${#gc_optn[@]}" ]; do
           case "${gc_optn[k]}" in
-            # -C <dir> は、このコマンドだけを、その場所で実行する（git -C と同じに扱う）
+            # -C <dir> は、このコマンドだけを、その場所で実行する（git -C と同じに扱う）。
+            # 値をくっつけて書いたとき（-C~/x・--chdir=~/x）は、シェルは ~ を展開しない
             -C | --chdir)
-              cdir="$(gc_resolve_dir "$envbase" "${gc_optv[k]}")"
+              if "${gc_opta[k]}"; then
+                cdir="$(gc_resolve_dir "$envbase" "${gc_optv[k]}" no-tilde)"
+              else
+                cdir="$(gc_resolve_dir "$envbase" "${gc_optv[k]}")"
+              fi
               has_cdir=true
               ;;
-            # -S <文字列> は、値を空白で分けた語を、続きの引数の前に置く（引用符・エスケープ・変数は解かない）
+            # -S <文字列> は、値を env と同じく語に分けて、続きの引数の前に置く
             -S | --split-string)
-              sw=()
-              IFS=" $tab$nl" read -r -d '' -a sw <<<"${gc_optv[k]}" || true
-              split+=(${sw[@]+"${sw[@]}"})
+              gc_split_s "${gc_optv[k]}"
+              split+=(${gc_split[@]+"${gc_split[@]}"})
               ;;
+            # -i は環境変数をすべて消し、-u <名前> はその変数を消すので、前の代入（GIT_DIR=x env -i git）は効かない
+            -i | --ignore-environment) gc_genv=() ;;
+            -u | --unset) gc_unset_genv "${gc_optv[k]}" ;;
           esac
           k=$((k + 1))
         done
@@ -665,7 +757,7 @@ gc_command() {
           *) break ;;
         esac
       done
-      gc_cd "${1:-}"
+      if [ $# -gt 0 ]; then gc_cd "$1"; else gc_cd; fi
       return 0
       ;;
     pushd)

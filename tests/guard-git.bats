@@ -625,6 +625,10 @@ silent() {
   # popd +N は、その場所を取り除くだけで、+0（今の場所）でなければ移らない
   allowed "pushd $TMP/wt && popd +1 && git commit -m x" "pushd $TMP/wt && pushd $TMP && popd -0 && popd && git commit -m x"
   denied "main の上ではコミットしません" "pushd $TMP/wt && popd -1 && git commit -m x"
+  # 引数の無い pushd -n は何もしない
+  denied "main の上ではコミットしません" "pushd $TMP/wt && pushd -n && popd && git commit -m x"
+  # pushd "" は失敗し、pushd -n "" で積んだ場所へ戻っても移らない
+  denied "main の上ではコミットしません" "pushd \"\"; git commit -m x" "pushd -n \"\" && popd && git commit -m x"
   # pushd -n +N は、今の場所を残したまま、積んだ場所だけを回す
   denied "main の上ではコミットしません" "pushd -n $TMP/wt && pushd -n $TMP && pushd -n +1 && git commit -m x"
   allowed "pushd -n $TMP/wt && pushd -n $TMP && pushd -n +1 && popd && git commit -m x"
@@ -651,6 +655,35 @@ silent() {
   allowed "command -v git push -f" "command -pV git push -f"
 }
 
+@test "env -S の値は、env と同じく引用符とエスケープを解いて分ける" {
+  git checkout -q -b feat/21-x
+  denied "main へは push しません" "env -S \"git push origin 'main'\"" "env -S 'git push origin \"main\"'" \
+    "env -S 'git push origin ma\\in'" "env -S 'git push \"origin\" \"feat/21-x:main\"'"
+  # "…" の外の \_ は区切り、中では空白
+  denied "強制 push" "env -S 'git\\_push\\_-f'"
+  allowed "env -S 'git push origin \"x\\_main\"'"
+}
+
+@test "env -i・env -・env -u で消した GIT_DIR などは、対象を求めるときに使わない" {
+  git init -q -b main "$TMP/other"
+  # 導入していないリポジトリ（other）を指した GIT_DIR を消すので、今のディレクトリ（main の上）で判断する
+  denied "main の上ではコミットしません" "GIT_DIR=$TMP/other/.git env -i git commit -m x" \
+    "GIT_DIR=$TMP/other/.git env - git commit -m x" "GIT_DIR=$TMP/other/.git env -u GIT_DIR git commit -m x" \
+    "GIT_DIR=$TMP/other/.git env --unset=GIT_DIR git commit -m x" "GIT_DIR=$TMP/other/.git env --ignore-env git commit -m x"
+  # 消した後の代入と、ほかの変数を消すときは、GIT_DIR が効く
+  silent "env -i GIT_DIR=$TMP/other/.git git commit -m x" "GIT_DIR=$TMP/other/.git env -u FOO git commit -m x"
+}
+
+@test "env -C の値をくっつけて書いたとき（-C~/x・--chdir=~/x）は、シェルと同じく ~ を展開しない" {
+  export HOME="$TMP/home"
+  # 文字どおりの ~/repo（$TMP/sub/~ → $TMP）は main の上のリポジトリ、展開した ~/repo は作業用のブランチのワークツリー
+  mkdir -p "$TMP/sub"
+  ln -s "$TMP" "$TMP/sub/~"
+  git worktree add -q -b feat/21-x "$TMP/home/repo"
+  denied "main の上ではコミットしません" "cd $TMP/sub && env -C~/repo git commit -m x" "cd $TMP/sub && env --chdir=~/repo git commit -m x"
+  allowed "cd $TMP/sub && env -C ~/repo git commit -m x" "cd $TMP/sub && env --chdir ~/repo git commit -m x"
+}
+
 @test "env -C <dir> で移った先で、そのコマンドの git を判断する" {
   git worktree add -q -b feat/21-x "$TMP/wt"
   allowed "env -C $TMP/wt git commit -m x" "env -C ../wt git commit -m x" "env --chdir=$TMP/wt git commit -m x" \
@@ -663,6 +696,11 @@ silent() {
   git worktree add -q -b feat/21-x "$TMP/wt"
   denied "main の上ではコミットしません" "env cd $TMP/wt; git commit -m x" "nohup pushd $TMP/wt; git commit -m x" \
     "timeout 5 cd $TMP/wt; git commit -m x"
-  # command・time は、シェルの組み込みの cd を実行する
-  allowed "command cd $TMP/wt && git commit -m x" "time cd $TMP/wt && git commit -m x"
+  # builtin・command・time は、シェルの組み込みの cd を実行する
+  allowed "command cd $TMP/wt && git commit -m x" "time cd $TMP/wt && git commit -m x" "builtin cd $TMP/wt && git commit -m x"
+  denied "main の上ではコミットしません" "cd $TMP/wt && builtin cd $REPO && git commit -m x"
+}
+
+@test "cd \"\" は移らない（引数の無い cd だけが \$HOME へ移る）" {
+  denied "main の上ではコミットしません" "cd \"\"; git commit -m x" "cd ''; git commit -m x"
 }
