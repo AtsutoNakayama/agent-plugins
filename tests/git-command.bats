@@ -56,3 +56,12 @@ run_gc() {
   assert_success
   assert_output "$(printf '[a]\n[b]')"
 }
+
+@test "gc_args は、コールバックの中で gc_args を呼んでも、読んだ語の数（gc_argn）を壊さない" {
+  run_gc 'cb() { gc_skip_opts "" "" -q x; }' eval 'gc_args cb "" "" a b c; echo "$gc_argn"'
+  assert_success
+  assert_output 3
+  # 途中でやめたときは、やめた語を数えない
+  run_gc 'cb() { gc_skip_opts "" "" -q x; [ "$2" != b ] || gc_stop=true; }' eval 'gc_args cb "" "" a b c; echo "$gc_argn"'
+  assert_output 1
+}
