@@ -41,7 +41,11 @@ jobs:
           sudo apt-get install -y -q bubblewrap socat
           sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
       - name: Claude Code
-        run: npm install -g @anthropic-ai/claude-code
+        # 更新で eval のオプションや採点が変わり、同じモデル・同じケースでも結果を比べられなくなったり、動かなくなったり
+        # しないように、バージョンを固定する。上げるときは手元で tests/eval/run.sh が通ることを確かめる
+        env:
+          CLAUDE_CODE_VERSION: 2.1.291
+        run: npm install -g "@anthropic-ai/claude-code@${CLAUDE_CODE_VERSION}"
       - name: eval
         env:
           CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
