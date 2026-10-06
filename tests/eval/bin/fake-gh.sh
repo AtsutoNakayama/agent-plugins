@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
-# claude plugin eval のケースで使う偽の gh（同じディレクトリの gh から呼ぶ）。GitHub に触れずに、ケースの準備のスクリプト
+# claude plugin eval のケースで使う偽の gh（同じディレクトリの gh は、このファイルへのシンボリックリンク。
+# shellcheck の対象にするため、本体は拡張子の付いたこのファイルにしてある）。GitHub に触れずに、ケースの準備のスクリプト
 # （plugins/dev-workflow/evals/lib/scaffold.bash の fake_gh）が作業用のディレクトリに置いた表で答える。
 # tests/eval/run.sh が、このディレクトリを PATH の先頭に足す。eval のサンドボックスの中からは、PATH にあるディレクトリしか
-# 見えないので、この処理も gh と同じディレクトリに置く。
+# 見えないので、本体も gh と同じディレクトリに置く。
 #
 # 表と記録は、今のディレクトリから上に辿って最初に見つかる .fake-gh/ に置く（ワークツリーの中で呼ばれても、作業用のリポジトリのものを使う）
 #   .fake-gh/routes  1行に1つ「<パターン>\t<応答のファイル>\t<終了コード>」。パターンは bash の case のパターンで、
