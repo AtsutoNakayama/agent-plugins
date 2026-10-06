@@ -93,47 +93,66 @@ dw_read_issue() {
   esac
 }
 
-# Issue の作業のブランチを名前で探し、「名前<TAB>手元にあるか<TAB>origin にあるか<TAB>確かか」（どれも true か false）を
+# Issue の作業のブランチを探し、「名前<TAB>手元にあるか<TAB>origin にあるか<TAB>確かか」（どれも true か false）を
 # 1行ずつ出力する。2つの段階に分ける（片付けで消してよいブランチと、作業があるかもしれないブランチは別のものなので）。
 #   - 確か（true）：branch.pattern に合い（type は labels.types のどれか）、番号（先頭の 0 はそろえる）が一致するもの。
-#     片付けや取りやめの対象にするのは、これだけ
-#   - 候補（false）：名前に「/<番号>-」を含むか「<番号>-」で始まるが、branch.pattern に合わないもの（wip/17-try・
-#     feat/17-Fix_Login のほか、backup/2024-01-15 のような関係の無いものもありうる）。見落とさないために見せるだけで、
-#     使う側が自動で消したり、Issue の作業と決めつけたりしない
+#     片付けや取りやめの対象にするのは、これだけ。設定で branch.pattern の形を変えても、その形で判定する
+#   - 候補（false）：確かではないが、名前に「/<番号>-」を含むか「<番号>-」で始まるもの（wip/17-try・feat/17-Fix_Login のほか、
+#     backup/2024-01-15 のような関係の無いものもありうる）。見落とさないために見せるだけで、使う側が自動で消したり、
+#     Issue の作業と決めつけたりしない
 # PR からは探さない（Closes #17, #18 の PR やリリース用の PR のように、別の Issue のブランチまで拾うため）。
 # origin を読めなければ止まる（「origin に無い」と区別できないまま出すと、使う側が片付けを誤るため）。
 # 使い方: dw_issue_branches <メインのワークツリー> <Issue の番号（dw_issue_number でそろえたもの）> <設定の JSON>
 dw_issue_branches() {
-  local re="(^|/)0*${2}-" names refs found b l r n
+  local names refs
   # refname:short はタグと同じ名前のブランチを heads/<名前> と出すので、lstrip=2 で refs/heads/ だけを外す
   names="$(git -C "$1" for-each-ref --format='%(refname:lstrip=2)' refs/heads/ | awk -v k=L 'NF { print k "\t" $0 }')"
   refs="$(git -C "$1" ls-remote --heads origin 2>/dev/null)" \
     || dw_die "origin のブランチを読めませんでした（通信や認証を確かめてください）"
-  # 名前の比べ方がロケールで変わらないよう C ロケールで絞り込んで並べる（重複を消すときに、別の名前を同じとみなさないため）。
-  # 名前の一覧は引数ではなく標準入力で渡す（ブランチが多いと、引数の長さの上限を超えるため）
-  found="$(printf '%s\n%s\n' "$names" "$(sed -n 's|^[0-9a-f]*[[:space:]]*refs/heads/||p' <<<"$refs" | awk -v k=R 'NF { print k "\t" $0 }')" \
-    | LC_ALL=C awk -F '\t' -v re="$re" '$2 ~ re { seen[$2] = 1; if ($1 == "L") l[$2] = 1; else r[$2] = 1 }
-        END { for (b in seen) print b "\t" ((b in l) ? "true" : "false") "\t" ((b in r) ? "true" : "false") }' \
-    | LC_ALL=C sort)"
-  # 確かかは、名前で絞り込んだもの（ふつう数本）だけで調べる
-  while IFS="$(printf '\t')" read -r b l r; do
-    [ -n "$b" ] || continue
-    n="$(dw_parse_branch "$3" "$b" | cut -d'|' -f2)"
-    n="${n#"${n%%[!0]*}"}"
-    if [ -n "$n" ] && [ "$n" = "$2" ]; then
-      printf '%s\t%s\t%s\ttrue\n' "$b" "$l" "$r"
-    else
-      printf '%s\t%s\t%s\tfalse\n' "$b" "$l" "$r"
-    fi
-  done <<<"$found"
+  # 名前の一覧は引数ではなく標準入力で渡し（ブランチが多いと、引数の長さの上限を超えるため）、1回の jq で判定する。
+  # 並べ方は jq の文字の順（ロケールに左右されない。重複を消すときに、別の名前を同じとみなさない）
+  # shellcheck disable=SC2016 # jq の変数を bash に展開させない
+  printf '%s\n%s\n' "$names" "$(sed -n 's|^[0-9a-f]*[[:space:]]*refs/heads/||p' <<<"$refs" | awk -v k=R 'NF { print k "\t" $0 }')" \
+    | jq -R -s -r --argjson c "$3" --arg n "$2" "$DW_JQ_BRANCH_RE"'
+      ($c | branch_re) as $re | ("(^|/)0*" + $n + "-") as $broad
+      | split("\n") | map(select(. != "") | split("\t")) | group_by(.[1])
+      | map({name: .[0][1], l: any(.[]; .[0] == "L"), r: any(.[]; .[0] == "R")})
+      | map(. + {confirmed: ((((try (.name | capture($re)) catch null) // {}).issue // "") | sub("^0+"; "")) == $n})
+      | map(select(.confirmed or (.name | test($broad))))
+      | .[] | "\(.name)\t\(.l)\t\(.r)\t\(.confirmed)"'
 }
 
-# ブランチの、マージ済みの PR の番号（今のリポジトリのもの。無ければ空）。
-# 使い方: dw_merged_pr_of <ブランチ>
-dw_merged_pr_of() {
+# ブランチの作業の状態を「<状態><TAB><PR の番号>」で出力する（今のリポジトリの PR だけを見る。フォークの同じ名前の PR は除く）。
+#   open    開いている PR がある（作業は続いている）
+#   merged  マージ済みの PR があり、ブランチの先端がその PR の最後のコミットに含まれる（作業はすべて base_branch に入った）。
+#           cleanup.sh がマージを確かめる基準と同じ。ブランチが手元にも origin にも無ければ、失うものが無いので merged とする
+#   none    どちらでもない（PR が無い、またはマージの後に PR に入っていないコミットがある・確かめられない）。作業が残っているものとして扱う
+# PR を読めなければ止まる。
+# 使い方: dw_branch_state <メインのワークツリー> <ブランチ>
+dw_branch_state() {
+  local prs pr n oid tip
+  prs="$(gh pr list --head "$2" --state all --json number,state,mergedAt,headRefOid,headRefName,isCrossRepository)" \
+    || dw_die "${2} の PR を読めませんでした"
   # --head はブランチ名だけで探すので、フォークの同じ名前のブランチからの PR を除く
-  gh pr list --head "$1" --state merged --json number,headRefName,isCrossRepository \
-    | jq -r --arg b "$1" 'map(select(.headRefName == $b and (.isCrossRepository | not))) | .[0].number // empty'
+  prs="$(jq -c --arg b "$2" 'map(select(.headRefName == $b and (.isCrossRepository | not)))' <<<"$prs")"
+  n="$(jq -r 'map(select(.state == "OPEN")) | .[0].number // empty' <<<"$prs")"
+  if [ -n "$n" ]; then printf 'open\t%s\n' "$n"; return 0; fi
+  pr="$(jq -c 'map(select(.state == "MERGED")) | sort_by(.mergedAt) | last // empty' <<<"$prs")"
+  if [ -z "$pr" ]; then printf 'none\t\n'; return 0; fi
+  n="$(jq -r .number <<<"$pr")"
+  oid="$(jq -r .headRefOid <<<"$pr")"
+  # 先端は手元のブランチ、無ければ origin のブランチ
+  tip="$(git -C "$1" rev-parse -q --verify "refs/heads/$2^{commit}" 2>/dev/null \
+    || git -C "$1" ls-remote origin "refs/heads/$2" 2>/dev/null | cut -f1)"
+  if [ -z "$tip" ] || [ "$tip" = "$oid" ]; then printf 'merged\t%s\n' "$n"; return 0; fi
+  # 先端が PR の最後のコミットに含まれるか。PR のコミットが手元に無ければ refs/pull/<番号>/head から取る（cleanup.sh と同じ）
+  if { git -C "$1" cat-file -e "${oid}^{commit}" 2>/dev/null || git -C "$1" fetch -q origin "refs/pull/$n/head" 2>/dev/null; } \
+    && git -C "$1" cat-file -e "${tip}^{commit}" 2>/dev/null \
+    && git -C "$1" merge-base --is-ancestor "$tip" "$oid" 2>/dev/null; then
+    printf 'merged\t%s\n' "$n"
+  else
+    printf 'none\t%s\n' "$n"
+  fi
 }
 
 # ブランチを使っているワークツリーの場所。ディレクトリが無い（手で消して記録だけが残った）ものは、無いものとして空を返す。
@@ -241,17 +260,22 @@ dw_check_json() {
     || dw_die "JSON のオブジェクトとして読めません: $1" 2
 }
 
+# 設定（入力）の branch.pattern を、type と Issue の番号を取り出す正規表現にする jq の定義（dw_parse_branch・dw_issue_branches）
+# jq の変数（$t）を bash に展開させないため、シングルクォートで書く
+# shellcheck disable=SC2016
+DW_JQ_BRANCH_RE='def branch_re: .labels.types as $t | .branch.pattern
+  | gsub("\\{type\\}"; "(?<type>" + ($t | join("|")) + ")")
+  | gsub("\\{issue_number\\}"; "(?<issue>[0-9]+)")
+  | gsub("\\{slug\\}"; "[a-z0-9]+(?:-[a-z0-9]+)*")
+  | "^" + . + "$";'
+
 # ブランチ名を branch.pattern に当て、type と Issue の番号を「<type>|<番号>」で出力する（無いものは空）
 # 区切りを空白にすると、read が先頭の空白を外して、type が空のときに番号を type と取り違える
 # 使い方: dw_parse_branch <設定の JSON> <ブランチ名>
 dw_parse_branch() {
-  jq -r --arg b "$2" '
-    .labels.types as $t
-    | (.branch.pattern
-      | gsub("\\{type\\}"; "(?<type>" + ($t | join("|")) + ")")
-      | gsub("\\{issue_number\\}"; "(?<issue>[0-9]+)")
-      | gsub("\\{slug\\}"; "[a-z0-9]+(?:-[a-z0-9]+)*")
-      | "^" + . + "$") as $re
+  # shellcheck disable=SC2016 # jq の変数（$b・$re）を bash に展開させない
+  jq -r --arg b "$2" "$DW_JQ_BRANCH_RE"'
+    branch_re as $re
     | (try ($b | capture($re)) catch null) // {}
     | "\(.type // "")|\(.issue // "")"' <<<"$1"
 }

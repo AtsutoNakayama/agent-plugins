@@ -7,8 +7,9 @@
 #   --slug TEXT      ブランチ名の短い説明（英語）。branch-name.sh で整える
 #   --no-worktree    リポジトリを変えないタスク（調査・Issue の整理など）。1 と 2 を飛ばし、
 #                    割り当てと列の移動だけを行う（branch と worktree は null）。
-#                    Issue に既にブランチ（branch.pattern に合い番号が一致し、まだマージされていないもの）があれば、
-#                    作らずに着手せず止まる（終了コード 2）。名前が似ているだけのブランチは警告するだけ（dw_issue_branches）。
+#                    Issue に作業の残っているブランチ（branch.pattern に合い番号が一致し、先端がマージ済みの PR に含まれないもの）が
+#                    あれば、作らずに着手せず止まる（終了コード 2）。名前が似ているだけのブランチや Issue を閉じる PR のブランチは、
+#                    警告するだけ（issue-branches.sh）。
 #                    後からリポジトリを変えることになったら、--slug を付けてもう一度実行すれば作れる
 #   --dry-run        変更せず、行う予定の操作だけを出力する
 #
@@ -85,30 +86,20 @@ sub_total="$(jq -r '.subIssuesSummary.total // 0' <<<"$issue_json")"
   || dw_die "Issue #${issue} は親の Issue（子の Issue が ${sub_total} 件）なので、着手しません。子の Issue に着手してください" 2
 title="$(jq -r .title <<<"$issue_json")"
 
-# ワークツリーを作らずに着手するときも、Issue に既にブランチがあれば止まる。黙って着手すると base_branch の上で作業させ、
-# 後で task-finish が、そのブランチの「マージされた PR がありません」で行き止まるため
-# 止めるのは、確かなブランチ（branch.pattern に合い番号が一致する）のうち、まだマージされていないものだけ
-# （マージ済みで残ったブランチは作業が main に入っているので、追加の調査で着手し直すのを妨げない）。
-# 名前が似ているだけの候補は、関係の無いブランチもありうるので、警告するだけにする
+# ワークツリーを作らずに着手するときも、Issue に作業の残っているブランチがあれば止まる。黙って着手すると base_branch の上で
+# 作業させ、後で task-finish がそのブランチで行き止まるため。ブランチは issue-branches.sh で探す（task-finish・task-cancel と
+# 同じ判定）。止めるのは、確かなブランチのうち作業が残っているもの（state が merged でない）だけにする（マージ済みで残った
+# ブランチは作業が main に入っているので、追加の調査で着手し直すのを妨げない）。候補は関係の無いブランチもありうるので、警告するだけ
 if $no_worktree; then
-  # 先に変数で受ける（ヒアストリングの中の $(...) が止まっても、スクリプトは止まらないため）
-  found="$(dw_issue_branches "$main_root" "$issue" "$config")"
-  list="" others=""
-  while IFS="$(printf '\t')" read -r b is_local _ confirmed; do
-    [ -n "$b" ] || continue
-    if [ "$confirmed" != true ]; then
-      others="${others:+${others}、}${b}"
-      continue
-    fi
-    [ -z "$(dw_merged_pr_of "$b")" ] || continue
-    wt=""
-    [ "$is_local" = true ] && wt="$(dw_live_worktree_of "$main_root" "$b")"
-    list="${list:+${list}、}${b}${wt:+（ワークツリー ${wt}）}"
-  done <<<"$found"
+  # 先に変数で受ける（origin・Issue・PR を読めなければ止まる）
+  found="$("$BASH" "$DW_SCRIPTS_DIR/issue-branches.sh" --issue "$issue")"
+  list="$(jq -r '[.branches[] | select(.state != "merged")
+    | .name + (if .worktree then "（ワークツリー \(.worktree)）" else "" end)] | join("、")' <<<"$found")"
   [ -z "$list" ] \
     || dw_die "Issue #${issue} には既にブランチ ${list} があります。ワークツリーを作らずに着手せず、そのブランチで作業してください" 2
+  others="$(jq -r '[.candidates[].name] | join("、")' <<<"$found")"
   [ -z "$others" ] \
-    || dw_warn "名前に #${issue} の番号を含むブランチ（${others}）があります。この Issue の作業なら、そのブランチで作業してください"
+    || dw_warn "Issue #${issue} に関係するかもしれないブランチ（${others}）があります。この Issue の作業なら、そのブランチで作業してください"
 fi
 
 # リポジトリを変えないタスク（--no-worktree）では、ブランチもワークツリーも作らない

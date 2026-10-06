@@ -72,14 +72,48 @@ names() { jq -c --arg k "${1:-branches}" '[.[$k][] | [.name, .local, .remote]]' 
   assert_equal "$(jq -c '[[.branches[].name], [.candidates[].name]]' <<<"$json")" '[[],["release/1-0-x"]]'
 }
 
-@test "確かなブランチに、マージ済みの PR の番号を付ける（フォークの同じ名前の PR は除く）" {
-  git branch feat/17-x
-  git branch feat/17-y
-  echo '[{"number": 9, "headRefName": "feat/17-x", "isCrossRepository": false},
-         {"number": 3, "headRefName": "feat/17-y", "isCrossRepository": true}]' >"$FIX/pr-list.json"
+# 使い方: pr_list <番号>:<状態>:<ブランチ>:<最後のコミット>[:<フォークか>]... → gh pr list --head の応答（$FIX/pr-list.json）
+pr_list() {
+  local spec n state branch oid fork out='[]'
+  for spec in "$@"; do
+    IFS=: read -r n state branch oid fork <<<"$spec"
+    out="$(jq -c --argjson n "$n" --arg s "$state" --arg b "$branch" --arg o "$oid" --argjson f "${fork:-false}" \
+      '. + [{number: $n, state: $s, headRefName: $b, headRefOid: $o, isCrossRepository: $f,
+             mergedAt: (if $s == "MERGED" then "2026-10-01T00:00:00Z" else null end)}]' <<<"$out")"
+  done
+  echo "$out" >"$FIX/pr-list.json"
+}
+
+@test "確かなブランチに作業の状態を付ける（先端がマージ済みの PR に含まれれば merged、開いた PR があれば open、ほかは none）" {
+  base="$(git rev-parse HEAD)"
+  git branch feat/17-a                           # 先端がマージ済みの PR の最後のコミットと同じ
+  git branch feat/17-b
+  git -C . worktree add -q "$TMP/wt-b" feat/17-b
+  git -C "$TMP/wt-b" commit -q --allow-empty -m "マージの後の作業"   # マージの後に PR に入っていないコミットがある
+  git branch feat/17-c                           # 開いている PR がある
+  git branch feat/17-d                           # フォークの同じ名前のマージ済みの PR だけ
+  pr_list "9:MERGED:feat/17-a:$base" "10:MERGED:feat/17-b:$base" "11:OPEN:feat/17-c:$base" "3:MERGED:feat/17-d:$base:true"
   run_branches --issue 17
   assert_success
-  assert_equal "$(jq -c '[.branches[] | [.name, .merged_pr]]' <<<"$json")" '[["feat/17-x",9],["feat/17-y",null]]'
+  assert_equal "$(jq -c '[.branches[] | [.name, .state, .pr]]' <<<"$json")" \
+    '[["feat/17-a","merged",9],["feat/17-b","none",10],["feat/17-c","open",11],["feat/17-d","none",null]]'
+}
+
+@test "確かなブランチの PR を読めなければ、マージ済みかを決めつけずに止まる" {
+  git branch feat/17-x
+  FAKE_FAIL=pr-list run_branches --issue 17
+  assert_failure 1
+  assert_output --partial "feat/17-x の PR を読めませんでした"
+}
+
+@test "設定で branch.pattern の形を変えても、その形で確かなブランチを見つける" {
+  jq '. + {branch: {pattern: "{type}-{issue_number}-{slug}"}}' .claude/dev-workflow/config.json >"$TMP/c" \
+    && mv "$TMP/c" .claude/dev-workflow/config.json
+  git branch feat-17-login
+  git branch feat/17-x
+  run_branches --issue 17
+  assert_success
+  assert_equal "$(jq -c '[[.branches[].name], [.candidates[].name]]' <<<"$json")" '[["feat-17-login"],["feat/17-x"]]'
 }
 
 @test "タグと同じ名前のブランチも、手元のブランチとして見つける" {
@@ -130,13 +164,14 @@ names() { jq -c --arg k "${1:-branches}" '[.[$k][] | [.name, .local, .remote]]' 
   assert_equal "$(jq -c '.branches[0].worktree' <<<"$json")" null
 }
 
-@test "Issue を閉じる PR のブランチは候補にだけ出し（開いている・マージ済み、今のリポジトリのもの）、開いているものは open_prs にも出す" {
+@test "Issue を閉じる PR のブランチは、手元か origin に残っていれば候補にだけ出し（今のリポジトリのもの）、開いているものは open_prs にも出す" {
   git branch fix-foo
   link_prs 5:OPEN:fix-foo 6:MERGED:old-work 7:OPEN:patch-1:other/lib 8:CLOSED:gave-up 9:OPEN:patch-2:me/demo:true
   run_branches --issue 17
   assert_success
   assert_equal "$(jq -c .branches <<<"$json")" '[]'
-  assert_equal "$(jq -c '[.candidates[] | [.name, .local, .from, .pr]]' <<<"$json")" '[["fix-foo",true,"pr",5],["old-work",false,"pr",6]]'
+  # old-work は手元にも origin にも無い（片付け終えた）ので、候補に出さない
+  assert_equal "$(jq -c '[.candidates[] | [.name, .local, .from, .pr]]' <<<"$json")" '[["fix-foo",true,"pr",5]]'
   assert_equal "$(jq -c '[.open_prs[] | [.number, .branch]]' <<<"$json")" '[[5,"fix-foo"],[7,"patch-1"],[9,"patch-2"]]'
 }
 
@@ -198,4 +233,13 @@ names() { jq -c --arg k "${1:-branches}" '[.[$k][] | [.name, .local, .remote]]' 
   run_branches --issue 21
   assert_failure 2
   assert_output --partial "#21 は PR です。Issue の番号を指定してください"
+}
+
+@test "Issue を閉じる PR のブランチが、名前で見つかったブランチと同じなら、二重に出さない" {
+  git branch feat/17-x
+  git branch wip/17-try
+  link_prs 5:OPEN:feat/17-x 6:MERGED:wip/17-try
+  run_branches --issue 17
+  assert_success
+  assert_equal "$(jq -c '[[.branches[].name], [.candidates[] | [.name, .from]]]' <<<"$json")" '[["feat/17-x"],[["wip/17-try","name"]]]'
 }

@@ -406,7 +406,7 @@ run_start() {
   git push -q origin main:refs/heads/wip/17-try
   run_start --issue 17 --no-worktree
   assert_success
-  assert_output --partial "名前に #17 の番号を含むブランチ（wip/17-try）があります"
+  assert_output --partial "Issue #17 に関係するかもしれないブランチ（wip/17-try）があります"
   assert_equal "$(called edit)" 1
 }
 
@@ -414,10 +414,37 @@ run_start() {
   setup_fake_gh
   setup_origin
   git push -q origin main:refs/heads/feat/17-x
-  echo '[{"number": 9, "headRefName": "feat/17-x", "isCrossRepository": false}]' >"$FIX/pr-list.json"
+  jq -n --arg o "$(git rev-parse main)" '[{number: 9, state: "MERGED", mergedAt: "2026-10-01T00:00:00Z", headRefName: "feat/17-x",
+    headRefOid: $o, isCrossRepository: false}]' >"$FIX/pr-list.json"
   run_start --issue 17 --no-worktree
   assert_success
   assert_equal "$(jq -c '[.worktree, .assigned]' <<<"$json")" '[null,true]'
+}
+
+@test "--no-worktree は、マージ済みの PR の後に作業を足したブランチ（PR に入っていないコミットがある）では止まる" {
+  setup_fake_gh
+  setup_origin
+  merged="$(git rev-parse main)"
+  git checkout -q -b feat/17-x
+  git -c user.name=t -c user.email=t@example.com commit -q --allow-empty -m "マージの後の作業"
+  git checkout -q main
+  jq -n --arg o "$merged" '[{number: 9, state: "MERGED", mergedAt: "2026-10-01T00:00:00Z", headRefName: "feat/17-x",
+    headRefOid: $o, isCrossRepository: false}]' >"$FIX/pr-list.json"
+  run_start --issue 17 --no-worktree
+  assert_failure 2
+  assert_output --partial "Issue #17 には既にブランチ feat/17-x があります"
+  assert_equal "$(called edit)" 0
+}
+
+@test "--no-worktree で、確かなブランチの PR を読めなければ、マージ済みかを決めつけずに止まる" {
+  setup_fake_gh
+  setup_origin
+  git push -q origin main:refs/heads/feat/17-x
+  FAKE_FAIL=pr-list run_start --issue 17 --no-worktree
+  assert_failure 1
+  assert_output --partial "feat/17-x の PR を読めませんでした"
+  assert_equal "$(called edit)" 0
+  assert_equal "$(called SetField)" 0
 }
 
 @test "--no-worktree で止まるとき、手で消したワークツリーの場所は伝えない" {
