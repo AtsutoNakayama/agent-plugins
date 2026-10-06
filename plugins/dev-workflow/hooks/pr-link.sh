@@ -11,13 +11,20 @@
 #
 # 決まり（設計書 §9）:
 #   - 同じリンクも、連続で毎回出す（常に見えるようにするため）
+#   - git のコマンドは、操作の対象（cd・pushd・git -C で移った先、--git-dir・GIT_DIR で指したリポジトリ。gc_target）の
+#     リポジトリ・ブランチで判断する。popd・cd - の後と、プロジェクトのルートからの相対パスへの cd の後は、
+#     移った先が分からないので出さない（scripts/lib/git-command.sh の gc_scan の after）
 #   - Issue の番号が分からないブランチ（main など）では、ブランチから導くリンクは出さない（作った PR・Issue は出す）
 #   - gh が無い・失敗する・解析できないときは、何も出さずに通す。フックは作業を止めない（いつも終了コード 0）
 #   - 導入していないリポジトリ（dw_is_set_up）では、何も出さない（設計書 §1）
 #
 # 出力は、使用者に見せる systemMessage と、Claude に渡す additionalContext（返答でも触れてもらう）の JSON。
-# コマンドの文字列を簡易に判定するだけなので、sh -c や別名を通すと見逃し、引用符の中の文字にも反応する。
+# git のコマンドは、guard-git.sh と同じ解析（scripts/lib/git-command.sh）で拾う。sh -c や別名を通すと見逃す。
+# スクリプト（commit.sh など）と gh pr create・gh issue create は、コマンドの文字列を簡易に判定するだけなので、
+# 引用符の中の文字にも反応し、フックの入力の cwd のリポジトリで判断する。
 # 標準入力でフックの入力（JSON）を受け取る。
+# 関数は gc_scan などのコールバック（on_git・add_new_name）から呼ぶので、直接の呼び出しが無い（SC2329）
+# shellcheck disable=SC2329
 set -euo pipefail
 # どこで失敗しても、作業は止めない（失敗して止まるときも、終了コードは 0 にする）。
 # ERR トラップ（set -E）は使わない。bash 3.2 では、コマンド置換 $( ) の中にも引き継がれ、
@@ -32,6 +39,8 @@ export LC_ALL=C
 command -v jq >/dev/null 2>&1 || exit 0
 # shellcheck source=../scripts/lib/common.sh
 . "$(cd "$(dirname "$0")" && pwd)/../scripts/lib/common.sh"
+# shellcheck source=../scripts/lib/git-command.sh
+. "$DW_SCRIPTS_DIR/lib/git-command.sh"
 
 input="$(cat)"
 cmd="$(jq -r '.tool_input.command // empty' <<<"$input")"
@@ -44,120 +53,110 @@ esac
 # コマンドの文字列が <正規表現> に当たるか
 has() { printf '%s' "$cmd" | grep -Eq -- "$1"; }
 
-# ファイル名の展開（*・?）は要らないので止める。コマンドの文字列を空白で語に分けるときに、展開されないようにする
+# ファイル名の展開（*・?）は要らないので止める（出力の URL を空白で分けるときに、展開されないようにする）
 set -f
 
-push=false commit=false create_branch=false created=false
-# ブランチを作るコマンドの、作るブランチの名前（拾えなければ空）
-created_name=""
-has 'pr-create\.sh' && push=true
-has 'commit\.sh' && commit=true
-has 'task-start\.sh' && create_branch=true
+created=false
 { has "(^|[^[:alnum:]_./-])gh( [^;&|]*)? (pr|issue) create([^[:alnum:]_-]|\$)" || has '(pr|issue)-create\.sh'; } && created=true
 
-# <オプション>のどれかの次の語を name に入れる。使い方: name_after "<オプション（空白区切り）>" <語>...
-name_after() {
-  local opts=" $1 " prev="" w
-  shift
-  for w in "$@"; do
-    case "$opts" in *" $prev "*) name="$w"; return 0 ;; esac
-    prev="$w"
-  done
-  return 1
-}
-
-# コマンドの文字列の git の呼び出しごとに、オプション（-C <dir>・-c <k=v> など）を飛ばした最初の語をサブコマンドとして、
-# push・commit・ブランチの作成を判定する。git stash push や git log --grep commit は、サブコマンドが違うので当たらない。
-# guard-git.sh（check_command）のようには解析しない。cd や git -C で移った先は追わず、引用符や $( ) の中の git も区別せずに拾う。
-# ブランチを作るコマンドは、-c・-C・-b・-B・--create・--force-create の次の語と、git branch <名前> の最初の語を、
-# 作るブランチの名前にする。-cname のようにオプションと名前をくっつけた書き方は、作ることだけが分かり、名前は拾えない
-# （guard-git.sh は警告するのに、ここは Issue のリンクを出さない、という食い違いが起きる。tests/pr-link.bats で押さえてある）
-scan_git() {
-  local line sub w name dry pos skip
-  while IFS= read -r line; do
-    line="${line#*git}"
-    # shellcheck disable=SC2086 # 空白で語に分ける（set -f で展開を止めてある）
-    set -- $line
-    sub=""
-    while [ $# -gt 0 ]; do
-      case "$1" in
-        -C | -c | --git-dir | --work-tree | --namespace | --config-env)
-          if [ $# -ge 2 ]; then shift 2; else shift $#; fi
-          ;;
-        -*) shift ;;
-        *) sub="$1"; shift; break ;;
-      esac
-    done
-    name=""
-    case "$sub" in
-      push)
-        # git push -n（--dry-run）は push しない
-        dry=false
-        for w in "$@"; do
-          case "$w" in -n | --dry-run) dry=true ;; esac
-        done
-        $dry || push=true
-        ;;
-      commit) commit=true ;;
-      switch)
-        name_after "-c -C --create --force-create" "$@" || true
-        for w in "$@"; do
-          case "$w" in --*) ;; -*[cC]*) create_branch=true ;; esac
-        done
-        [ -z "$name" ] || create_branch=true
-        ;;
-      checkout)
-        name_after "-b -B" "$@" || true
-        for w in "$@"; do
-          case "$w" in --*) ;; -*[bB]*) create_branch=true ;; esac
-        done
-        ;;
-      worktree)
-        if [ "${1:-}" = add ]; then
-          shift
-          name_after "-b -B" "$@" || true
-          for w in "$@"; do
-            case "$w" in --*) ;; -*[bB]*) create_branch=true ;; esac
-          done
-          # -b・-B が無いときは、2つ目の位置引数（git worktree add <パス> <ブランチ>）をブランチの名前にする。
-          # 値を取るオプション（--reason・-b・-B）の次の語は、位置引数に数えない
-          if [ -z "$name" ]; then
-            pos=0 skip=false
-            for w in "$@"; do
-              if $skip; then skip=false; continue; fi
-              case "$w" in
-                --reason | -b | -B) skip=true ;;
-                -*) ;;
-                *) pos=$((pos + 1)); [ "$pos" -ne 2 ] || name="$w" ;;
-              esac
-            done
-          fi
-          # -b が無くても、ワークツリーを作るので、ブランチも作る
-          create_branch=true
-        fi
-        ;;
-      branch)
-        # git branch <名前>（一覧・削除・名前の変更などのオプションが先にあるときは作らない）
-        case "${1:-}" in '' | -*) ;; *) name="$1"; create_branch=true ;; esac
-        ;;
-    esac
-    name="${name#[\"\']}"
-    name="${name%[\"\']}"
-    [ -z "$name" ] || [ -n "$created_name" ] || created_name="$name"
-  done < <(printf '%s\n' "$cmd" | grep -Eo '(^|[^[:alnum:]_./-])git( [^;&|]*)?' || true)
-}
-scan_git
-$push || $commit || $create_branch || $created || exit 0
-# --dry-run のコマンドは、push も commit も PR・Issue の作成もしない（スクリプトの --dry-run を含む）ので、何も出さない
-# 引用符の中（コミットメッセージなど）の --dry-run は、取り除いてから調べる
-printf '%s' "$cmd" | sed -E "s/\"[^\"]*\"//g; s/'[^']*'//g" | grep -Eq '(^|[[:space:]])--dry-run([[:space:]=]|$)' && exit 0
-
+# フックの入力の cwd は、コマンドを実行した後の Claude Code のディレクトリ（外側の cd で移った先。
+# プロジェクトの外へ移ったときは、Claude Code が戻した先（プロジェクトのルート。$CLAUDE_PROJECT_DIR））
 cwd="$(jq -r '.cwd // empty' <<<"$input")"
 dir="$( (cd "${cwd:-.}" && pwd -P) 2>/dev/null || true)"
-[ -n "$dir" ] || exit 0
-# 導入していないリポジトリでは何もしない
-root="$(git -C "$dir" rev-parse --show-toplevel 2>/dev/null || true)"
-dw_is_set_up "$root" || exit 0
+project_dir=""
+[ -z "${CLAUDE_PROJECT_DIR:-}" ] || project_dir="$( (cd "$CLAUDE_PROJECT_DIR" && pwd -P) 2>/dev/null || true)"
+
+# 操作ごとの対象を、同じ添え字で持つ
+#   ev_kind    push・commit・created（PR・Issue を作った）・create（ブランチを作る）
+#   ev_repo    操作の対象のリポジトリ（gc_repo。ワークツリーなら元のリポジトリ）
+#   ev_root    操作の対象の作業ツリーの一番上（gc_root）
+#   ev_branch  create は作るブランチの名前、ほかは対象の今のブランチ
+#   ev_issue   ev_branch の Issue の番号（Issue のリンクを足すときに入れる）
+ev_kind=() ev_repo=() ev_root=() ev_branch=() ev_issue=()
+add_event() {
+  ev_kind+=("$1")
+  ev_repo+=("$gc_repo")
+  ev_root+=("$gc_root")
+  ev_branch+=("$2")
+  ev_issue+=("")
+}
+
+# 作るブランチの名前を覚える（gc_new_branches・gc_worktree_branch のコールバック）
+new_names=()
+add_new_name() { new_names+=("$1"); }
+
+# git の呼び出しを1つ調べ、push・commit・ブランチの作成なら、対象のリポジトリとブランチを覚える（gc_scan のコールバック）。
+# git stash push や git log --grep commit は、サブコマンドが違うので当たらない。
+# ブランチを作るコマンドの名前は、guard-git.sh と同じ書き方（-cname なども）で拾う。-b・-B の無い git worktree add は、
+# 2つ目の位置引数（git worktree add <パス> <ブランチ>）を名前にする
+# 使い方: on_git <サブコマンド> <引数>...
+on_git() {
+  local sub="$1" k
+  shift
+  new_names=()
+  case "$sub" in
+    push)
+      # git push -n（--dry-run。-nu のようにまとめた書き方を含む）は push しない
+      gc_push_args "$@"
+      ! $gc_push_dry || return 0
+      ;;
+    commit)
+      # git commit --dry-run は commit しない
+      for k in "$@"; do
+        [ "$k" != --dry-run ] || return 0
+      done
+      ;;
+    switch | checkout | branch | worktree)
+      gc_new_branches add_new_name "$sub" "$@"
+      if [ "$sub" = worktree ] && [ "${1:-}" = add ] && [ "${#new_names[@]}" -eq 0 ]; then
+        shift
+        gc_worktree_branch add_new_name "$@"
+      fi
+      [ "${#new_names[@]}" -gt 0 ] || return 0
+      ;;
+    *) return 0 ;;
+  esac
+  # 操作の対象を求める（--git-dir・GIT_DIR などで指したときも、guard-git.sh と同じ求め方）。作業ツリーが分からなければ出さない
+  gc_target
+  [ -n "$gc_root" ] || return 0
+  case "$sub" in
+    push | commit) add_event "$sub" "$(gc_branch)" ;;
+    *)
+      for k in "${new_names[@]}"; do
+        add_event create "$k"
+      done
+      ;;
+  esac
+}
+gc_scan on_git "$cmd" "$dir" after "$project_dir"
+
+# スクリプトの中の git は、コマンドの文字列に現れないので、名前で拾う（cwd のリポジトリ・ブランチで判断する）
+task_start=false
+has 'task-start\.sh' && task_start=true
+script_push=false script_commit=false
+has 'pr-create\.sh' && script_push=true
+has 'commit\.sh' && script_commit=true
+# --dry-run を付けたスクリプトと gh pr create は、push も commit も PR・Issue の作成もしないので、それらのリンクは出さない。
+# 名前で拾うのと同じく、コマンドの文字列で調べる（引用符の中（コミットメッセージなど）の --dry-run は、取り除いてから調べる）。
+# git push・git commit の --dry-run は、on_git が git の呼び出しごとに調べる
+if printf '%s' "$cmd" | sed -E "s/\"[^\"]*\"//g; s/'[^']*'//g" | grep -Eq '(^|[[:space:]])--dry-run([[:space:]=]|$)'; then
+  task_start=false script_push=false script_commit=false created=false
+fi
+cwd_root="" cwd_repo=""
+if $created || $task_start || $script_push || $script_commit; then
+  gc_git_dir="$dir" gc_gopts=() gc_genv=()
+  gc_target
+  cwd_root="$gc_root" cwd_repo="$gc_repo"
+  if [ -n "$cwd_root" ]; then
+    cwd_branch="$(gc_branch)"
+    ! $script_push || add_event push "$cwd_branch"
+    ! $script_commit || add_event commit "$cwd_branch"
+    # 作った PR・Issue の Issue は、cwd のブランチのもの
+    ! $created || add_event created "$cwd_branch"
+  fi
+fi
+
+[ "${#ev_kind[@]}" -gt 0 ] || $task_start || exit 0
 
 # コマンドの標準出力（標準エラーは見ない。警告などが混ざるので）
 stdout="$(jq -r '.tool_response | if type == "object" then (.stdout // "") else (. // "" | tostring) end' <<<"$input" 2>/dev/null || true)"
@@ -173,8 +172,8 @@ add_link() {
 
 # --- 作った PR・Issue（標準出力から拾う）-------------------------------------------
 # スクリプトの出力の JSON は、作ったものの URL を url（issue-create.sh）か pr.url（pr-create.sh）に持つ（body などの別の URL は拾わない）。
-# gh pr create・gh issue create は、URL だけの行を出す
-if $created; then
+# gh pr create・gh issue create は、URL だけの行を出す。導入していないリポジトリ（cwd）では出さない
+if $created && dw_is_set_up "$cwd_root"; then
   for u in $( { jq -r 'objects | (.url // .pr.url // empty)' <<<"$stdout" 2>/dev/null || true
     printf '%s\n' "$stdout" | grep -E '^https://[^[:space:]]+/(pull|issues)/[0-9]+[[:space:]]*$' || true; } | awk '!seen[$0]++'); do
     case "$u" in
@@ -185,56 +184,92 @@ if $created; then
 fi
 
 # --- ブランチから導くリンク ----------------------------------------------------------
-branch="$(git -C "$dir" symbolic-ref --short -q HEAD 2>/dev/null || true)"
-config="$( (cd "$dir" && WORKFLOW_REPO_ROOT="$root" "$BASH" "$DW_SCRIPTS_DIR/config.sh") 2>/dev/null || true)"
-# ブランチ名を branch.pattern に当てて、Issue の番号を取り出す。使い方: issue_of <ブランチ名>
-issue_of() {
-  [ -n "$config" ] || return 0
-  local parsed
-  parsed="$(dw_parse_branch "$config" "$1" 2>/dev/null || true)"
-  printf '%s\n' "${parsed#*|}"
+# リポジトリのルートの設定を読む（直前に読んだルートと同じなら読み直さない）。使い方: load_config <ルート>
+config_root="" config=""
+load_config() {
+  [ "$1" != "$config_root" ] || return 0
+  config_root="$1"
+  config="$( (cd "$1" && WORKFLOW_REPO_ROOT="$1" "$BASH" "$DW_SCRIPTS_DIR/config.sh") 2>/dev/null || true)"
 }
-cwd_issue=""
-[ -z "$branch" ] || cwd_issue="$(issue_of "$branch")"
+# ブランチ名を、そのリポジトリの branch.pattern に当てて、Issue の番号を issue に入れる（無ければ空）。
+# 設定の読み込みを使い回すため、$( ) の中では呼ばない。使い方: issue_of <ルート> <ブランチ名>
+issue=""
+issue_of() {
+  local parsed
+  issue=""
+  [ -n "$2" ] || return 0
+  load_config "$1"
+  [ -n "$config" ] || return 0
+  parsed="$(dw_parse_branch "$config" "$2" 2>/dev/null || true)"
+  issue="${parsed#*|}"
+}
+# Issue のリンクを足す。同じリポジトリ（別のワークツリーを含む）の同じ Issue は、1回だけ調べる。
+# 使い方: add_issue <リポジトリ> <ルート> <番号>
+seen_issues=()
+add_issue() {
+  local url s
+  [ -n "$3" ] || return 0
+  for s in ${seen_issues[@]+"${seen_issues[@]}"}; do
+    [ "$s" != "$1|$3" ] || return 0
+  done
+  seen_issues+=("$1|$3")
+  url="$( (cd "$2" && gh issue view "$3" --json url -q .url) 2>/dev/null || true)"
+  [ -z "$url" ] || add_link "$url" "Issue #${3}"
+}
 
-# 出す Issue のリンク。操作ごとに、対象の Issue が違う
-#   - push・commit・PR や Issue を作る操作：今のブランチの Issue
+# 出す Issue のリンク。操作ごとに、対象の Issue が違う。導入していないリポジトリへの操作は飛ばす
+#   - push・commit・PR や Issue を作る操作：対象のリポジトリの今のブランチの Issue
 #   - ブランチを作るコマンド：作るブランチの Issue（名前が拾えない・Issue の番号が無いときは出さない。間違った Issue より、何も出さないほうがよい）
 #   - task-start.sh：標準出力の JSON の issue（別のワークツリーを作るので。標準エラーの警告（warn:）が混ざっても読める。取れなければ出さない）
-issues=()
-if $push || $commit || $created; then
-  [ -z "$cwd_issue" ] || issues+=("$cwd_issue")
-fi
-if has 'task-start\.sh'; then
-  n="$(jq -r 'objects | .issue // empty' <<<"$stdout" 2>/dev/null | head -n 1 || true)"
-  case "$n" in '' | *[!0-9]*) ;; *) issues+=("$n") ;; esac
-elif $create_branch && [ -n "$created_name" ]; then
-  n="$(issue_of "$created_name")"
-  [ -z "$n" ] || issues+=("$n")
-fi
-
-for n in ${issues[@]+"${issues[@]}"}; do
-  url="$( (cd "$dir" && gh issue view "$n" --json url -q .url) 2>/dev/null || true)"
-  [ -z "$url" ] || add_link "$url" "Issue #${n}"
+# 今のブランチの Issue を先に、作るブランチの Issue を後に並べる
+for pass in current create; do
+  for ((k = 0; k < ${#ev_kind[@]}; k++)); do
+    if [ "${ev_kind[k]}" = create ]; then
+      [ "$pass" = create ] || continue
+    else
+      [ "$pass" = current ] || continue
+    fi
+    dw_is_set_up "${ev_root[k]}" || continue
+    issue_of "${ev_root[k]}" "${ev_branch[k]}"
+    ev_issue[k]="$issue"
+    add_issue "${ev_repo[k]}" "${ev_root[k]}" "$issue"
+  done
 done
+if $task_start && dw_is_set_up "$cwd_root"; then
+  n="$(jq -r 'objects | .issue // empty' <<<"$stdout" 2>/dev/null | head -n 1 || true)"
+  case "$n" in '' | *[!0-9]*) ;; *) add_issue "$cwd_repo" "$cwd_root" "$n" ;; esac
+fi
 
-# push の PR・CI は、今のブランチのもの（Issue が分からないブランチでは出さない）
-if $push && [ -n "$cwd_issue" ] && [ -n "$branch" ]; then
+# push の PR・CI は、push したリポジトリの今のブランチのもの（Issue が分からないブランチでは出さない）。
+# 同じブランチへの push は、1回だけ調べる
+pushed=()
+for ((k = 0; k < ${#ev_kind[@]}; k++)); do
+  [ "${ev_kind[k]}" = push ] || continue
+  root="${ev_root[k]}" branch="${ev_branch[k]}"
+  [ -n "$branch" ] || continue
+  dup=false
+  for p in ${pushed[@]+"${pushed[@]}"}; do
+    [ "$p" != "$root|$branch" ] || dup=true
+  done
+  ! $dup || continue
+  pushed+=("$root|$branch")
+  # Issue のリンクを足すときに求めた番号を使う（導入していないリポジトリでは空）
+  [ -n "${ev_issue[k]}" ] || continue
   # gh pr list が失敗したときは、PR が無いのか分からないので、PR・CI のリンクは出さない（Issue のリンクは出す）
-  if pr="$( (cd "$dir" && gh pr list --head "$branch" --state open --json url,isCrossRepository \
+  if pr="$( (cd "$root" && gh pr list --head "$branch" --state open --json url,isCrossRepository \
     -q 'map(select(.isCrossRepository | not)) | .[0].url // empty') 2>/dev/null)"; then
     if [ -n "$pr" ]; then
       add_link "$pr" "PR"
       add_link "$pr/checks" "CI"
     else
-      repo="$( (cd "$dir" && gh repo view --json url -q .url) 2>/dev/null || true)"
+      repo="$( (cd "$root" && gh repo view --json url -q .url) 2>/dev/null || true)"
       if [ -n "$repo" ]; then
         add_link "$repo/pull/new/$branch" "PR を作る"
         add_link "$repo/actions?query=branch%3A$(printf '%s' "$branch" | sed 's|/|%2F|g')" "CI"
       fi
     fi
   fi
-fi
+done
 
 [ "${#links[@]}" -gt 0 ] || exit 0
 

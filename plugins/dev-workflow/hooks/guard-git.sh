@@ -12,9 +12,12 @@
 # （Claude Code はコマンドを実行せず、理由を Claude に伝える）。警告するときは、フックの出力の JSON を
 # 標準出力に出し、終了コード 0 で終わる。
 # 操作の対象のリポジトリ（cd・git -C で移った先、--git-dir・GIT_DIR などで指したリポジトリ）が、導入していないリポジトリ
-# なら何もしない（target_resolve・target_set_up）。git がリポジトリを見つけられないときは、守りを外さないよう調べる（設計書 §1）。
-# コマンドの文字列を簡易に解析するだけなので、sh -c や git の別名（alias）を通すと見逃す。
+# なら何もしない（gc_target・target_set_up）。git がリポジトリを見つけられないときは、守りを外さないよう調べる（設計書 §1）。
+# コマンドの文字列の解析は、pr-link.sh と共有する（scripts/lib/git-command.sh）。sh -c・timeout などを前に付けたコマンドや
+# git の別名（alias）を通すと見逃す。popd は戻る先を追わないので、pushd した先で判断する。
 # 最後の守りは GitHub のルールセット（setup-repo.sh）。
+# 関数は gc_scan のコールバック（check_git）から呼ぶので、直接の呼び出しが無い（SC2329）
+# shellcheck disable=SC2329
 set -euo pipefail
 
 # 日本語をバイト列として扱い、1文字ずつの読み取りを速く・確実にする
@@ -22,6 +25,8 @@ export LC_ALL=C
 
 # shellcheck source=../scripts/lib/common.sh
 . "$(cd "$(dirname "$0")" && pwd)/../scripts/lib/common.sh"
+# shellcheck source=../scripts/lib/git-command.sh
+. "$DW_SCRIPTS_DIR/lib/git-command.sh"
 dw_require jq
 
 input="$(cat)"
@@ -33,164 +38,56 @@ case "$cmd" in
 esac
 cwd="$(jq -r '.cwd // empty' <<<"$input")"
 dir="$( (cd "${cwd:-.}" && pwd -P) 2>/dev/null || true)"
+# ブランチ名の警告（最後にまとめて出す）
+warnings=() nwarn=0
 
 # --- 判断 -------------------------------------------------------------------------
 
 deny() { dw_die "$1" 2; }
 
-# 基準のディレクトリからの相対パスを絶対パスにする（先頭の ~・$HOME は expand_home で展開する）。分からなければ空を出力する。
-# 使い方: resolve_dir <基準のディレクトリ（空なら不明）> <パス>
-resolve_dir() {
-  local p
-  p="$(expand_home "$2")"
-  case "$p" in
-    /*) dw_abs_dir / "$p" || true ;;
-    *) [ -z "$1" ] || dw_abs_dir "$1" "$p" || true ;;
-  esac
-}
-
-# git の操作の対象（ディレクトリと、git のグローバルオプション・対象を変える環境変数）で git を実行する。
-# 使い方: git_at <コマンド>...   （git_dir と gopts と genv を参照する）
-git_at() {
-  [ -n "$git_dir" ] || return 1
-  (cd "$git_dir" && env ${genv[@]+"${genv[@]}"} git ${gopts[@]+"${gopts[@]}"} "$@" 2>/dev/null)
-}
-
-# 操作の対象を求めて、trepo と troot に入れる。check_command がコマンドごとに1回だけ呼び、導入したかの判定（target_set_up）と、
-# 設定（base_branch・branch.pattern）を読むリポジトリの、どちらにも使う。git は rev-parse を1回だけ起動する。
-#   trepo  対象のリポジトリ（--git-common-dir の実体の絶対パス。ワークツリーなら元のリポジトリ）。git が見つけられなければ空
-#   troot  対象の作業ツリーの一番上。確かめられなければ空
-# オプションも環境変数も無ければ、--show-toplevel（git がそのコマンドで使う作業ツリー）がそのままルート。
-# --git-dir・GIT_DIR などがあると、--show-toplevel は今のディレクトリを返すことがある（作業ツリーを指定しないとき）ので、
-# その場所の git のディレクトリが対象のものと同じかで確かめる（dw_root_if_repo。同じリポジトリの別のワークツリーとも見分ける）。
-# 違えば、対象がメインのリポジトリならメインのワークツリー（dw_repo_main_root）、ワークツリー（git worktree add）の git の
-# ディレクトリなら、その gitdir ファイルが記録するワークツリー（dw_worktree_root）。.git の中など、--show-toplevel が答えないときも同じ
-target_resolve() {
-  local gd c top
-  trepo="" troot=""
-  [ -n "$git_dir" ] || return 0
-  { IFS= read -r gd; IFS= read -r c; IFS= read -r top; } <<<"$(dw_parse_repo_paths "$git_dir" \
-    "$(git_at rev-parse --git-dir --git-common-dir --show-toplevel || true)" || true)" || true
-  [ -n "${c:-}" ] || return 0
-  trepo="$c"
-  if [ "${#gopts[@]}" -eq 0 ] && [ "${#genv[@]}" -eq 0 ] && [ -n "${top:-}" ]; then
-    troot="$top"
-    return 0
-  fi
-  if [ "$gd" = "$trepo" ]; then
-    troot="$(dw_root_if_repo "${top:-}" "$gd" || dw_repo_main_root "$trepo" || true)"
-  else
-    troot="$(dw_root_if_repo "${top:-}" "$gd" || dw_worktree_root "$gd" || true)"
-  fi
-}
-
-# 操作の対象が、導入したリポジトリなら成功し、導入していなければ 1 を返す（設計書 §1）。target_resolve の後に呼ぶ。
+# 操作の対象が、導入したリポジトリなら成功し、導入していなければ 1 を返す（設計書 §1）。gc_target の後に呼ぶ。
 #   - ルートが分かれば、そこ（かメインのワークツリー）にチームの設定があるか（dw_is_set_up）
 #   - リポジトリは分かるがルートが分からない（bare リポジトリ、外から指した --separate-git-dir のリポジトリなど）ときは、
 #     HEAD にチームの設定がコミットされているか
 #   - git がリポジトリを見つけられない（ディレクトリが分からない cd - の後など）ときは、守りを外さないよう、導入したものとみなす
 target_set_up() {
-  if [ -n "$troot" ]; then
-    dw_is_set_up "$troot"
+  if [ -n "$gc_root" ]; then
+    dw_is_set_up "$gc_root"
     return
   fi
-  [ -n "$trepo" ] || return 0
-  git_at cat-file -e "HEAD:.claude/dev-workflow/config.json"
+  [ -n "$gc_repo" ] || return 0
+  gc_git cat-file -e "HEAD:.claude/dev-workflow/config.json"
 }
 
-# 対象のリポジトリの base_branch を出力する。読めなければ main。target_resolve・target_set_up の後（導入したリポジトリのとき）に呼ぶ。
+# 対象のリポジトリの base_branch を出力する。読めなければ main。gc_target・target_set_up の後（導入したリポジトリのとき）に呼ぶ。
 # ルートが分かれば、そのリポジトリの設定（config.sh。導入したリポジトリなのでユーザーの層も合わせる）から読む。
 # ルートが分からなければ、HEAD にコミットされたチームの設定、ユーザーの層の順に読む（導入したものとして調べているので、
 # ユーザーの層も効かせる）。今のディレクトリのリポジトリの設定は、対象と違うことがあるので、代わりに読まない
 base_branch() {
   local base=""
-  if [ -n "$troot" ]; then
-    base="$( (cd "$troot" && WORKFLOW_REPO_ROOT="$troot" "$BASH" "$DW_SCRIPTS_DIR/config.sh" '.base_branch // empty') 2>/dev/null || true)"
+  if [ -n "$gc_root" ]; then
+    base="$( (cd "$gc_root" && WORKFLOW_REPO_ROOT="$gc_root" "$BASH" "$DW_SCRIPTS_DIR/config.sh" '.base_branch // empty') 2>/dev/null || true)"
   else
-    [ -z "$trepo" ] || base="$(git_at show "HEAD:.claude/dev-workflow/config.json" | jq -r '.base_branch // empty | strings' 2>/dev/null || true)"
+    [ -z "$gc_repo" ] || base="$(gc_git show "HEAD:.claude/dev-workflow/config.json" | jq -r '.base_branch // empty | strings' 2>/dev/null || true)"
     [ -n "$base" ] || base="$(jq -r '.base_branch // empty | strings' "$(dw_user_dir)/config.json" 2>/dev/null || true)"
   fi
   printf '%s\n' "${base:-main}"
 }
 
-# コマンドの文字列の値の先頭にある ~・$HOME・${HOME} を、シェルと同じく展開する（シェルが展開する前の文字列を見ているため）。
-# ~ をシェルが展開するのは、語の先頭（cd ~/x・--git-dir ~/x）と代入の値（GIT_DIR=~/x）だけで、--git-dir=~/x のような
-# オプションの値には展開しないので、そのときは no-tilde を渡す。ほかの変数は展開しない（対象が分からなければ、守りを外さないよう調べる）
-# 使い方: expand_home <値> [no-tilde]
-expand_home() {
-  local v="$1"
-  # ~ と $HOME はシェルが展開する前の文字として比べる
-  # shellcheck disable=SC2088,SC2016
-  if [ "${2:-}" != no-tilde ]; then
-    case "$v" in
-      '~') v="$HOME" ;;
-      '~/'*) v="$HOME/${v#\~/}" ;;
-    esac
-  fi
-  # shellcheck disable=SC2016
-  case "$v" in
-    '$HOME' | '${HOME}') v="$HOME" ;;
-    '$HOME/'*) v="$HOME/${v#\$HOME/}" ;;
-    '${HOME}/'*) v="$HOME/${v#\$\{HOME\}/}" ;;
-  esac
-  printf '%s\n' "$v"
-}
-
-# git push の引数を調べる。使い方: check_push <引数>...
+# git push の引数を調べる（引数の読み方は gc_push_args）。使い方: check_push <引数>...
 check_push() {
-  local force=false remote="" nref=0 after_dd=false expect=false w k c dest current base
-  local refs=()
-  for w in "$@"; do
-    if $expect; then
-      expect=false
-      continue
-    fi
-    if ! $after_dd; then
-      case "$w" in
-        --) after_dd=true; continue ;;
-        # --mirror はすべての ref をリモートに合わせて上書き・削除する
-        --force | --mirror) force=true; continue ;;
-        --repo | --push-option | --receive-pack | --exec) expect=true; continue ;;
-        --*) continue ;;
-        -?*)
-          # 短いオプションはまとめて書ける（-fu）。-o は値を取るので、その後ろは値
-          k=1
-          while [ "$k" -lt "${#w}" ]; do
-            c="${w:k:1}"
-            case "$c" in
-              f) force=true ;;
-              o)
-                [ "$((k + 1))" -lt "${#w}" ] || expect=true
-                break
-                ;;
-            esac
-            k=$((k + 1))
-          done
-          continue
-          ;;
-      esac
-    fi
-    if [ -z "$remote" ]; then
-      remote="$w"
-    else
-      refs+=("$w")
-      nref=$((nref + 1))
-    fi
-  done
+  local w dest current base
+  gc_push_args "$@"
+  ! $gc_push_force || deny "強制 push（--force / -f / +<refspec> / --mirror）はしません。必要なら --force-with-lease を使ってください"
 
-  for w in ${refs[@]+"${refs[@]}"}; do
-    case "$w" in +*) force=true ;; esac
-  done
-  $force && deny "強制 push（--force / -f / +<refspec> / --mirror）はしません。必要なら --force-with-lease を使ってください"
-
-  current="$(git_at symbolic-ref --short -q HEAD || true)"
+  current="$(gc_branch)"
   base="$(base_branch)"
-  if [ "$nref" -eq 0 ]; then
+  if [ "${#gc_push_refs[@]}" -eq 0 ]; then
     [ "$current" != "$base" ] \
       || deny "${base} へは push しません。作業用のブランチ（task-start）で PR を作ってください"
     return 0
   fi
-  for w in "${refs[@]}"; do
+  for w in "${gc_push_refs[@]}"; do
     w="${w#+}"
     case "$w" in
       *:*) dest="${w##*:}" ;;
@@ -216,151 +113,26 @@ check_branch_name() {
     '' | *'$'* | *'`'*) return 0 ;;
   esac
   # 対象のルートが分からなければ、どの規約で確かめるか分からないので確かめない（警告だけなので、止める側に倒さない）
-  [ -n "$troot" ] || return 0
+  [ -n "$gc_root" ] || return 0
   [ "$name" != "$(base_branch)" ] || return 0
-  git_at show-ref --verify --quiet "refs/heads/$name" && return 0
-  [ -z "$(git_at for-each-ref --format=x "refs/remotes/*/$name" || true)" ] || return 0
+  gc_git show-ref --verify --quiet "refs/heads/$name" && return 0
+  [ -z "$(gc_git for-each-ref --format=x "refs/remotes/*/$name" || true)" ] || return 0
   # 規約に合わないときだけ終了コード 1（設定を読めないなどは 2）
-  out="$( (cd "$troot" && WORKFLOW_REPO_ROOT="$troot" "$BASH" "$DW_SCRIPTS_DIR/branch-name.sh" --check "$name") 2>/dev/null)" \
+  out="$( (cd "$gc_root" && WORKFLOW_REPO_ROOT="$gc_root" "$BASH" "$DW_SCRIPTS_DIR/branch-name.sh" --check "$name") 2>/dev/null)" \
     && return 0
   [ $? -eq 1 ] || return 0
   warnings+=("ブランチ名 ${name} は規約に合いません（$(jq -r '.reason // empty' <<<"$out" 2>/dev/null || true)）。")
   nwarn=$((nwarn + 1))
 }
 
-# git switch・git checkout・git worktree add の引数から、作るブランチの名前を探して確かめる。
-# 使い方: check_create <値を取る短いオプションの文字> <値を取る長いオプション（空白区切り）> <引数>...
-check_create() {
-  local shorts="$1" longs=" $2 " expect=false w k c
-  shift 2
-  for w in "$@"; do
-    if $expect; then
-      expect=false
-      check_branch_name "$w"
-      continue
-    fi
-    case "$w" in
-      --) return 0 ;;
-      --*=*)
-        case "$longs" in *" ${w%%=*} "*) check_branch_name "${w#*=}" ;; esac
-        ;;
-      --*)
-        case "$longs" in *" $w "*) expect=true ;; esac
-        ;;
-      -?*)
-        # 短いオプションはまとめて書ける（-qc name）。値を取る文字の後ろが残っていれば、それが値（-cname）
-        k=1
-        while [ "$k" -lt "${#w}" ]; do
-          c="${w:k:1}"
-          case "$shorts" in
-            *"$c"*)
-              if [ "$((k + 1))" -lt "${#w}" ]; then
-                check_branch_name "${w:k+1}"
-              else
-                expect=true
-              fi
-              break
-              ;;
-          esac
-          k=$((k + 1))
-        done
-        ;;
-    esac
-  done
-}
-
-# git branch の引数を調べる。ブランチを作るとき（一覧・削除・名前の変更などのオプションが無く、名前がある）だけ確かめる。
-# オプションは名前の後ろにも書けるので（git branch bar -d）、すべての引数を見てから判断する
-# 使い方: check_branch <引数>...
-check_branch() {
-  local w after_dd=false name=""
-  for w in "$@"; do
-    if ! $after_dd; then
-      case "$w" in
-        --) after_dd=true; continue ;;
-        --force | --track | --track=* | --no-track | --quiet | --create-reflog | --recurse-submodules | --color | --color=* | --no-color) continue ;;
-        # 短いオプションはまとめて書ける（-ft）。作るときに使う f・t・q だけなら続ける
-        -*[!ftq]*) return 0 ;;
-        -?*) continue ;;
-        -*) return 0 ;;
-      esac
-    fi
-    [ -n "$name" ] || name="$w"
-  done
-  [ -z "$name" ] || check_branch_name "$name"
-}
-
-# 1つのコマンド（単語の並び）を調べる。cd ならディレクトリを移す。
-# 使い方: check_command <単語>...
-check_command() {
-  local target sub base
-  # 先頭の環境変数の代入（FOO=1 git push）、前に付くだけのコマンド、予約語（then git push）を飛ばす。
-  # 操作の対象を変える代入（GIT_DIR など）は、対象のリポジトリを求めるときに使う
-  genv=()
-  while [ $# -gt 0 ]; do
-    case "$1" in
-      GIT_DIR=* | GIT_WORK_TREE=* | GIT_COMMON_DIR=*) genv+=("${1%%=*}=$(expand_home "${1#*=}")"); shift ;;
-      [A-Za-z_]*=*) shift ;;
-      command | exec | time | nohup | env) shift ;;
-      if | then | elif | else | while | until | do | '{' | '!') shift ;;
-      *) break ;;
-    esac
-  done
-  [ $# -gt 0 ] || return 0
-
-  case "$1" in
-    cd | pushd)
-      shift
-      target=""
-      while [ $# -gt 0 ]; do
-        case "$1" in
-          -) target=-; break ;;
-          -*) shift ;;
-          *) target="$1"; break ;;
-        esac
-      done
-      case "$target" in
-        '') dir="$(resolve_dir "" "$HOME")" ;;
-        -) dir="" ;;
-        *) dir="$(resolve_dir "$dir" "$target")" ;;
-      esac
-      return 0
-      ;;
-    git | */git) shift ;;
-    *) return 0 ;;
-  esac
-
-  git_dir="$dir"
-  gopts=()
-  while [ $# -gt 0 ]; do
-    case "$1" in
-      -C)
-        [ $# -ge 2 ] || return 0
-        git_dir="$(resolve_dir "$git_dir" "$2")"
-        shift 2
-        ;;
-      --git-dir | --work-tree)
-        [ $# -ge 2 ] || return 0
-        gopts+=("$1" "$(expand_home "$2")")
-        shift 2
-        ;;
-      -c | --namespace | --config-env)
-        [ $# -ge 2 ] || return 0
-        shift 2
-        ;;
-      --git-dir=* | --work-tree=*) gopts+=("${1%%=*}=$(expand_home "${1#*=}" no-tilde)"); shift ;;
-      -*) shift ;;
-      *) break ;;
-    esac
-  done
-  [ $# -gt 0 ] || return 0
-  sub="$1"
+# git の呼び出しを1つ調べる（gc_scan のコールバック）。使い方: check_git <サブコマンド> <引数>...
+check_git() {
+  local sub="$1" base
   shift
-
   case "$sub" in
     commit | push | switch | checkout | branch | worktree)
       # 操作の対象を求め、導入していないリポジトリなら何もしない（git がリポジトリを見つけられないときは、今までどおり調べる）
-      target_resolve
+      gc_target
       target_set_up || return 0
       ;;
     *) return 0 ;;
@@ -369,422 +141,15 @@ check_command() {
   case "$sub" in
     commit)
       base="$(base_branch)"
-      [ "$(git_at symbolic-ref --short -q HEAD || true)" != "$base" ] \
+      [ "$(gc_branch)" != "$base" ] \
         || deny "${base} の上ではコミットしません。作業用のブランチを作ってください（task-start）"
       ;;
     push) check_push "$@" ;;
-    switch) check_create cC "--create --force-create --orphan" "$@" ;;
-    checkout) check_create bB "--orphan" "$@" ;;
-    branch) check_branch "$@" ;;
-    worktree)
-      if [ "${1:-}" = add ]; then
-        shift
-        check_create bB "" "$@"
-      fi
-      ;;
+    *) gc_new_branches check_branch_name "$sub" "$@" ;;
   esac
 }
 
-# --- コマンドの文字列を単語に分ける ------------------------------------------------
-# 引用符・エスケープ・$( )・ヒアドキュメント・リダイレクトを考え、; & | 改行 ( ) でコマンドを区切る。
-# bash では ${cmd:i} などが文字列の長さに比例して遅いので、1文字ずつではなく、特別な文字の手前までをまとめて読む。
-# また $cmd を展開するたびに全体が写されるので、先の wsize 文字を wbuf に写しておき、そこから win 文字ずつ見る。
-
-len=${#cmd}
-# bash 3.2 では "${...}" の中の $'\n' の扱いが新しい bash と違うので、変数にしておく
-nl=$'\n' tab=$'\t'
-# 特別な文字（ここで区切ってまとめて読む）。外側・"..." の中・$( ) の中。
-# パターンとして使うので、${rest%%$top_stop*} のように引用符で囲まずに展開する（SC2295 は意図どおり）
-top_stop='[\\ '"$tab$nl"';&|()<>#'"'"'"`$]'
-dq_stop='[\\"$`]'
-# shellcheck disable=SC1003
-sub_stop='[\\'"'"'"`()<'"$nl"']'
-win=512 wsize=4096 wbase=0 wbuf=""
-i=0
-word="" in_word=false skip_word=false
-words=() nwords=0
-hd_delims=() hd_strip=() hd_n=0
-# ( ) の中の cd は外に効かないので、( の時点のディレクトリを積んでおき、) で戻す
-dstack=() dn=0
-# case の中の深さ（case の時点の dn を積む）
-case_dn=() cn=0
-arith_i=0
-git_dir="" gopts=() genv=() trepo="" troot=""
-# ブランチ名の警告（最後にまとめて出す）
-warnings=() nwarn=0
-
-# 残りの文字列の先頭（最大 win 文字）を rest に入れる。wbuf を使い切りそうなら写し直す
-window() {
-  local off=$((i - wbase))
-  if [ "$off" -lt 0 ] || { [ $((off + win)) -gt "${#wbuf}" ] && [ $((wbase + ${#wbuf})) -lt "$len" ]; }; then
-    wbase=$i
-    wbuf="${cmd:i:wsize}"
-    off=0
-  fi
-  rest="${wbuf:off:win}"
-}
-
-flush_word() {
-  if $in_word; then
-    if $skip_word; then
-      skip_word=false
-    else
-      words+=("$word")
-      nwords=$((nwords + 1))
-    fi
-  fi
-  word="" in_word=false
-}
-
-# (( が算術式なら、閉じる )) の次の位置を arith_i に入れて 0 を返す。
-# (( の後ろで最初に閉じる括弧の次が ) でなければ、((cmd) ...) のような入れ子のサブシェル
-arith_end() {
-  local seg k=2 depth=2 c
-  # 算術式は短いので、先の wsize 文字の中だけを見る（見つからなければサブシェルとして調べる）
-  seg="${cmd:i:wsize}"
-  while [ "$k" -lt "${#seg}" ]; do
-    c="${seg:k:1}"
-    case "$c" in
-      '(') depth=$((depth + 1)) ;;
-      ')')
-        depth=$((depth - 1))
-        if [ "$depth" -eq 1 ]; then
-          [ "${seg:k+1:1}" = ')' ] || return 1
-          arith_i=$((i + k + 2))
-          return 0
-        fi
-        ;;
-    esac
-    k=$((k + 1))
-  done
-  return 1
-}
-
-# case と esac を数える。case の時点の括弧の深さを積み、パターンの ) で括弧を閉じないようにする
-track_case() {
-  local w
-  for w in "$@"; do
-    case "$w" in
-      if | then | elif | else | while | until | do | '{' | '!') ;;
-      'case')
-        case_dn[cn]=$dn
-        cn=$((cn + 1))
-        return 0
-        ;;
-      'esac')
-        [ "$cn" -eq 0 ] || cn=$((cn - 1))
-        return 0
-        ;;
-      *) return 0 ;;
-    esac
-  done
-}
-
-end_command() {
-  flush_word
-  skip_word=false
-  [ "$nwords" -eq 0 ] || track_case "${words[@]}"
-  [ "$nwords" -eq 0 ] || check_command "${words[@]}"
-  words=() nwords=0
-}
-
-# i から <区切り> の手前までを cut に入れる（区切りが無ければ最後まで）。
-# 窓の中で見つからないときだけ、残り全体から探す
-# 使い方: cut_until <区切りの文字>
-cut_until() {
-  local rest
-  window
-  cut="${rest%%"$1"*}"
-  if [ "$cut" = "$rest" ] && [ $((i + ${#rest})) -lt "$len" ]; then
-    rest="${cmd:i}"
-    cut="${rest%%"$1"*}"
-  fi
-}
-
-# '...' の中身を加える
-scan_squote() {
-  local cut q
-  i=$((i + 1))
-  cut_until "'"
-  q="$cut"
-  i=$((i - 1))
-  word+="$q" in_word=true
-  i=$((i + ${#q} + 2))
-}
-
-# `...` をそのまま加える
-scan_backtick() {
-  local cut q
-  i=$((i + 1))
-  cut_until '`'
-  q="$cut"
-  i=$((i - 1))
-  word+="\`$q\`" in_word=true
-  i=$((i + ${#q} + 2))
-}
-
-# "..." の中身を加える
-scan_dquote() {
-  local rest chunk c n
-  in_word=true
-  i=$((i + 1))
-  while [ "$i" -lt "$len" ]; do
-    window
-    # shellcheck disable=SC2295
-    chunk="${rest%%$dq_stop*}"
-    if [ -n "$chunk" ]; then
-      word+="$chunk"
-      i=$((i + ${#chunk}))
-      continue
-    fi
-    c="${rest:0:1}"
-    case "$c" in
-      '"')
-        i=$((i + 1))
-        return 0
-        ;;
-      \\)
-        n="${rest:1:1}"
-        case "$n" in
-          '$' | '`' | '"' | \\) word+="$n" ;;
-          "$nl") ;;
-          *) word+="$c$n" ;;
-        esac
-        i=$((i + 2))
-        ;;
-      '$')
-        if [ "${rest:1:1}" = '(' ]; then
-          scan_subst
-        else
-          word+="$c"
-          i=$((i + 1))
-        fi
-        ;;
-      '`') scan_backtick ;;
-    esac
-  done
-}
-
-# $( ... ) と $(( ... )) をそのまま加える（中のコマンドは調べない）
-scan_subst() {
-  local rest chunk c depth=1 arith=false
-  window
-  # $(( ... )) の << はシフト演算で、ヒアドキュメントではない
-  # shellcheck disable=SC2016
-  [ "${rest:0:3}" != '$((' ] || arith=true
-  # shellcheck disable=SC2016
-  word+='$(' in_word=true
-  i=$((i + 2))
-  while [ "$i" -lt "$len" ]; do
-    window
-    # shellcheck disable=SC2295
-    chunk="${rest%%$sub_stop*}"
-    if [ -n "$chunk" ]; then
-      word+="$chunk"
-      i=$((i + ${#chunk}))
-      continue
-    fi
-    c="${rest:0:1}"
-    case "$c" in
-      "'") scan_squote ;;
-      '"') scan_dquote ;;
-      '`') scan_backtick ;;
-      \\)
-        word+="${rest:0:2}"
-        i=$((i + 2))
-        ;;
-      '(')
-        depth=$((depth + 1))
-        word+="$c"
-        i=$((i + 1))
-        ;;
-      ')')
-        word+="$c"
-        i=$((i + 1))
-        depth=$((depth - 1))
-        [ "$depth" -gt 0 ] || return 0
-        ;;
-      '<')
-        if ! $arith && [ "${rest:0:2}" = '<<' ] && [ "${rest:0:3}" != '<<<' ]; then
-          i=$((i + 2))
-          read_heredoc_delim
-        else
-          word+="$c"
-          i=$((i + 1))
-        fi
-        ;;
-      "$nl")
-        word+=' '
-        if [ "$hd_n" -gt 0 ]; then skip_heredocs; else i=$((i + 1)); fi
-        ;;
-    esac
-  done
-}
-
-# << の後ろの区切りの語を読み、次の改行で本文を飛ばせるように覚える（i は << の直後）
-read_heredoc_delim() {
-  local rest c strip=0 d=""
-  window
-  if [ "${rest:0:1}" = - ]; then
-    strip=1
-    i=$((i + 1))
-  fi
-  while [ "$i" -lt "$len" ]; do
-    window
-    case "${rest:0:1}" in
-      ' ' | "$tab") i=$((i + 1)) ;;
-      *) break ;;
-    esac
-  done
-  while [ "$i" -lt "$len" ]; do
-    window
-    c="${rest:0:1}"
-    case "$c" in
-      ' ' | "$tab" | "$nl" | ';' | '&' | '|' | '(' | ')' | '<' | '>') break ;;
-      "'" | '"' | \\) ;;
-      *) d+="$c" ;;
-    esac
-    i=$((i + 1))
-  done
-  hd_delims+=("$d")
-  hd_strip+=("$strip")
-  hd_n=$((hd_n + 1))
-}
-
-# ヒアドキュメントの本文を飛ばす（i は本文の前の改行）
-skip_heredocs() {
-  local k=0 d rest body line cut
-  i=$((i + 1))
-  while [ "$k" -lt "$hd_n" ]; do
-    d="${hd_delims[k]}"
-    rest="${cmd:i}"
-    if [ "${hd_strip[k]}" = 0 ]; then
-      # 区切りの行を探して、その次の行へ一度に進む
-      if [ "$rest" = "$d" ] || [ "${rest:0:${#d}+1}" = "$d$nl" ]; then
-        i=$((i + ${#d} + 1))
-      else
-        body="${rest%%"$nl$d$nl"*}"
-        if [ "$body" != "$rest" ]; then
-          i=$((i + ${#body} + ${#d} + 2))
-        else
-          i=$len
-        fi
-      fi
-    else
-      # <<- は行頭のタブを除いて比べるので、1行ずつ見る
-      while [ "$i" -lt "$len" ]; do
-        cut_until "$nl"
-        line="$cut"
-        i=$((i + ${#line} + 1))
-        line="${line#"${line%%[!"$tab"]*}"}"
-        [ "$line" != "$d" ] || break
-      done
-    fi
-    k=$((k + 1))
-  done
-  hd_delims=() hd_strip=() hd_n=0
-}
-
-# < や > のリダイレクト。対象の語（2>&1 の 1 やファイル名）はコマンドの引数に入れない
-scan_redirect() {
-  # 2>&1 の 2 のような、数字だけの語は fd の番号
-  case "$word" in
-    '' | *[!0-9]*) flush_word ;;
-    *) word="" in_word=false ;;
-  esac
-  local rest
-  window
-  if [ "${rest:0:3}" = '<<<' ]; then
-    i=$((i + 3))
-    skip_word=true
-  elif [ "${rest:0:2}" = '<<' ]; then
-    i=$((i + 2))
-    read_heredoc_delim
-  else
-    i=$((i + 1))
-    case "${rest:1:1}" in
-      '>' | '&' | '|') i=$((i + 1)) ;;
-    esac
-    skip_word=true
-  fi
-}
-
-while [ "$i" -lt "$len" ]; do
-  window
-  # shellcheck disable=SC2295
-  chunk="${rest%%$top_stop*}"
-  if [ -n "$chunk" ]; then
-    word+="$chunk" in_word=true
-    i=$((i + ${#chunk}))
-    continue
-  fi
-  c="${rest:0:1}"
-  case "$c" in
-    ' ' | "$tab")
-      flush_word
-      i=$((i + 1))
-      ;;
-    "$nl")
-      end_command
-      if [ "$hd_n" -gt 0 ]; then skip_heredocs; else i=$((i + 1)); fi
-      ;;
-    ';' | '&' | '|')
-      end_command
-      i=$((i + 1))
-      ;;
-    '(')
-      end_command
-      if [ "${rest:1:1}" = '(' ] && arith_end; then
-        # (( ... )) は算術式なので、コマンドとして調べない（中の << もシフト演算）
-        i=$arith_i
-      else
-        dstack[dn]="$dir"
-        dn=$((dn + 1))
-        i=$((i + 1))
-      fi
-      ;;
-    ')')
-      end_command
-      # case のパターンの ) （a) など）は括弧を閉じない
-      if [ "$cn" -gt 0 ] && [ "$dn" -eq "${case_dn[cn - 1]}" ]; then
-        :
-      elif [ "$dn" -gt 0 ]; then
-        dn=$((dn - 1))
-        dir="${dstack[dn]}"
-      fi
-      i=$((i + 1))
-      ;;
-    '<' | '>') scan_redirect ;;
-    '#')
-      if $in_word; then
-        word+="$c"
-        i=$((i + 1))
-      else
-        # コメントは改行の手前まで飛ばす
-        cut_until "$nl"
-        i=$((i + ${#cut}))
-      fi
-      ;;
-    "'") scan_squote ;;
-    '"') scan_dquote ;;
-    '`') scan_backtick ;;
-    \\)
-      if [ "${rest:1:1}" != "$nl" ]; then
-        word+="${rest:1:1}" in_word=true
-      fi
-      i=$((i + 2))
-      ;;
-    '$')
-      if [ "${rest:1:1}" = '(' ]; then
-        scan_subst
-      else
-        word+="$c" in_word=true
-        i=$((i + 1))
-      fi
-      ;;
-  esac
-done
-end_command
+gc_scan check_git "$cmd" "$dir"
 
 # 警告は、使用者には systemMessage、Claude には additionalContext で伝える。コマンドはいつもどおり実行させる
 if [ "$nwarn" -gt 0 ]; then
