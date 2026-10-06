@@ -235,6 +235,32 @@ step() { awk -v n="$2" -v end="$3" 'on && ($0 ~ /^###? / || (end != "" && $0 ~ e
   grep -q 'pr_respond.handlers' "$f" || fail "pr-respond に、担当の skill の設定（pr_respond.handlers）が書かれていません"
 }
 
+@test "branch-update は、衝突を直す前に、両立できると判断した衝突も含めて直し方の方針の確認を取る（設計書 §8・ADR 000237）" {
+  # 両立できると判断した衝突を確かめずに直し、push の前の確認の時点で直したコミットが既にできていた（#237）
+  f="$SKILLS/branch-update/SKILL.md"
+  step2="$(step "$f" 2)"
+  grep -q '両立できると判断した衝突も含めて、直す前に見せる' <<<"$step2" \
+    || fail "手順2に、両立できると判断した衝突も直す前に見せることが書かれていません"
+  grep -q 'ここではまだファイルを直さない' <<<"$step2" || fail "手順2に、方針を決める間はファイルを直さないことが書かれていません"
+  for choice in 'この方針で直す' '直し方を変える' '取り込みをやめる'; do
+    grep -q "「${choice}」" <<<"$step2" || fail "方針の確認の選択肢「${choice}」がありません"
+  done
+  grep -qF 'git merge --abort' <<<"$step2" || fail "取り込みをやめるときに merge を取り消すことが書かれていません"
+  grep -q 'もう一度確認を取る' <<<"$step2" || fail "方針のとおりに直せないときに確認を取り直すことが書かれていません"
+  # 確認（AskUserQuestion）が、直してコミットする（git add）より前にある
+  ask="$(grep -n 'AskUserQuestion で、方針の確認を取る' <<<"$step2" | cut -d: -f1)"
+  add="$(grep -n 'git add' <<<"$step2" | cut -d: -f1)"
+  [ -n "$ask" ] && [ -n "$add" ] || fail "手順2に、方針の確認か、直した後のコミットがありません"
+  [ "$ask" -lt "$add" ] || fail "方針の確認が、直してコミットするより後にあります"
+  # 両立できるなら確かめずに直す、という元の書き方が残っていない
+  grep -q '両立できるなら、そのように直す（' <<<"$step2" && fail "両立できる衝突を確かめずに直す書き方が残っています"
+  # 確認の後に直し方を変えたら、push の前の確認で伝える
+  grep -q '直し方を変えたなら.*手順4で伝える' <<<"$(step "$f" 3)" \
+    || fail "手順3に、確認の後に直し方を変えたら手順4で伝えることが書かれていません"
+  grep -q '確認を取った方針から変えたところ' <<<"$(step "$f" 4)" \
+    || fail "手順4（push の前の確認）に、確認の後に変えた直し方を示すことが書かれていません"
+}
+
 @test "pr-create と task-finish は pr-respond に依存しない（使わなくてもマージから後片付けまで進める）" {
   for name in pr-create task-finish; do
     if grep -n 'pr-respond' "$SKILLS/$name/SKILL.md"; then
