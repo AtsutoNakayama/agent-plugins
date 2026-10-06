@@ -221,6 +221,8 @@ step() { awk -v n="$2" -v end="$3" 'on && ($0 ~ /^###? / || (end != "" && $0 ~ e
     grep -q "\`${v}\`" <<<"$overlap" || fail "手順3に overlap の ${v} の扱いがありません"
   done
   grep -q 'issue.can_defer' <<<"$overlap" || fail "手順3に can_defer の扱いがありません"
+  # 依存先が全部閉じていたかは、スクリプトの all_closed で決める（blocked_by と skipped_closed を文章で突き合わせない）
+  grep -q '`all_closed` が true' <<<"$ask" || fail "手順4に all_closed の扱いがありません"
 }
 
 # shellcheck disable=SC2016 # バッククォートはスキルの本文の文字で、展開させない
