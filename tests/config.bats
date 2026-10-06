@@ -165,13 +165,13 @@ load test_helper
 @test "導入していないリポジトリやリポジトリの外では、ユーザーの層（設定とガイド）を読まない" {
   echo '{"language": "en"}' >"$WORKFLOW_USER_DIR/config.json"
   echo user >"$WORKFLOW_USER_DIR/commit.md"
-  run_script config.sh '[.language, .guides, .sources] | tojson'
+  run_script config.sh '[.language, .guides, .sources, .set_up] | tojson'
   assert_success
-  assert_output "[\"ja\",{},[\"$(cd "$SCRIPTS/.." && pwd)/defaults/workflow.json\"]]"
+  assert_output "[\"ja\",{},[\"$(cd "$SCRIPTS/.." && pwd)/defaults/workflow.json\"],false]"
   cd "$TMP"
-  run_script config.sh '[.language, .guides] | tojson'
+  run_script config.sh '[.language, .guides, .set_up] | tojson'
   assert_success
-  assert_output '["ja",{}]'
+  assert_output '["ja",{},false]'
   # 壊れたユーザーの層も読まないので、止まらない
   echo '{broken' >"$WORKFLOW_USER_DIR/config.json"
   run_script config.sh .language
@@ -183,12 +183,12 @@ load test_helper
   echo '{"language": "en"}' >"$WORKFLOW_USER_DIR/config.json"
   echo user >"$WORKFLOW_USER_DIR/commit.md"
   mark_set_up
-  run_script config.sh '[.language, .guides.commit] | tojson'
-  assert_output "[\"en\",[\"$WORKFLOW_USER_DIR/commit.md\"]]"
+  run_script config.sh '[.language, .guides.commit, .set_up] | tojson'
+  assert_output "[\"en\",[\"$WORKFLOW_USER_DIR/commit.md\"],true]"
   # 初期設定をコミットする前に作ったワークツリーには、チームの設定が無い
   git worktree add -q "$TMP/wt" -b feat/1-x
   cd "$TMP/wt"
   [ ! -f .claude/dev-workflow/config.json ]
-  run_script config.sh '[.language, .guides.commit] | tojson'
-  assert_output "[\"en\",[\"$WORKFLOW_USER_DIR/commit.md\"]]"
+  run_script config.sh '[.language, .guides.commit, .set_up] | tojson'
+  assert_output "[\"en\",[\"$WORKFLOW_USER_DIR/commit.md\"],true]"
 }
