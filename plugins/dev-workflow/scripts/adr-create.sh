@@ -3,7 +3,7 @@
 #
 # 使い方: adr-create.sh --issue N --name TEXT --template TYPE [--date YYYY-MM-DD] [--supersedes FILE]... [--dry-run]
 #
-#   --issue N          判断をした Issue の番号。ファイル名の先頭（6桁に0埋め。999999 まで）と front matter の issue になる
+#   --issue N          判断をした Issue の番号（#N でもよい）。ファイル名の先頭（6桁に0埋め。999999 まで）と front matter の issue になる
 #   --name TEXT        短い名前（英語）。小文字にし、英数字以外は - にして 40 文字までに整える
 #   --template TYPE    テンプレート（templates/adr/ の MADR 4.0.0 を日本語に訳したもの）
 #                        full          全部の節・説明あり（adr-template.md）
@@ -53,13 +53,10 @@ while [ $# -gt 0 ]; do
 done
 
 [ -n "$issue" ] || dw_die "--issue は必須です" 64
-case "$issue" in
-  *[!0-9]*) dw_die "--issue には数字を指定してください: $issue" 64 ;;
-esac
-# 先頭の 0 を外して10進数にする（printf %06d は 08 を8進数として読んで落ちる）。桁あふれを避けるため、数にする前に桁数を見る
-stripped="$(printf '%s' "$issue" | sed 's/^0*//')"
-[ "${#stripped}" -le 6 ] || dw_die "--issue は6桁までにしてください: $issue" 64
-issue=$((10#${stripped:-0}))
+# #12 の形も受け、先頭の 0 を外す（dw_issue_number。printf %06d は 08 を8進数として読んで落ちるため）
+issue="$(dw_issue_number --issue "$issue")"
+# ファイル名は6桁に0埋めする。dw_issue_number は文字列で 0 を外すので、数として使う前に桁数を見て桁あふれを避ける
+[ "${#issue}" -le 6 ] || dw_die "--issue は6桁までにしてください: $issue" 64
 [ -n "$name" ] || dw_die "--name は必須です" 64
 case "$template" in
   full) tpl="adr-template.md" ;;

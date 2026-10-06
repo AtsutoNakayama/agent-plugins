@@ -19,7 +19,7 @@ git submodule update --init   # 初回だけ
 このリポジトリ自身も dev-workflow プラグインのワークフローで開発します。
 
 1. **Issue を起票します**（`/dev-workflow:task-create`）。作業はすべて Issue から始めます。
-2. **着手します**（`/dev-workflow:task-start`）。ブランチとワークツリー（`.claude/worktrees/<ブランチ名>`）ができるので、以後はその中で作業します。
+2. **着手します**（`/dev-workflow:task-start`）。ブランチとワークツリー（`.claude/worktrees/<ブランチ名>`）ができるので、以後はその中で作業します。調査や Issue の整理のように、リポジトリのファイルを変えないタスクでは、ワークツリーを作らずに着手し、終わったら `/dev-workflow:task-finish` で Issue を閉じます（3〜4 は要りません）。
 3. **コミットします**（`/dev-workflow:commit`）。全部を直し終えてから1回でコミットするのではなく、論理的な区切り（1つの変更を仕上げてテストが通ったところ）ごとにコミットします。
 4. **PR を出します**（`/dev-workflow:pr-create`）。出す前に、下の「テストとチェック」がすべて通ることを確かめます。PR はマージキューに入れてマージします。main が先に進んでも、PR に main を取り込み直す必要はありません（下の「コミットと PR の規約」のマージの条件）。PR に指摘や質問が付いたら、`/dev-workflow:pr-respond` で対応します（下の「指摘に手元の Claude Code で対応する」）。
 5. **後片付けをします**（`/dev-workflow:task-finish`）。PR がマージされたら、ワークツリーとローカルのブランチを削除し、main を最新にして、PR が閉じる Issue が閉じたかも伝えます。

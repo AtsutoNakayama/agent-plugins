@@ -174,3 +174,9 @@ pos() {
   assert_output --partial "$(cat "$DEFAULT")"
   assert_output --partial "続きは次のファイルを読んでください: $WORKFLOW_USER_DIR/task-flow.md）"
 }
+
+@test "既定の流れに、ワークツリーが要らないタスク（リポジトリを変えない）の進め方が書いてある" {
+  grep -q 'ワークツリーとブランチを作らずに着手できます' "$DEFAULT"
+  # shellcheck disable=SC2016 # バッククォートは流れの本文の文字で、展開させない
+  grep -q 'もう一度 `/dev-workflow:task-start` でワークツリーを作ってから変えます' "$DEFAULT"
+}

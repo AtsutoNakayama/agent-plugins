@@ -166,9 +166,16 @@ TEMPLATES="$(cd "$BATS_TEST_DIRNAME/../plugins/dev-workflow/templates/adr" && pw
   run_script adr-create.sh --issue 999999 --name x --template full
   assert_success
   assert_equal "$(jq -r .path <<<"$output")" "docs/adr/999999-x.md"
+  # Issue #0 は無いので、0 だけの番号は止まる（ほかのスクリプトと同じ dw_issue_number）
   run_script adr-create.sh --issue 0000 --name x --template full
+  assert_failure 64
+  assert_output --partial "--issue には Issue の番号を指定してください: 0000"
+}
+
+@test "--issue は #12 の形でも受ける（ほかのスクリプトと同じ dw_issue_number）" {
+  run_script adr-create.sh --issue '#8' --name x --template full
   assert_success
-  assert_equal "$(jq -r .path <<<"$output")" "docs/adr/000000-x.md"
+  assert_equal "$(jq -r .path <<<"$output")" "docs/adr/000008-x.md"
 }
 
 @test "置き換える ADR の front matter が閉じていなければ、何も作らず書き換えずに終了コード 4 で止まる" {

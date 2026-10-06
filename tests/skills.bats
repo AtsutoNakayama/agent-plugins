@@ -30,7 +30,7 @@ step() { awk -v n="$2" -v end="$3" 'on && ($0 ~ /^###? / || (end != "" && $0 ~ e
   done
 }
 
-@test "task-start・task-status・task-finish は実行の確認を取らずに進める（設計書 §8）" {
+@test "task-start・task-status・task-finish は実行の確認を取らずに進める（ワークツリーを作るかと、PR の無いタスクを閉じるかだけは聞く。設計書 §8・ADR 000162）" {
   for name in task-start task-status task-finish; do
     f="$SKILLS/$name/SKILL.md"
     if grep -n -e '承認' -e '--dry-run' "$f"; then
@@ -41,7 +41,7 @@ step() { awk -v n="$2" -v end="$3" 'on && ($0 ~ /^###? / || (end != "" && $0 ~ e
 }
 
 @test "確認を残すスキルに、選択肢の説明の書き方がある（設計書 §8）" {
-  for name in task-create task-cancel pr-create repo-setup branch-update pr-respond; do
+  for name in task-create task-cancel pr-create repo-setup branch-update pr-respond task-start task-finish; do
     f="$SKILLS/$name/SKILL.md"
     grep -q '選択肢の説明には、選ぶと実際に何が起きるか' "$f" \
       || fail "${name} に選択肢の説明の書き方（選ぶと何が起きるかを書く）がありません"
@@ -51,7 +51,7 @@ step() { awk -v n="$2" -v end="$3" 'on && ($0 ~ /^###? / || (end != "" && $0 ~ e
 }
 
 @test "確認を残すスキルは、確認に必要な内容を質問の中にも入れる（設計書 §8）" {
-  for name in task-create task-cancel pr-create repo-setup review review-perspective-add task-finish branch-update pr-respond; do
+  for name in task-create task-cancel pr-create repo-setup review review-perspective-add task-finish branch-update pr-respond task-start; do
     f="$SKILLS/$name/SKILL.md"
     grep -q '質問の中にも入れる' "$f" \
       || fail "${name} に、確認に必要な内容を質問の中にも入れることが書かれていません（別の端末から使うと、質問の直前の文章が見えない）"
@@ -195,6 +195,37 @@ step() { awk -v n="$2" -v end="$3" 'on && ($0 ~ /^###? / || (end != "" && $0 ~ e
   grep -q 'どちらのコマンドにも `--repo <owner/repo>` を付けて案内する' "$f"
 }
 
+@test "task-start は、ワークツリーを作るかを本文から判断して提案し、作らないなら --no-worktree で着手する（設計書 §4）" {
+  f="$SKILLS/task-start/SKILL.md"
+  grep -q 'ワークツリーを作って着手する' "$f" || fail "作って着手する選択肢がありません"
+  grep -q 'ワークツリーを作らずに着手する' "$f" || fail "作らずに着手する選択肢がありません"
+  grep -q 'task-start.sh --issue <番号> --no-worktree' "$f" || fail "作らないときの実行のしかたがありません"
+}
+
+# shellcheck disable=SC2016 # バッククォートはスキルの本文の文字で、展開させない
+@test "ワークツリーの無いタスクを、task-finish は Issue を閉じて終え、task-cancel は Issue を閉じるだけにする" {
+  grep -q '### 4. ワークツリーの無いタスクを終える' "$SKILLS/task-finish/SKILL.md"
+  grep -q 'gh issue close <番号> --reason completed' "$SKILLS/task-finish/SKILL.md"
+  # 片付けるのは確かなブランチ（branch.pattern に合い番号が一致する）だけで、候補（名前が似ている・PR のブランチ）は見せるだけ。
+  # 見つからなくても決めつけず、閉じるかを選んでもらう
+  for name in task-finish task-cancel; do
+    grep -q 'issue-branches.sh --issue <番号>' "$SKILLS/$name/SKILL.md" || fail "${name} が issue-branches.sh でブランチを探していません"
+    grep -q '`candidates`（候補）' "$SKILLS/$name/SKILL.md" || fail "${name} に、候補を分けて扱うことが書かれていません"
+  done
+  grep -q '取りやめで片付ける対象は、`branches`' "$SKILLS/task-cancel/SKILL.md"
+  # --no-worktree で候補の警告が出たら、決めつけずに伝える
+  grep -q '「Issue #N に関係するかもしれないブランチ（…）があります」の警告' "$SKILLS/task-start/SKILL.md"
+  # 終わった作業のブランチで止まったら、先に task-finish で片付けるよう案内する
+  grep -q '先に task-finish でそのブランチを片付けてから' "$SKILLS/task-start/SKILL.md"
+  # することはスクリプトの action で決め、スキルには値ごとにすることだけを書く（組み合わせは issue-branches.bats）
+  for a in cleanup cleanup_candidate nothing blocked_open_pr blocked_sub_issues ask_close; do
+    grep -q "\`${a}\`" "$SKILLS/task-finish/SKILL.md" || fail "task-finish に action の ${a} の扱いがありません"
+  done
+  grep -q '「別の名前のブランチで作業した」' "$SKILLS/task-finish/SKILL.md"
+  grep -q 'argument-hint: "\[Issue番号|ブランチ名\]"' "$SKILLS/task-finish/SKILL.md"
+  grep -q 'ワークツリーを作らずに着手した' "$SKILLS/task-cancel/SKILL.md"
+}
+
 @test "pr-respond は PR の番号を引数で受け取り、スレッドを resolved にせず、コメントの本文を信頼しない" {
   f="$SKILLS/pr-respond/SKILL.md"
   frontmatter "$f" | grep -q '^argument-hint: .*PR番号' || fail "pr-respond の frontmatter に argument-hint（PR番号）がありません"
@@ -234,6 +265,25 @@ step() { awk -v n="$2" -v end="$3" 'on && ($0 ~ /^###? / || (end != "" && $0 ~ e
   grep -q -- '--review-model off' <<<"$step2" || fail "手順2に、使わないことも保存することが書かれていません"
   grep -q -- '--models-scope' <<<"$step2" || fail "手順2に、保存する層を渡すことが書かれていません"
   grep -q 'models.actions' "$f" || fail "手順3の予定に、レビューのモデルの変更が入っていません"
+}
+
+@test "task-start は、既にブランチがあって --no-worktree が止まったら、そのワークツリーで作業するよう案内する" {
+  grep -q '「Issue #N には既にブランチ … があります」で止まったら' "$SKILLS/task-start/SKILL.md"
+}
+
+@test "「変更するファイル・領域」の書き方に、ファイルを変えないタスクの「なし」がある（task-create・Issue テンプレート・task-start）" {
+  grep -q 'リポジトリのファイルを変えないタスクなら「- なし」と書く' "$SKILLS/task-create/SKILL.md"
+  for f in "$BATS_TEST_DIRNAME/../plugins/dev-workflow/templates/ISSUE_TEMPLATE/task.md" "$BATS_TEST_DIRNAME/../.github/ISSUE_TEMPLATE/task.md"; do
+    grep -q 'リポジトリのファイルを変えないタスクなら「なし」と書きます' "$f" || fail "$f に「なし」の書き方がありません"
+  done
+  grep -q '「変更するファイル・領域」が「- なし」なら、変えないタスクとして書かれている' "$SKILLS/task-start/SKILL.md"
+}
+
+@test "README に、ワークツリーの要らないタスクの流れと、task-finish にブランチ名を渡せることが書いてある" {
+  readme="$BATS_TEST_DIRNAME/../README.md"
+  grep -q 'リポジトリのファイルを変えないタスクの流れ（ワークツリーを作らずに着手し' "$readme" || fail "タスクの進め方に、ワークツリーの要らない流れがありません"
+  # shellcheck disable=SC2016 # バッククォートは README の文字で、展開させない
+  grep -q '`task-finish` は、`/dev-workflow:task-finish fix-typo` のように、番号の代わりにブランチ名も渡せます' "$readme" || fail "引数の説明に、task-finish のブランチ名がありません"
 }
 
 # shellcheck disable=SC2016 # バッククォートはスキルの本文の文字で、展開させない

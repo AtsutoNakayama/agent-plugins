@@ -62,11 +62,8 @@ while [ $# -gt 0 ]; do
   esac
 done
 [ -n "$issue" ] || dw_die "--issue は必須です" 64
-# スキルの引数の #12 も受ける。# だけは番号が無いので、そのまま残して数字以外として拒否する
-case "$issue" in "#"?*) issue="${issue#\#}" ;; esac
-case "$issue" in
-  *[!0-9]*) dw_die "--issue には数字を指定してください: $issue" 64 ;;
-esac
+# スキルの引数の #12 も受ける（dw_issue_number）
+issue="$(dw_issue_number --issue "$issue")"
 [ -n "$body_file" ] || dw_die "--body-file は必須です" 64
 if [ "$body_file" = - ]; then
   body="$(cat)"
@@ -90,7 +87,8 @@ branch="$(git -C "$repo_root" symbolic-ref --short -q HEAD || true)"
   || dw_die "未コミットの変更があります。コミットしてから実行してください（commit）" 2
 
 # --- Issue ----------------------------------------------------------------------
-issue_json="$(gh issue view "$issue" --json number,title,state,labels,body)" || dw_die "Issue #${issue} を読めません"
+# PR の番号なら止まる（dw_read_issue）
+issue_json="$(dw_read_issue "$issue" number,title,state,labels,body)"
 labels="$(jq -c '[.labels[].name]' <<<"$issue_json")"
 types="$(jq -c --argjson t "$(jq -c '.labels.types' <<<"$config")" 'map(select(. as $n | $t | index($n)))' <<<"$labels")"
 [ "$(jq length <<<"$types")" = 1 ] \

@@ -1,5 +1,5 @@
 # shellcheck shell=bash
-# branch-name・status-set・task-start・cleanup・pr-create・issue-cancel のテストで使う偽の gh。load fake_gh で読み込み、setup_fake_gh を呼ぶ。
+# branch-name・status-set・task-start・cleanup・pr-create・issue-cancel・issue-branches のテストで使う偽の gh。load fake_gh で読み込み、setup_fake_gh を呼ぶ。
 #
 # - gh repo view                    me/demo を返す
 # - gh issue view N --json ...      $FIX/issue-N.json を返す（-q があれば適用する）。引数を「issue-view N ...」として $CALLS に記録する
@@ -7,6 +7,7 @@
 # - gh issue comment N --body-file -  「issue-comment N」を $CALLS に記録し、標準入力を $TMP/issue-comment-body に写す
 # - gh issue close N ...            引数を「issue-close N ...」として $CALLS に記録する
 # - gh pr list ...                  $FIX/pr-list.json（無ければ []）を返し、引数を「pr-list ...」として $CALLS に記録する
+# - gh pr view <URL か番号> ...     $FIX/pr-<番号>.json を返す（番号は URL の最後の部分）。「pr-view <番号>」を $CALLS に記録する
 # - gh pr create ...                引数を「pr-create ...」として $CALLS に記録し、--body-file の中身を $TMP/pr-body に写して、
 #                                   https://github.com/me/demo/pull/42 を返す
 # - gh pr comment N --body-file -   「pr-comment N」を $CALLS に記録し、標準入力を $TMP/pr-comment-body に写す
@@ -19,7 +20,7 @@
 # - gh api -X DELETE <パス>          「api-delete <パス>」を $CALLS に記録する
 # - gh api graphql                  操作名ごとに $FIX/<操作名>.json を返し、「<操作名> <変数>」を $CALLS に記録する
 # - gh project ・Project の REST     fake_gh_project.bash が受け持つ（ProjectView・ProjectFields・AddItem・SetField など）
-# FAKE_FAIL に指定した操作名（issue-view・edit・issue-comment・issue-close・pr-list・pr-create・pr-comment・pr-close・api-get・api-delete・api-sub-issues を含む）は、FAKE_FAIL_MSG（既定: gh: failed）を出して失敗する。
+# FAKE_FAIL に指定した操作名（issue-view・edit・issue-comment・issue-close・pr-list・pr-view・pr-create・pr-comment・pr-close・api-get・api-delete・api-sub-issues を含む）は、FAKE_FAIL_MSG（既定: gh: failed）を出して失敗する。
 
 setup_fake_gh() {
   FIX="$TMP/fix"
@@ -99,6 +100,13 @@ case "$1 $2" in
     echo "pr-list $*" >>"$CALLS"
     fail pr-list
     if [ -f "$FIX/pr-list.json" ]; then jq -r "$q" "$FIX/pr-list.json"; else echo '[]' | jq -r "$q"; fi
+    ;;
+  "pr view")
+    n="${3##*/}"
+    echo "pr-view $n" >>"$CALLS"
+    fail pr-view
+    [ -f "$FIX/pr-$n.json" ] || { echo "GraphQL: Could not resolve to a PullRequest (NOT_FOUND)" >&2; exit 1; }
+    jq -r "$q" "$FIX/pr-$n.json"
     ;;
   "pr create")
     shift 2

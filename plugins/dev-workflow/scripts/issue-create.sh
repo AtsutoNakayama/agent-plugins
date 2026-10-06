@@ -7,8 +7,8 @@
 #   --body-file PATH     本文のファイル。- なら標準入力（既定: 本文なし）
 #   --story-point N      Story Point。1, 2, 3, 5, 8, 13, 21, 34 のどれか（既定: 空欄）。
 #                        21 と 34 は設定できるが、分割を勧める警告を出す
-#   --blocked-by N       依存する（先に終わらせる）同じリポジトリの Issue の番号。複数回指定できる
-#   --parent N           親にする同じリポジトリの Issue の番号。起票した Issue を N のサブ Issue にする。
+#   --blocked-by N       依存する（先に終わらせる）同じリポジトリの Issue の番号（#N でもよい）。複数回指定できる
+#   --parent N           親にする同じリポジトリの Issue の番号（#N でもよい）。起票した Issue を N のサブ Issue にする。
 #                        親子の深さが設定の sub_issues.max_depth（既定 3）を超えるなら、Issue を作る前に止める。
 #                        目安の 2 層より深くなる（3 層目になる）ときは、作るが警告する。
 #                        Story Point は子にだけ付けるので、親の Project の Story Point が入っていれば空欄にする
@@ -40,18 +40,6 @@ need_value() {
   fi
 }
 
-# Issue の番号を取り出して出力する。本文に書くときと同じ #12 の形や、先頭の 0 も受け付ける
-# 使い方: issue_number <オプション名> <値>
-issue_number() {
-  local n="${2#\#}"
-  case "$n" in
-    '' | *[!0-9]*) dw_die "$1 には Issue の番号を指定してください: $2" 64 ;;
-  esac
-  n="$((10#$n))"
-  [ "$n" -gt 0 ] || dw_die "$1 には Issue の番号を指定してください: $2" 64
-  printf '%s\n' "$n"
-}
-
 title="" type="" body_file="" sp="" parent="" breaking=false
 # 依存する Issue の番号（空白区切り。重複は除く）
 blocked_by=""
@@ -69,7 +57,8 @@ while [ $# -gt 0 ]; do
       ;;
     --blocked-by)
       need_value "$@"
-      n="$(issue_number "$1" "$2")"
+      # 本文に書くときと同じ #12 の形や、先頭の 0 も受け付ける（dw_issue_number）
+      n="$(dw_issue_number "$1" "$2")"
       case " $blocked_by " in
         *" $n "*) ;;
         *) blocked_by="${blocked_by:+$blocked_by }$n" ;;
@@ -78,7 +67,7 @@ while [ $# -gt 0 ]; do
       ;;
     --parent)
       need_value "$@"
-      parent="$(issue_number "$1" "$2")"
+      parent="$(dw_issue_number "$1" "$2")"
       shift 2
       ;;
     --breaking) breaking=true; shift ;;

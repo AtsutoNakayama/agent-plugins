@@ -117,7 +117,7 @@ writes() { grep -oE '^(issue-comment|issue-close|pr-comment|pr-close|api-delete)
   setup_cancel
   run_script issue-cancel.sh --issue 17 --reason "重複です" --duplicate-of '#'
   assert_failure 64
-  assert_output --partial "--duplicate-of に値がありません"
+  assert_output --partial "--duplicate-of には Issue の番号を指定してください: #"
   assert_equal "$(writes)" ""
 }
 
@@ -128,7 +128,7 @@ writes() { grep -oE '^(issue-comment|issue-close|pr-comment|pr-close|api-delete)
   assert_output --partial "--duplicate-of に閉じる Issue 自身（#17）は指定できません"
   run_script issue-cancel.sh --issue 17 --reason "重複です" --duplicate-of abc
   assert_failure 64
-  assert_output --partial "--duplicate-of には数字を指定してください: abc"
+  assert_output --partial "--duplicate-of には Issue の番号を指定してください: abc"
 }
 
 @test "Project と Story Point には触れない" {
@@ -248,7 +248,7 @@ writes() { grep -oE '^(issue-comment|issue-close|pr-comment|pr-close|api-delete)
   setup_cancel
   run_script issue-cancel.sh --issue abc --reason "やらないことにしました"
   assert_failure 64
-  assert_output --partial "--issue には数字を指定してください: abc"
+  assert_output --partial "--issue には Issue の番号を指定してください: abc"
 }
 
 @test "--branch を付けると、Issue → PR（コメントして閉じる）→ リモートのブランチの順に片付ける" {
@@ -483,4 +483,13 @@ writes() { grep -oE '^(issue-comment|issue-close|pr-comment|pr-close|api-delete)
   run_script issue-cancel.sh --issue 17 --reason "やめます"
   assert_failure 2
   assert_output --partial "開いている子の Issue（#30, #31）があります"
+}
+
+@test "ブランチ名の # や空白などは符号化して REST のパスに入れる（# から後が落ちて、別のブランチを消さないため）" {
+  setup_cancel
+  touch "$FIX/remote-ref"
+  run_script issue-cancel.sh --issue 17 --reason "やらないことにしました" --branch 'feature/login#2'
+  assert_success
+  assert_equal "$(grep '^api-get ' "$CALLS")" "api-get repos/me/demo/git/ref/heads/feature/login%232"
+  assert_equal "$(grep '^api-delete ' "$CALLS")" "api-delete repos/me/demo/git/refs/heads/feature/login%232"
 }
