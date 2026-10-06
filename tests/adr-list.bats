@@ -159,3 +159,14 @@ write_adr() {
   assert_failure 2
   assert_output --partial "設定を読めません"
 }
+
+@test "前のファイルの値を次のファイルに持ち越さない（中身の無いファイルを挟んでも）" {
+  write_adr docs/adr/a.md "$(printf 'status: accepted\nissue: 5')" "A"
+  : >docs/adr/b.md
+  write_adr docs/adr/c.md "" "front matter の無い C"
+  write_adr docs/adr/d.md "status: proposed" ""
+  run_script adr-list.sh
+  assert_success
+  assert_equal "$(jq -c '[.adrs[] | [.path, .issue, .status, .title]]' <<<"$output")" \
+    '[["docs/adr/a.md",5,"accepted","A"],["docs/adr/b.md",null,null,null],["docs/adr/c.md",null,null,"front matter の無い C"],["docs/adr/d.md",null,"proposed",null]]'
+}

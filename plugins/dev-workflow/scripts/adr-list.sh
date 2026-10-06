@@ -51,36 +51,45 @@ case "$suggest" in
   *) dw_die "adr.suggest は true か false にしてください: ${suggest}" 2 ;;
 esac
 
-# ADR ごとに「パス<TAB>issue<TAB>status<TAB>title」の1行にし、最後に1回の jq でまとめる
-rows=""
+# ADR ごとに「パス<TAB>issue<TAB>status<TAB>title」の1行にし、最後に1回の jq でまとめる。
+# ADR が多くても遅くならないよう、awk は全部のファイルに1回だけ起動する。awk は中身の無いファイルを1行も読まないので、
+# そのファイルは、ファイルの一覧（files）から、値の無い ADR として補う
+files="" rows=""
 if [ -d "$repo_root/$adr_dir" ]; then
+  # awk にはリポジトリのルートからの相対パスで渡し、出力のパスをそのまま使う
+  set --
   for f in "$repo_root/$adr_dir"/*.md; do
-    [ -f "$f" ] || continue
-    row="$(awk '
+    [ -f "$f" ] && set -- "$@" "${f#"$repo_root"/}"
+  done
+  if [ $# -gt 0 ]; then
+    files="$(printf '%s\n' "$@")"
+    rows="$(cd "$repo_root" && awk '
       function clean(v) {
         sub(/^[^:]*:[ \t]*/, "", v); sub(/[ \t\r]+$/, "", v)
         if (v ~ /^".*"$/ || v ~ /^\047.*\047$/) v = substr(v, 2, length(v) - 2)
         gsub(/\t/, " ", v)
         return v
       }
-      NR == 1 && $0 == "---" { fm = 1; next }
+      function flush() { if (cur != "") printf "%s\t%s\t%s\t%s\n", cur, i, s, t }
+      FNR == 1 { flush(); cur = FILENAME; i = s = t = ""; fm = 0; done = 0 }
+      done { next }
+      FNR == 1 && $0 == "---" { fm = 1; next }
       fm && $0 == "---" { fm = 0; next }
       fm && /^issue:/ && i == "" { i = clean($0); next }
       fm && /^status:/ && s == "" { s = clean($0); next }
-      !fm && /^# / { t = substr($0, 3); sub(/[ \t\r]+$/, "", t); gsub(/\t/, " ", t); exit }
-      END { printf "%s\t%s\t%s", i, s, t }' "$f")"
-    rows="${rows}${f#"$repo_root"/}	${row}
-"
-  done
+      !fm && /^# / { t = substr($0, 3); sub(/[ \t\r]+$/, "", t); gsub(/\t/, " ", t); done = 1; next }
+      END { flush() }' "$@")"
+  fi
 fi
 
 # shellcheck disable=SC2016 # jq の変数を bash に展開させない
-printf '%s' "$rows" | jq -R -s --arg dir "$adr_dir" --argjson suggest "$suggest" --arg want "$issue" '
+printf '%s' "$rows" | jq -R -s --arg files "$files" --arg dir "$adr_dir" --argjson suggest "$suggest" --arg want "$issue" '
   def nz: if . == "" then null else . end;
   # issue の値は、前後の # と先頭の 0 を外して、数字だけなら番号にする
   def num: ltrimstr("#") | if test("^[0-9]+$") and test("[1-9]") then tonumber else null end;
-  [split("\n")[] | select(. != "") | split("\t")
-    | {path: .[0], issue: (.[1] // "" | num), status: (.[2] // "" | nz), title: (.[3] // "" | nz)}]
+  (reduce (split("\n")[] | select(. != "") | split("\t")) as $r ({}; .[$r[0]] = $r)) as $rows
+  | [$files | split("\n")[] | select(. != "") | . as $p | ($rows[$p] // [$p])
+    | {path: $p, issue: (.[1] // "" | num), status: (.[2] // "" | nz), title: (.[3] // "" | nz)}]
   # glob の並びはロケールで変わるので、文字の順に並べ直す
   | sort_by(.path)
   | (if $want == "" then null else ($want | tonumber) end) as $n
