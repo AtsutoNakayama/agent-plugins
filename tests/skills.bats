@@ -242,10 +242,14 @@ step() { awk -v n="$2" -v end="${3:-^###? }" 'on && $0 ~ end { exit } $0 ~ ("^##
   assert_equal "$(frontmatter "$AGENT" | sed -n 's/^name: //p')" "perspective-reviewer"
   tools="$(frontmatter "$AGENT" | sed -n 's/^tools: //p')"
   assert_equal "$tools" "Read, Grep, Glob, Bash"
-  grep -q '1つずつ実行し.*`&&`' "$AGENT" \
-    || fail "agent の定義に、Bash のコマンドを1つずつ実行する決まりがありません（つなぐと承認されないことがある）"
+  rule="$(grep '1つずつ実行し' "$AGENT")" || fail "agent の定義に、Bash のコマンドを1つずつ実行する決まりがありません（つなぐと承認されないことがある）"
+  for w in '`cd`' '`&&`' '`;`' '`|`'; do
+    grep -qF "$w" <<<"$rule" || fail "agent の、Bash のコマンドを1つずつ実行する決まりに ${w} がありません"
+  done
   grep -q '観点ファイルがつないだコマンド.*1つずつに分けて' "$AGENT" \
     || fail "agent の定義に、観点ファイルがつないだコマンドを指示したときの扱いがありません"
+  grep -q '1つずつのコマンドで確かめられなければ.*`notes`' "$AGENT" \
+    || fail "agent の定義に、分けて確かめられないときに notes に書くことがありません"
 
   f="$SKILLS/review/SKILL.md"
   step3="$(step "$f" 3)"
