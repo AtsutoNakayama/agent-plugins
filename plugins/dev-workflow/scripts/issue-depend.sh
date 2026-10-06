@@ -8,9 +8,9 @@
 #   --dry-run        変更せず、行う予定の操作だけを出力する
 #
 # 行うこと:
-#   1. Issue N と、依存する Issue M があるかを確かめる（PR の番号や無い番号なら、何も変えずに止まる）
-#   2. M が GitHub の依存関係に無ければ登録する
-#   3. 本文の「## 依存」の見出しの下に「- #M」が無ければ足す。「- なし」の行は消す。見出しが無ければ、本文の最後に足す
+#   1. Issue N と、依存する Issue M があり、どちらも開いているかを確かめる（PR の番号・無い番号・閉じた Issue なら、何も変えずに止まる）
+#   2. M が GitHub の依存関係に無ければ登録する（依存が循環するなど、GitHub が断ったら、その理由を出して止まる）
+#   3. 本文の「## 依存」の節に「#M」が無ければ、最初の節に「- #M」を足す。「なし」の行は消す。節が無ければ、本文の最後に足す
 set -euo pipefail
 
 # shellcheck source=lib/common.sh
@@ -64,15 +64,17 @@ actions='[]'
 note() { actions="$(jq -c --arg a "$1" '. + [$a]' <<<"$actions")"; }
 
 # --- 1. Issue と依存する Issue を確かめる ---------------------------------------------
-# REST の issues は PR も返すので、PR の番号は無い Issue として扱う
+# REST の issues は PR も返すので、PR の番号は無い Issue として扱う（dw_issue_ref と同じ）
 target="$(dw_gh_find gh api "$issue_dir/$issue")"
 jq -e '. != null and (.pull_request | not)' >/dev/null <<<"$target" || dw_die "Issue #${issue} がありません（${repo_nwo}）" 2
-# 依存関係の登録（REST）には node id ではなく数値の id を使う。「番号:id」を空白区切りで持つ
+[ "$(jq -r .state <<<"$target")" = open ] || dw_die "Issue #${issue} は閉じています" 2
+# 閉じた Issue への依存は、待つものが無いので足さない。「番号:id」を空白区切りで持つ
 blocking=""
 for n in $blocked_by; do
-  id="$(dw_gh_find gh api "$issue_dir/$n" | jq -r 'if . == null or .pull_request then empty else .id end')"
-  [ -n "$id" ] || dw_die "依存する Issue #${n} がありません（${repo_nwo}）" 2
-  blocking="${blocking:+$blocking }$n:$id"
+  ref="$(dw_issue_ref "$repo_nwo" "$n")"
+  [ -n "$ref" ] || dw_die "依存する Issue #${n} がありません（${repo_nwo}）" 2
+  [ "${ref#* }" = open ] || dw_die "依存する Issue #${n} は閉じています" 2
+  blocking="${blocking:+$blocking }$n:${ref%% *}"
 done
 
 # --- 2. GitHub の依存関係に登録する -------------------------------------------------
@@ -83,38 +85,39 @@ for pair in $blocking; do
   n="${pair%%:*}" id="${pair#*:}"
   jq -e --argjson id "$id" 'index($id) == null' >/dev/null <<<"$registered" || continue
   note "Issue #${issue} の依存関係（blocked by）に #${n} を登録する"
-  $dry_run || gh api -X POST "$issue_dir/$issue/dependencies/blocked_by" -F issue_id="$id" >/dev/null \
+  $dry_run || dw_add_blocked_by "$repo_nwo" "$issue" "$id" \
     || dw_die "Issue #${issue} の依存関係に #${n} を登録できませんでした"
   added_dependency="${added_dependency:+$added_dependency }$n"
 done
 
 # --- 3. 本文の「依存」に書く ----------------------------------------------------------
-# 見出しの読み方は next-tasks.sh と同じ（## 依存。前後の空白と行末の \r は無視する）。見出しの下に既にある #M は足さない。
-# 「なし」の行（`なし` も）は、依存ができたので消す。行末の \r（GitHub の画面で書いた本文）は、見出しの行に合わせる
+# 節は next-tasks.sh と同じ読み方（DW_JQ_ISSUE_SECTIONS）で探す。どの「依存」の節にも無い #M だけを、最初の節の最後の行
+# （空行を除く）の後に足す。「なし」の行（箇条書きでも、`なし` でも）は、依存ができたので、どの節からも消す。
+# 足す行の改行は、本文に合わせる（GitHub の画面で書いた本文は \r\n）
 # jq の変数（$l など）を bash に展開させないため、シングルクォートで書く
 # shellcheck disable=SC2016
-edit='
+edit="$DW_JQ_ISSUE_SECTIONS"'
   (.body // "") as $body
-  | ($body | split("\n")) as $l
-  | ([range(0; $l | length) | select($l[.] | sub("\r$"; "") | test("^##[ \t]*依存[ \t]*$"))] | first) as $h
-  | if $h == null then
-      ($ns | map("- #\(.)")) as $add
-      | {added: $ns,
-         body: (($body | sub("[\r\n]+$"; "")) as $b | if $b == "" then "" else $b + "\n\n" end)
-           + "## 依存\n" + ($add | join("\n")) + "\n"}
+  | body_lines as $l
+  | section_ranges("依存") as $rs
+  | (if $body | test("\r\n") then "\r" else "" end) as $cr
+  | (deps) as $have
+  | [$ns[] | select(. as $n | $have | index($n) | not)] as $new
+  | if ($new | length) == 0 then {added: [], body: $body}
+    elif ($rs | length) == 0 then
+      {added: $new,
+       body: (($body | sub("[\r\n]+$"; "")) as $b | (if $b == "" then "" else $b + $cr + "\n" + $cr + "\n" end)
+         + (["## 依存"] + ($new | map("- #\(.)")) | map(. + $cr + "\n") | join("")))}
     else
-      ([range($h + 1; $l | length) | select($l[.] | test("^## "))] | first // ($l | length)) as $end
-      | ([$l[$h + 1:$end][] | scan("#([0-9]+)") | .[0] | tonumber]) as $have
-      | [$ns[] | select(. as $n | $have | index($n) | not)] as $new
-      | if ($new | length) == 0 then {added: [], body: $body}
-        else
-          (if $l[$h] | endswith("\r") then "\r" else "" end) as $cr
-          | [$l[$h + 1:$end][] | select(gsub("`"; "") | test("^[ \t]*[-*][ \t]+なし") | not)] as $sec
-          | ([range(0; $sec | length) | select($sec[.] | sub("\r$"; "") | test("\\S"))] | last) as $last
-          | (if $last == null then 0 else $last + 1 end) as $at
-          | {added: $new,
-             body: ($l[:$h + 1] + $sec[:$at] + ($new | map("- #\(.)" + $cr)) + $sec[$at:] + $l[$end:] | join("\n"))}
-        end
+      def nashi: gsub("[`\r]"; "") | test("^[ \t]*([-*][ \t]+)?なし");
+      ([$rs[] | range(.head + 1; .end)] | map(select($l[.] | nashi))) as $drop
+      | ($rs[0]) as $r
+      | ([range($r.head + 1; $r.end) | select(. as $i | ($drop | index($i) | not) and ($l[$i] | gsub("\r"; "") | test("\\S")))]
+         | last // $r.head) as $at
+      | {added: $new,
+         body: ([range(0; $l | length) | . as $i
+            | (if $drop | index($i) then empty else $l[$i] end),
+              (if $i == $at then ($new[] | "- #\(.)" + $cr) else empty end)] | join("\n"))}
     end'
 edited="$(jq -c --argjson ns "$(jq -nc --arg b "$blocked_by" '$b | split(" ") | map(tonumber)')" "$edit" <<<"$target")"
 added_body="$(jq -r '.added | join(" ")' <<<"$edited")"

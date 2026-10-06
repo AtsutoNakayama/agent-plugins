@@ -7,10 +7,10 @@ load test_helper
 # 偽の gh。
 # - gh repo view ... -q .nameWithOwner                       me/demo を返す
 # - gh api repos/me/demo/issues/<番号>                       $FIX/issue-<番号>.json を返す（無ければ 404）。「GetIssue <番号>」を記録する
-# - gh api --paginate .../issues/<番号>/dependencies/blocked_by...  $FIX/blocked-<番号>.json（無ければ []）を返す
+# - gh api --paginate .../issues/<番号>/dependencies/blocked_by...  $FIX/blocked-<番号>.json（無ければ []）を返す。「Blocked <番号>」を記録する
 # - gh api -X POST .../issues/<番号>/dependencies/blocked_by -F issue_id=<id>  「AddBlockedBy <番号> <id>」を記録する
 # - gh issue edit <番号> --body-file -                        標準入力を $FIX/body-<番号> に書き、「EditBody <番号>」を記録する
-# FAKE_FAIL に指定した操作名（GetIssue・AddBlockedBy・EditBody）は失敗する。
+# FAKE_FAIL に指定した操作名（GetIssue・Blocked・AddBlockedBy・EditBody）は、FAKE_FAIL_MSG（既定: gh: failed）を出して失敗する。
 setup_fake_gh() {
   FIX="$TMP/fix"
   CALLS="$TMP/calls"
@@ -25,6 +25,8 @@ case "$1 $2" in
   "api --paginate")
     n="${3#*/issues/}"
     n="${n%%/*}"
+    echo "Blocked $n" >>"$CALLS"
+    fail Blocked
     if [ -f "$FIX/blocked-$n.json" ]; then cat "$FIX/blocked-$n.json"; else echo '[]'; fi
     ;;
   "api -X")
@@ -52,10 +54,10 @@ SH
   export PATH="$TMP/bin:$PATH"
 }
 
-# 使い方: issue <番号> [本文] [PR なら pr]
+# 使い方: issue <番号> [本文] [PR なら pr] [状態（既定 open）]
 # REST の Issue を書く。id は番号に 1000 を足したもの
 issue() {
-  jq -nc --argjson n "$1" --arg b "${2-}" --arg pr "${3:-}" '{number: $n, id: ($n + 1000), body: $b,
+  jq -nc --argjson n "$1" --arg b "${2-}" --arg pr "${3:-}" --arg st "${4:-open}" '{number: $n, id: ($n + 1000), body: $b, state: $st,
     html_url: "https://github.com/me/demo/issues/\($n)"} + (if $pr == "" then {} else {pull_request: {}} end)' >"$FIX/issue-$1.json"
 }
 
@@ -203,5 +205,76 @@ body_of() { cat "$FIX/body-$1"; }
   assert_failure 64
   run_script issue-depend.sh --issue 10 --foo
   assert_failure 64
+  run_script issue-depend.sh --blocked-by 5 --issue
+  assert_failure 64
+  assert_output --partial "--issue に値がありません"
+  run_script issue-depend.sh --issue 10 --blocked-by ''
+  assert_failure 64
+  assert_output --partial "--blocked-by に値がありません"
   assert_equal "$(cat "$CALLS")" ''
+}
+
+@test "Issue か依存する Issue が閉じていれば、何も変えずに止まる" {
+  setup_fake_gh
+  issue 10 $'## 依存\n- なし' "" closed
+  issue 11 $'## 依存\n- なし'
+  issue 5 "" "" closed
+  run_script issue-depend.sh --issue 10 --blocked-by 6
+  assert_failure 2
+  assert_output --partial "Issue #10 は閉じています"
+  run_script issue-depend.sh --issue 11 --blocked-by 5
+  assert_failure 2
+  assert_output --partial "依存する Issue #5 は閉じています"
+  assert_equal "$(grep -cvE '^GetIssue ' "$CALLS")" 0
+}
+
+@test "箇条書きでない「なし」の行も消し、どの「依存」の節にも無い番号だけを最初の節に足す" {
+  setup_fake_gh
+  issue 10 $'## 依存\nなし\n\n## 補足\ny\n## 依存\n- #6\n- なし（今のところ）'
+  issue 5
+  issue 6
+  run_script issue-depend.sh --issue 10 --blocked-by 5 --blocked-by 6
+  assert_success
+  assert_equal "$(body_of 10)" $'## 依存\n- #5\n\n## 補足\ny\n## 依存\n- #6'
+  assert_equal "$(jq -c .added.body <<<"$output")" '[5]'
+}
+
+@test "「## 」で始まらない行（##依存）は見出しとみなさず、next-tasks.sh と同じく節を足す" {
+  # 見出しの読み方が next-tasks.sh と違い、足した依存が task-next に読まれないことがあった
+  setup_fake_gh
+  issue 10 $'##依存\n- なし'
+  issue 5
+  run_script issue-depend.sh --issue 10 --blocked-by 5
+  assert_success
+  assert_equal "$(body_of 10)" $'##依存\n- なし\n\n## 依存\n- #5'
+}
+
+@test "見出しが無い CRLF の本文には、CRLF で節を足す" {
+  setup_fake_gh
+  issue 10 $'## 背景\r\nx\r\n'
+  issue 5
+  run_script issue-depend.sh --issue 10 --blocked-by 5
+  assert_success
+  assert_equal "$(body_of 10 | od -c | tr -s ' ' | tr -d '\n')" "$(printf '## 背景\r\nx\r\n\r\n## 依存\r\n- #5\r\n' | od -c | tr -s ' ' | tr -d '\n')"
+}
+
+@test "依存関係を登録できなければ（循環などで GitHub が断ったら）、GitHub の理由を出して止まり、本文は変えない" {
+  setup_fake_gh
+  issue 10 $'## 依存\n- なし'
+  issue 5
+  FAKE_FAIL=AddBlockedBy FAKE_FAIL_MSG="gh: Validation Failed (HTTP 422)" run_script issue-depend.sh --issue 10 --blocked-by 5
+  assert_failure 1
+  assert_output --partial "gh: Validation Failed (HTTP 422)"
+  assert_output --partial "Issue #10 の依存関係に #5 を登録できませんでした"
+  assert_equal "$(called EditBody)" 0
+}
+
+@test "登録済みの依存関係を読めなければ、何も変えずに止まる" {
+  setup_fake_gh
+  issue 10 $'## 依存\n- なし'
+  issue 5
+  FAKE_FAIL=Blocked run_script issue-depend.sh --issue 10 --blocked-by 5
+  assert_failure 1
+  assert_output --partial "Issue #10 の依存関係を読めませんでした"
+  assert_equal "$(called AddBlockedBy) $(called EditBody)" '0 0'
 }
