@@ -18,7 +18,7 @@ eval_repo() {
   # 実行のたびに HOME が空になり、git の名前とメールアドレスが無いので、リポジトリに設定する（Claude のコミットにも使う）
   git config user.name "Eval"
   git config user.email "eval@example.com"
-  mkdir -p .claude/dev-workflow .fake-gh/res
+  mkdir -p .claude/dev-workflow
   printf '%s\n' "${1:-"{}"}" >.claude/dev-workflow/config.json
   printf '# demo\n' >README.md
   printf '.fake-gh/\n.fake-remote.git/\n' >>.git/info/exclude
@@ -27,12 +27,20 @@ eval_repo() {
   git init -q --bare .fake-remote.git
   git remote add origin "$PWD/.fake-remote.git"
   git push -q -u origin main
-  : >.fake-gh/routes
-  : >.fake-gh/calls
+  fake_gh_init
   fake_gh 'repo view*' '{"nameWithOwner": "me/demo", "url": "https://github.com/me/demo", "defaultBranchRef": {"name": "main"}}'
   fake_gh '--version*' 'gh version 2.96.0 (2026-07-02)'
   fake_gh 'api user*' '{"login": "me"}'
   fake_gh 'auth status*' 'github.com: Logged in to github.com account me'
+}
+
+# 偽の gh の表（.fake-gh/）を、空にして作る（tests/eval/bin/fake-gh.sh の表と記録の形式を参照）。
+# 使い方: fake_gh_init
+fake_gh_init() {
+  rm -rf .fake-gh
+  mkdir -p .fake-gh/res
+  : >.fake-gh/routes
+  : >.fake-gh/calls
 }
 
 # 偽の gh の応答を、表の最後に足す（先に足したものが優先される）。
