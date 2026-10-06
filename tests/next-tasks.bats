@@ -641,3 +641,12 @@ args() { grep "^$1 " "$CALLS" | sed -n "${2:-1}p" | cut -d' ' -f2-; }
   assert_equal "$(out_of '.active_unknown')" '[20]'
   assert_equal "$(out_of '[.todo[] | [.number, (.warnings | length)]]')" '[[10,0],[11,1]]'
 }
+
+@test "バッククォートで囲んだ「なし」と「不明」が並ぶ Issue は、領域が分からないものとして扱う" {
+  setup_fake_gh
+  item 10 Todo $'## 変更するファイル・領域\n- `なし`\n- `不明`'
+  write_page
+  run_script next-tasks.sh
+  assert_success
+  assert_equal "$(out_of '.todo[0].area_known')" false
+}
