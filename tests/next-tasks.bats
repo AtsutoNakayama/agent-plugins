@@ -838,17 +838,19 @@ args() { grep "^$1 " "$CALLS" | sed -n "${2:-1}p" | cut -d' ' -f2-; }
   item 32 Hold $'## 変更するファイル・領域\n- docs/'
   item 34 Backlog $'## 変更するファイル・領域\n- docs/'
   item 35 Todo $'## 変更するファイル・領域\n- tests/'
+  item 36 "" $'## 変更するファイル・領域\n- docs/'
   write_page
   issue 33 $'## 変更するファイル・領域\n- docs/'
-  for n in 30 31 32 33 34 35; do
+  for n in 30 31 32 33 34 35 36; do
     run_script next-tasks.sh --issue "$n"
     assert_success
     echo "$n $(out_of '.issue | [.status, .overlap, .can_defer]')" >>"$TMP/got"
   done
   assert_equal "$(cat "$TMP/got")" "$(printf '%s\n' \
     '30 ["Todo","conflict",true]' '31 ["In Progress","conflict",false]' '32 ["Hold","conflict",false]' \
-    '33 [null,"conflict",false]' '34 ["Backlog","conflict",false]' '35 ["Todo","none",false]')"
-  # Project の項目にある Issue は読み直さない（Project に無い #33 だけ読む）
+    '33 [null,"conflict",false]' '34 ["Backlog","conflict",false]' '35 ["Todo","none",false]' \
+    '36 [null,"conflict",false]')"
+  # Project の項目にある Issue は読み直さない（Project に無い #33 だけ読む。列が空の #36 も Project の項目を使う）
   assert_equal "$(called IssueView)" 1
   assert_equal "$(args IssueView)" 33
 }
