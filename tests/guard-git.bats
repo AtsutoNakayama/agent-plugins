@@ -211,6 +211,11 @@ silent() {
     "cd $TMP/wt |& cat; git commit -m x" "pushd $TMP/wt && popd | cat && popd; git commit -m x"
   allowed "cd $TMP/wt && git commit -m x | cat" "cd $TMP/wt; true & git commit -m x" "pushd $TMP/wt && popd | cat && git commit -m x" \
     "cd $TMP/wt && true | true; git commit -m x" "true | true; cd $TMP/wt && git commit -m x"
+  # || はパイプではない（a || b | c の | は b と c のパイプライン）
+  allowed "cd $TMP/wt || true; git commit -m x" "cd $TMP/wt || true | cat; git commit -m x"
+  denied "main の上ではコミットしません" "cd $TMP/wt | true || true; git commit -m x"
+  # 語のあるコマンドで終わった並びの後の改行では、新しい並びを始める（& で戻す先は、その並びの始まり）
+  allowed "$(printf 'cd %s && true\ntrue & git commit -m x' "$TMP/wt")"
   # & を含むリダイレクト（&>）、&& の後の改行、case の ;& は、バックグラウンドやパイプではない
   allowed "cd $TMP/wt &> /dev/null && git commit -m x" "$(printf 'cd %s &&\ngit commit -m x' "$TMP/wt")" \
     "case x in x) cd $TMP/wt ;& y) : ;; esac; git commit -m x"

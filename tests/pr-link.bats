@@ -444,8 +444,13 @@ EOF"
 
 @test "パイプラインの中の cd で移った先は、外に効かない" {
   make_wt
-  shows "cd $TMP/wt | true; git push" "Issue #17: https://github.com/me/demo/issues/17"
-  [[ "$output" != *"issues/23"* ]] || fail "パイプラインの中で移った先の Issue を出した: $output"
+  local c
+  # パイプラインと & の中で、絶対パスへ移ってたどり始めても、外側はたどっていない状態（cwd）に戻り、
+  # その後の外側の相対パスへの cd もたどらない
+  for c in "cd $TMP/wt | true; git push" "cd $TMP/wt & git push" "cd $TMP/wt | true; cd .. && git push"; do
+    shows "$c" "Issue #17: https://github.com/me/demo/issues/17"
+    [[ "$output" != *"issues/23"* ]] || fail "パイプラインや & の中で移った先の Issue を出した: $c / $output"
+  done
 }
 
 @test "外側の場所をたどる前に積んだ場所へ、( ) の中で戻ったときは、移った先が分からないので何も出さない" {
