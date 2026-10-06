@@ -553,3 +553,13 @@ auto_branch() {
   run_script review-perspectives.sh --auto
   assert_equal "$(json_of "$output" | jq -r .context.model)" sonnet
 }
+
+@test "ホームのリポジトリでは、ユーザーの層の観点を、リポジトリの観点としても使わない" {
+  export WORKFLOW_USER_DIR="$TMP/home/.claude/dev-workflow"
+  git init -q -b main "$TMP/home"
+  perspective "$WORKFLOW_USER_DIR/review" mine "自分の観点"
+  cd "$TMP/home"
+  run_script review-perspectives.sh
+  assert_success
+  jq -e '(.perspectives | any(.name == "mine") | not) and (.perspectives | any(.layer == "plugin"))' <<<"$output" >/dev/null || fail "$output"
+}
