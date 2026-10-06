@@ -802,3 +802,91 @@ args() { grep "^$1 " "$CALLS" | sed -n "${2:-1}p" | cut -d' ' -f2-; }
   assert_failure 64
   assert_output --partial "--issue に値がありません"
 }
+
+@test "--issue の overlap は、重なりがあれば conflict（分からない着手中の Issue があっても）、無くて分からなければ unknown、どちらでもなければ none" {
+  # 重なる・分からない・重ならないの判断を、スキルの文章で値を組み合わせて決めると、両方あるときの扱いが食い違っていた
+  setup_fake_gh
+  item 20 "In Progress" $'## 変更するファイル・領域\n- docs/'
+  item 21 "In Progress"
+  write_page
+  issue 30 $'## 変更するファイル・領域\n- docs/a.md'
+  issue 31 $'## 変更するファイル・領域\n- tests/'
+  issue 32 $'## 変更するファイル・領域\n- 不明'
+  issue 33 $'## 変更するファイル・領域\n- なし'
+  for n in 30 31 32 33; do
+    run_script next-tasks.sh --issue "$n"
+    assert_success
+    echo "$n $(out_of '.issue | [.overlap, ([.conflicts_with_active[].issue]), (.warnings | length), .area_known]')" >>"$TMP/got"
+  done
+  assert_equal "$(cat "$TMP/got")" $'30 ["conflict",[20],1,true]\n31 ["unknown",[],1,true]\n32 ["unknown",[],1,false]\n33 ["none",[],0,true]'
+  # 着手中の Issue の領域が全部分かっていて、重ならなければ none
+  : >"$FIX/nodes"
+  item 20 "In Progress" $'## 変更するファイル・領域\n- docs/'
+  write_page
+  run_script next-tasks.sh --issue 31
+  assert_success
+  assert_equal "$(out_of '.issue.overlap')" '"none"'
+}
+
+@test "--issue の can_defer は、重なりがあって、Issue が Todo の列にあるときだけ true（列は Project の項目から読む）" {
+  # 着手中・保留・Project に無い Issue に「今は着手しない」を出すと、task-next が候補に戻さず、待つ意味が無い
+  setup_fake_gh
+  echo '{"project": {"owner": "me", "number": 4}, "status": {"hold": "Hold"}}' >"$REPO/.claude/dev-workflow/config.json"
+  item 20 "In Progress" $'## 変更するファイル・領域\n- docs/'
+  item 30 Todo $'## 変更するファイル・領域\n- docs/'
+  item 31 "In Progress" $'## 変更するファイル・領域\n- docs/'
+  item 32 Hold $'## 変更するファイル・領域\n- docs/'
+  item 34 Backlog $'## 変更するファイル・領域\n- docs/'
+  item 35 Todo $'## 変更するファイル・領域\n- tests/'
+  write_page
+  issue 33 $'## 変更するファイル・領域\n- docs/'
+  for n in 30 31 32 33 34 35; do
+    run_script next-tasks.sh --issue "$n"
+    assert_success
+    echo "$n $(out_of '.issue | [.status, .overlap, .can_defer]')" >>"$TMP/got"
+  done
+  assert_equal "$(cat "$TMP/got")" "$(printf '%s\n' \
+    '30 ["Todo","conflict",true]' '31 ["In Progress","conflict",false]' '32 ["Hold","conflict",false]' \
+    '33 [null,"conflict",false]' '34 ["Backlog","conflict",false]' '35 ["Todo","none",false]')"
+  # Project の項目にある Issue は読み直さない（Project に無い #33 だけ読む）
+  assert_equal "$(called IssueView)" 1
+  assert_equal "$(args IssueView)" 33
+}
+
+@test "--issue では status.todo が無くても止まらない（Todo の Issue を扱わないため）" {
+  setup_fake_gh
+  echo '{"project": {"owner": "me", "number": 4}, "status": {"todo": null}}' >"$REPO/.claude/dev-workflow/config.json"
+  item 20 "In Progress" $'## 変更するファイル・領域\n- docs/'
+  write_page
+  issue 30 $'## 変更するファイル・領域\n- docs/'
+  run_script next-tasks.sh --issue 30
+  assert_success
+  assert_equal "$(out_of '.issue | [.overlap, .can_defer]')" '["conflict",false]'
+  run_script next-tasks.sh
+  assert_failure 2
+  assert_output --partial "status.todo が設定されていません"
+}
+
+@test "--issue で開いている PR を読めなければ、止まる" {
+  setup_fake_gh
+  item 20 "In Progress"
+  write_page
+  issue 30 $'## 変更するファイル・領域\n- docs/'
+  FAKE_FAIL=PrList run_script next-tasks.sh --issue 30
+  assert_failure 1
+  assert_output --partial "開いている PR を読めませんでした"
+}
+
+@test "本文の節は「## 」で始まる見出しだけで区切り、同じ見出しの節が複数あれば全部読む" {
+  # 依存を書く issue-depend.sh と読み方を共有する（DW_JQ_ISSUE_SECTIONS）
+  setup_fake_gh
+  item 10 Todo $'## 依存\n- #5\n##依存\n- #6\n## 補足\n#7\n## 依存\r\n- #8'
+  write_page
+  echo open >"$FIX/state-5"
+  echo open >"$FIX/state-6"
+  echo open >"$FIX/state-7"
+  echo open >"$FIX/state-8"
+  run_script next-tasks.sh
+  assert_success
+  assert_equal "$(out_of '.todo[0].body_deps')" '[5,6,8]'
+}
