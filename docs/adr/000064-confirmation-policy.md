@@ -53,4 +53,3 @@ issue: 64
 
 * 出典：Issue #23（https://github.com/nakayama-labs/agent-plugins/issues/23）、PR #24（https://github.com/nakayama-labs/agent-plugins/pull/24）、Issue #64（https://github.com/nakayama-labs/agent-plugins/issues/64）、PR #70（https://github.com/nakayama-labs/agent-plugins/pull/70）、設計書 §8
 * #23 と #64 の2つの判断を、今の線引きとして1つの ADR にまとめた。date と issue は、今の線引きを決めた #64 のもの。
-* この線引きの例外は、後の ADR で決めた：[000162](000162-start-without-worktree.md)（task-start がワークツリーを作るか、task-finish が PR の無いタスクの Issue を閉じるかを聞く）、[000237](000237-confirm-conflict-resolution-plan.md)（branch-update が衝突を直す前に直し方の方針を聞く）。例外の一覧は設計書 §8 にもある。
