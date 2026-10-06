@@ -24,7 +24,7 @@ frontmatter() { awk 'NR == 1 && $0 == "---" { on = 1; next } on && $0 == "---" {
   done
 }
 
-@test "task-start・task-status・task-finish は実行の確認を取らずに進める（設計書 §8）" {
+@test "task-start・task-status・task-finish は実行の確認を取らずに進める（ワークツリーを作るかと、PR の無いタスクを閉じるかだけは聞く。設計書 §8・ADR 000162）" {
   for name in task-start task-status task-finish; do
     f="$SKILLS/$name/SKILL.md"
     if grep -n -e '承認' -e '--dry-run' "$f"; then
