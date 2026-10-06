@@ -259,3 +259,12 @@ write_adr() {
   assert_failure 2
   assert_output --partial "#404 が"
 }
+
+@test "引用符で囲んだ値は閉じる引用符までを値にし、後ろのコメントは捨てる" {
+  write_adr docs/adr/a.md "$(printf 'status: "accepted" # 見直し済み\nissue: "151" # 元の Issue')" "a"
+  write_adr docs/adr/b.md "$(printf "status: 'a # b'  # c\nissue: '151'")" "b"
+  write_adr docs/adr/c.md "$(printf 'status: "閉じていない\nissue: 151')" "c"
+  run_script adr-list.sh --issue 151
+  assert_success
+  assert_equal "$(jq -c '[.adrs[] | [.path, .status]]' <<<"$output")" '[["docs/adr/a.md","accepted"],["docs/adr/b.md","a # b"],["docs/adr/c.md","\"閉じていない"]]'
+}
