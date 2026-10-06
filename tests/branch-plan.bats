@@ -18,11 +18,11 @@ P='.pushed_behind = 1'
 
 # 既定の状態を jq のフィルタ $1 で変えて branch-plan.sh に渡し、「action reason queue fallback」（null は -）が $2 と同じかを確かめる
 check_plan() {
-  local status got
-  status="$(jq -c "$1" <<<"$BASE")"
-  got="$("${TEST_BASH:-bash}" "$SCRIPTS/branch-plan.sh" <<<"$status" \
-    | jq -r '[.action, .reason, .queue, .fallback] | map(. // "-") | join(" ")')"
-  assert_equal "$got" "$2"
+  local input
+  input="$(jq -c "$1" <<<"$BASE")"
+  run_script branch-plan.sh <<<"$input"
+  assert_success
+  assert_equal "$(jq -r '[.action, .reason, .queue, .fallback] | map(. // "-") | join(" ")' <<<"$output")" "$2"
 }
 
 @test "出力は action・reason・queue・fallback の4つ" {
