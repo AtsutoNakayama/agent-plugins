@@ -627,8 +627,6 @@ silent() {
   denied "main の上ではコミットしません" "pushd $TMP/wt && popd -1 && git commit -m x"
   # 引数の無い pushd -n は何もしない
   denied "main の上ではコミットしません" "pushd $TMP/wt && pushd -n && popd && git commit -m x"
-  # pushd "" は失敗し、pushd -n "" で積んだ場所へ戻っても移らない
-  denied "main の上ではコミットしません" "pushd \"\"; git commit -m x" "pushd -n \"\" && popd && git commit -m x"
   # pushd -n +N は、今の場所を残したまま、積んだ場所だけを回す
   denied "main の上ではコミットしません" "pushd -n $TMP/wt && pushd -n $TMP && pushd -n +1 && git commit -m x"
   allowed "pushd -n $TMP/wt && pushd -n $TMP && pushd -n +1 && popd && git commit -m x"
@@ -709,5 +707,11 @@ EOF
 }
 
 @test "cd \"\" は移らない（引数の無い cd だけが \$HOME へ移る）" {
+  # $HOME を作業用のブランチのワークツリーにして、$HOME へ移ったと読めば通してしまうようにする
+  git worktree add -q -b feat/21-x "$TMP/wt"
+  export HOME="$TMP/wt"
   denied "main の上ではコミットしません" "cd \"\"; git commit -m x" "cd ''; git commit -m x"
+  # pushd "" は失敗し、pushd -n "" で積んだ場所へ戻っても移らない
+  denied "main の上ではコミットしません" "pushd \"\"; git commit -m x" "pushd -n \"\" && popd && git commit -m x"
+  allowed "cd; git commit -m x" "cd && git commit -m x"
 }
