@@ -253,6 +253,8 @@ if ! $dry_run && [ "$(jq -n --argjson c "$to_check" --argjson a "$to_add" '$c + 
     || dw_die "PR #${pr_number} はできていますが、Issue #${issue} の本文のチェックリストが途中で変わり、指定した文の項目が1つだけではなくなったので、チェックを付けませんでした（項目を確かめ直してから、もう一度実行してください）" 2
   # 読み直す間に足された項目は、もう足さない
   now_add="$(jq -c --argjson t "$now_tasks" "$missing_jq" <<<"$to_add")"
+  # 出力の added は、実際に足した項目にする
+  to_add="$now_add"
   # 指定した行の行頭のチェックボックスだけを [x] にし、項目の文の中の [ ] や、ほかの行（改行の \r を含む）はそのまま残す。
   # 足す項目は、最初の項目がある節（次の見出しの手前まで。コードブロックの中の見出しの形の行は見出しとみなさない）の
   # 最後の空でない行の後に、最初の項目と同じ字下げで置く
@@ -305,7 +307,7 @@ jq -n --argjson i "$issue" --arg branch "$branch" --arg base "$base" --arg title
     # Issue の本文のチェックリストの項目と、この実行でチェックを付ける項目の文
     tasks: ($tasks | map(del(.line))),
     checked: $checked,
-    # この実行で足す項目の文（文が同じ項目が既にあるものは除く）
+    # この実行で足す項目の文（文が同じ項目が既にあるものは除く。実行したときは、読み直した本文に実際に足したもの）
     added: $added,
     actions: $actions
   }'

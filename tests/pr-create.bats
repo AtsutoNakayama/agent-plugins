@@ -576,3 +576,14 @@ fake_issue_tasks() {
   assert_success
   assert_equal "$(jq -c '[.issue, .title]' <<<"$json")" '[17,"feat: 作業 17"]'
 }
+
+@test "確かめた後、読み直すまでの間に同じ項目が足されていたら、足さず、added にも出さない" {
+  setup_branch
+  set_issue_body "$(printf -- '- [ ] a')"
+  # 読み直したときには、同じ項目が既にある
+  jq -n --arg b "$(printf -- '- [ ] a\n- [ ] x')" '{body: $b}' >"$FIX/issue-17-body.json"
+  run_pr --issue 17 --body-file "$TMP/body.md" --add-task x --add-task y
+  assert_success
+  assert_equal "$(jq -c .added <<<"$json")" '["y"]'
+  assert_equal "$(cat "$TMP/issue-edit-body")" "$(printf -- '- [ ] a\n- [ ] x\n- [ ] y')"
+}
