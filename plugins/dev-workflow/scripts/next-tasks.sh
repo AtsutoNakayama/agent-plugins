@@ -1,7 +1,15 @@
 #!/usr/bin/env bash
 # Project の Todo の Issue を並び順に読み、次に着手すべきものと、同時に進められる組を JSON で出力する。何も変えない。
 #
-# 使い方: next-tasks.sh
+# 使い方: next-tasks.sh [--issue N]
+#   --issue N   Issue N（#N でもよい）と着手中の Issue との重なりだけを出す（task-start が着手する前に確かめる）。
+#               N は Project のどの列にあっても、Project に無くてもよい。N が着手中の列にあれば、着手中から除く。
+#               重なりの判定は Todo の各 Issue と同じ。依存は読まず、todo・next・parallel・hold は出さない（status.todo も要らない）。
+#               出力は {repo, project, issue: {number, title, url, status, areas, areas_ignored, area_known, warnings,
+#               conflicts_with_active, overlap, can_defer}, active_unknown, in_progress}。
+#               status は Project の列（Project に無い・列が空なら null）。overlap は、重なる着手中の Issue があれば conflict、
+#               無くて、N か着手中の Issue の領域が分からなければ unknown、どちらでもなければ none（重なりを優先する）。
+#               can_defer は、overlap が conflict で N が Todo の列にあるとき true（依存させて Todo で待てる）
 #
 # 並び順は Project 上の並び（手動で並べ替えた順）。依存（GitHub の blocked by と、本文の「依存」の #N）に
 # 閉じていない Issue（開いている・見つからない）があれば waiting にする。コンフリクトの見込みは、本文の「変更するファイル・領域」と、
@@ -26,8 +34,14 @@ dw_require gh jq
 # macOS の BSD sed が日本語で失敗しないよう、バイト列として扱わせる
 usage() { LC_ALL=C sed -n '2,/^[^#]/{/^[^#]/d;s/^# \{0,1\}//;p;}' "$0"; }
 
+target=""
 while [ $# -gt 0 ]; do
   case "$1" in
+    --issue)
+      { [ $# -ge 2 ] && [ -n "$2" ]; } || dw_die "--issue に値がありません" 64
+      target="$(dw_issue_number --issue "$2")"
+      shift 2
+      ;;
     -h | --help) usage; exit 0 ;;
     *) dw_die "不明な引数です: $1" 64 ;;
   esac
@@ -38,9 +52,10 @@ owner="$(jq -r '.project.owner // empty' <<<"$config")"
 number="$(jq -r '.project.number // empty' <<<"$config")"
 [ -n "$number" ] || dw_die "project.number が未設定です（setup-project.sh --write-config で設定できます）" 2
 todo_col="$(jq -r '.status.todo // empty' <<<"$config")"
+# --issue では Todo の Issue を扱わないので、status.todo が無くても止めない
 # 着手中として数える列。PR を作ると pr_opened の列へ移すリポジトリでは、レビュー中の Issue もそこにあるので含める
 active_cols="$(jq -c '[.status.start, .status.pr_opened] | map(select(. != null and . != "")) | unique' <<<"$config")"
-[ -n "$todo_col" ] || dw_die "status.todo が設定されていません" 2
+[ -n "$todo_col" ] || [ -n "$target" ] || dw_die "status.todo が設定されていません" 2
 # 保留の列。設定されていなければ空で、どの Issue も保留にならない
 hold_col="$(jq -r '.status.hold // empty' <<<"$config")"
 dw_check_hold_column "$config"
@@ -64,8 +79,8 @@ query='query TodoItems($owner: String!, $number: Int!, $sp: String!, $after: Str
     }
   } } }
 }'
-# このリポジトリの開いている Issue を、Todo（todo）と保留（hold）と着手中（start・pr_opened）だけに絞って持つ（Done の項目が多くても引数が長くならない）。
-# 並びは Project の並びのまま
+# このリポジトリの開いている Issue を、Todo（todo）と保留（hold）と着手中（start・pr_opened）と、--issue の Issue だけに絞って持つ
+# （Done の項目が多くても引数が長くならない）。並びは Project の並びのまま
 issues='[]' after=""
 while :; do
   vars="$(jq -nc --arg o "$owner" --argjson n "$number" --arg s "$sp_name" --arg a "$after" \
@@ -74,13 +89,15 @@ while :; do
   page="$(dw_gh_find dw_gql "$query" "$vars")"
   jq -e '.data.repositoryOwner.projectV2.items' >/dev/null 2>&1 <<<"$page" \
     || dw_die "Project が見つかりません: ${owner}/${number}（setup-project.sh で設定してください）"
-  picked="$(jq -c --arg r "$repo_nwo" --arg todo "$todo_col" --arg hold "$hold_col" --argjson active "$active_cols" '
+  picked="$(jq -c --arg r "$repo_nwo" --arg todo "$todo_col" --arg hold "$hold_col" --argjson active "$active_cols" \
+    --argjson target "${target:-0}" '
     [.data.repositoryOwner.projectV2.items.nodes[]
       | select(.content.__typename == "Issue" and .content.repository.nameWithOwner == $r and .content.state == "OPEN")
       | {number: .content.number, title: .content.title, url: .content.url, body: (.content.body // ""),
          status: (.status.name // ""), story_point: (.sp.number // null),
          sub_issues: (.content.subIssuesSummary.total // 0)} | .parent = (.sub_issues > 0)
-      | select(.status == $todo or ($hold != "" and .status == $hold) or (.status | IN($active[])))]' <<<"$page")"
+      | select(($todo != "" and .status == $todo) or ($hold != "" and .status == $hold) or (.status | IN($active[]))
+          or .number == $target)]' <<<"$page")"
   issues="$(jq -c --argjson p "$picked" '. + $p' <<<"$issues")"
   [ "$(jq -r '.data.repositoryOwner.projectV2.items.pageInfo.hasNextPage' <<<"$page")" = true ] || break
   # カーソルが空か前回と同じなら、同じページを読み続けてしまう（無限ループ）ので止める
@@ -90,7 +107,7 @@ while :; do
   after="$next_after"
 done
 
-# 本文の見出し（## <見出し>）の次の行から、次の見出しまでを行の配列にする
+# 本文の節は、issue-depend.sh と同じ読み方（DW_JQ_ISSUE_SECTIONS の section・deps）で読む
 # 領域は、箇条書きの1行から、バッククォートで囲んだ最初の語（無ければ最初の空白までの語）をパスとして取る
 #   - 「不明」「なし」で始まる行は、領域が無いものとして数えない。「なし」の行（`なし` のようにバッククォートで囲んでもよい）があり、
 #     ほかに領域も「不明」の行も無ければ、ファイルを変えない Issue（no_files）として、領域が空と分かっているものとする。
@@ -100,12 +117,7 @@ done
 #     areas_ignored に出す（スキルが使う人に伝える）
 # jq の変数（$h など）を bash に展開させないため、シングルクォートで書く
 # shellcheck disable=SC2016
-defs='
-  def section($h): (.body | gsub("\r"; "") | split("\n"))
-    | reduce .[] as $l ({on: false, out: []};
-        if ($l | test("^## ")) then .on = ($l | test("^##[ \t]*" + $h + "[ \t]*$"))
-        elif .on then .out += [$l] else . end) | .out;
-  def deps: [section("依存")[] | scan("#([0-9]+)") | .[0] | tonumber] | unique;
+defs="$DW_JQ_ISSUE_SECTIONS"'
   def area_lines: [section("変更するファイル・領域")[] | select(test("^[ \t]*[-*][ \t]+"))
       | sub("^[ \t]*[-*][ \t]+(\\[[ xX]\\][ \t]+)?"; "")];
   def area_tokens: [area_lines[]
@@ -120,11 +132,58 @@ defs='
       | (area_tokens | length) == 0 and any($l[]; test("^なし")) and (any($l[]; test("^不明")) | not);
 '
 
+# 着手中の Issue。--issue の Issue が着手中の列にあれば（着手し直すとき）、自分とは重ならないので除く
+active="$(jq -c "$defs"'[.[] | select((.status | IN($active[])) and .number != $target) | {number, title, parent, areas: areas, no_files: no_files} ]' \
+  --argjson active "$active_cols" --argjson target "${target:-0}" <<<"$issues")"
+
+# 着手中の Issue の開いている PR が変えているファイル。PR の Issue は、ブランチ名（<type>/<番号>-…）か Closes で決める
+prs="$(gh pr list --state open --limit 1000 --json number,headRefName,files,closingIssuesReferences)" \
+  || dw_die "開いている PR を読めませんでした"
+
+# 重なりの判定。Todo の各 Issue と --issue の Issue とで、同じものを使う（jq の定義 odefs）
+# shellcheck disable=SC2016
+odefs='
+  def ov($a; $b): [$a[] as $x | $b[] as $y
+      | select($x == "." or $y == "." or $x == $y or ($x | startswith($y + "/")) or ($y | startswith($x + "/"))) | {a: $x, b: $y}];
+  def pr_issues: ([.closingIssuesReferences[]?.number]
+      + [.headRefName | capture("^[^/]+/(?<n>[0-9]+)-") | .n | tonumber]) | unique;
+  # 着手中の Issue に、開いている PR のファイル（pr_files）と、変えるパス（paths）と、それが分かるか（area_known）を付ける。
+  # 親を残すかは、PR のファイルの数ではなく、PR があるかで決める（ファイルが空の PR もある）
+  def active_paths($prs): map(. as $i | [$prs[] | select(pr_issues | index($i.number))] as $own
+    | . + {pr_files: ([$own[].files[]?.path] | unique)}
+    | select((.parent | not) or ($own | length > 0)) | if .parent then .areas = [] | .no_files = false else . end
+    | .paths = ((.areas + .pr_files) | unique)
+    | .area_known = ((.paths | length > 0) or .no_files) | del(.parent, .no_files));
+  def unknown_numbers: [.[] | select(.area_known | not) | .number];
+  # 領域（areas・no_files）を持つ Issue に、着手中の Issue（active_paths の結果）との重なりを付ける
+  def with_overlap($act): . as $t
+    | .area_known = ((.areas | length > 0) or .no_files)
+    | .warnings = (if .no_files then [] else ($act | unknown_numbers | map("着手中の #\(.) は PR も領域も無く、重なるか分からない")) end)
+    | .conflicts_with_active = [$act[] | select(ov($t.areas; .paths) | length > 0) | {issue: .number, paths: ov($t.areas; .paths)}];
+'
+
+# --issue では、指定した Issue の重なりだけを出して終える（Todo の Issue・依存・保留は扱わない）。
+# Issue は、Project の項目にあればそれを使い、無ければ読む（列は null）
+if [ -n "$target" ]; then
+  target_item="$(jq -c --argjson t "$target" 'map(select(.number == $t))[0] // empty' <<<"$issues")"
+  [ -n "$target_item" ] || target_item="$(dw_read_issue "$target" number,title,body | jq -c '. + {status: null}')"
+  jq -n --argjson target "$target_item" --argjson active "$active" --argjson prs "$prs" --arg todo "$todo_col" \
+    --arg repo "$repo_nwo" --arg owner "$owner" --argjson number "$number" "$defs$odefs"'
+    ($active | active_paths($prs)) as $act
+    | ($target | {number, title, url, status: (if .status == "" then null else .status end),
+        areas: areas, areas_ignored: areas_ignored, no_files: no_files} | with_overlap($act)
+        | .overlap = (if (.conflicts_with_active | length) > 0 then "conflict"
+            elif (.area_known | not) or (.warnings | length) > 0 then "unknown" else "none" end)
+        | .can_defer = (.overlap == "conflict" and $todo != "" and .status == $todo) | del(.no_files)) as $issue
+    | {repo: $repo, project: {owner: $owner, number: $number}, issue: $issue,
+       active_unknown: ($act | unknown_numbers), in_progress: $act}'
+  exit 0
+fi
+
+# ここから先は、Todo の Issue の提案（--issue でないとき）だけ
 repo_issue_dir="repos/$repo_nwo/issues"
 todo="$(jq -c "$defs"'[.[] | select(.status == $todo) | . + {areas: areas, areas_ignored: areas_ignored, body_deps: deps, no_files: no_files} | del(.body)]' \
   --arg todo "$todo_col" <<<"$issues")"
-active="$(jq -c "$defs"'[.[] | select(.status | IN($active[])) | {number, title, parent, areas: areas, no_files: no_files} ]' \
-  --argjson active "$active_cols" <<<"$issues")"
 hold="$(jq -c --arg hold "$hold_col" '[.[] | select($hold != "" and .status == $hold) | {number, title, url}]' <<<"$issues")"
 
 # 各 Todo の Issue の依存関係（blocked by）を読み、本文の依存と合わせて、閉じているかを調べる
@@ -156,33 +215,18 @@ for d in $(jq -r --argjson o "$open_in_project" --arg repo "$repo_nwo" \
   fetched="$(jq -c --arg d "$d" --arg s "$s" '. + {($d): ($s | ascii_downcase)}' <<<"$fetched")"
 done
 
-# 着手中の Issue の開いている PR が変えているファイル。PR の Issue は、ブランチ名（<type>/<番号>-…）か Closes で決める
-prs="$(gh pr list --state open --limit 1000 --json number,headRefName,files,closingIssuesReferences)" \
-  || dw_die "開いている PR を読めませんでした"
-
 jq -n --argjson todo "$todo" --argjson active "$active" --argjson deps "$deps" --argjson fetched "$fetched" \
   --argjson in_project "$open_in_project" --argjson hold "$hold" \
-  --argjson prs "$prs" --arg repo "$repo_nwo" --arg owner "$owner" --argjson number "$number" '
-  def ov($a; $b): [$a[] as $x | $b[] as $y
-      | select($x == "." or $y == "." or $x == $y or ($x | startswith($y + "/")) or ($y | startswith($x + "/"))) | {a: $x, b: $y}];
-  def pr_issues: ([.closingIssuesReferences[]?.number]
-      + [.headRefName | capture("^[^/]+/(?<n>[0-9]+)-") | .n | tonumber]) | unique;
-  # 親を残すかは、PR のファイルの数ではなく、PR があるかで決める（ファイルが空の PR もある）
-  ($active | map(. as $i | [$prs[] | select(pr_issues | index($i.number))] as $own
-    | . + {pr_files: ([$own[].files[]?.path] | unique)}
-    | select((.parent | not) or ($own | length > 0)) | if .parent then .areas = [] | .no_files = false else . end
-    | .paths = ((.areas + .pr_files) | unique)
-    | .area_known = ((.paths | length > 0) or .no_files) | del(.parent, .no_files))) as $act
-  | ([$act[] | select(.area_known | not) | .number]) as $active_unknown
+  --argjson prs "$prs" --arg repo "$repo_nwo" --arg owner "$owner" --argjson number "$number" "$odefs"'
+  ($active | active_paths($prs)) as $act
+  | ($act | unknown_numbers) as $active_unknown
   | ($todo | map(. as $t
       | ($deps[] | select(.number == $t.number).blockers) as $bl
       | . + {blocked_by: ($bl | map(. + {state: (.state // (if .repo == $repo and (.number | IN($in_project[])) then "open"
                                                           else ($fetched[.number | tostring] // "open") end))})
           | map(select(.state != "closed")))}
       | .waiting = (.blocked_by | length > 0)
-      | .area_known = ((.areas | length > 0) or .no_files)
-      | .warnings = (if .no_files then [] else ($active_unknown | map("着手中の #\(.) は PR も領域も無く、重なるか分からない")) end)
-      | .conflicts_with_active = [$act[] | select(ov($t.areas; .paths) | length > 0) | {issue: .number, paths: ov($t.areas; .paths)}])) as $items
+      | with_overlap($act))) as $items
   | ([$items[] | select((.waiting or .parent) | not)]) as $ready
   | (reduce $ready[] as $r ({sel: [], out: []};
       ([.sel[] | select(ov($r.areas; .areas) | length > 0) | {issue: .number, paths: ov($r.areas; .areas)}]) as $clash

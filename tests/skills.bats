@@ -203,6 +203,29 @@ step() { awk -v n="$2" -v end="$3" 'on && ($0 ~ /^###? / || (end != "" && $0 ~ e
 }
 
 # shellcheck disable=SC2016 # バッククォートはスキルの本文の文字で、展開させない
+@test "task-start は、ワークツリーを作るかを聞く前に、着手中の Issue との重なりを task-next と同じ判定で確かめる" {
+  # task-next を通らずに着手すると、着手中の Issue と同じファイルを変える Issue に、気付かずに着手していた（#241）
+  f="$SKILLS/task-start/SKILL.md"
+  overlap="$(step "$f" 3)"
+  grep -q 'next-tasks.sh --issue <番号>' <<<"$overlap" || fail "手順3で next-tasks.sh --issue を使っていません"
+  grep -q '3. 着手中のタスクとの重なりを確かめる' "$f" || fail "重なりを確かめる手順がありません"
+  grep -q '4. ワークツリーを作るかを決める' "$f" || fail "重なりを確かめた後に、ワークツリーを作るかを決めていません"
+  ask="$(step "$f" 4)"
+  # 重なるときは「今は着手しない」も選べ、選んだら重なる Issue への依存を足す
+  grep -q '「今は着手しない」' <<<"$ask" || fail "重なるときの「今は着手しない」の選択肢がありません"
+  grep -q 'issue-depend.sh --issue <番号> --blocked-by' <<<"$ask" || fail "今は着手しないときに依存を足していません"
+  # ワークツリーを作るかが依頼で決まっていても、重なるときは聞く
+  grep -q '`issue.overlap` が `conflict` なら、聞かずに進めない' <<<"$ask" || fail "質問を飛ばすときに、重なりがあれば聞くことが書かれていません"
+  # 重なる・分からない・重ならないの判断は、スクリプトの値（overlap・can_defer）で決め、値の組み合わせを文章で決めない
+  for v in conflict unknown none; do
+    grep -q "\`${v}\`" <<<"$overlap" || fail "手順3に overlap の ${v} の扱いがありません"
+  done
+  grep -q 'issue.can_defer' <<<"$overlap" || fail "手順3に can_defer の扱いがありません"
+  # 依存先が全部閉じていたかは、スクリプトの all_closed で決める（blocked_by と skipped_closed を文章で突き合わせない）
+  grep -q '`all_closed` が true' <<<"$ask" || fail "手順4に all_closed の扱いがありません"
+}
+
+# shellcheck disable=SC2016 # バッククォートはスキルの本文の文字で、展開させない
 @test "ワークツリーの無いタスクを、task-finish は Issue を閉じて終え、task-cancel は Issue を閉じるだけにする" {
   grep -q '### 4. ワークツリーの無いタスクを終える' "$SKILLS/task-finish/SKILL.md"
   grep -q 'gh issue close <番号> --reason completed' "$SKILLS/task-finish/SKILL.md"

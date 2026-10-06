@@ -7,9 +7,10 @@ load test_helper
 # 偽の gh。
 # - gh repo view ... -q .nameWithOwner            me/demo を返す
 # - gh api graphql                                 「TodoItems <変数>」を $CALLS に記録し、$FIX/TodoItems.<n>.json（n 回目。無ければ TodoItems.json）を返す
-# - gh api --paginate .../issues/<番号>/dependencies/blocked_by...  $FIX/blocked-<番号>.json（無ければ []）を返す
+# - gh api --paginate .../issues/<番号>/dependencies/blocked_by...  $FIX/blocked-<番号>.json（無ければ []）を返す。「Blocked <番号>」を記録する
 # - gh api repos/me/demo/issues/<番号> -q .state   $FIX/state-<番号>（無ければ closed）を返す。「GetIssue <番号>」を記録する
 # - gh pr list ...                                 $FIX/pr-list.json（無ければ []）を返す。「PrList <引数>」を記録する
+# - gh issue view <番号> ...                         $FIX/issue-<番号>.json（無ければ、無い Issue のエラー）を返す。「IssueView <番号>」を記録する
 # FAKE_FAIL に指定した操作名（TodoItems・GetIssue・PrList）は、FAKE_FAIL_MSG（既定: gh: failed）を出して失敗する。
 setup_fake_gh() {
   FIX="$TMP/fix"
@@ -34,6 +35,7 @@ case "$1 $2" in
   "api --paginate")
     n="${3#*/issues/}"
     n="${n%%/*}"
+    echo "Blocked $n" >>"$CALLS"
     if [ -f "$FIX/blocked-$n.json" ]; then cat "$FIX/blocked-$n.json"; else echo '[]'; fi
     ;;
   "api repos/me/demo/issues/"*)
@@ -46,6 +48,11 @@ case "$1 $2" in
     echo "PrList ${*:3}" >>"$CALLS"
     fail PrList
     if [ -f "$FIX/pr-list.json" ]; then cat "$FIX/pr-list.json"; else echo '[]'; fi
+    ;;
+  "issue view")
+    echo "IssueView $3" >>"$CALLS"
+    if [ -f "$FIX/issue-$3.json" ]; then cat "$FIX/issue-$3.json"
+    else echo "GraphQL: Could not resolve to an issue or pull request with the number of $3. (repository.issue)" >&2; exit 1; fi
     ;;
   *) echo "gh: 想定外の呼び出し: $*" >&2; exit 1 ;;
 esac
@@ -71,6 +78,13 @@ write_page() {
   jq -sc --argjson next "${2:-false}" --argjson cursor "\"${3:-C1}\"" '{data: {repositoryOwner: {projectV2: {items: {
     pageInfo: {hasNextPage: $next, endCursor: (if $cursor == "null" then null else $cursor end)}, nodes: .}}}}}' "$FIX/nodes" >"$FIX/${1:-TodoItems.json}"
   : >"$FIX/nodes"
+}
+
+# 使い方: issue <番号> [本文] [url]
+# gh issue view が返す Issue を書く（--issue で指定する Issue。Project に無くてもよい）
+issue() {
+  jq -nc --argjson n "$1" --arg b "${2:-}" --arg u "${3:-https://github.com/me/demo/issues/$1}" \
+    '{number: $n, title: "作業 \($n)", body: $b, url: $u}' >"$FIX/issue-$1.json"
 }
 
 # 使い方: out_of <jq の式>
@@ -600,7 +614,7 @@ JSON
   write_page
   run_script next-tasks.sh
   assert_success
-  assert_equal "$(grep -vcE '^(TodoItems|GetIssue|PrList) ' "$CALLS")" 0
+  assert_equal "$(grep -vcE '^(TodoItems|GetIssue|PrList|Blocked) ' "$CALLS")" 0
 }
 
 @test "project.number が未設定ならエラーになる" {
@@ -697,4 +711,192 @@ args() { grep "^$1 " "$CALLS" | sed -n "${2:-1}p" | cut -d' ' -f2-; }
   run_script next-tasks.sh
   assert_success
   assert_equal "$(out_of '.todo[0].area_known')" false
+}
+
+@test "--issue は、指定した Issue と着手中の Issue（領域と開いている PR のファイル）との重なりだけを出す" {
+  # task-start は重なりを確かめずに着手していた（#239 で、着手中の #169 と同じファイルを変える Issue に着手しかけた）
+  setup_fake_gh
+  item 10 Todo $'## 変更するファイル・領域\n- docs/'
+  item 20 "In Progress" $'## 変更するファイル・領域\n- plugins/dev-workflow/defaults/task-flow.md'
+  item 21 "In Progress"
+  write_page
+  echo '[{"number": 50, "headRefName": "feat/21-x", "closingIssuesReferences": [], "files": [{"path": "README.md"}]}]' >"$FIX/pr-list.json"
+  issue 30 $'## 変更するファイル・領域\n- plugins/dev-workflow/defaults/\n- README.md\n- tests/'
+  run_script next-tasks.sh --issue 30
+  assert_success
+  assert_equal "$(out_of 'keys')" '["active_unknown","in_progress","issue","project","repo"]'
+  assert_equal "$(out_of '.issue | [.number, .url, .area_known, .warnings]')" '[30,"https://github.com/me/demo/issues/30",true,[]]'
+  assert_equal "$(out_of '.issue.conflicts_with_active')" \
+    '[{"issue":20,"paths":[{"a":"plugins/dev-workflow/defaults","b":"plugins/dev-workflow/defaults/task-flow.md"}]},{"issue":21,"paths":[{"a":"README.md","b":"README.md"}]}]'
+  assert_equal "$(out_of '[.in_progress[].number]')" '[20,21]'
+  # 依存は読まない（Todo の Issue の分も）
+  assert_equal "$(called Blocked)" 0
+  assert_equal "$(args IssueView)" 30
+}
+
+@test "--issue の判定は、同じ Issue が Todo にあるときの next-tasks.sh の判定と食い違わない" {
+  setup_fake_gh
+  echo '{"project": {"owner": "me", "number": 4}, "status": {"pr_opened": "In Review"}}' >"$REPO/.claude/dev-workflow/config.json"
+  body=$'## 変更するファイル・領域\n- `docs/design.md`\n- plugins/*/x.sh\n- tests/a.bats'
+  issue 10 "$body"
+  echo '[{"number": 50, "headRefName": "feat/22-x", "closingIssuesReferences": [], "files": [{"path": "tests/a.bats"}]}]' >"$FIX/pr-list.json"
+  item 10 Todo "$body"
+  item 20 "In Progress" $'## 変更するファイル・領域\n- docs/'
+  item 21 "In Progress"
+  item 22 "In Review"
+  write_page
+  pick='{areas, areas_ignored, area_known, warnings, conflicts_with_active}'
+  run_script next-tasks.sh
+  assert_success
+  from_todo="$(out_of ".todo[0] | $pick")"
+  run_script next-tasks.sh --issue '#10'
+  assert_success
+  assert_equal "$(out_of ".issue | $pick")" "$from_todo"
+  # 重なり・警告・無視した行のどれもある場面で比べる
+  assert_equal "$(jq -c '[(.conflicts_with_active | map(.issue)), (.warnings | length), .areas_ignored]' <<<"$from_todo")" '[[20,22],1,["plugins/*/x.sh"]]'
+}
+
+@test "--issue の Issue が着手中の列にあれば（着手し直すとき）、着手中から除く" {
+  setup_fake_gh
+  item 30 "In Progress" $'## 変更するファイル・領域\n- docs/'
+  item 20 "In Progress" $'## 変更するファイル・領域\n- tests/'
+  write_page
+  echo '[{"number": 50, "headRefName": "feat/30-x", "closingIssuesReferences": [], "files": [{"path": "docs/a.md"}]}]' >"$FIX/pr-list.json"
+  issue 30 $'## 変更するファイル・領域\n- docs/'
+  run_script next-tasks.sh --issue 30
+  assert_success
+  assert_equal "$(out_of '[.issue.conflicts_with_active, [.in_progress[].number]]')" '[[],[20]]'
+}
+
+@test "--issue の Issue の領域が分からなければ area_known が false、着手中の Issue に領域も PR も無ければ警告を付ける" {
+  setup_fake_gh
+  item 20 "In Progress"
+  write_page
+  issue 30 $'## 変更するファイル・領域\n- 不明'
+  run_script next-tasks.sh --issue 30
+  assert_success
+  assert_equal "$(out_of '[.issue.area_known, .issue.warnings, .active_unknown]')" '[false,["着手中の #20 は PR も領域も無く、重なるか分からない"],[20]]'
+}
+
+@test "--issue の Issue の領域が「なし」なら、どれとも重ならず、警告も付けない" {
+  setup_fake_gh
+  item 20 "In Progress"
+  item 21 "In Progress" $'## 変更するファイル・領域\n- .'
+  write_page
+  issue 30 $'## 変更するファイル・領域\n- なし'
+  run_script next-tasks.sh --issue 30
+  assert_success
+  assert_equal "$(out_of '.issue | [.area_known, .warnings, .conflicts_with_active]')" '[true,[],[]]'
+}
+
+@test "--issue に PR の番号・無い番号・値が無いときは止まる" {
+  setup_fake_gh
+  issue 40 "" https://github.com/me/demo/pull/40
+  run_script next-tasks.sh --issue 40
+  assert_failure 2
+  assert_output --partial "#40 は PR です"
+  run_script next-tasks.sh --issue 41
+  assert_failure 2
+  assert_output --partial "Issue #41 が me/demo にありません"
+  run_script next-tasks.sh --issue
+  assert_failure 64
+  assert_output --partial "--issue に値がありません"
+}
+
+@test "--issue の overlap は、重なりがあれば conflict（分からない着手中の Issue があっても）、無くて分からなければ unknown、どちらでもなければ none" {
+  # 重なる・分からない・重ならないの判断を、スキルの文章で値を組み合わせて決めると、両方あるときの扱いが食い違っていた
+  setup_fake_gh
+  item 20 "In Progress" $'## 変更するファイル・領域\n- docs/'
+  item 21 "In Progress"
+  write_page
+  issue 30 $'## 変更するファイル・領域\n- docs/a.md'
+  issue 31 $'## 変更するファイル・領域\n- tests/'
+  issue 32 $'## 変更するファイル・領域\n- 不明'
+  issue 33 $'## 変更するファイル・領域\n- なし'
+  for n in 30 31 32 33; do
+    run_script next-tasks.sh --issue "$n"
+    assert_success
+    echo "$n $(out_of '.issue | [.overlap, ([.conflicts_with_active[].issue]), (.warnings | length), .area_known]')" >>"$TMP/got"
+  done
+  assert_equal "$(cat "$TMP/got")" $'30 ["conflict",[20],1,true]\n31 ["unknown",[],1,true]\n32 ["unknown",[],1,false]\n33 ["none",[],0,true]'
+  # 着手中の Issue の領域が全部分かっていて、重ならなければ none
+  : >"$FIX/nodes"
+  item 20 "In Progress" $'## 変更するファイル・領域\n- docs/'
+  write_page
+  run_script next-tasks.sh --issue 31
+  assert_success
+  assert_equal "$(out_of '.issue.overlap')" '"none"'
+}
+
+@test "--issue の can_defer は、重なりがあって、Issue が Todo の列にあるときだけ true（列は Project の項目から読む）" {
+  # 着手中・保留・Project に無い Issue に「今は着手しない」を出すと、task-next が候補に戻さず、待つ意味が無い
+  setup_fake_gh
+  echo '{"project": {"owner": "me", "number": 4}, "status": {"hold": "Hold"}}' >"$REPO/.claude/dev-workflow/config.json"
+  item 20 "In Progress" $'## 変更するファイル・領域\n- docs/'
+  item 30 Todo $'## 変更するファイル・領域\n- docs/'
+  item 31 "In Progress" $'## 変更するファイル・領域\n- docs/'
+  item 32 Hold $'## 変更するファイル・領域\n- docs/'
+  item 34 Backlog $'## 変更するファイル・領域\n- docs/'
+  item 35 Todo $'## 変更するファイル・領域\n- tests/'
+  item 36 "" $'## 変更するファイル・領域\n- docs/'
+  write_page
+  issue 33 $'## 変更するファイル・領域\n- docs/'
+  for n in 30 31 32 33 34 35 36; do
+    run_script next-tasks.sh --issue "$n"
+    assert_success
+    echo "$n $(out_of '.issue | [.status, .overlap, .can_defer]')" >>"$TMP/got"
+  done
+  assert_equal "$(cat "$TMP/got")" "$(printf '%s\n' \
+    '30 ["Todo","conflict",true]' '31 ["In Progress","conflict",false]' '32 ["Hold","conflict",false]' \
+    '33 [null,"conflict",false]' '34 ["Backlog","conflict",false]' '35 ["Todo","none",false]' \
+    '36 [null,"conflict",false]')"
+  # Project の項目にある Issue は読み直さない（Project に無い #33 だけ読む。列が空の #36 も Project の項目を使う）
+  assert_equal "$(called IssueView)" 1
+  assert_equal "$(args IssueView)" 33
+}
+
+@test "--issue では status.todo が無くても止まらない（Todo の Issue を扱わないため）" {
+  setup_fake_gh
+  echo '{"project": {"owner": "me", "number": 4}, "status": {"todo": null}}' >"$REPO/.claude/dev-workflow/config.json"
+  item 20 "In Progress" $'## 変更するファイル・領域\n- docs/'
+  write_page
+  issue 30 $'## 変更するファイル・領域\n- docs/'
+  run_script next-tasks.sh --issue 30
+  assert_success
+  assert_equal "$(out_of '.issue | [.overlap, .can_defer]')" '["conflict",false]'
+  run_script next-tasks.sh
+  assert_failure 2
+  assert_output --partial "status.todo が設定されていません"
+}
+
+@test "--issue で開いている PR を読めなければ、止まる" {
+  setup_fake_gh
+  item 20 "In Progress"
+  write_page
+  issue 30 $'## 変更するファイル・領域\n- docs/'
+  FAKE_FAIL=PrList run_script next-tasks.sh --issue 30
+  assert_failure 1
+  assert_output --partial "開いている PR を読めませんでした"
+}
+
+@test "本文の節は「## 」で始まる行（コードブロックの中も）だけで区切り、同じ見出しの節が複数あれば全部読む" {
+  # 依存を書く issue-depend.sh と読み方を共有する（DW_JQ_ISSUE_SECTIONS）
+  setup_fake_gh
+  item 10 Todo $'## 依存\n- #5\n##依存\n- #6\n```\n## 補足\n```\n- #9\n## 補足\n#7\n## 依存\r\n- #8'
+  write_page
+  for n in 5 6 7 8 9; do echo open >"$FIX/state-$n"; done
+  run_script next-tasks.sh
+  assert_success
+  # コードブロックの中の「## 補足」も見出しとみなすので、#9 は「補足」の節にある（issue-depend.sh も同じ決まりで書く）
+  assert_equal "$(out_of '.todo[0].body_deps')" '[5,6,8]'
+}
+
+@test "HTML のコメントの中の「## 依存」も節の見出しとみなし、その中の #N も読む（issue-depend.sh と同じ読み方。既知の制限）" {
+  setup_fake_gh
+  item 10 Todo $'## 依存\n<!--\n- #5\n## 依存\n-->\n- なし'
+  write_page
+  echo open >"$FIX/state-5"
+  run_script next-tasks.sh
+  assert_success
+  assert_equal "$(out_of '.todo[0].body_deps')" '[5]'
 }
