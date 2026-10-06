@@ -157,7 +157,9 @@ fake_issue() {
 
 # fake_issue で作った Issue の本文を置き換える。使い方: fake_issue_body <番号> <本文>
 fake_issue_body() {
-  jq --arg b "$2" '. + {body: $b}' "$FIX/issue-$1.json" >"$TMP/i.json" && mv "$TMP/i.json" "$FIX/issue-$1.json"
+  # 長い本文も試せるよう、本文は引数ではなくファイルで jq に渡す（引数1つの長さには上限がある）
+  printf '%s' "$2" | jq -Rs . >"$TMP/body.json" \
+    && jq --slurpfile b "$TMP/body.json" '. + {body: $b[0]}' "$FIX/issue-$1.json" >"$TMP/i.json" && mv "$TMP/i.json" "$FIX/issue-$1.json"
 }
 
 # Project P4 での Issue の項目と今の列。使い方: issue_item <列名 | none（列が空） | absent（Project に無い）>

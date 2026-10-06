@@ -302,3 +302,33 @@ write_adr() {
   assert_equal "$(jq -c '[.adrs[] | [.path, .issue, .status]]' <<<"$output")" \
     '[["docs/adr/a.md",151,"won'"'"'t fix"],["docs/adr/b.md",151,"see \"X\" # y"],["docs/adr/c.md",null,null],["docs/adr/d.md",null,"accepted"]]'
 }
+
+@test "ADR の項目は「ADR」と「に残す」の間の空白（無い・全角）を問わず、取り消し線は「ADR に残す」が ~~ の内側にあるかで見る" {
+  fake_issue_body 151 "$(printf -- '- [ ] 設定の判断をADRに残す')"
+  run_script adr-list.sh --issue 151
+  assert_equal "$(jq -c '[.proposal, [.adr_tasks[].text]]' <<<"$output")" '["pending",["設定の判断をADRに残す"]]'
+  fake_issue_body 151 "$(printf -- '- [ ] 設定の判断を ADR　に残す')"
+  run_script adr-list.sh --issue 151
+  assert_equal "$(jq -c .proposal <<<"$output")" '"pending"'
+  # 「ADR に残す」だけを取り消した断った記録
+  fake_issue_body 151 "$(printf -- '- [ ] 設定の判断を ~~ADRに残す~~（不要）')"
+  run_script adr-list.sh --issue 151
+  assert_equal "$(jq -c .proposal <<<"$output")" '"declined"'
+  # 取り消し線はあるが、「ADR に残す」は取り消し線の外にある
+  fake_issue_body 151 "$(printf -- '- [ ] ~~旧案~~ではなく新案の判断を ADR に残す（~~別 Issue~~ ではない）')"
+  run_script adr-list.sh --issue 151
+  assert_equal "$(jq -c .proposal <<<"$output")" '"pending"'
+  # 閉じていない ~~ の後ろは、取り消し線の内側とみなさない
+  fake_issue_body 151 "$(printf -- '- [ ] 判断を ~~ADR に残す')"
+  run_script adr-list.sh --issue 151
+  assert_equal "$(jq -c .proposal <<<"$output")" '"pending"'
+}
+
+@test "Issue の本文が長くても（引数の長さの上限を超える大きさでも）読める" {
+  # 日本語は UTF-8 で1文字3バイトなので、6万文字で 180KB ほどになる（Linux の引数1つの上限は 128KiB）
+  body="$(printf -- '- [ ] 判断を ADR に残す\n'; head -c 60000 /dev/zero | tr '\0' 'x' | sed 's/x/あ/g')"
+  fake_issue_body 151 "$body"
+  run_script adr-list.sh --issue 151
+  assert_success
+  assert_equal "$(jq -c .proposal <<<"$output")" '"pending"'
+}

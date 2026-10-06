@@ -23,10 +23,12 @@
 #              pending   Issue のチェックリストに、取り消し線もチェックも無い ADR の項目がある。提案ではなく、
 #                        ADR の項目が残っていて ADR がまだ無いことを伝える
 #              done      ADR の項目にチェックがある（ほかの置き場所に残したなど）。提案しない
-#              declined  ADR の項目が取り消し線（「ADR に残す」が ~~ と ~~ の間にある）だけ。提案を断った記録なので、提案しない
+#              declined  ADR の項目が取り消した項目（「ADR に残す」が、閉じた ~~ と ~~ の内側にだけある）だけ。
+#                        提案を断った記録なので、提案しない
 #              judge     ADR の項目が無い。AI が差分から、ADR にすべき判断があるかを判断する
 #            ADR の項目は、Issue の本文のチェックリストの項目（md_scan）のうち、文に「ADR に残す」を含むもの
-#            （task-create・pr-create が足す形。ADR を話題にしているだけの項目は含めない）。
+#            （「ADR」と「に残す」の間の空白は、無くても全角でもよい。task-create・pr-create が足す形。
+#            ADR を話題にしているだけの項目は含めない）。
 #            Issue の本文を gh で読むのは、pending・done・declined・judge を決めるときだけ
 #   adr_tasks proposal を決めるのに読んだ ADR の項目（checked・text）。Issue を読まなかったときは null
 #
@@ -125,14 +127,19 @@ if [ "$state" != read ]; then
   printf '%s\n' "$out"
   exit 0
 fi
-# Issue のチェックリストの ADR の項目から、pending・done・declined・judge を決める
-issue_json="$(dw_read_issue "$issue" body)"
-jq --argjson i "$issue_json" "$DW_JQ_MD_SCAN"'
-  def struck: .text | test("^~~.*ADR に残す.*~~");
-  ($i.body // "" | md_scan | .items | map(select(.text | test("ADR に残す")) | {checked, text})) as $t
+# Issue のチェックリストの ADR の項目から、pending・done・declined・judge を決める。
+# Issue の JSON（本文を含む）は大きいことがあるので、引数ではなく標準入力で渡す（引数1つの長さには上限がある）
+dw_read_issue "$issue" body | jq --argjson out "$out" "$DW_JQ_MD_SCAN"'
+  def adr_item: test("ADR[\\s　]*に残す");
+  # 「ADR に残す」が、閉じた ~~ と ~~ の内側にだけあれば、取り消した項目（断った記録）とみなす
+  def struck: [.text | splits("~~")] as $p
+    | ([range(1; ($p | length) - 1; 2) | $p[.]] | any(adr_item))
+      and ([range(0; $p | length) | select(. % 2 == 0 or . == ($p | length) - 1) | $p[.]] | any(adr_item) | not);
+  (.body // "" | md_scan | .items | map(select(.text | adr_item) | {checked, text})) as $t
+  | $out
   | .adr_tasks = $t
   | .proposal = (
       if any($t[]; (struck | not) and (.checked | not)) then "pending"
       elif any($t[]; (struck | not) and .checked) then "done"
       elif ($t | length) > 0 then "declined"
-      else "judge" end)' <<<"$out"
+      else "judge" end)'
