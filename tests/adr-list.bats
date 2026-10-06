@@ -249,7 +249,7 @@ write_adr() {
   assert_success
   assert_equal "$(jq -c .proposal <<<"$output")" '"declined"'
   # 途中だけの取り消し線は、断った記録とみなさない
-  fake_issue_body 151 "$(printf -- '- [ ] 判断を ~~ADR~~ に残す')"
+  fake_issue_body 151 "$(printf -- '- [ ] ~~判断~~を ADR に残す')"
   run_script adr-list.sh --issue 151
   assert_equal "$(jq -c .proposal <<<"$output")" '"pending"'
 }
@@ -267,4 +267,11 @@ write_adr() {
   run_script adr-list.sh --issue 151
   assert_success
   assert_equal "$(jq -c '[.adrs[] | [.path, .status]]' <<<"$output")" '[["docs/adr/a.md","accepted"],["docs/adr/b.md","a # b"],["docs/adr/c.md","\"閉じていない"]]'
+}
+
+@test "proposal：ADR を話題にしているだけの項目（「ADR に残す」を含まない）は ADR の項目とみなさず、judge にする" {
+  fake_issue_body 151 "$(printf -- '- [ ] ADR-0005 の手順に従って実装する\n- [x] 既に ADR がある判断は提案しない\n- [ ] README の ADR の節を直す')"
+  run_script adr-list.sh --issue 151
+  assert_success
+  assert_equal "$(jq -c '[.proposal, .adr_tasks]' <<<"$output")" '["judge",[]]'
 }

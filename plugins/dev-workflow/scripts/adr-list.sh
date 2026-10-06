@@ -23,9 +23,10 @@
 #              pending   Issue のチェックリストに、取り消し線もチェックも無い ADR の項目がある。提案ではなく、
 #                        ADR の項目が残っていて ADR がまだ無いことを伝える
 #              done      ADR の項目にチェックがある（ほかの置き場所に残したなど）。提案しない
-#              declined  ADR の項目が取り消し線（~~…~~ で始まる）だけ。提案を断った記録なので、提案しない
+#              declined  ADR の項目が取り消し線（「ADR に残す」が ~~ と ~~ の間にある）だけ。提案を断った記録なので、提案しない
 #              judge     ADR の項目が無い。AI が差分から、ADR にすべき判断があるかを判断する
-#            ADR の項目は、Issue の本文のチェックリストの項目（md_scan）のうち、文に「ADR」を含むもの。
+#            ADR の項目は、Issue の本文のチェックリストの項目（md_scan）のうち、文に「ADR に残す」を含むもの
+#            （task-create・pr-create が足す形。ADR を話題にしているだけの項目は含めない）。
 #            Issue の本文を gh で読むのは、pending・done・declined・judge を決めるときだけ
 #   adr_tasks proposal を決めるのに読んだ ADR の項目（checked・text）。Issue を読まなかったときは null
 #
@@ -128,8 +129,8 @@ if [ -n "$issue" ]; then
     proposal='"exists"'
   else
     issue_json="$(dw_read_issue "$issue" body)"
-    adr_tasks="$(jq -c "$DW_JQ_MD_SCAN"' .body // "" | md_scan | .items | map(select(.text | test("ADR")) | {checked, text})' <<<"$issue_json")"
-    proposal="$(jq -c 'def struck: .text | test("^~~.+~~");
+    adr_tasks="$(jq -c "$DW_JQ_MD_SCAN"' .body // "" | md_scan | .items | map(select(.text | test("ADR に残す")) | {checked, text})' <<<"$issue_json")"
+    proposal="$(jq -c 'def struck: .text | test("^~~.*ADR に残す.*~~");
       if any(.[]; (struck | not) and (.checked | not)) then "pending"
       elif any(.[]; (struck | not) and .checked) then "done"
       elif length > 0 then "declined"
