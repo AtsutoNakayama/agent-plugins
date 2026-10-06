@@ -198,10 +198,15 @@ pos() {
 @test "フックの出力に、スキルの外でも開発者への質問は AskUserQuestion で出し、内容を質問の中にも入れることが書いてある" {
   run_hook
   assert_success
-  assert_output --partial 'スキルの外でも'
-  assert_output --partial '開発者に判断を求める質問や確認は、選択肢を文章に並べた平文ではなく、AskUserQuestion で出します'
-  assert_output --partial '質問の中（質問の文や選択肢の preview）にも入れます'
-  # ファイルを変える作業の流れ（番号の付いた段階）の中ではなく、流れの外の項目に書く
+  assert_output --partial 'ファイルを変えない依頼（質問への回答・調査）でも'
+  assert_output --partial 'AskUserQuestion を使える場面では、選択肢を文章に並べた平文ではなく、AskUserQuestion で出します'
+  assert_output --partial '選択肢の説明には、選ぶと実際に何が起きるかを書き'
+  assert_output --partial '質問の中（質問の文や選択肢の preview。複数選択の質問では preview を使えないので、選択肢の説明）にも入れます'
+  # shellcheck disable=SC2016 # バッククォートは流れの本文の文字で、展開させない
+  assert_output --partial '`/remote-control` で別の端末から使うと、質問の直前の文章が見えないことがある'
+  # ファイルを変える作業の流れ（番号の付いた段階）の中ではなく、流れの外の項目にちょうど1つ書く
+  run grep -cF 'AskUserQuestion で出します' "$DEFAULT"
+  assert_output 1
   run grep -cE '^- スキルの外でも.*AskUserQuestion で出します' "$DEFAULT"
   assert_output 1
 }
