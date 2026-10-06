@@ -619,3 +619,25 @@ args() { grep "^$1 " "$CALLS" | sed -n "${2:-1}p" | cut -d' ' -f2-; }
   assert_equal "$(out_of '.parallel')" '[10,11]'
   assert_equal "$(out_of '[.todo[] | [.number, .area_known]]')" '[[10,true],[11,true],[12,false],[13,false]]'
 }
+
+@test "バッククォートで囲んだ「なし」も、ファイルを変えない Issue として扱う" {
+  setup_fake_gh
+  item 10 Todo $'## 変更するファイル・領域\n- docs/'
+  item 20 "In Progress" $'## 変更するファイル・領域\n- `なし`'
+  write_page
+  run_script next-tasks.sh
+  assert_success
+  assert_equal "$(out_of '[.active_unknown, .todo[0].warnings]')" '[[],[]]'
+}
+
+@test "領域が「なし」の Todo の Issue には、着手中の Issue の「重なるか分からない」警告を付けない（どれとも重ならないため）" {
+  setup_fake_gh
+  item 10 Todo $'## 変更するファイル・領域\n- なし'
+  item 11 Todo $'## 変更するファイル・領域\n- docs/'
+  item 20 "In Progress"
+  write_page
+  run_script next-tasks.sh
+  assert_success
+  assert_equal "$(out_of '.active_unknown')" '[20]'
+  assert_equal "$(out_of '[.todo[] | [.number, (.warnings | length)]]')" '[[10,0],[11,1]]'
+}

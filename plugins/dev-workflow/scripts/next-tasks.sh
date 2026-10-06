@@ -88,8 +88,9 @@ done
 
 # 本文の見出し（## <見出し>）の次の行から、次の見出しまでを行の配列にする
 # 領域は、箇条書きの1行から、バッククォートで囲んだ最初の語（無ければ最初の空白までの語）をパスとして取る
-#   - 「不明」「なし」で始まる行は、領域が無いものとして数えない。「なし」の行があり、ほかに領域も「不明」の行も無ければ、
-#     ファイルを変えない Issue（no_files）として、領域が空と分かっているものとする
+#   - 「不明」「なし」で始まる行は、領域が無いものとして数えない。「なし」の行（`なし` のようにバッククォートで囲んでもよい）があり、
+#     ほかに領域も「不明」の行も無ければ、ファイルを変えない Issue（no_files）として、領域が空と分かっているものとする。
+#     どれとも重ならないので、着手中の Issue の「重なるか分からない」警告も付けない
 #   - 末尾の /** や /* は外す（ディレクトリ全体）。「.」「*」「**」はリポジトリ全体
 #   - 日本語の句読点・括弧を含む語や、途中にグロブ（* ? [）がある語は、パスとして判断できないので areas に入れず
 #     areas_ignored に出す（スキルが使う人に伝える）
@@ -111,7 +112,8 @@ defs='
   def unjudgeable: test("[（）、。：]|[*?\\[]");
   def areas: [area_tokens[] | select(unjudgeable | not)] | unique;
   def areas_ignored: [area_tokens[] | select(unjudgeable)] | unique;
-  def no_files: (area_tokens | length) == 0 and any(area_lines[]; test("^なし")) and (any(area_lines[]; test("^不明")) | not);
+  def no_files: [area_lines[] | gsub("`"; "")] as $l
+      | (area_tokens | length) == 0 and any($l[]; test("^なし")) and (any($l[]; test("^不明")) | not);
 '
 
 repo_issue_dir="repos/$repo_nwo/issues"
@@ -174,7 +176,7 @@ jq -n --argjson todo "$todo" --argjson active "$active" --argjson deps "$deps" -
           | map(select(.state != "closed")))}
       | .waiting = (.blocked_by | length > 0)
       | .area_known = ((.areas | length > 0) or .no_files)
-      | .warnings = ($active_unknown | map("着手中の #\(.) は PR も領域も無く、重なるか分からない"))
+      | .warnings = (if .no_files then [] else ($active_unknown | map("着手中の #\(.) は PR も領域も無く、重なるか分からない")) end)
       | .conflicts_with_active = [$act[] | select(ov($t.areas; .paths) | length > 0) | {issue: .number, paths: ov($t.areas; .paths)}])) as $items
   | ([$items[] | select((.waiting or .parent) | not)]) as $ready
   | (reduce $ready[] as $r ({sel: [], out: []};
