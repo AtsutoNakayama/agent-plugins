@@ -879,6 +879,7 @@ gc_flush_word() {
     else
       words+=("$word")
       nwords=$((nwords + 1))
+      joined=false
     fi
   fi
   word="" in_word=false
@@ -928,15 +929,65 @@ gc_track_case() {
   done
 }
 
-# 読んだ語を1つのコマンドとして終え、case と esac を数えてから調べる（gc_command）。語が無ければ何もしない
+# 読んだ語を1つのコマンドとして終え、case と esac を数え、複合コマンドの入れ子を追ってから調べる（gc_command）。
+# 語が無ければ何もしない
 gc_end_command() {
   gc_flush_word
   skip_word=false
   if [ "$nwords" -gt 0 ]; then
     gc_track_case "${words[@]}"
+    gc_track_levels "${words[@]}"
     gc_command "${words[@]}"
   fi
   words=() nwords=0
+}
+
+# --- パイプラインと & -----------------------------------------------------------------
+# パイプラインの各コマンド（2つ以上つないだとき）と、& でバックグラウンドで動かす並び（&&・|| でつないだもの）は、
+# シェルではサブシェルで動くので、その中で移った場所と積んだスタックは外に効かない。ただし、それが分かるのは | や & を
+# 読んだ時なので、入れ子の段（lvl。{ }・if〜fi・while/until/for/select〜done・case〜esac・( ) で深くなる）ごとに、
+# 今のコマンドの始まり（lv_e*）と並びの始まり（lv_l*）の場所・スタック・anchored を覚えておき、分かった時に戻す。
+# 区切りは、語の有無ではなく区切りの記号で判断する（(( )) のように語の無いコマンドもあるため）。
+# after では、( ) と違い、パイプラインや & の中も外側と同じ規則でたどる（終わるまでサブシェルと分からないため）。
+
+# 今の段の、コマンドの始まりを覚える
+gc_mark_elem() { lv_ed[lvl]="$gc_dir" lv_ep[lvl]="$pstack" lv_ea[lvl]="$anchored"; }
+# 今の段の、並び（とコマンド）の始まりを覚える
+gc_mark_list() {
+  gc_mark_elem
+  lv_ld[lvl]="$gc_dir" lv_lp[lvl]="$pstack" lv_la[lvl]="$anchored"
+}
+# パイプラインを終える。2つ以上つないだときは、最後のコマンドもサブシェルなので、その始まりへ戻す
+gc_end_pipe() {
+  if "${lv_pipe[lvl]}"; then
+    gc_dir="${lv_ed[lvl]}" pstack="${lv_ep[lvl]}" anchored="${lv_ea[lvl]}"
+    lv_pipe[lvl]=false
+  fi
+}
+# 段を1つ深くする（複合コマンドや ( の始まり）
+gc_level_push() {
+  lvl=$((lvl + 1))
+  lv_pipe[lvl]=false
+  gc_mark_list
+}
+# 段を1つ浅くする（複合コマンドや ) の終わり）。中の最後のパイプラインを終える
+gc_level_pop() {
+  [ "$lvl" -gt 0 ] || return 0
+  gc_end_pipe
+  lvl=$((lvl - 1))
+}
+# コマンドの先頭の予約語から、複合コマンドの始まり（段を深くする）と終わり（浅くする）を読む
+gc_track_levels() {
+  local w
+  for w in "$@"; do
+    case "$w" in
+      # 予約語は、bash 3.2 が case のパターンとして読めるよう、引用符で囲む
+      '{' | 'if' | 'while' | 'until' | 'for' | 'select' | 'case') gc_level_push ;;
+      '}' | 'fi' | 'done' | 'esac') gc_level_pop ;;
+      'then' | 'elif' | 'else' | 'do' | '!' | 'time') ;;
+      *) return 0 ;;
+    esac
+  done
 }
 
 # i から <区切り> の手前までを cut に入れる（区切りが無ければ最後まで）。
@@ -1188,6 +1239,9 @@ gc_scan() {
   # case の中の深さ（case の時点の dn を積む）
   local case_dn=() cn=0
   local arith_i=0
+  # 入れ子の段と、段ごとのコマンド・並びの始まり（gc_mark_list の前のコメント）。&&・||・| の後ろか（joined）
+  local lvl=0 lv_ed=() lv_ep=() lv_ea=() lv_ld=() lv_lp=() lv_la=() lv_pipe=(false) joined=false
+  gc_mark_list
 
   while [ "$i" -lt "$len" ]; do
     gc_window
@@ -1206,21 +1260,68 @@ gc_scan() {
         ;;
       "$nl")
         gc_end_command
+        # &&・||・| の後ろの改行では、並びが続く
+        if ! $joined; then
+          gc_end_pipe
+          gc_mark_list
+        fi
         if [ "$hd_n" -gt 0 ]; then gc_skip_heredocs; else i=$((i + 1)); fi
         ;;
-      ';' | '&' | '|')
+      ';')
         gc_end_command
-        i=$((i + 1))
+        gc_end_pipe
+        gc_mark_list
+        joined=false
+        # case の ;& と ;;& の & は、バックグラウンドではない
+        if [ "${rest:1:1}" = '&' ]; then i=$((i + 2)); else i=$((i + 1)); fi
+        ;;
+      '&')
+        case "${rest:1:1}" in
+          '&')
+            gc_end_command
+            gc_end_pipe
+            gc_mark_elem
+            joined=true
+            i=$((i + 2))
+            ;;
+          # &> と &>> は、リダイレクト
+          '>') i=$((i + 1)) ;;
+          *)
+            # 並びごとバックグラウンド（サブシェル）で動くので、並びの始まりへ戻す
+            gc_end_command
+            gc_end_pipe
+            gc_dir="${lv_ld[lvl]}" pstack="${lv_lp[lvl]}" anchored="${lv_la[lvl]}"
+            gc_mark_list
+            joined=false
+            i=$((i + 1))
+            ;;
+        esac
+        ;;
+      '|')
+        gc_end_command
+        if [ "${rest:1:1}" = '|' ]; then
+          gc_end_pipe
+          gc_mark_elem
+          i=$((i + 2))
+        else
+          # パイプラインのコマンドはサブシェルで動くので、今のコマンドの始まりへ戻す。|& は標準エラーもつなぐパイプ
+          gc_dir="${lv_ed[lvl]}" pstack="${lv_ep[lvl]}" anchored="${lv_ea[lvl]}"
+          lv_pipe[lvl]=true
+          if [ "${rest:1:1}" = '&' ]; then i=$((i + 2)); else i=$((i + 1)); fi
+        fi
+        joined=true
         ;;
       '(')
         gc_end_command
         if [ "${rest:1:1}" = '(' ] && gc_arith_end; then
           # (( ... )) は算術式なので、コマンドとして調べない（中の << もシフト演算）
           i=$arith_i
+          joined=false
         else
           dstack[dn]="$gc_dir"
           pstack_save[dn]="$pstack"
           dn=$((dn + 1))
+          gc_level_push
           i=$((i + 1))
         fi
         ;;
@@ -1230,6 +1331,7 @@ gc_scan() {
         if [ "$cn" -gt 0 ] && [ "$dn" -eq "${case_dn[cn - 1]}" ]; then
           :
         elif [ "$dn" -gt 0 ]; then
+          gc_level_pop
           dn=$((dn - 1))
           gc_dir="${dstack[dn]}"
           pstack="${pstack_save[dn]}"

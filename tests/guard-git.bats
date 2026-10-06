@@ -204,14 +204,34 @@ silent() {
   allowed "(cd $TMP/wt && git commit -m x)" "cd $TMP/wt && (git status) && git commit -m x"
 }
 
-@test "パイプラインや & で動かすコマンドは、今は外に効いたものとして読む（{ } の中の cd の後の commit を、その場所で判断する）" {
+@test "パイプラインの各コマンドと、& でバックグラウンドで動かす並びの cd・pushd・popd は、外に効かない" {
   git worktree add -q -b feat/21-x "$TMP/wt"
-  # { } の中の cd を、コマンドごとに戻して読む誤り（パイプラインを扱いかけたときの退行）を、もう一度起こさない
+  denied "main の上ではコミットしません" "cd ../wt | true; git commit -m x" "cd $TMP/wt & git commit -m x" \
+    "pushd $TMP/wt | cat; git commit -m x" "true | cd $TMP/wt; git commit -m x" "cd $TMP/wt && true & git commit -m x" \
+    "cd $TMP/wt |& cat; git commit -m x" "pushd $TMP/wt && popd | cat && popd; git commit -m x"
+  allowed "cd $TMP/wt && git commit -m x | cat" "cd $TMP/wt; true & git commit -m x" "pushd $TMP/wt && popd | cat && git commit -m x" \
+    "cd $TMP/wt && true | true; git commit -m x" "true | true; cd $TMP/wt && git commit -m x"
+  # & を含むリダイレクト（&>）、&& の後の改行、case の ;& は、バックグラウンドやパイプではない
+  allowed "cd $TMP/wt &> /dev/null && git commit -m x" "$(printf 'cd %s &&\ngit commit -m x' "$TMP/wt")" \
+    "case x in x) cd $TMP/wt ;& y) : ;; esac; git commit -m x"
+}
+
+@test "パイプラインや & の中の複合コマンド（{ }・ループ・if）は、全体を1つのコマンドとして扱う" {
+  git worktree add -q -b feat/21-x "$TMP/wt"
+  denied "main の上ではコミットしません" "{ cd $TMP/wt; } & git commit -m x" "{ cd $TMP/wt; } | cat; git commit -m x" \
+    "while true; do cd $TMP/wt; break; done | cat; git commit -m x" "if true; then cd $TMP/wt; fi | cat; git commit -m x"
+  # { } の中の ; でコマンドごとに戻すと、{ } の中の cd の後の commit を、cd の前の場所で判断してしまう
   denied "main の上ではコミットしません" "cd $TMP/wt; true | { cd $REPO; git commit -m x; }" \
     "cd $TMP/wt; true | { cd $REPO; git commit -m x; } && :"
-  # & を含むリダイレクト（&>）、&& の後の改行、( ) の中の cd、case の ;& は、外に効く・効かないを正しく読む
-  allowed "cd $TMP/wt &> /dev/null && git commit -m x" "$(printf 'cd %s &&\ngit commit -m x' "$TMP/wt")" \
-    "true | (cd $TMP/wt; git commit -m x)" "case x in x) cd $TMP/wt ;& y) : ;; esac; git commit -m x"
+  allowed "true | { cd $TMP/wt; git commit -m x; }" "true | (cd $TMP/wt; git commit -m x)" \
+    "{ cd $TMP/wt; } && git commit -m x" "if true; then cd $TMP/wt; fi; git commit -m x"
+}
+
+@test "語の無いコマンド（(( ))）の後でも、パイプラインと並びの区切りを正しく読む" {
+  git worktree add -q -b feat/21-x "$TMP/wt"
+  # (( )) で終わるパイプラインの後の cd を戻さない。&& (( )) の後の改行では、新しい並びを始める
+  denied "main の上ではコミットしません" "cd $TMP/wt; true | ((1)); cd $REPO && git commit -m x" \
+    "$(printf 'cd %s; cd %s && ((1))\ntrue & git commit -m x' "$TMP/wt" "$REPO")"
 }
 
 @test "case のパターンの ) は括弧を閉じない" {
