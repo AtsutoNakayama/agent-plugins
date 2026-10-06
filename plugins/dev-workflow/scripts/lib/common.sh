@@ -445,6 +445,17 @@ dw_local_config_file() {
   printf '%s\n' "$f"
 }
 
+# 保留の列（status.hold）が、ほかの役割の列と同じ名前なら止まる。同じ列だと、保留の Issue が Todo や着手中にも数えられ、
+# 保留にした意味が無くなる
+# 使い方: dw_check_hold_column <合わせた設定の JSON>
+dw_check_hold_column() {
+  local same
+  same="$(jq -r '.status as $s | ($s.hold // "") as $h | select($h != "")
+    | [$s | to_entries[] | select(.key != "hold" and .value == $h) | .key] | first // empty' <<<"$1")"
+  [ -z "$same" ] \
+    || dw_die "保留の列（status.hold）は、ほかの役割（status.${same}）と別の列名にしてください: $(jq -r .status.hold <<<"$1")" 2
+}
+
 # 設定ファイルに jq の式を当てて書き直す。ファイルが無ければ {} から作り、JSON のオブジェクトとして読めなければ止まる。
 # 一時ファイルに書いてから置き換え、jq が失敗したら一時ファイルを消して止まる（書きかけのファイルを残さない）
 # 使い方: dw_write_config <設定ファイル> <jq の引数（--arg などと式）...>

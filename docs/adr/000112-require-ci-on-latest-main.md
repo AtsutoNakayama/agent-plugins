@@ -45,4 +45,5 @@ issue: 112
 
 * 出典：Issue #112（https://github.com/nakayama-labs/agent-plugins/issues/112）、PR #148（https://github.com/nakayama-labs/agent-plugins/pull/148）、設計書 §9
 * 後に、マージキューも使えるようにした。#174 で、このリポジトリを Organization に移してキューが使えることを確かめ、このリポジトリのルールセットではキューを有効にして strict を外した（PR #191）。repo-setup ではキューをオプション（`--merge-queue`）として選べるようにした（PR #201）。プラグインの既定の方式は、個人のアカウントのリポジトリでも使える必須のチェックと strict のまま（設計書 §9）。
+* キューを使うリポジトリでは、main が進むたびに取り込み直す必要は無いので、branch-update は main と衝突したときだけ取り込む（[ADR 000210](000210-merge-main-only-on-conflict-with-queue.md)）。
 * 必須のチェックが無いまま使い続けないよう、`doctor.sh` は base_branch に必須のチェックが無ければ警告する（PR #220）。

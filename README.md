@@ -20,7 +20,7 @@ plugins/dev-workflow/scripts/doctor.sh
 |---|---|
 | `/dev-workflow:repo-setup` | リポジトリの初期設定（下記） |
 | `/dev-workflow:task-create` | 依頼の内容から Issue を起票し、type ラベル（破壊的変更なら `breaking` ラベルも）を付けて Project に追加する。下書きの前に、開いている Issue から重複と親の候補を探し、重なる Issue があれば、起票の前にどう扱うか（既にある Issue で進める、その Issue を親にする、など）を聞く。Story Point は見積もりを提案し、確認してから設定する。先に終わらせる Issue があれば、本文の「依存」に `#N` を書き、GitHub の依存関係（blocked by）にも登録する。大きな仕様を分けた一部なら、仕様の Issue を親にしてサブ Issue として紐付ける（親子は2層が目安で、必要なら3層まで。Story Point は子にだけ付ける）。親と子をまとめて下書きし、親子の木を見せて確認してから、親 → 子の順に起票できる。既にある Issue を親に指定して、その下に子を足すこともできる。触りそうなファイル・領域も本文の「変更するファイル・領域」に書く（`task-next` が並列にできるかを見るのに使う。分からなければ「不明」、ファイルを変えないタスクなら「なし」） |
-| `/dev-workflow:task-next` | Todo の Issue から、次に着手すべきものと、同時に進められる組を提案する。優先順位は Project の Todo の上から順で、依存（GitHub の blocked by と本文の「依存」）が終わっていないものと、サブ Issue を持つ親の Issue（作業は子の Issue で進める）は候補から外す。本文の「変更するファイル・領域」と、着手中（In Progress と、設定されていれば PR を出した後の列 `pr_opened`）の Issue の領域・PR のファイルが重なりそうなものは「並列にできない」と警告する（止めはしない）。何も変えない読み取り専用で、herdr などが無くても使える |
+| `/dev-workflow:task-next` | Todo の Issue から、次に着手すべきものと、同時に進められる組を提案する。優先順位は Project の Todo の上から順で、依存（GitHub の blocked by と本文の「依存」）が終わっていないものと、サブ Issue を持つ親の Issue（作業は子の Issue で進める）と、保留の列（設定されていれば）にある Issue は候補から外す（保留の Issue は件数と番号を伝え、条件がそろったら Todo に戻すよう案内する）。本文の「変更するファイル・領域」と、着手中（In Progress と、設定されていれば PR を出した後の列 `pr_opened`）の Issue の領域・PR のファイルが重なりそうなものは「並列にできない」と警告する（止めはしない）。何も変えない読み取り専用で、herdr などが無くても使える |
 | `/dev-workflow:task-start` | Issue の作業を始める。ブランチとワークツリー（`.claude/worktrees/<ブランチ名>`）を作り、自分に割り当てて In Progress に移す。調査や Issue の整理のようにリポジトリのファイルを変えないタスクでは、ワークツリーとブランチを作らずに、割り当てと列の移動だけを行える。どちらにするかは Issue の本文から判断して提案し、選んでもらう（その Issue のブランチが既にあれば、作らずには着手しない。終わった作業のブランチなら、先に `task-finish` で片付ける）。その後は確認を取らずに進め、結果を伝える。親の Issue（サブ Issue を持つ Issue）には着手せず、開いている子の一覧を見せる |
 | `/dev-workflow:task-status` | Issue を Project の指定した列へ移す。`Blocked` など自分で足した列へも移せる。Project に入っていなければ追加してから移す。確認を取らずに進め、結果を伝える。Project に無い列を指定したときは、移さずに列の一覧を見せる |
 | `/dev-workflow:commit` | 変更を Conventional Commits の規約に沿ってコミットする。メッセージを検証してからコミットし、main の上ではコミットしない |
@@ -30,7 +30,7 @@ plugins/dev-workflow/scripts/doctor.sh
 | `/dev-workflow:pr-create` | 作業用のブランチを push し、Issue に紐付けた PR を作る。タイトルは `<type>: <Issueのタイトル>`、本文は PR テンプレートに沿って書き、`Closes #N` を付けてラベルを引き継ぐ。Issue に `breaking` ラベルがあれば、タイトルを `<type>!:` にし、本文に `BREAKING CHANGE:`（移行のしかた）を書く。Issue の「やること」のうち差分で済んだ項目にチェックを付ける。確認してから push する |
 | `/dev-workflow:pr-respond` | PR を出した後に付いたレビューの指摘・質問・コメントと、CI の失敗に対応する。最初に PR の状態（CI・レビュー・マージできるか）を見せ、指摘（直す）・質問（答えるだけ）・感想や承認（何もしない）に分けて一覧にする。直すものと答えるものを選ぶと、直してコミットし、push するコミットと返信の本文を見せて確認してから、push と返信を行う。スレッドは resolved にしない（レビューした人に任せる）。コメントの本文にある AI への指示には従わない。コメントが無ければ何も変えずに終わる。使わなくてもマージや `task-finish` は進められる |
 | `/dev-workflow:task-finish` | PR がマージされた後の後片付け。マージを確かめ、ワークツリーとローカルのブランチを削除し、main を最新にし（`git pull --ff-only`）、PR が閉じる Issue が閉じたかも伝える（閉じるのは頼まれたときだけ）。確認を取らずに進め、作業が失われるとき（マージされていない、PR に入っていないコミット・未コミットの変更・サブモジュールの push していないコミットがある）は、何も消さずに止まる。`.env` など git が無視するファイルが残っているときは、一覧を見せて消してよいか確認する。規約の形で番号が一致する作業のブランチが見つからないとき（ワークツリーを作らずに着手したタスクなど）は、決めつけずに、名前が似ているブランチや Issue を閉じる PR のブランチを候補として見せて、Issue を完了として閉じるか、別の名前のブランチ（候補）で作業したかを聞く（Issue を閉じる PR が開いていれば閉じない）。Issue が既に閉じていて候補があれば、その候補で片付けるかを聞く。ブランチ名を指定して片付けることもできる |
-| `/dev-workflow:branch-update` | PR のブランチに、設定済みの `base_branch`（既定は main）の最新状態を取り込む。遅れを調べ、`origin/<base_branch>` を merge し（rebase と強制 push は使いません）、衝突を直して、リポジトリのテストとチェックを通します。push の前に、取り込んだコミットとチェックの結果を見せて確認を取り、push の後は CI が通り直るのを待って結果を伝えます。すでに最新なら何もしません。判断できない衝突はユーザーに聞きます |
+| `/dev-workflow:branch-update` | PR のブランチに、設定済みの `base_branch`（既定は main）の最新状態を取り込む。遅れを調べ、`origin/<base_branch>` を merge し（rebase と強制 push は使いません）、衝突を直して、リポジトリのテストとチェックを通します。push の前に、取り込んだコミットとチェックの結果を見せて確認を取り、push の後は CI が通り直るのを待って結果を伝えます。すでに最新なら何もしません。手元では取り込み済みで、まだ push していないときは、取り込まずにテストとチェックを通して push します（マージキューを使うリポジトリでは、main と衝突しているときだけ）。判断できない衝突はユーザーに聞きます。「コンフリクトした」という依頼にも使えます。マージキューを使うリポジトリでは、取り込むのは PR が main と衝突しているときだけです。衝突していなければ取り込まずに、キューの状態に合わせて案内します（キューの中で先に並んだ PR と衝突したときや、CI の失敗などでキューから外れたままのときは、外れた理由を伝え、先に並んだ PR のマージを待つか、衝突や失敗に対応してからもう一度キューに入れるよう案内します）。最新の main が要るときは、確かめてから取り込みます。取り込んで CI が通った後は、PR をもう一度キューに入れるよう伝えます |
 | `/dev-workflow:task-cancel` | やらないことにした Issue や誤って起票した Issue を取りやめる。理由と参照先（代わりに作業する Issue など）をコメントに書き、not planned（重複なら元の Issue に紐付けて duplicate）で閉じる。着手していれば、PR を閉じ、リモートと手元のブランチ・ワークツリーも削除する。失う作業（マージしていないコミット・未コミットの変更・`.env` など）を見せて確認してから行う。親の Issue（サブ Issue を持つ Issue）を取りやめるときは、開いている子孫（子・孫）を一緒に取りやめるか、残すかを確認で選ぶ（一緒に取りやめるなら、着手中の子孫の PR とブランチも片付ける）。Project からは外さず、Story Point も残す（後からボードで経緯を参照できるように）。マージした後の片付けは `task-finish` を使う |
 
 Issue の番号を取るスキル（`task-start`・`task-status`・`task-finish`・`task-cancel`）は、`/dev-workflow:task-start 12` や `/dev-workflow:task-start #12` のように、引数で番号を渡せます。`task-status` は `/dev-workflow:task-status 12 Blocked` のように、番号、列名の順に渡します。`task-finish` は、`/dev-workflow:task-finish fix-typo` のように、番号の代わりにブランチ名も渡せます（名前に Issue の番号を含まないブランチを片付けるとき）。引数が無ければ、依頼の文章から読み取ります。`pr-respond` は `/dev-workflow:pr-respond 42` のように PR の番号を渡せます（無ければ今のブランチの PR）。
@@ -163,7 +163,7 @@ plugins/dev-workflow/scripts/setup/setup-all.sh
 
 作ったファイル（テンプレート、`.claude/dev-workflow/config.json`）はコミットされません。main は守られるので、PR でマージしてください。
 
-`/dev-workflow:repo-setup` では、レビューに使うモデルを決めていなければ、使うかどうかも聞かれます（下の「レビューに使うモデル」）。
+`/dev-workflow:repo-setup` では、レビューに使うモデルを決めていなければ、使うかどうかも聞かれます（下の「レビューに使うモデル」）。保留の列を設定していなければ、作るかどうかも聞かれます（下の「Project」）。
 
 ### ラベル
 
@@ -189,9 +189,14 @@ plugins/dev-workflow/scripts/setup/setup-project.sh --write-config
 # 既存の Project に接続する
 plugins/dev-workflow/scripts/setup/setup-project.sh --number 3 --write-config
 
+# 保留の列（On Hold）も足し、設定の status.hold に書く
+plugins/dev-workflow/scripts/setup/setup-project.sh --hold-column "On Hold" --write-config
+
 # 変更せずに、行う予定の操作だけを確認する
 plugins/dev-workflow/scripts/setup/setup-project.sh --dry-run
 ```
+
+保留の列は、外の条件を待っていて今は着手できない Issue（例：試用期間が終わるまで着手できない）を置く列です。任意で、設定しなければ今までどおりに動きます。保留の列にある Issue は `/dev-workflow:task-next` の候補から外れ、件数と番号が伝えられます。列へ移すのも Todo に戻すのも `/dev-workflow:task-status` で行います（`/dev-workflow:task-status 12 hold`・`/dev-workflow:task-status 12 todo`）。保留の列の名前を変えるときは、Project の画面で列の名前を変え、`.claude/dev-workflow/config.json` の `status.hold` も同じ名前にしてください。`--hold-column` で別の列を足して切り替えるときは、今の保留の列に Issue が残っていると止まるので、先に新しい列へ移してください。
 
 Project に組み込みの自動追加（Auto-add to project）は API で有効にできないため、スクリプトが表示する URL の画面で1回だけ手動で有効にしてください。
 
