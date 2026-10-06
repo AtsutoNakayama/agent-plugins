@@ -180,3 +180,11 @@ pos() {
   # shellcheck disable=SC2016 # バッククォートは流れの本文の文字で、展開させない
   grep -q 'もう一度 `/dev-workflow:task-start` でワークツリーを作ってから変えます' "$DEFAULT"
 }
+
+@test "既定の流れに、Issue の分け方を提案する前に task-create の手順を読むことが書いてある" {
+  # shellcheck disable=SC2016 # バッククォートは流れの本文の文字で、展開させない
+  grep -q 'Issue の分け方や作業の構成を提案するときは、提案する前に `/dev-workflow:task-create` の手順を読み' "$DEFAULT"
+  for rule in '親子は「仕様 → 着手できる作業」の2層' 'Story Point は子にだけ付けて、親は空欄' '依存は番号で書く'; do
+    grep -qF "$rule" "$DEFAULT" || fail "「${rule}」が書かれていません"
+  done
+}
