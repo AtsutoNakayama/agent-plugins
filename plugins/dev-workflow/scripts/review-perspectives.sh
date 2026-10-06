@@ -12,8 +12,9 @@
 #             - マージ先: origin/<base_branch>（git fetch origin <base_branch> で最新にする。できなければ警告して
 #               手元の origin/<base_branch> を使う。それも無ければ終了コード 2）
 #             - 基点: git merge-base <マージ先> HEAD
-#             - Issue の番号: ブランチ名（branch.pattern の {issue_number}）。gh で Issue を読み、見つからなければ
-#               Issue は無いものとする（警告）。gh で読めなければ（認証・通信など）、番号は使い、type はブランチ名から決める（警告）
+#             - Issue の番号: ブランチ名（branch.pattern の {issue_number}。先頭の 0 はそろえる）。番号として使えない値（0 など）なら
+#               Issue は無いものとする（警告）。gh で Issue を読み、見つからないか、番号が PR のものなら、Issue は無いものとする（警告）。
+#               gh で読めなければ（認証・通信など）、番号は使い、type はブランチ名から決める（警告）
 #             - type: Issue の type ラベル（labels.types のどれか1つ）。無いか1つに決まらなければ、
 #               ブランチ名（branch.pattern の {type}）。どちらでも決まらなければ無し
 #   --base    基点のコミット。差分のファイルは git diff <基点> で読む
