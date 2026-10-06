@@ -184,76 +184,69 @@ gc_opt() {
 
 # 引数の並びを、git や getopt と同じく読み（1語ずつの読み方は gc_opt）、語ごとに「<コールバック> <種類> …」を呼ぶ。
 #   opt <名前> <値> <値の書き方>  オプション。値の書き方は、値を取らなければ none、くっつけて書けば（-cname・--create=name）
-#                                 attached、次の語が値なら next（値が無いまま終われば、値は空）
+#                                 attached、次の語が値なら next、値を取るのに値が無いまま終われば missing（値は空）
 #   arg <語>                      オプションでない語（- と、-- の後ろの語を含む）
 #   dd                            --（この後ろの語は、すべて arg になる）
-# コールバックが 0 以外を返すと、そこで読むのをやめる。gc_argn に、読み終えた語の数（やめた語を含まない）を入れる。
+# コールバックは、読むのをやめるときに gc_stop=true とする。gc_argn に、読み終えた語の数（やめた語を含まない）を入れる。
+# コールバックは普通の文として呼ぶので、その中でも set -e が効き、終了コードは見ない（0 以外ならフックが止まる）。
 # コールバックは、呼び出し元の local の変数を読み書きできる（呼び出し元の中から呼ばれるため）。
 # 使い方: gc_args <コールバック> <値を取る短いオプションの文字> <長いオプション（gc_opt と同じ）> <引数>...
-gc_argn=0
+gc_argn=0 gc_stop=false
 gc_args() {
-  # コールバックが呼び出し元の変数（cb・dd など）を読めるよう、作業用の変数は ga_ で始める
+  # コールバックが呼び出し元の変数（cb など）を読めるよう、作業用の変数は ga_ で始める
   local ga_cb="$1" ga_shorts="$2" ga_longs="$3" ga_w ga_k ga_dd=false ga_next="" ga_rc
   shift 3
-  gc_argn=0
+  gc_argn=0 gc_stop=false
   for ga_w in "$@"; do
     if [ -n "$ga_next" ]; then
-      "$ga_cb" opt "$ga_next" "$ga_w" next || return 0
+      "$ga_cb" opt "$ga_next" "$ga_w" next
       ga_next=""
     elif $ga_dd; then
-      "$ga_cb" arg "$ga_w" || return 0
+      "$ga_cb" arg "$ga_w"
     else
       ga_rc=0
       gc_opt "$ga_w" "$ga_shorts" "$ga_longs" || ga_rc=$?
       case "$ga_rc" in
         0)
           ga_k=0
-          while [ "$ga_k" -lt "${#gc_on[@]}" ]; do
+          while [ "$ga_k" -lt "${#gc_on[@]}" ] && ! $gc_stop; do
             if "${gc_oa[ga_k]}"; then
-              "$ga_cb" opt "${gc_on[ga_k]}" "${gc_ov[ga_k]}" attached || return 0
+              "$ga_cb" opt "${gc_on[ga_k]}" "${gc_ov[ga_k]}" attached
             else
-              "$ga_cb" opt "${gc_on[ga_k]}" "" none || return 0
+              "$ga_cb" opt "${gc_on[ga_k]}" "" none
             fi
             ga_k=$((ga_k + 1))
           done
           ga_next="$gc_onext"
           ;;
-        1) "$ga_cb" arg "$ga_w" || return 0 ;;
+        1) "$ga_cb" arg "$ga_w" ;;
         2)
-          "$ga_cb" dd || return 0
+          "$ga_cb" dd
           ga_dd=true
           ;;
       esac
     fi
+    ! $gc_stop || return 0
     gc_argn=$((gc_argn + 1))
   done
-  [ -z "$ga_next" ] || "$ga_cb" opt "$ga_next" "" next || true
+  [ -z "$ga_next" ] || "$ga_cb" opt "$ga_next" "" missing
 }
 
-# 前に付くコマンド（timeout・nice・env など）のオプションを読む（gc_args）。最初のオプションでない語か -- で止まる
-# （-- も数える）。
+# 前に付くコマンド（timeout・nice・env など）のオプションを読む（gc_args）。最初のオプションでない語で止まる
+# （-- は数え、その次の語で止まる）。
 # 使い方: gc_skip_opts <値を取る短いオプションの文字> <長いオプション（gc_opt と同じ）> <引数>...
-#   gc_nopt  オプションの語の数
-#   gc_optn・gc_optv・gc_opta  オプションの名前・値・値をくっつけて書いたか（true・false）
-gc_nopt=0 gc_optn=() gc_optv=() gc_opta=()
+#   gc_nopt  オプションの語の数（-- を含む）
+#   gc_optn・gc_optv・gc_optk  オプションの名前・値・値の書き方（gc_args の none・attached・next・missing）
+gc_nopt=0 gc_optn=() gc_optv=() gc_optk=()
 gc_skip_opts() {
-  local dd=false
-  gc_optn=() gc_optv=() gc_opta=()
+  gc_optn=() gc_optv=() gc_optk=()
   gc_args gc_skip_opts_on "$@"
   gc_nopt=$gc_argn
-  ! $dd || gc_nopt=$((gc_nopt + 1))
 }
 gc_skip_opts_on() {
   case "$1" in
-    opt)
-      gc_optn+=("$2") gc_optv+=("$3")
-      if [ "$4" = attached ]; then gc_opta+=(true); else gc_opta+=(false); fi
-      ;;
-    dd)
-      dd=true
-      return 1
-      ;;
-    *) return 1 ;;
+    opt) gc_optn+=("$2") gc_optv+=("$3") gc_optk+=("$4") ;;
+    arg) gc_stop=true ;;
   esac
 }
 
@@ -288,8 +281,13 @@ gc_create_opts() {
 }
 gc_create_opts_on() {
   case "$1" in
-    opt) [ "$4" = none ] || "$cb" "$3" ;;
-    dd) return 1 ;;
+    # 値が無いまま終わった（git switch -c）ときは、作るブランチの名前が無い
+    opt)
+      case "$4" in
+        attached | next) "$cb" "$3" ;;
+      esac
+      ;;
+    dd) gc_stop=true ;;
   esac
 }
 
@@ -310,16 +308,17 @@ gc_branch_create_on() {
         *" $2 "*) ;;
         *)
           name=""
-          return 1
+          gc_stop=true
           ;;
       esac
       ;;
     arg)
       if [ "$2" = - ]; then
         name=""
-        return 1
+        gc_stop=true
+      elif [ -z "$name" ]; then
+        name="$2"
       fi
-      [ -n "$name" ] || name="$2"
       ;;
   esac
 }
@@ -336,9 +335,10 @@ gc_worktree_branch() {
 gc_worktree_branch_on() {
   [ "$1" = arg ] || return 0
   pos=$((pos + 1))
-  [ "$pos" -eq 2 ] || return 0
-  "$cb" "$2"
-  return 1
+  if [ "$pos" -eq 2 ]; then
+    "$cb" "$2"
+    gc_stop=true
+  fi
 }
 
 # git push の引数を読んで、次の変数に入れる。guard-git.sh（強制 push・push 先）と pr-link.sh（dry-run）が使う。
@@ -389,7 +389,7 @@ gc_commit_args() {
 gc_commit_args_on() {
   case "$1" in
     opt) [ "$2" != --dry-run ] || gc_commit_dry=true ;;
-    dd) return 1 ;;
+    dd) gc_stop=true ;;
   esac
 }
 
@@ -758,7 +758,7 @@ gc_command() {
             # -C <dir> は、このコマンドだけを、その場所で実行する（git -C と同じに扱う）。
             # 値をくっつけて書いたとき（-C~/x・--chdir=~/x）は、シェルは ~ を展開しない
             -C | --chdir)
-              if "${gc_opta[k]}"; then
+              if [ "${gc_optk[k]}" = attached ]; then
                 cdir="$(gc_resolve_dir "$envbase" "${gc_optv[k]}" no-tilde)"
               else
                 cdir="$(gc_resolve_dir "$envbase" "${gc_optv[k]}")"
