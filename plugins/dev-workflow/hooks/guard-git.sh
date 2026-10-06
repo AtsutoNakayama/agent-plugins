@@ -12,7 +12,7 @@
 # （Claude Code はコマンドを実行せず、理由を Claude に伝える）。警告するときは、フックの出力の JSON を
 # 標準出力に出し、終了コード 0 で終わる。
 # 操作の対象のリポジトリ（cd・git -C で移った先、--git-dir・GIT_DIR などで指したリポジトリ）が、導入していないリポジトリ
-# なら何もしない（target_resolve・target_set_up）。git がリポジトリを見つけられないときは、守りを外さないよう調べる（設計書 §1）。
+# なら何もしない（gc_target・target_set_up）。git がリポジトリを見つけられないときは、守りを外さないよう調べる（設計書 §1）。
 # コマンドの文字列の解析は、pr-link.sh と共有する（scripts/lib/git-command.sh）。sh -c や git の別名（alias）を通すと見逃す。
 # 最後の守りは GitHub のルールセット（setup-repo.sh）。
 # 関数は gc_scan のコールバック（check_git）から呼ぶので、直接の呼び出しが無い（SC2329）
@@ -37,7 +37,6 @@ case "$cmd" in
 esac
 cwd="$(jq -r '.cwd // empty' <<<"$input")"
 dir="$( (cd "${cwd:-.}" && pwd -P) 2>/dev/null || true)"
-trepo="" troot=""
 # ブランチ名の警告（最後にまとめて出す）
 warnings=() nwarn=0
 
@@ -45,58 +44,30 @@ warnings=() nwarn=0
 
 deny() { dw_die "$1" 2; }
 
-# 操作の対象を求めて、trepo と troot に入れる。check_git がコマンドごとに1回だけ呼び、導入したかの判定（target_set_up）と、
-# 設定（base_branch・branch.pattern）を読むリポジトリの、どちらにも使う。git は rev-parse を1回だけ起動する。
-#   trepo  対象のリポジトリ（--git-common-dir の実体の絶対パス。ワークツリーなら元のリポジトリ）。git が見つけられなければ空
-#   troot  対象の作業ツリーの一番上。確かめられなければ空
-# オプションも環境変数も無ければ、--show-toplevel（git がそのコマンドで使う作業ツリー）がそのままルート。
-# --git-dir・GIT_DIR などがあると、--show-toplevel は今のディレクトリを返すことがある（作業ツリーを指定しないとき）ので、
-# その場所の git のディレクトリが対象のものと同じかで確かめる（dw_root_if_repo。同じリポジトリの別のワークツリーとも見分ける）。
-# 違えば、対象がメインのリポジトリならメインのワークツリー（dw_repo_main_root）、ワークツリー（git worktree add）の git の
-# ディレクトリなら、その gitdir ファイルが記録するワークツリー（dw_worktree_root）。.git の中など、--show-toplevel が答えないときも同じ
-target_resolve() {
-  local gd c top
-  trepo="" troot=""
-  [ -n "$gc_git_dir" ] || return 0
-  { IFS= read -r gd; IFS= read -r c; IFS= read -r top; } <<<"$(dw_parse_repo_paths "$gc_git_dir" \
-    "$(gc_git rev-parse --git-dir --git-common-dir --show-toplevel || true)" || true)" || true
-  [ -n "${c:-}" ] || return 0
-  trepo="$c"
-  if [ "${#gc_gopts[@]}" -eq 0 ] && [ "${#gc_genv[@]}" -eq 0 ] && [ -n "${top:-}" ]; then
-    troot="$top"
-    return 0
-  fi
-  if [ "$gd" = "$trepo" ]; then
-    troot="$(dw_root_if_repo "${top:-}" "$gd" || dw_repo_main_root "$trepo" || true)"
-  else
-    troot="$(dw_root_if_repo "${top:-}" "$gd" || dw_worktree_root "$gd" || true)"
-  fi
-}
-
-# 操作の対象が、導入したリポジトリなら成功し、導入していなければ 1 を返す（設計書 §1）。target_resolve の後に呼ぶ。
+# 操作の対象が、導入したリポジトリなら成功し、導入していなければ 1 を返す（設計書 §1）。gc_target の後に呼ぶ。
 #   - ルートが分かれば、そこ（かメインのワークツリー）にチームの設定があるか（dw_is_set_up）
 #   - リポジトリは分かるがルートが分からない（bare リポジトリ、外から指した --separate-git-dir のリポジトリなど）ときは、
 #     HEAD にチームの設定がコミットされているか
 #   - git がリポジトリを見つけられない（ディレクトリが分からない cd - の後など）ときは、守りを外さないよう、導入したものとみなす
 target_set_up() {
-  if [ -n "$troot" ]; then
-    dw_is_set_up "$troot"
+  if [ -n "$gc_root" ]; then
+    dw_is_set_up "$gc_root"
     return
   fi
-  [ -n "$trepo" ] || return 0
+  [ -n "$gc_repo" ] || return 0
   gc_git cat-file -e "HEAD:.claude/dev-workflow/config.json"
 }
 
-# 対象のリポジトリの base_branch を出力する。読めなければ main。target_resolve・target_set_up の後（導入したリポジトリのとき）に呼ぶ。
+# 対象のリポジトリの base_branch を出力する。読めなければ main。gc_target・target_set_up の後（導入したリポジトリのとき）に呼ぶ。
 # ルートが分かれば、そのリポジトリの設定（config.sh。導入したリポジトリなのでユーザーの層も合わせる）から読む。
 # ルートが分からなければ、HEAD にコミットされたチームの設定、ユーザーの層の順に読む（導入したものとして調べているので、
 # ユーザーの層も効かせる）。今のディレクトリのリポジトリの設定は、対象と違うことがあるので、代わりに読まない
 base_branch() {
   local base=""
-  if [ -n "$troot" ]; then
-    base="$( (cd "$troot" && WORKFLOW_REPO_ROOT="$troot" "$BASH" "$DW_SCRIPTS_DIR/config.sh" '.base_branch // empty') 2>/dev/null || true)"
+  if [ -n "$gc_root" ]; then
+    base="$( (cd "$gc_root" && WORKFLOW_REPO_ROOT="$gc_root" "$BASH" "$DW_SCRIPTS_DIR/config.sh" '.base_branch // empty') 2>/dev/null || true)"
   else
-    [ -z "$trepo" ] || base="$(gc_git show "HEAD:.claude/dev-workflow/config.json" | jq -r '.base_branch // empty | strings' 2>/dev/null || true)"
+    [ -z "$gc_repo" ] || base="$(gc_git show "HEAD:.claude/dev-workflow/config.json" | jq -r '.base_branch // empty | strings' 2>/dev/null || true)"
     [ -n "$base" ] || base="$(jq -r '.base_branch // empty | strings' "$(dw_user_dir)/config.json" 2>/dev/null || true)"
   fi
   printf '%s\n' "${base:-main}"
@@ -182,12 +153,12 @@ check_branch_name() {
     '' | *'$'* | *'`'*) return 0 ;;
   esac
   # 対象のルートが分からなければ、どの規約で確かめるか分からないので確かめない（警告だけなので、止める側に倒さない）
-  [ -n "$troot" ] || return 0
+  [ -n "$gc_root" ] || return 0
   [ "$name" != "$(base_branch)" ] || return 0
   gc_git show-ref --verify --quiet "refs/heads/$name" && return 0
   [ -z "$(gc_git for-each-ref --format=x "refs/remotes/*/$name" || true)" ] || return 0
   # 規約に合わないときだけ終了コード 1（設定を読めないなどは 2）
-  out="$( (cd "$troot" && WORKFLOW_REPO_ROOT="$troot" "$BASH" "$DW_SCRIPTS_DIR/branch-name.sh" --check "$name") 2>/dev/null)" \
+  out="$( (cd "$gc_root" && WORKFLOW_REPO_ROOT="$gc_root" "$BASH" "$DW_SCRIPTS_DIR/branch-name.sh" --check "$name") 2>/dev/null)" \
     && return 0
   [ $? -eq 1 ] || return 0
   warnings+=("ブランチ名 ${name} は規約に合いません（$(jq -r '.reason // empty' <<<"$out" 2>/dev/null || true)）。")
@@ -201,7 +172,7 @@ check_git() {
   case "$sub" in
     commit | push | switch | checkout | branch | worktree)
       # 操作の対象を求め、導入していないリポジトリなら何もしない（git がリポジトリを見つけられないときは、今までどおり調べる）
-      target_resolve
+      gc_target
       target_set_up || return 0
       ;;
     *) return 0 ;;

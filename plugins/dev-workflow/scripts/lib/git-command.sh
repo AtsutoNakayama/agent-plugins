@@ -4,11 +4,12 @@
 # common.sh の後に source する。
 #
 # 引用符・エスケープ・$( )・ヒアドキュメント・リダイレクトを考え、; & | 改行 ( ) でコマンドを区切る。
-# cd・pushd で移った先と、git -C で指した先を追う（( ) の中の cd は外に効かない）。
-# $( ) の中のコマンドは調べない。sh -c や git の別名（alias）を通すと見逃す。
+# cd・pushd・popd で移った先と、git -C で指した先を追う（( ) の中の cd は外に効かない）。cd - の後は、移った先を不明とする。
+# 前に付くだけのコマンド（command・exec・time・nohup・env・timeout・nice）は飛ばす。
+# $( ) の中のコマンドは調べない。sh -c・xargs・sudo や git の別名（alias）を通すと見逃す。
 #
 # 使い方:
-#   gc_scan <コールバック> <コマンドの文字列> <始めのディレクトリ（空なら不明）> [after]
+#   gc_scan <コールバック> <コマンドの文字列> <始めのディレクトリ（空なら不明）> [after [<戻す先>]]
 #   git の呼び出しごとに「<コールバック> <サブコマンド> <残りの引数>...」を呼ぶ。呼ぶ前に、次の変数を設定する。
 #     gc_git_dir  git を実行するディレクトリ（cd・git -C で移った先。分からなければ空）
 #     gc_gopts    git のグローバルオプションのうち、対象を変えるもの（--git-dir・--work-tree）。配列
@@ -20,9 +21,13 @@
 #   Claude Code は、外側（( ) の外）の cd で移った先を次のコマンドに引き継ぐので、cwd は既に移った先にある。
 #   そのため、外側の相対パスへの cd はたどらない。絶対パス（~・$HOME を含む）への cd は、始めのディレクトリに関係なく
 #   移った先が分かり、プロジェクトの外へ移って Claude Code が cwd を戻したときにも正しいので、たどる。その後の相対パスへの cd もたどる。
-#   cd sub && git push && cd .. のように、後ろでまた相対パスへ移ると、git push を移る前の場所で判断してしまう。
+#   cd sub && git push && cd .. や pushd sub && git push && popd のように、後ろでまた移ると、git push を移る前の場所で
+#   判断してしまう。外側の popd・cd - の後は、移った先を不明とする。
+#   <戻す先> には、Claude Code が cwd を戻す先（プロジェクトのルート。$CLAUDE_PROJECT_DIR）を渡す。外側の相対パスへの cd が
+#   プロジェクトの外へ出ると、Claude Code は cwd をそこへ戻すので、cwd が <戻す先> のときは、移った先を不明とする
+#   （プロジェクトの中で <戻す先> へ移ったのと見分けられないので、間違った場所より、不明とする）。
 
-gc_git_dir="" gc_gopts=() gc_genv=()
+gc_git_dir="" gc_gopts=() gc_genv=() gc_repo="" gc_root=""
 
 # コマンドの文字列の値の先頭にある ~・$HOME・${HOME} を、シェルと同じく展開する（シェルが展開する前の文字列を見ているため）。
 # ~ をシェルが展開するのは、語の先頭（cd ~/x・--git-dir ~/x）と代入の値（GIT_DIR=~/x）だけで、--git-dir=~/x のような
@@ -63,6 +68,35 @@ gc_resolve_dir() {
 gc_git() {
   [ -n "$gc_git_dir" ] || return 1
   (cd "$gc_git_dir" && env ${gc_genv[@]+"${gc_genv[@]}"} git ${gc_gopts[@]+"${gc_gopts[@]}"} "$@" 2>/dev/null)
+}
+
+# 操作の対象（gc_git_dir・gc_gopts・gc_genv）のリポジトリを求めて、gc_repo と gc_root に入れる。コールバックの中で呼ぶ。
+# 導入したかの判定と、設定（base_branch・branch.pattern など）を読むリポジトリの、どちらにも使う。git は rev-parse を1回だけ起動する。
+#   gc_repo  対象のリポジトリ（--git-common-dir の実体の絶対パス。ワークツリーなら元のリポジトリ）。git が見つけられなければ空
+#   gc_root  対象の作業ツリーの一番上。確かめられなければ空
+# オプションも環境変数も無ければ、--show-toplevel（git がそのコマンドで使う作業ツリー）がそのままルート。
+# --git-dir・GIT_DIR などがあると、--show-toplevel は今のディレクトリを返すことがある（作業ツリーを指定しないとき）ので、
+# その場所の git のディレクトリが対象のものと同じかで確かめる（dw_root_if_repo。同じリポジトリの別のワークツリーとも見分ける）。
+# 違えば、対象がメインのリポジトリならメインのワークツリー（dw_repo_main_root）、ワークツリー（git worktree add）の git の
+# ディレクトリなら、その gitdir ファイルが記録するワークツリー（dw_worktree_root）。.git の中など、--show-toplevel が答えないときも同じ
+# shellcheck disable=SC2034 # gc_root は呼び出し側（フック）が読む
+gc_target() {
+  local gd c top
+  gc_repo="" gc_root=""
+  [ -n "$gc_git_dir" ] || return 0
+  { IFS= read -r gd; IFS= read -r c; IFS= read -r top; } <<<"$(dw_parse_repo_paths "$gc_git_dir" \
+    "$(gc_git rev-parse --git-dir --git-common-dir --show-toplevel || true)" || true)" || true
+  [ -n "${c:-}" ] || return 0
+  gc_repo="$c"
+  if [ "${#gc_gopts[@]}" -eq 0 ] && [ "${#gc_genv[@]}" -eq 0 ] && [ -n "${top:-}" ]; then
+    gc_root="$top"
+    return 0
+  fi
+  if [ "$gd" = "$gc_repo" ]; then
+    gc_root="$(dw_root_if_repo "${top:-}" "$gd" || dw_repo_main_root "$gc_repo" || true)"
+  else
+    gc_root="$(dw_root_if_repo "${top:-}" "$gd" || dw_worktree_root "$gd" || true)"
+  fi
 }
 
 # 操作の対象の今のブランチを出力する（detached HEAD や分からないときは空）
@@ -151,12 +185,38 @@ gc_branch_create() {
   [ -z "$name" ] || "$cb" "$name"
 }
 
+# git worktree add <パス> <ブランチ>（-b・-B を付けない形）の、2つ目の位置引数を「<コールバック> <名前>」に渡す。
+# gc_new_branches と違い、作るブランチではなく、既にあるブランチを使う書き方。値を取るオプション（--reason・-b・-B）の次の語は、
+# 位置引数に数えない
+# 使い方: gc_worktree_branch <コールバック> <add の後の引数>...
+gc_worktree_branch() {
+  local cb="$1" w pos=0 skip=false
+  shift
+  for w in "$@"; do
+    if $skip; then
+      skip=false
+      continue
+    fi
+    case "$w" in
+      --reason | -b | -B) skip=true ;;
+      -*) ;;
+      *)
+        pos=$((pos + 1))
+        if [ "$pos" -eq 2 ]; then
+          "$cb" "$w"
+          return 0
+        fi
+        ;;
+    esac
+  done
+}
+
 # --- コマンドごとの解析 -------------------------------------------------------------
 
 # 1つのコマンド（単語の並び）を調べる。cd ならディレクトリを移し、git ならコールバックを呼ぶ。gc_scan の中から呼ぶ。
 # 使い方: gc_command <単語>...
 gc_command() {
-  local target to
+  local target to verb
   # 先頭の環境変数の代入（FOO=1 git push）、前に付くだけのコマンド、予約語（then git push）を飛ばす。
   # 操作の対象を変える代入（GIT_DIR など）は、対象のリポジトリを求めるときに使う
   gc_genv=()
@@ -164,7 +224,41 @@ gc_command() {
     case "$1" in
       GIT_DIR=* | GIT_WORK_TREE=* | GIT_COMMON_DIR=*) gc_genv+=("${1%%=*}=$(gc_expand_home "${1#*=}")"); shift ;;
       [A-Za-z_]*=*) shift ;;
-      command | exec | time | nohup | env) shift ;;
+      command | exec | nohup) shift ;;
+      time)
+        shift
+        [ "${1:-}" != -p ] || shift
+        ;;
+      env)
+        # オプションを飛ばす（-u・-C・-S は値を取る）。後ろの代入（env FOO=1 git push）は、この繰り返しで飛ばす
+        shift
+        while [ $# -gt 0 ]; do
+          case "$1" in
+            -u | -C | -S) [ $# -ge 2 ] || return 0; shift 2 ;;
+            -*) shift ;;
+            *) break ;;
+          esac
+        done
+        ;;
+      timeout)
+        # オプション（-s・-k は値を取る）と、時間を飛ばす
+        shift
+        while [ $# -gt 0 ]; do
+          case "$1" in
+            -s | -k) [ $# -ge 2 ] || return 0; shift 2 ;;
+            -*) shift ;;
+            *) shift; break ;;
+          esac
+        done
+        ;;
+      nice)
+        # -n <値> を飛ばす（-n5・-5・--adjustment=5 は1語）
+        shift
+        case "${1:-}" in
+          -n | --adjustment) [ $# -ge 2 ] || return 0; shift 2 ;;
+          -*) shift ;;
+        esac
+        ;;
       if | then | elif | else | while | until | do | '{' | '!') shift ;;
       *) break ;;
     esac
@@ -172,7 +266,22 @@ gc_command() {
   [ $# -gt 0 ] || return 0
 
   case "$1" in
+    popd)
+      # pushd で積んだ場所に戻る。実行した後のディレクトリから始めたときは、外側の popd の後を不明とする（先頭のコメント）
+      if [ "$pn" -gt 0 ]; then
+        pn=$((pn - 1))
+        gc_dir="${pstack[pn]}"
+      else
+        gc_dir=""
+      fi
+      if $after && [ "$dn" -eq 0 ]; then
+        gc_dir=""
+        anchored=true
+      fi
+      return 0
+      ;;
     cd | pushd)
+      verb="$1"
       shift
       target=""
       while [ $# -gt 0 ]; do
@@ -182,6 +291,12 @@ gc_command() {
           *) target="$1"; break ;;
         esac
       done
+      if [ "$verb" = pushd ]; then
+        pstack[pn]="$gc_dir"
+        pn=$((pn + 1))
+        # 引数の無い pushd は、積んだ場所と入れ替えるので、移った先を不明とする
+        [ -n "$target" ] || target=-
+      fi
       case "$target" in
         '') to="$(gc_resolve_dir "" "$HOME")" ;;
         -) to="" ;;
@@ -190,7 +305,11 @@ gc_command() {
           if $after && ! $anchored && [ "$dn" -eq 0 ]; then
             case "$(gc_expand_home "$target")" in
               /*) ;;
-              *) return 0 ;;
+              *)
+                # cwd が戻す先なら、プロジェクトの外へ出て戻されたのかもしれないので、不明とする
+                [ -z "$reset_dir" ] || [ "$gc_dir" != "$reset_dir" ] || gc_dir=""
+                return 0
+                ;;
             esac
           fi
           to="$(gc_resolve_dir "$gc_dir" "$target")"
@@ -534,7 +653,7 @@ gc_scan_redirect() {
 
 # 使い方は先頭のコメント
 gc_scan() {
-  local callback="$1" cmd="$2" gc_dir="$3" after=false anchored=false
+  local callback="$1" cmd="$2" gc_dir="$3" after=false anchored=false reset_dir="${5:-}"
   [ "${4:-}" != after ] || after=true
   # bash 3.2 は、関数を呼ぶたびに呼び出し元の引数を写すので、長いコマンドの文字列を引数に残すと、
   # 下の関数を呼ぶたびに文字列の長さに比例して遅くなる。読んだら空にする
@@ -555,6 +674,8 @@ gc_scan() {
   local hd_delims=() hd_strip=() hd_n=0
   # ( ) の中の cd は外に効かないので、( の時点のディレクトリを積んでおき、) で戻す
   local dstack=() dn=0
+  # pushd で積んだ場所（popd で戻る）。( ) の中で積んだ分は外に効かないので、( の時点の数も積む
+  local pstack=() pn=0 pnstack=()
   # case の中の深さ（case の時点の dn を積む）
   local case_dn=() cn=0
   local arith_i=0
@@ -589,6 +710,7 @@ gc_scan() {
           i=$arith_i
         else
           dstack[dn]="$gc_dir"
+          pnstack[dn]=$pn
           dn=$((dn + 1))
           i=$((i + 1))
         fi
@@ -601,6 +723,7 @@ gc_scan() {
         elif [ "$dn" -gt 0 ]; then
           dn=$((dn - 1))
           gc_dir="${dstack[dn]}"
+          pn=${pnstack[dn]}
         fi
         i=$((i + 1))
         ;;

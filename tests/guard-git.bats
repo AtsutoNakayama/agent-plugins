@@ -541,3 +541,17 @@ silent() {
   mkdir "$TMP/plain"
   denied "強制 push" "cd $TMP/plain && git push --force" "cd $TMP/plain && GIT_DIR=$TMP/nowhere git push --force"
 }
+
+@test "timeout・nice・time -p・env のオプションを前に付けた git も調べる" {
+  git checkout -q -b feat/21-x
+  denied "強制 push" "timeout 60 git push -f" "timeout -s KILL -k 5 60 git push --force" "nice -n 5 git push -f" \
+    "nice -5 git push -f" "time -p git push -f" "env -u FOO BAR=1 git push -f" "nohup timeout 1m git push -f"
+}
+
+@test "popd で pushd の前の場所に戻る（( ) の中の pushd は外に効かない）" {
+  git worktree add -q -b feat/21-x "$TMP/wt"
+  # REPO は main の上
+  denied "main の上ではコミットしません" "pushd ../wt && git push && popd && git commit -m x" \
+    "(pushd ../wt) && pushd ../wt && popd && git commit -m x" "pushd ../wt; pushd ../repo; popd; popd; git commit -m x"
+  allowed "pushd ../wt && git commit -m x && popd" "pushd ../wt; pushd ../repo; popd; git commit -m x"
+}
