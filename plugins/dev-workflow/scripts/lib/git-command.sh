@@ -4,9 +4,10 @@
 # common.sh の後に source する。
 #
 # 引用符・エスケープ・$( )・ヒアドキュメント・リダイレクトを考え、; & | 改行 ( ) でコマンドを区切る。
-# cd・pushd で移った先と、git -C で指した先を追う（( ) の中の cd は外に効かない）。cd - の後は、移った先を不明とする。
-# popd は、after を付けたとき（下）だけ扱う（pushd で積んだ場所は追わない）。前に付くだけのコマンド（command・exec・time・
-# nohup・env）は飛ばす。$( ) の中のコマンドは調べない。sh -c・xargs・timeout などや git の別名（alias）を通すと見逃す。
+# cd で移った先、pushd・popd で積んだ・戻った場所（シェルと同じく、dirs のスタックを追う）、git -C・env -C で指した先を追う
+# （( ) の中で移った・積んだ分は外に効かない）。cd - の後は、移った先を不明とする。前に付くコマンド（command・exec・time・nohup・
+# env・timeout・nice）は、そのオプションとともに飛ばす（env -S の値は空白で分けて読む）。$( ) の中のコマンドは調べない。
+# sh -c・xargs などや git の別名（alias）を通すと見逃す。
 #
 # 使い方:
 #   gc_scan <コールバック> <コマンドの文字列> <始めのディレクトリ（空なら不明）> [after [<戻す先>]]
@@ -22,7 +23,8 @@
 #   そのため、外側の相対パスへの cd はたどらない。絶対パス（~・$HOME を含む）への cd は、始めのディレクトリに関係なく
 #   移った先が分かり、プロジェクトの外へ移って Claude Code が cwd を戻したときにも正しいので、たどる。その後の相対パスへの cd もたどる。
 #   cd sub && git push && cd .. や pushd sub && git push && popd のように、後ろでまた移ると、git push を移る前の場所で
-#   判断してしまう。popd・cd - の後は、移った先を不明とする（pushd で積んだ場所は追わないので、( ) の中の popd も同じ）。
+#   判断してしまう。cd - の後は、移った先を不明とする。外側の場所をまだたどっていないときに積んだ場所へ popd で戻ると、
+#   たどっていない状態（cwd）に戻る（pushd から popd までは、シェルの場所を変えないので）。
 #   <戻す先> には、Claude Code が cwd を戻す先（プロジェクトのルート。$CLAUDE_PROJECT_DIR）を渡す。外側の相対パスへの cd が
 #   プロジェクトの外へ出ると、Claude Code は cwd をそこへ戻すので、cwd が <戻す先> のときは、移った先を不明とする
 #   （プロジェクトの中で <戻す先> へ移ったのと見分けられないので、間違った場所より、不明とする）。
@@ -273,71 +275,389 @@ gc_push_args() {
 
 # --- コマンドごとの解析 -------------------------------------------------------------
 
-# 1つのコマンド（単語の並び）を調べる。cd ならディレクトリを移し、git ならコールバックを呼ぶ。gc_scan の中から呼ぶ。
+# 前に付くコマンド（timeout・nice・env など）のオプションを読む。最初のオプションでない語か -- で止まる（-- も数える）。
+# 短いオプションはまとめて書け（-iu FOO）、値をくっつけても書ける（-uFOO）。長いオプションは --name=value とも書け、
+# getopt と同じく略して書ける（--sig KILL）。
+# 使い方: gc_skip_opts <値を取る短いオプションの文字> <値を取る長いオプション（空白区切り）> <引数>...
+#   gc_nopt  オプションの語の数
+#   gc_optn  オプションの名前（-C・--chdir。略した長いオプションは、略さない名前）の配列
+#   gc_optv  オプションの値（値を取らなければ空）の配列
+gc_nopt=0 gc_optn=() gc_optv=()
+gc_skip_opts() {
+  local shorts="$1" longs="$2" w k c l n=0 name=""
+  shift 2
+  gc_optn=() gc_optv=()
+  for w in "$@"; do
+    if [ -n "$name" ]; then
+      gc_optn+=("$name") gc_optv+=("$w")
+      name="" n=$((n + 1))
+      continue
+    fi
+    case "$w" in
+      --) n=$((n + 1)); break ;;
+      --*)
+        c=""
+        # 長いオプションの名前は空白も * なども含まないので、分けて並べる
+        # shellcheck disable=SC2086
+        for l in $longs; do
+          case "$l" in "${w%%=*}"*) c="$l"; break ;; esac
+        done
+        if [ -z "$c" ]; then
+          gc_optn+=("${w%%=*}") gc_optv+=("")
+        else
+          case "$w" in
+            *=*) gc_optn+=("$c") gc_optv+=("${w#*=}") ;;
+            *) name="$c" ;;
+          esac
+        fi
+        ;;
+      -?*)
+        # 値を取る文字の後ろが残っていれば、それが値（-uFOO）
+        k=1
+        while [ "$k" -lt "${#w}" ]; do
+          c="${w:k:1}"
+          case "$shorts" in
+            *"$c"*)
+              if [ "$((k + 1))" -lt "${#w}" ]; then
+                gc_optn+=("-$c") gc_optv+=("${w:k+1}")
+              else
+                name="-$c"
+              fi
+              break
+              ;;
+          esac
+          gc_optn+=("-$c") gc_optv+=("")
+          k=$((k + 1))
+        done
+        ;;
+      *) break ;;
+    esac
+    n=$((n + 1))
+  done
+  # 値の無いまま終わった
+  if [ -n "$name" ]; then
+    gc_optn+=("$name") gc_optv+=("")
+  fi
+  gc_nopt=$n
+}
+
+# cd で移る。after のときの外側の相対パスの扱いは、先頭のコメント。gc_scan の中から呼ぶ。
+# 使い方: gc_cd <行き先（空なら $HOME、- なら前の場所）>
+gc_cd() {
+  local target="$1" to
+  case "$target" in
+    '') to="$(gc_resolve_dir "" "$HOME")" ;;
+    -) to="" ;;
+    *)
+      # 実行した後のディレクトリから始めたときは、外側の相対パスへの cd は、絶対パスへ移るまでたどらない（先頭のコメント）
+      if $after && ! $anchored && [ "$dn" -eq 0 ]; then
+        case "$(gc_expand_home "$target")" in
+          /*) ;;
+          *)
+            # cwd が戻す先なら、プロジェクトの外へ出て戻されたのかもしれないので、不明とする
+            [ -z "$reset_dir" ] || [ "$gc_dir" != "$reset_dir" ] || gc_dir=""
+            return 0
+            ;;
+        esac
+      fi
+      to="$(gc_resolve_dir "$gc_dir" "$target")"
+      ;;
+  esac
+  [ "$dn" -gt 0 ] || anchored=true
+  gc_dir="$to"
+}
+
+# --- ディレクトリのスタック（pushd・popd・dirs）--------------------------------------
+# シェルと同じく、pushd で積んだ場所を追う。gc_scan の作業用の変数を使い、gc_scan の中から呼ぶ。
+# スタック（dirs -v の 1 番から後ろ。0 番は今の場所 gc_dir）は、pstack に、上から順に1行ずつ（改行で終わる）、次の形で持つ。
+#   d<ディレクトリ>  その場所（空なら不明）
+#   p<ディレクトリ>  after で、外側の場所をまだたどっていない（anchored でない）ときの場所（cwd）。ここへ戻ると、たどっていない状態に戻る
+#   r<パス>          pushd -n で積んだパス。シェルは、ここへ移るときの場所から解決するので、移るときに cd と同じにたどる
+# 失敗する使い方（積んだ場所が無い popd・範囲の外の番号・不正なオプション・多すぎる引数）は、シェルと同じく、場所もスタックも変えない。
+
+# 今の場所を、スタックの形にして entry に入れる
+gc_cur_entry() {
+  if $after && ! $anchored && [ "$dn" -eq 0 ]; then
+    entry="p$gc_dir"
+  else
+    entry="d$gc_dir"
+  fi
+}
+
+# スタックの形の場所へ移る。使い方: gc_goto <スタックの形>
+gc_goto() {
+  case "$1" in
+    p*)
+      gc_dir="${1#p}"
+      [ "$dn" -gt 0 ] || anchored=false
+      ;;
+    r*) gc_cd "${1#r}" ;;
+    *)
+      gc_dir="${1#d}"
+      [ "$dn" -gt 0 ] || anchored=true
+      ;;
+  esac
+}
+
+# 今の場所とスタックを、dirs -v の順に配列 dl に並べる（dl[0] が今の場所）
+gc_dirs_list() {
+  local s="$pstack"
+  gc_cur_entry
+  dl=("$entry")
+  while [ -n "$s" ]; do
+    dl+=("${s%%"$nl"*}")
+    s="${s#*"$nl"}"
+  done
+}
+
+# dl の <番号> から後ろを、スタックにする。使い方: gc_dirs_set <番号>
+gc_dirs_set() {
+  local k="$1"
+  pstack=""
+  while [ "$k" -lt "${#dl[@]}" ]; do
+    pstack+="${dl[k]}$nl"
+    k=$((k + 1))
+  done
+}
+
+# +N（左から）・-N（右から）を、dl の番号にして idx に入れる。範囲の外なら 1 を返す。使い方: gc_dirs_index <+N か -N>
+gc_dirs_index() {
+  local n="${1#[+-]}"
+  case "$n" in '' | *[!0-9]*) return 1 ;; esac
+  # 先頭の 0 を 8 進数と読ませない（+08）。桁が多すぎる番号は範囲の外
+  [ "${#n}" -le 9 ] || return 1
+  n=$((10#$n))
+  case "$1" in
+    +*) idx=$n ;;
+    *) idx=$((${#dl[@]} - 1 - n)) ;;
+  esac
+  [ "$idx" -ge 0 ] && [ "$idx" -lt "${#dl[@]}" ]
+}
+
+# pushd [-n] [+N | -N | <dir>]。-n は、今の場所を変えずにスタックだけを変える
+gc_pushd() {
+  local nocd=false rot=() k
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      -n) nocd=true; shift ;;
+      --) shift; break ;;
+      - | [+-][0-9]*) break ;;
+      -*) return 0 ;;
+      *) break ;;
+    esac
+  done
+  [ $# -le 1 ] || return 0
+  if [ $# -eq 1 ]; then
+    case "$1" in
+      [+-][0-9]*) ;;
+      *)
+        if $nocd; then
+          # パスのまま積む（改行を含むパスは、1行に収まらないので不明とする）
+          case "$1" in
+            *"$nl"*) pstack="d$nl$pstack" ;;
+            *) pstack="r$1$nl$pstack" ;;
+          esac
+        else
+          gc_cur_entry
+          pstack="$entry$nl$pstack"
+          gc_cd "$1"
+        fi
+        return 0
+        ;;
+    esac
+  fi
+  gc_dirs_list
+  if [ $# -eq 0 ]; then
+    # 上の2つを入れ替える（積んだ場所が無ければ失敗する。$HOME へは移らない）
+    [ "${#dl[@]}" -ge 2 ] || return 0
+    entry="${dl[0]}"
+    dl[0]="${dl[1]}"
+    dl[1]="$entry"
+  else
+    # idx の場所が先頭に来るよう回す
+    gc_dirs_index "$1" || return 0
+    k=$idx
+    while [ "$k" -lt "${#dl[@]}" ]; do
+      rot+=("${dl[k]}")
+      k=$((k + 1))
+    done
+    k=0
+    while [ "$k" -lt "$idx" ]; do
+      rot+=("${dl[k]}")
+      k=$((k + 1))
+    done
+    dl=("${rot[@]}")
+  fi
+  # -n では、今の場所はそのままで、回した後の 1 番から後ろがスタックになる（シェルと同じ）
+  gc_dirs_set 1
+  $nocd || gc_goto "${dl[0]}"
+}
+
+# popd [-n] [+N | -N]。今の場所（0 番）を取り除くときだけ、次の場所へ移る（-n なら移らずに 1 番を取り除く）
+gc_popd() {
+  local nocd=false k idx=0
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      -n) nocd=true; shift ;;
+      --) shift; break ;;
+      [+-][0-9]*) break ;;
+      *) return 0 ;;
+    esac
+  done
+  [ $# -le 1 ] || return 0
+  gc_dirs_list
+  [ "${#dl[@]}" -ge 2 ] || return 0
+  if [ $# -eq 1 ]; then
+    gc_dirs_index "$1" || return 0
+  fi
+  if [ "$idx" -eq 0 ]; then
+    entry="${dl[1]}"
+    gc_dirs_set 2
+    $nocd || gc_goto "$entry"
+  else
+    pstack=""
+    k=1
+    while [ "$k" -lt "${#dl[@]}" ]; do
+      [ "$k" -eq "$idx" ] || pstack+="${dl[k]}$nl"
+      k=$((k + 1))
+    done
+  fi
+}
+
+# dirs -c はスタックを空にする
+gc_dirs() {
+  local w
+  for w in "$@"; do
+    case "$w" in
+      [+-][0-9]*) ;;
+      -*c*) pstack="" ;;
+    esac
+  done
+}
+
+# 1つのコマンド（単語の並び）を調べる。cd・pushd・popd・dirs なら場所とスタックを変え、git ならコールバックを呼ぶ。
+# gc_scan の中から呼ぶ。
 # 使い方: gc_command <単語>...
 gc_command() {
-  local target to
-  # 先頭の環境変数の代入（FOO=1 git push）、前に付くだけのコマンド、予約語（then git push）を飛ばす。
-  # 操作の対象を変える代入（GIT_DIR など）は、対象のリポジトリを求めるときに使う
+  local cdir="" has_cdir=false envbase ext=false k sw=() split=()
+  # 先頭の環境変数の代入（FOO=1 git push）、前に付くコマンドとそのオプション、予約語（then git push）を飛ばす。
+  # 操作の対象を変える代入（GIT_DIR など）は、対象のリポジトリを求めるときに使う。
+  # 外部のコマンド（env・nohup・timeout・nice・exec）として実行する cd などは、シェルの場所を変えない（ext）
   gc_genv=()
   while [ $# -gt 0 ]; do
     case "$1" in
       GIT_DIR=* | GIT_WORK_TREE=* | GIT_COMMON_DIR=*) gc_genv+=("${1%%=*}=$(gc_expand_home "${1#*=}")"); shift ;;
       [A-Za-z_]*=*) shift ;;
-      command | exec | time | nohup | env) shift ;;
       if | then | elif | else | while | until | do | '{' | '!') shift ;;
+      time)
+        # time -p（シェルの予約語なので、組み込みのコマンドもシェルの中で実行する）
+        shift
+        gc_skip_opts "" "" "$@"
+        shift "$gc_nopt"
+        ;;
+      command)
+        shift
+        gc_skip_opts "" "" "$@"
+        shift "$gc_nopt"
+        # command -v・-V は、コマンドを実行せず、その在りかを出すだけ
+        for k in ${gc_optn[@]+"${gc_optn[@]}"}; do
+          case "$k" in -v | -V) return 0 ;; esac
+        done
+        ;;
+      nohup) ext=true; shift ;;
+      exec)
+        ext=true
+        shift
+        gc_skip_opts a "" "$@"
+        shift "$gc_nopt"
+        ;;
+      timeout)
+        # timeout [オプション] <時間> <コマンド>
+        ext=true
+        shift
+        gc_skip_opts ks "--kill-after --signal" "$@"
+        shift "$gc_nopt"
+        [ $# -eq 0 ] || shift
+        ;;
+      nice)
+        # nice -n 5・nice -5・nice --adjustment=5
+        ext=true
+        shift
+        gc_skip_opts n --adjustment "$@"
+        shift "$gc_nopt"
+        ;;
+      env)
+        ext=true
+        shift
+        gc_skip_opts uCSa "--unset --chdir --split-string --argv0" "$@"
+        shift "$gc_nopt"
+        # env の後ろの - は -i と同じ
+        [ "${1:-}" != - ] || shift
+        if $has_cdir; then envbase="$cdir"; else envbase="$gc_dir"; fi
+        split=()
+        k=0
+        while [ "$k" -lt "${#gc_optn[@]}" ]; do
+          case "${gc_optn[k]}" in
+            # -C <dir> は、このコマンドだけを、その場所で実行する（git -C と同じに扱う）
+            -C | --chdir)
+              cdir="$(gc_resolve_dir "$envbase" "${gc_optv[k]}")"
+              has_cdir=true
+              ;;
+            # -S <文字列> は、値を空白で分けた語を、続きの引数の前に置く（引用符・エスケープ・変数は解かない）
+            -S | --split-string)
+              sw=()
+              IFS=" $tab$nl" read -r -d '' -a sw <<<"${gc_optv[k]}" || true
+              split+=(${sw[@]+"${sw[@]}"})
+              ;;
+          esac
+          k=$((k + 1))
+        done
+        # 分けた語にも env のオプションがありうるので、もう一度 env として読む（値は短くなっていくので、いずれ終わる）
+        [ "${#split[@]}" -eq 0 ] || set -- env "${split[@]}" "$@"
+        ;;
       *) break ;;
     esac
   done
   [ $# -gt 0 ] || return 0
 
   case "$1" in
-    popd)
-      # 実行した後のディレクトリから始めたときは、popd の後を不明とする（先頭のコメント）。
-      # それ以外は、pushd で積んだ場所を追わないので、移らないものとする
-      if $after; then
-        gc_dir=""
-        [ "$dn" -gt 0 ] || anchored=true
-      fi
-      return 0
+    cd | pushd | popd | dirs)
+      ! $ext || return 0
       ;;
-    cd | pushd)
+  esac
+  case "$1" in
+    cd)
       shift
-      target=""
       while [ $# -gt 0 ]; do
         case "$1" in
-          -) target=-; break ;;
+          -) break ;;
           -*) shift ;;
-          *) target="$1"; break ;;
+          *) break ;;
         esac
       done
-      case "$target" in
-        '') to="$(gc_resolve_dir "" "$HOME")" ;;
-        -) to="" ;;
-        *)
-          # 実行した後のディレクトリから始めたときは、外側の相対パスへの cd は、絶対パスへ移るまでたどらない（先頭のコメント）
-          if $after && ! $anchored && [ "$dn" -eq 0 ]; then
-            case "$(gc_expand_home "$target")" in
-              /*) ;;
-              *)
-                # cwd が戻す先なら、プロジェクトの外へ出て戻されたのかもしれないので、不明とする
-                [ -z "$reset_dir" ] || [ "$gc_dir" != "$reset_dir" ] || gc_dir=""
-                return 0
-                ;;
-            esac
-          fi
-          to="$(gc_resolve_dir "$gc_dir" "$target")"
-          ;;
-      esac
-      [ "$dn" -gt 0 ] || anchored=true
-      gc_dir="$to"
+      gc_cd "${1:-}"
+      return 0
+      ;;
+    pushd)
+      shift
+      gc_pushd "$@"
+      return 0
+      ;;
+    popd)
+      shift
+      gc_popd "$@"
+      return 0
+      ;;
+    dirs)
+      shift
+      gc_dirs "$@"
       return 0
       ;;
     git | */git) shift ;;
     *) return 0 ;;
   esac
 
-  gc_git_dir="$gc_dir"
+  if $has_cdir; then gc_git_dir="$cdir"; else gc_git_dir="$gc_dir"; fi
   gc_gopts=()
   while [ $# -gt 0 ]; do
     case "$1" in
@@ -351,7 +671,7 @@ gc_command() {
         gc_gopts+=("$1" "$(gc_expand_home "$2")")
         shift 2
         ;;
-      -c | --namespace | --config-env)
+      -c | --namespace | --config-env | --attr-source | --shallow-file)
         [ $# -ge 2 ] || return 0
         shift 2
         ;;
@@ -688,6 +1008,8 @@ gc_scan() {
   local hd_delims=() hd_strip=() hd_n=0
   # ( ) の中の cd は外に効かないので、( の時点のディレクトリを積んでおき、) で戻す
   local dstack=() dn=0
+  # pushd で積んだ場所（gc_pushd の前のコメント）。( の時点のものを pstack_save に積んでおき、) で戻す
+  local pstack="" pstack_save=() dl=() entry="" idx=0
   # case の中の深さ（case の時点の dn を積む）
   local case_dn=() cn=0
   local arith_i=0
@@ -722,6 +1044,7 @@ gc_scan() {
           i=$arith_i
         else
           dstack[dn]="$gc_dir"
+          pstack_save[dn]="$pstack"
           dn=$((dn + 1))
           i=$((i + 1))
         fi
@@ -734,6 +1057,7 @@ gc_scan() {
         elif [ "$dn" -gt 0 ]; then
           dn=$((dn - 1))
           gc_dir="${dstack[dn]}"
+          pstack="${pstack_save[dn]}"
         fi
         i=$((i + 1))
         ;;

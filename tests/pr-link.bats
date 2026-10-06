@@ -423,12 +423,18 @@ EOF"
   CLAUDE_PROJECT_DIR="$REPO" shows_wt "cd ../wt && git push" "$TMP/wt"
 }
 
-@test "popd の後は、移った先が分からないので何も出さない（( ) の中の pushd はたどる）" {
+@test "popd は、pushd で積んだ場所へ戻る（積んだ場所が無ければ移らない）" {
   make_wt
-  silent "pushd $TMP/wt && popd && git push" "pushd $TMP/wt; popd; git commit -m x" "popd; git push"
-  # ( ) の中の popd の後も、戻る先を追わないので、不明とする（pushd した先のリンクを出さない）
-  silent "(pushd ../wt && popd && git push)" "(cd ../wt && pushd $TMP && popd && git commit -m x)"
-  [ "$(called issue-view)" -eq 0 ]
+  local c
+  # 外側の場所をまだたどっていないときに積んだ場所へ戻ると、cwd（実行した後の場所）に戻り、その後の相対パスへの cd もたどらない
+  for c in "pushd $TMP/wt && popd && git push" "pushd $TMP/wt; popd; git commit -m x" "popd; git push" \
+    "(pushd ../wt && popd && git push)"; do
+    shows "$c" "Issue #17: https://github.com/me/demo/issues/17"
+    [[ "$output" != *"issues/23"* ]] || fail "pushd した先の Issue を出した: $c / $output"
+  done
+  shows_wt "(cd ../wt && pushd $TMP && popd && git commit -m x)"
+  shows_wt "cd $TMP/wt && pushd $REPO && popd && git commit -m x"
+  shows_wt "pushd $TMP && popd && cd .. && git commit -m x" "$TMP/wt"
   shows_wt "(pushd ../wt && git push)"
 }
 
@@ -492,6 +498,16 @@ EOF"
   shows "command git commit -m x" "Issue #17: https://github.com/me/demo/issues/17"
   shows "nohup git push" "PR を作る:"
   shows "env FOO=1 git push" "PR を作る:"
+}
+
+@test "前に付くコマンドのオプション（timeout・nice・time -p・env）を飛ばして、git を拾い、env -C の先で判断する" {
+  shows "timeout 60 git push" "PR を作る:"
+  shows "nice -n 5 git commit -m x" "Issue #17: https://github.com/me/demo/issues/17"
+  shows "time -p git commit -m x" "Issue #17: https://github.com/me/demo/issues/17"
+  shows "env -u FOO git push" "PR を作る:"
+  make_wt
+  shows_wt "env -C ../wt git commit -m x"
+  shows_wt "env --chdir=$TMP/wt git push"
 }
 
 @test "git push の略した --dry-run（--dry など）も dry-run とみなし、--recurse-submodules の値をリモートと読まない" {

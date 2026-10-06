@@ -176,6 +176,11 @@ silent() {
   allowed "git push --force-w" "git push --force-with origin feat/21-x"
 }
 
+@test "git の値を取るグローバルオプション（--attr-source・--shallow-file）の値を、サブコマンドと読まない" {
+  git checkout -q -b feat/21-x
+  denied "強制 push" "git --attr-source HEAD push -f" "git --shallow-file x push -f"
+}
+
 @test "引用符・ヒアドキュメント・コメントの中の文字は、コマンドとみなさない" {
   git checkout -q -b feat/21-x
   allowed \
@@ -569,13 +574,88 @@ silent() {
   denied "強制 push" "cd $TMP/plain && git push --force" "cd $TMP/plain && GIT_DIR=$TMP/nowhere git push --force"
 }
 
-@test "popd は場所を移さない（積んだ場所が無い popd の後でも、main への commit を止める）" {
+@test "積んだ場所が無い popd は場所を移さない（その後でも、main への commit を止める）" {
   denied "main の上ではコミットしません" "popd; git commit -m x" "popd && git commit -m x"
   denied "強制 push" "popd; git push -f"
+}
+
+@test "pushd で積んだ場所を追い、popd で戻った先で判断する" {
+  git worktree add -q -b feat/21-x "$TMP/wt"
+  denied "main の上ではコミットしません" \
+    "pushd ../wt && git push && popd && git commit -m x" \
+    "pushd $TMP/wt; popd; git commit -m x" \
+    "pushd $TMP/wt && pushd $TMP && popd && popd && git commit -m x" \
+    "cd $TMP/wt && pushd $REPO && popd -n && git commit -m x"
+  allowed "pushd ../wt && pushd $REPO && popd && git commit -m x" \
+    "cd $TMP/wt && pushd $REPO && popd && git commit -m x" \
+    "cd $TMP/wt && pushd $REPO && popd +0 && git commit -m x" \
+    "pushd $TMP/wt && dirs -c && popd; git commit -m x"
+}
+
+@test "( ) の中で積んだ・戻した場所は、括弧の外に効かない" {
+  git worktree add -q -b feat/21-x "$TMP/wt"
+  denied "main の上ではコミットしません" \
+    "pushd $TMP/wt && (popd && git commit -m x)" \
+    "(pushd $TMP/wt); popd; git commit -m x" \
+    "pushd $TMP/wt && (popd; pushd $TMP/wt) && popd && git commit -m x"
+  allowed "pushd $TMP/wt && (popd) && git commit -m x" "cd $TMP/wt && (pushd $REPO) && popd; git commit -m x"
+}
+
+@test "引数の無い pushd・pushd -n・pushd +N/-N・popd +N/-N を、シェルと同じに扱う" {
+  git worktree add -q -b feat/21-x "$TMP/wt"
+  # 引数の無い pushd は、積んだ場所が無ければ失敗し、あれば上の2つを入れ替える（$HOME へは移らない）
+  denied "main の上ではコミットしません" "pushd; git commit -m x" "pushd $TMP/wt && pushd && git commit -m x" \
+    "pushd -n $TMP/wt && git commit -m x" "pushd -n ../wt && popd -n && popd; git commit -m x"
+  allowed "pushd -n $TMP/wt && pushd && git commit -m x" "pushd -n ../wt && popd && git commit -m x"
+  # pushd -n で積んだ相対パスは、移るときの場所から解決する（シェルと同じ）
+  allowed "pushd -n wt && cd .. && popd && git commit -m x"
+  # +N は左から、-N は右から数えた場所を先頭に回して移る（dirs -v の順。0 は今の場所）
+  denied "main の上ではコミットしません" "pushd $TMP/wt && pushd +1 && git commit -m x" \
+    "pushd $TMP/wt && pushd -0 && git commit -m x" "pushd $TMP/wt && pushd $TMP && pushd -0 && git commit -m x"
+  allowed "pushd $TMP/wt && pushd $TMP && pushd +1 && git commit -m x" "pushd $TMP/wt && pushd +1 && pushd -0 && git commit -m x"
+  # 範囲の外の番号は失敗し、移らない
+  denied "main の上ではコミットしません" "pushd +1; git commit -m x" "pushd $TMP/wt && pushd +2; pushd +1; git commit -m x"
+  # popd +N は、その場所を取り除くだけで、+0（今の場所）でなければ移らない
+  allowed "pushd $TMP/wt && popd +1 && git commit -m x" "pushd $TMP/wt && pushd $TMP && popd -0 && popd && git commit -m x"
+  denied "main の上ではコミットしません" "pushd $TMP/wt && popd -1 && git commit -m x"
+  # pushd -n +N は、今の場所を残したまま、積んだ場所だけを回す
+  denied "main の上ではコミットしません" "pushd -n $TMP/wt && pushd -n $TMP && pushd -n +1 && git commit -m x"
+  allowed "pushd -n $TMP/wt && pushd -n $TMP && pushd -n +1 && popd && git commit -m x"
 }
 
 @test "前に付くだけのコマンド（command・exec・time・nohup・env）を飛ばして、git を調べる" {
   git checkout -q -b feat/21-x
   denied "強制 push" "command git push -f" "exec git push -f" "time git push -f" "nohup git push -f" "env git push -f" \
     "env FOO=1 git push -f" "FOO=1 nohup git push -f"
+}
+
+@test "前に付くコマンドのオプション（timeout・nice・time -p・env・command・exec）を飛ばして、git を調べる" {
+  git checkout -q -b feat/21-x
+  denied "強制 push" \
+    "timeout 60 git push -f" "timeout -s KILL 60 git push -f" "timeout --signal=KILL -k5 --foreground 60 git push -f" \
+    "timeout --sig KILL 60 git push -f" "timeout -- 60 git push -f" \
+    "nice git push -f" "nice -n 5 git push -f" "nice -n5 git push -f" "nice -5 git push -f" "nice --adjustment=5 git push -f" \
+    "time -p git push -f" \
+    "env -u FOO git push -f" "env -i git push -f" "env - git push -f" "env -iu FOO git push -f" "env --unset=FOO git push -f" \
+    "env --unset FOO git push -f" "env -0 -v git push -f" "env -S 'git push -f'" "env -S '-u FOO' git push -f" \
+    "command -p git push -f" "exec -a x git push -f" "exec -cl git push -f" \
+    "timeout 60 nice -n 5 env -u FOO FOO=1 git push -f"
+  # command -v・-V は、コマンドを実行しない
+  allowed "command -v git push -f" "command -pV git push -f"
+}
+
+@test "env -C <dir> で移った先で、そのコマンドの git を判断する" {
+  git worktree add -q -b feat/21-x "$TMP/wt"
+  allowed "env -C $TMP/wt git commit -m x" "env -C ../wt git commit -m x" "env --chdir=$TMP/wt git commit -m x" \
+    "env --chd ../wt nice git commit -m x" "env -iC../wt git commit -m x" "env -C $TMP env -C wt git commit -m x"
+  # env -C は、そのコマンドだけに効く
+  denied "main の上ではコミットしません" "env -C $TMP/wt true; git commit -m x" "cd $TMP/wt && env -C $REPO git commit -m x"
+}
+
+@test "外部のコマンドとして実行する cd・pushd・popd は、場所を移さない" {
+  git worktree add -q -b feat/21-x "$TMP/wt"
+  denied "main の上ではコミットしません" "env cd $TMP/wt; git commit -m x" "nohup pushd $TMP/wt; git commit -m x" \
+    "timeout 5 cd $TMP/wt; git commit -m x"
+  # command・time は、シェルの組み込みの cd を実行する
+  allowed "command cd $TMP/wt && git commit -m x" "time cd $TMP/wt && git commit -m x"
 }
