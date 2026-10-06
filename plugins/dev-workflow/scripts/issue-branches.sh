@@ -1,21 +1,24 @@
 #!/usr/bin/env bash
-# Issue の作業のブランチと PR を探す。task-finish・task-cancel が、片付けるブランチを決めるのに使う。何も変えない。
+# Issue の作業のブランチと、Issue を閉じる開いている PR を探す。task-finish・task-cancel が、片付けるブランチと、
+# Issue を閉じてよいかを決めるのに使う。何も変えない。
 #
 # 使い方: issue-branches.sh --issue N
 #   --issue N   Issue の番号（#N でもよい）
 #
 # 探すもの:
-#   - 名前で：手元のブランチと origin のブランチのうち、branch.pattern に当てた Issue の番号が N のもの
-#     （origin を読めなければ止まる。「リモートに無い」と区別できないまま出すと、使う側が片付けを誤るため）
-#   - PR で：Issue に紐付く PR（Closes #N など。gh issue view の closedByPullRequestsReferences）。
-#     規約に合わない名前のブランチで作業していても見つかる。Issue の側から読むので、PR の件数の上限を受けない。
-#     マージせずに閉じた PR は、作業が残っていないので除く
+#   - ブランチ：名前だけで探す（dw_issue_branches）。手元と origin のブランチのうち、名前に「/<番号>-」を含むか
+#     「<番号>-」で始まるもの。branch.pattern に合わない名前や、先頭に 0 が付いた古い名前も含めて広めに探す。
+#     PR からは探さない（Closes #17, #18 の PR やリリース用の PR のように、別の Issue のブランチまで拾うため）。
+#     origin を読めなければ止まる
+#   - 開いている PR：Issue を閉じる PR（Closes #N など。gh issue view の closedByPullRequestsReferences）のうち、開いているもの。
+#     フォークや別のリポジトリの PR も含む。ブランチを探すのには使わず、Issue を閉じてよいかの判断にだけ使う
+#
+# 止まるとき: PR の番号・無い番号（終了コード 2）、gh が古い（2）、origin や Issue を読めない（1）
 #
 # 出力:
-#   branches  片付けの対象のブランチ。名前で見つかったものと、今のリポジトリの PR（fork が false）のブランチ。
-#             [{name, local, remote, worktree（無ければ null）, pr（紐付く PR の番号。無ければ null）}]
-#   prs       紐付く PR（開いている・マージ済み）。[{number, url, state, branch, fork}]
-#             fork は、ブランチが origin に無い PR（フォークからの PR、別のリポジトリの PR）。手元では片付けられない
+#   issue     {number, title, state, url, open_sub_issues（開いている子の数）}
+#   branches  名前で見つかったブランチ。[{name, local, remote, worktree（無ければ null）}]
+#   open_prs  Issue を閉じる、開いている PR。[{number, url, branch}]
 set -euo pipefail
 
 # shellcheck source=lib/common.sh
@@ -42,60 +45,38 @@ issue="$(dw_issue_number --issue "$issue")"
 
 repo_root="$(dw_repo_root)" || dw_die "リポジトリの中で実行してください" 64
 main_root="$(dw_main_root "$repo_root")" || dw_die "メインのワークツリーが分かりません"
-config="$("$BASH" "$DW_SCRIPTS_DIR/config.sh")"
+# closedByPullRequestsReferences は gh 2.73.0 から読める（プラグインが求める版はそれより新しい）
+dw_require_gh_version "$DW_GH_MIN_VERSION" "Issue を閉じる PR を読む（gh issue view --json closedByPullRequestsReferences）"
 
-# ブランチ名が、この Issue のものか（branch.pattern に当てた番号が一致するか）
-is_ours() { [ "$(dw_parse_branch "$config" "$1" | cut -d'|' -f2)" = "$issue" ]; }
-
-# --- 名前で探す -------------------------------------------------------------------
-local_names="$(git -C "$main_root" for-each-ref --format='%(refname:short)' refs/heads/)"
-# 読めないまま続けると、どのブランチも「リモートに無い」と出て、task-cancel が PR とリモートのブランチを残したり、
-# origin にだけあるブランチを見落として「着手していない」と判断したりする
-remote_refs="$(git -C "$main_root" ls-remote --heads origin 2>/dev/null)" \
-  || dw_die "origin のブランチを読めませんでした（通信や認証を確かめてください）"
-remote_names="$(sed -n 's|^[0-9a-f]*[[:space:]]*refs/heads/||p' <<<"$remote_refs")"
-named='[]'
-while IFS= read -r b; do
-  [ -n "$b" ] && is_ours "$b" && named="$(jq -c --arg b "$b" '. + [$b]' <<<"$named")"
-done <<<"$(printf '%s\n%s\n' "$local_names" "$remote_names" | sort -u)"
-
-# --- PR で探す --------------------------------------------------------------------
 # PR の番号なら止まる（dw_read_issue。PR を Issue として閉じないため）
-issue_json="$(dw_read_issue "$issue" closedByPullRequestsReferences)"
-nwo="$(gh repo view --json nameWithOwner -q .nameWithOwner)" || dw_die "リポジトリの名前を読めませんでした"
-prs='[]'
-while IFS=$'\t' read -r url pr_repo; do
-  [ -n "$url" ] || continue
-  pr="$(gh pr view "$url" --json number,url,state,headRefName,isCrossRepository)" \
-    || dw_die "PR ${url} を読めませんでした"
-  prs="$(jq -c --argjson p "$pr" --arg r "$pr_repo" --arg nwo "$nwo" '
-    if $p.state == "CLOSED" then . else
-      . + [{number: $p.number, url: $p.url, state: $p.state, branch: $p.headRefName,
-            fork: ($p.isCrossRepository or ($r != "" and ($r | ascii_downcase) != ($nwo | ascii_downcase)))}]
-    end' <<<"$prs")"
-done < <(jq -r '.closedByPullRequestsReferences // [] | .[]
-  | [.url, (if .repository then "\(.repository.owner.login)/\(.repository.name)" else "" end)] | @tsv' <<<"$issue_json")
+issue_json="$(dw_read_issue "$issue" number,title,state,subIssuesSummary,closedByPullRequestsReferences)"
+found="$(dw_issue_branches "$main_root" "$issue")"
 
-# --- まとめる ---------------------------------------------------------------------
-# ワークツリーの場所は、見つかったブランチ（ふつう1〜2本）だけで引く（手元のブランチすべてで引くと、ブランチが多いと遅い）
+# ワークツリーの場所は、見つかった手元のブランチ（ふつう1〜2本）だけで引く。ディレクトリを手で消した記録は、無いものとする
 worktrees='{}'
-while IFS= read -r b; do
-  [ -n "$b" ] || continue
+while IFS="$(printf '\t')" read -r b is_local _; do
+  [ "$is_local" = true ] || continue
   p="$(dw_worktree_of "$main_root" "$b")"
-  [ -z "$p" ] || worktrees="$(jq -c --arg b "$b" --arg p "$p" '. + {($b): $p}' <<<"$worktrees")"
-done <<<"$(jq -r --argjson prs "$prs" '(. + [$prs[] | select(.fork | not) | .branch]) | unique[]' <<<"$named")"
-jq -n --argjson i "$issue" --argjson named "$named" --argjson prs "$prs" --argjson wt "$worktrees" \
-  --arg local "$local_names" --arg remote "$remote_names" '
-  ($local | split("\n")) as $l | ($remote | split("\n")) as $r
-  | ($named + [$prs[] | select(.fork | not) | .branch] | unique) as $names
-  | {
-      issue: $i,
-      branches: [$names[] as $b | {
-        name: $b,
-        local: ($l | index($b) != null),
-        remote: ($r | index($b) != null),
-        worktree: ($wt[$b] // null),
-        pr: ([$prs[] | select((.fork | not) and .branch == $b) | .number] | first // null)
-      }],
-      prs: $prs
-    }'
+  if [ -n "$p" ] && [ -d "$p" ]; then
+    worktrees="$(jq -c --arg b "$b" --arg p "$p" '. + {($b): $p}' <<<"$worktrees")"
+  fi
+done <<<"$found"
+branches="$(printf '%s\n' "$found" | jq -R -s -c --argjson wt "$worktrees" '
+  split("\n") | map(select(. != "") | split("\t")
+    | {name: .[0], local: (.[1] == "true"), remote: (.[2] == "true"), worktree: ($wt[.[0]] // null)})')"
+
+# Issue を閉じる PR のうち、開いているもの（closedByPullRequestsReferences は状態を返さないので、PR ごとに読む）
+open_prs='[]'
+while IFS= read -r url; do
+  [ -n "$url" ] || continue
+  pr="$(gh pr view "$url" --json number,url,state,headRefName)" || dw_die "PR ${url} を読めませんでした"
+  open_prs="$(jq -c --argjson p "$pr" \
+    'if $p.state == "OPEN" then . + [{number: $p.number, url: $p.url, branch: $p.headRefName}] else . end' <<<"$open_prs")"
+done < <(jq -r '.closedByPullRequestsReferences // [] | .[].url' <<<"$issue_json")
+
+jq -n --argjson i "$issue_json" --argjson b "$branches" --argjson o "$open_prs" '{
+  issue: {number: $i.number, title: $i.title, state: $i.state, url: $i.url,
+          open_sub_issues: (($i.subIssuesSummary.total // 0) - ($i.subIssuesSummary.completed // 0))},
+  branches: $b,
+  open_prs: $o
+}'

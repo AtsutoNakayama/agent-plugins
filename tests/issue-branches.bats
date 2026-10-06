@@ -1,5 +1,5 @@
 #!/usr/bin/env bats
-# Issue の作業のブランチと PR を探す（issue-branches.sh）。
+# Issue の作業のブランチと、Issue を閉じる開いている PR を探す（issue-branches.sh）。
 # bats はテストごとにサブシェルで動くので、変数の変更がテスト内に閉じるのは意図どおり
 # shellcheck disable=SC2030,SC2031
 
@@ -15,17 +15,17 @@ setup() {
   link_prs
 }
 
-# Issue 17 に紐付く PR（closedByPullRequestsReferences）を決め、PR ごとの中身を作る
-# 使い方: link_prs [<番号>:<状態>:<ブランチ>:<フォークか>[:<PR のリポジトリ>]]...
+# Issue 17 を閉じる PR（closedByPullRequestsReferences）を決め、PR ごとの中身を作る
+# 使い方: link_prs [<番号>:<状態>:<ブランチ>[:<PR のリポジトリ>]]...
 link_prs() {
-  local refs='[]' spec n state branch fork repo
+  local refs='[]' spec n state branch repo
   for spec in "$@"; do
-    IFS=: read -r n state branch fork repo <<<"$spec"
+    IFS=: read -r n state branch repo <<<"$spec"
     repo="${repo:-me/demo}"
     refs="$(jq -c --argjson n "$n" --arg r "$repo" \
       '. + [{number: $n, url: "https://github.com/\($r)/pull/\($n)", repository: {name: ($r | split("/")[1]), owner: {login: ($r | split("/")[0])}}}]' <<<"$refs")"
-    jq -n --argjson n "$n" --arg s "$state" --arg b "$branch" --argjson f "$fork" --arg r "$repo" \
-      '{number: $n, url: "https://github.com/\($r)/pull/\($n)", state: $s, headRefName: $b, isCrossRepository: $f}' >"$FIX/pr-$n.json"
+    jq -n --argjson n "$n" --arg s "$state" --arg b "$branch" --arg r "$repo" \
+      '{number: $n, url: "https://github.com/\($r)/pull/\($n)", state: $s, headRefName: $b}' >"$FIX/pr-$n.json"
   done
   jq --argjson refs "$refs" '. + {closedByPullRequestsReferences: $refs}' "$FIX/issue-17.json" >"$FIX/i" && mv "$FIX/i" "$FIX/issue-17.json"
 }
@@ -36,62 +36,113 @@ run_branches() {
   json="$(json_of "$output")"
 }
 
-@test "名前で、手元とリモートのこの Issue のブランチを見つける（ほかの Issue のブランチは入れない）" {
+# 使い方: names → 見つかったブランチの [名前, 手元にあるか, origin にあるか] の一覧
+names() { jq -c '[.branches[] | [.name, .local, .remote]]' <<<"$json"; }
+
+@test "名前で、手元と origin のこの Issue のブランチを見つける（ほかの Issue のブランチは入れない）" {
   git branch feat/17-x
   git branch fix/170-y
+  git branch fix/1-7-segment
   git push -q origin main:refs/heads/docs/17-z
   run_branches --issue 17
   assert_success
-  assert_equal "$(jq -c '[.branches[] | [.name, .local, .remote, .pr]]' <<<"$json")" \
-    '[["docs/17-z",false,true,null],["feat/17-x",true,false,null]]'
-  assert_equal "$(jq -c .prs <<<"$json")" '[]'
+  assert_equal "$(names)" '[["docs/17-z",false,true],["feat/17-x",true,false]]'
+  assert_equal "$(jq -c .open_prs <<<"$json")" '[]'
 }
 
-@test "ワークツリーで使っているブランチには、その場所を付ける" {
+@test "branch.pattern に合わない名前や、先頭に 0 が付いた古い名前も見つける（見落として Issue を閉じないため）" {
+  for b in wip/17-try feat/17-Fix_Login feat/017-old 17-bare; do git branch "$b"; done
+  run_branches --issue 17
+  assert_success
+  assert_equal "$(jq -c '[.branches[].name]' <<<"$json")" '["17-bare","feat/017-old","feat/17-Fix_Login","wip/17-try"]'
+}
+
+@test "タグと同じ名前のブランチも、手元のブランチとして見つける" {
+  git branch feat/17-x
+  git tag feat/17-x
+  run_branches --issue 17
+  assert_success
+  assert_equal "$(names)" '[["feat/17-x",true,false]]'
+}
+
+@test "句読点だけが違う名前を、ロケールによらず別のブランチとして扱う" {
+  # C 以外の UTF-8 のロケールでは、sort -u が句読点を無視して、別の名前を同じとみなすことがある（uutils の sort など）
+  loc="$(locale -a 2>/dev/null | grep -Ei '^[a-z]{2}_[A-Z]{2}\.utf-?8$' | head -n 1 || true)"
+  [ -n "$loc" ] || skip "C 以外の UTF-8 のロケールが無い"
+  fake_issue 1 '["feat"]'
+  git branch feat/1-7-segment-display
+  git branch feat/17-segment-display
+  LC_ALL="$loc" LANG="$loc" run_branches --issue 17
+  assert_success
+  assert_equal "$(jq -c '[.branches[].name]' <<<"$json")" '["feat/17-segment-display"]'
+  LC_ALL="$loc" LANG="$loc" run_branches --issue 1
+  assert_success
+  assert_equal "$(jq -c '[.branches[].name]' <<<"$json")" '["feat/1-7-segment-display"]'
+}
+
+@test "origin のブランチが多くても（名前の合計が引数の長さの上限の 128 KiB を超えても）止まらない" {
+  sha="$(git rev-parse HEAD)"
+  {
+    echo '# pack-refs with: peeled fully-peeled sorted'
+    printf '%s refs/heads/feat/17-x\n' "$sha"
+    for i in $(seq 1 2500); do
+      printf '%s refs/heads/renovate/some-very-long-package-scope-name-and-version-%04d.x-lockfile\n' "$sha" "$i"
+    done
+  } >"$TMP/origin.git/packed-refs"
+  run_branches --issue 17
+  assert_success
+  assert_equal "$(names)" '[["feat/17-x",false,true]]'
+}
+
+@test "ワークツリーで使っているブランチには、その場所を付ける（手で消したディレクトリの記録は付けない）" {
   git worktree add -q -b feat/17-x "$TMP/wt"
   run_branches --issue '#17'
   assert_success
   assert_equal "$(jq -r '.branches[0].worktree' <<<"$json")" "$TMP/wt"
+  rm -rf "$TMP/wt"
+  run_branches --issue 17
+  assert_success
+  assert_equal "$(jq -c '.branches[0].worktree' <<<"$json")" null
 }
 
-@test "規約に合わない名前のブランチも、Issue に紐付く PR から見つける（開いている・マージ済み）" {
+@test "Issue を閉じる PR のうち開いているものだけを open_prs に出し（フォークや別のリポジトリも含む）、PR のブランチは探さない" {
   git branch fix-foo
-  link_prs 5:OPEN:fix-foo:false 6:MERGED:old-work:false
+  link_prs 5:OPEN:fix-foo 6:MERGED:old-work 7:OPEN:patch-1:other/lib 8:CLOSED:gave-up
   run_branches --issue 17
   assert_success
-  assert_equal "$(jq -c '[.branches[] | [.name, .local, .pr]]' <<<"$json")" '[["fix-foo",true,5],["old-work",false,6]]'
-  assert_equal "$(jq -c '[.prs[] | [.number, .state, .fork]]' <<<"$json")" '[[5,"OPEN",false],[6,"MERGED",false]]'
+  assert_equal "$(jq -c '[.open_prs[] | [.number, .branch]]' <<<"$json")" '[[5,"fix-foo"],[7,"patch-1"]]'
+  assert_equal "$(jq -c .branches <<<"$json")" '[]'
 }
 
-@test "マージせずに閉じた PR は除く" {
-  link_prs 5:CLOSED:fix-foo:false
-  run_branches --issue 17
-  assert_success
-  assert_equal "$(jq -c '[.branches, .prs]' <<<"$json")" '[[],[]]'
-}
-
-@test "フォークや別のリポジトリの PR は prs に fork として出し、ブランチには入れない" {
-  link_prs 5:OPEN:patch-1:true 6:OPEN:feat/17-x:false:other/lib
+@test "Closes #17, #18 の PR のブランチ（別の Issue の作業）を、#17 のブランチとして拾わない" {
+  git worktree add -q -b feat/18-x "$TMP/wt18"
+  link_prs 5:OPEN:feat/18-x
   run_branches --issue 17
   assert_success
   assert_equal "$(jq -c .branches <<<"$json")" '[]'
-  assert_equal "$(jq -c '[.prs[] | [.number, .fork]]' <<<"$json")" '[[5,true],[6,true]]'
+  assert_equal "$(jq -c '[.open_prs[].number]' <<<"$json")" '[5]'
 }
 
-@test "名前と PR の両方で見つかったブランチは1つにまとめる" {
-  git branch feat/17-x
-  link_prs 5:OPEN:feat/17-x:false
+@test "Issue の番号・タイトル・状態と、開いている子の数を出す" {
+  jq '. + {subIssuesSummary: {total: 3, completed: 1, percentCompleted: 33}}' "$FIX/issue-17.json" >"$FIX/i" \
+    && mv "$FIX/i" "$FIX/issue-17.json"
   run_branches --issue 17
   assert_success
-  assert_equal "$(jq -c '[.branches[] | [.name, .pr]]' <<<"$json")" '[["feat/17-x",5]]'
+  assert_equal "$(jq -c '.issue | [.number, .title, .state, .open_sub_issues]' <<<"$json")" '[17,"作業 17","OPEN",2]'
 }
 
-@test "origin を読めなければ、「リモートに無い」と区別できないまま出さずに止まる" {
+@test "origin を読めなければ、「origin に無い」と区別できないまま出さずに止まる" {
   git branch feat/17-x
   git remote set-url origin "$TMP/no-such.git"
   run_branches --issue 17
   assert_failure 1
   assert_output "error: origin のブランチを読めませんでした（通信や認証を確かめてください）"
+}
+
+@test "gh が古ければ（Issue を閉じる PR を読めない）、更新を促して止まる" {
+  FAKE_GH_VERSION=2.72.0 run_branches --issue 17
+  assert_failure 2
+  assert_output --partial "gh 2.88.0 以上が要ります（今は 2.72.0）"
 }
 
 @test "Issue を読めなければ止まる。--issue が数字でなければ使い方の誤り" {
@@ -106,7 +157,7 @@ run_branches() {
   git branch feat/17-x
   run_branches --issue 017
   assert_success
-  assert_equal "$(jq -c '[.issue, [.branches[].name]]' <<<"$json")" '[17,["feat/17-x"]]'
+  assert_equal "$(jq -c '[.issue.number, [.branches[].name]]' <<<"$json")" '[17,["feat/17-x"]]'
 }
 
 @test "PR の番号は Issue として受け取らずに止まる（task-finish が PR を Issue として閉じないため）" {

@@ -199,12 +199,14 @@ frontmatter() { awk 'NR == 1 && $0 == "---" { on = 1; next } on && $0 == "---" {
 @test "ワークツリーの無いタスクを、task-finish は Issue を閉じて終え、task-cancel は Issue を閉じるだけにする" {
   grep -q '### 4. ワークツリーの無いタスクを終える' "$SKILLS/task-finish/SKILL.md"
   grep -q 'gh issue close <番号> --reason completed' "$SKILLS/task-finish/SKILL.md"
-  # 規約に合わない名前のブランチでも、Issue に紐付く PR から探して片付ける。ブランチが無くても開いている PR があれば閉じない
+  # ブランチは名前だけで探す（PR から探すと別の Issue のブランチまで拾う）。見つからなくても決めつけず、閉じるかを選んでもらう
   for name in task-finish task-cancel; do
     grep -q 'issue-branches.sh --issue <番号>' "$SKILLS/$name/SKILL.md" || fail "${name} が issue-branches.sh でブランチを探していません"
+    grep -q 'PR からはブランチを探さない' "$SKILLS/$name/SKILL.md" || fail "${name} に、PR からブランチを探さないことが書かれていません"
   done
   # shellcheck disable=SC2016 # バッククォートはスキルの本文の文字で、展開させない
-  grep -q '開いている（`state` が `OPEN`）PR があるかを見る' "$SKILLS/task-finish/SKILL.md"
+  grep -q '`open_prs` がある：Issue を閉じる PR が開いている' "$SKILLS/task-finish/SKILL.md"
+  grep -q '「別の名前のブランチで作業した」' "$SKILLS/task-finish/SKILL.md"
   grep -q 'argument-hint: "\[Issue番号|ブランチ名\]"' "$SKILLS/task-finish/SKILL.md"
   grep -q 'ワークツリーを作らずに着手した' "$SKILLS/task-cancel/SKILL.md"
 }

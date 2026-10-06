@@ -63,6 +63,26 @@ dw_read_issue() {
   printf '%s\n' "$json"
 }
 
+# Issue の作業のブランチを名前で探し、「名前<TAB>手元にあるか<TAB>origin にあるか」（true か false）を1行ずつ出力する。
+# 名前に「/<番号>-」を含むか「<番号>-」で始まるものを、branch.pattern に合わない名前（wip/17-try・feat/17-Fix_Login など）や、
+# 先頭に 0 が付いた古い名前（feat/017-x）も含めて広めに探す。見落とすと、作業があるのに Issue を閉じたり取りやめたりするため。
+# PR からは探さない（Closes #17, #18 の PR やリリース用の PR のように、別の Issue のブランチまで拾うため）。
+# origin を読めなければ止まる（「origin に無い」と区別できないまま出すと、使う側が片付けを誤るため）。
+# 使い方: dw_issue_branches <メインのワークツリー> <Issue の番号（dw_issue_number でそろえたもの）>
+dw_issue_branches() {
+  local re="(^|/)0*${2}-" names refs
+  # refname:short はタグと同じ名前のブランチを heads/<名前> と出すので、lstrip=2 で refs/heads/ だけを外す
+  names="$(git -C "$1" for-each-ref --format='%(refname:lstrip=2)' refs/heads/ | awk -v k=L 'NF { print k "\t" $0 }')"
+  refs="$(git -C "$1" ls-remote --heads origin 2>/dev/null)" \
+    || dw_die "origin のブランチを読めませんでした（通信や認証を確かめてください）"
+  # 名前の比べ方がロケールで変わらないよう C ロケールで絞り込んで並べる（重複を消すときに、別の名前を同じとみなさないため）。
+  # 名前の一覧は引数ではなく標準入力で渡す（ブランチが多いと、引数の長さの上限を超えるため）
+  printf '%s\n%s\n' "$names" "$(sed -n 's|^[0-9a-f]*[[:space:]]*refs/heads/||p' <<<"$refs" | awk -v k=R 'NF { print k "\t" $0 }')" \
+    | LC_ALL=C awk -F '\t' -v re="$re" '$2 ~ re { seen[$2] = 1; if ($1 == "L") l[$2] = 1; else r[$2] = 1 }
+        END { for (b in seen) print b "\t" ((b in l) ? "true" : "false") "\t" ((b in r) ? "true" : "false") }' \
+    | LC_ALL=C sort
+}
+
 # ブランチを使っているワークツリーの場所（無ければ空）。
 # 使い方: dw_worktree_of <メインのワークツリー> <ブランチ>
 dw_worktree_of() {

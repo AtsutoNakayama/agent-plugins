@@ -17,7 +17,7 @@ Project からは外さず、Story Point も変えない。後からボードで
 スクリプト（どれも JSON を出力する）:
 
 - `${CLAUDE_PLUGIN_ROOT}/scripts/issue-cancel.sh`：理由のコメント、not planned か duplicate で閉じる操作、PR を閉じてリモートのブランチを削除する操作、親を閉じるときに開いている子孫を閉じる（`--sub-issues close`）か残す（`--sub-issues keep`）操作（`--help` で使い方）
-- `${CLAUDE_PLUGIN_ROOT}/scripts/issue-branches.sh`：Issue の作業のブランチ（名前で見つかるものと、Issue に紐付く PR のもの）と PR を探す。何も変えない（`--help` で使い方）
+- `${CLAUDE_PLUGIN_ROOT}/scripts/issue-branches.sh`：Issue の作業のブランチを名前で探し、Issue を閉じる開いている PR を出す。何も変えない（`--help` で使い方）
 - `${CLAUDE_PLUGIN_ROOT}/scripts/cleanup.sh`：`--abandon` で、手元のワークツリーとブランチを削除する。失うものを `lost` に出す（`--help` で使い方）
 
 ## 手順
@@ -32,11 +32,11 @@ Project からは外さず、Story Point も変えない。後からボードで
 
 ### 2. やめた作業のブランチを探す
 
-`issue-branches.sh --issue <番号>` で、Issue の作業のブランチを探す。`branches` に、名前（`<type>/<番号>-…`）で見つかった手元・リモートのブランチと、Issue に紐付く PR のブランチが出る（規約に合わない名前のブランチで作業していても、PR から見つかる）。各ブランチの `local`（手元にあるか）・`remote`（origin にあるか）・`worktree`・`pr` で、手順4の引数を決める（`remote` が true なら `--branch` を付け、`local` が true か `worktree` があれば `cleanup.sh` を実行する）。止まったら（origin や Issue を読めない）、標準エラーの1行のメッセージを伝えて終える。ブランチが無いと決めつけて、Issue だけを閉じない。
+`issue-branches.sh --issue <番号>` で、Issue の作業のブランチを探す。`branches` に、名前に `/<番号>-` を含む（か `<番号>-` で始まる）手元と origin のブランチが出る（規約に合わない名前や、先頭に 0 が付いた古い名前も含む）。PR からはブランチを探さない（`Closes #17, #18` の PR のように、別の Issue のブランチまで拾って消してしまうため）。各ブランチの `local`（手元にあるか）・`remote`（origin にあるか）・`worktree` で、手順4の引数を決める（`remote` が true なら `--branch` を付け、`local` が true か `worktree` があれば `cleanup.sh` を実行する）。止まったら（PR の番号・無い番号・gh が古い・origin や Issue を読めない）、標準エラーの1行のメッセージを伝えて終える。ブランチが無いと決めつけて、Issue だけを閉じない。
 
-- 紐付く PR がマージ済み（`prs` の `state` が `MERGED`）のブランチは、作業が既に base_branch に入っているので、取りやめの対象にしない。そのことを手順5の確認に書く
-- フォークや別のリポジトリからの開いている PR（`prs` の `fork` が true）は、このスキルでは閉じられない。PR の番号と URL を手順5の確認に書き、閉じるならユーザーに閉じてもらう
-- 見つからなければ、着手していないか、ワークツリーを作らずに着手した（task-start の `--no-worktree`）ので、片付ける作業は無い。Issue を閉じるだけにする。複数あれば、どれを片付けるかユーザーに聞く
+- 複数あれば、どれを片付けるかユーザーに聞く（スクリプトは1回に1つのブランチを扱うので、選んだブランチごとに手順4と手順6を行う）
+- `open_prs`（Issue を閉じる、開いている PR）のうち、ブランチが `branches` に無いもの（規約に合わない名前のブランチやフォークの PR）は、このスキルでは閉じない。PR の番号・URL・ブランチを手順5の確認に書き、閉じるならユーザーに閉じてもらう（別の Issue の作業かもしれないため）
+- 見つからなければ、着手していないか、ワークツリーを作らずに着手した（task-start の `--no-worktree`）ので、片付ける作業は無い。Issue を閉じるだけにする
 
 親の Issue なら、親のブランチ（親には着手しないので、ふつうは無い）に加えて、開いている子孫ごとにも同じように探す。ブランチのある子孫は着手中なので、一緒に取りやめるときは、手順6でその子孫ごとに PR とブランチも片付ける。
 
