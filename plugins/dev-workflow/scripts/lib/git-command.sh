@@ -112,7 +112,8 @@ gc_branch() { gc_git symbolic-ref --short -q HEAD || true; }
 # 無ければ頭が同じものを、<長いオプション> の並びの順に探す（曖昧な略し方では、コマンドが失敗して何もしないので、どれでもよい）。
 # <長いオプション> には、値を取るものを末尾に = を付けて並べる。値を取らないものは、略した形を読みたいときと、
 # 値を取るものの頭と同じ名前（switch の --force と --force-create）を見分けたいときに並べる。
-# - と -- はオプションとみなさない（呼び出し側で扱う）。オプションでなければ 1 を返す。
+# オプションなら 0、オプションでない語（- を含む）なら 1、-- なら 2 を返す（-- の後ろの扱いはコマンドごとに違うので、
+# 呼び出し側が終了コードで分ける。-- を位置引数として読まないよう、1 と分けている）。
 # 使い方: gc_opt <語> <値を取る短いオプションの文字> <長いオプション（空白区切り）>
 #   gc_on    オプションの名前（-c・--create。略した長いオプションは略さない名前、知らない長いオプションは書いたまま）の配列
 #   gc_ov    オプションの値（値を取らない、または次の語が値なら空）の配列
@@ -123,7 +124,8 @@ gc_opt() {
   local w="$1" shorts="$2" longs="$3" k c l name long=""
   gc_on=() gc_ov=() gc_oa=() gc_onext=""
   case "$w" in
-    - | --) return 1 ;;
+    -) return 1 ;;
+    --) return 2 ;;
     --*)
       name="${w%%=*}"
       # 長いオプションの名前は空白も * なども含まないので、分けて並べる
@@ -186,7 +188,7 @@ gc_opt() {
 #   gc_optn・gc_optv・gc_opta  オプションの名前・値・値をくっつけて書いたか（gc_opt の gc_on・gc_ov・gc_oa を並べたもの）
 gc_nopt=0 gc_optn=() gc_optv=() gc_opta=()
 gc_skip_opts() {
-  local shorts="$1" longs="$2" w n=0 next=""
+  local shorts="$1" longs="$2" w n=0 next="" rc
   shift 2
   gc_optn=() gc_optv=() gc_opta=()
   for w in "$@"; do
@@ -196,11 +198,15 @@ gc_skip_opts() {
       next=""
       continue
     fi
-    [ "$w" != -- ] || break
-    if ! gc_opt "$w" "$shorts" "$longs"; then
-      n=$((n - 1))
-      break
-    fi
+    rc=0
+    gc_opt "$w" "$shorts" "$longs" || rc=$?
+    case "$rc" in
+      1)
+        n=$((n - 1))
+        break
+        ;;
+      2) break ;;
+    esac
     gc_optn+=(${gc_on[@]+"${gc_on[@]}"}) gc_optv+=(${gc_ov[@]+"${gc_ov[@]}"}) gc_opta+=(${gc_oa[@]+"${gc_oa[@]}"})
     next="$gc_onext"
   done
@@ -236,7 +242,7 @@ gc_new_branches() {
 # オプションは名前の後ろにも書けるので、-- までのすべての語を見る。
 # 使い方: gc_create_opts <コールバック> <値を取る短いオプションの文字> <長いオプション（gc_opt と同じ）> <引数>...
 gc_create_opts() {
-  local cb="$1" shorts="$2" longs="$3" w k next=""
+  local cb="$1" shorts="$2" longs="$3" w k next="" rc
   shift 3
   for w in "$@"; do
     if [ -n "$next" ]; then
@@ -244,8 +250,12 @@ gc_create_opts() {
       "$cb" "$w"
       continue
     fi
-    [ "$w" != -- ] || return 0
-    gc_opt "$w" "$shorts" "$longs" || continue
+    rc=0
+    gc_opt "$w" "$shorts" "$longs" || rc=$?
+    case "$rc" in
+      1) continue ;;
+      2) return 0 ;;
+    esac
     k=0
     while [ "$k" -lt "${#gc_on[@]}" ]; do
       ! "${gc_oa[k]}" || "$cb" "${gc_ov[k]}"
@@ -260,21 +270,26 @@ gc_create_opts() {
 # 作るときに使えるオプション（略した形も。gc_opt）だけなら続ける
 # 使い方: gc_branch_create <コールバック> <引数>...
 gc_branch_create() {
-  local cb="$1" w k after_dd=false name=""
+  local cb="$1" w k after_dd=false name="" rc
   local create=" --force --track --no-track --quiet --create-reflog --recurse-submodules --color --no-color "
   shift
   for w in "$@"; do
     if ! $after_dd; then
-      case "$w" in
-        --) after_dd=true; continue ;;
-        -) return 0 ;;
+      [ "$w" != - ] || return 0
+      rc=0
+      gc_opt "$w" "" "$create" || rc=$?
+      case "$rc" in
+        0)
+          for k in ${gc_on[@]+"${gc_on[@]}"}; do
+            case "$create -f -t -q " in *" $k "*) ;; *) return 0 ;; esac
+          done
+          continue
+          ;;
+        2)
+          after_dd=true
+          continue
+          ;;
       esac
-      if gc_opt "$w" "" "$create"; then
-        for k in ${gc_on[@]+"${gc_on[@]}"}; do
-          case "$create -f -t -q " in *" $k "*) ;; *) return 0 ;; esac
-        done
-        continue
-      fi
     fi
     [ -n "$name" ] || name="$w"
   done
@@ -286,7 +301,7 @@ gc_branch_create() {
 # 次の語は、位置引数に数えない。-- の後ろは、すべて位置引数
 # 使い方: gc_worktree_branch <コールバック> <add の後の引数>...
 gc_worktree_branch() {
-  local cb="$1" w pos=0 next=false after_dd=false
+  local cb="$1" w pos=0 next=false after_dd=false rc
   shift
   for w in "$@"; do
     if $next; then
@@ -294,14 +309,18 @@ gc_worktree_branch() {
       continue
     fi
     if ! $after_dd; then
-      if [ "$w" = -- ]; then
-        after_dd=true
-        continue
-      fi
-      if gc_opt "$w" bB "--reason="; then
-        [ -z "$gc_onext" ] || next=true
-        continue
-      fi
+      rc=0
+      gc_opt "$w" bB "--reason=" || rc=$?
+      case "$rc" in
+        0)
+          [ -z "$gc_onext" ] || next=true
+          continue
+          ;;
+        2)
+          after_dd=true
+          continue
+          ;;
+      esac
     fi
     pos=$((pos + 1))
     if [ "$pos" -eq 2 ]; then
@@ -321,7 +340,7 @@ gc_worktree_branch() {
 gc_push_force=false gc_push_dry=false gc_push_refs=()
 # shellcheck disable=SC2034 # gc_push_force・gc_push_dry は呼び出し側（フック）が読む
 gc_push_args() {
-  local after_dd=false next=false w k remote=""
+  local after_dd=false next=false w k remote="" rc
   gc_push_force=false gc_push_dry=false gc_push_refs=()
   for w in "$@"; do
     if $next; then
@@ -329,21 +348,25 @@ gc_push_args() {
       continue
     fi
     if ! $after_dd; then
-      if [ "$w" = -- ]; then
-        after_dd=true
-        continue
-      fi
-      if gc_opt "$w" o "--repo= --push-option= --receive-pack= --exec= --recurse-submodules= --force --mirror --dry-run"; then
-        [ -z "$gc_onext" ] || next=true
-        for k in ${gc_on[@]+"${gc_on[@]}"}; do
-          case "$k" in
-            # --mirror はすべての ref をリモートに合わせて上書き・削除する
-            -f | --force | --mirror) gc_push_force=true ;;
-            -n | --dry-run) gc_push_dry=true ;;
-          esac
-        done
-        continue
-      fi
+      rc=0
+      gc_opt "$w" o "--repo= --push-option= --receive-pack= --exec= --recurse-submodules= --force --mirror --dry-run" || rc=$?
+      case "$rc" in
+        0)
+          [ -z "$gc_onext" ] || next=true
+          for k in ${gc_on[@]+"${gc_on[@]}"}; do
+            case "$k" in
+              # --mirror はすべての ref をリモートに合わせて上書き・削除する
+              -f | --force | --mirror) gc_push_force=true ;;
+              -n | --dry-run) gc_push_dry=true ;;
+            esac
+          done
+          continue
+          ;;
+        2)
+          after_dd=true
+          continue
+          ;;
+      esac
     fi
     if [ -z "$remote" ]; then
       remote="$w"
@@ -360,15 +383,19 @@ gc_push_args() {
 gc_commit_dry=false
 # shellcheck disable=SC2034 # gc_commit_dry は呼び出し側（フック）が読む
 gc_commit_args() {
-  local next=false w k
+  local next=false w k rc
   gc_commit_dry=false
   for w in "$@"; do
     if $next; then
       next=false
       continue
     fi
-    [ "$w" != -- ] || return 0
-    gc_opt "$w" mFcCt "--message= --file= --reuse-message= --reedit-message= --fixup= --squash= --author= --date= --template= --cleanup= --trailer= --pathspec-from-file= --dry-run" || continue
+    rc=0
+    gc_opt "$w" mFcCt "--message= --file= --reuse-message= --reedit-message= --fixup= --squash= --author= --date= --template= --cleanup= --trailer= --pathspec-from-file= --dry-run" || rc=$?
+    case "$rc" in
+      1) continue ;;
+      2) return 0 ;;
+    esac
     [ -z "$gc_onext" ] || next=true
     for k in ${gc_on[@]+"${gc_on[@]}"}; do
       [ "$k" != --dry-run ] || gc_commit_dry=true
@@ -892,11 +919,14 @@ gc_track_case() {
   done
 }
 
+# 読んだ語を1つのコマンドとして終え、case と esac を数えてから調べる（gc_command）。語が無ければ何もしない
 gc_end_command() {
   gc_flush_word
   skip_word=false
-  [ "$nwords" -eq 0 ] || gc_track_case "${words[@]}"
-  [ "$nwords" -eq 0 ] || gc_command "${words[@]}"
+  if [ "$nwords" -gt 0 ]; then
+    gc_track_case "${words[@]}"
+    gc_command "${words[@]}"
+  fi
   words=() nwords=0
 }
 
