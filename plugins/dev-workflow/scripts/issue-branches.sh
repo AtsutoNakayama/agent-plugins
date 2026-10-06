@@ -23,6 +23,13 @@
 #   branches    [{name, local, remote, worktree（無ければ null）}]
 #   candidates  [{name, local, remote, worktree, from（name か pr）, pr（from が pr のときの PR の番号。ほかは null）}]
 #   open_prs    [{number, url, branch}]
+#   action      task-finish がすること（上から順に、当てはまった最初のもの）
+#                 cleanup             確かなブランチがある。片付ける（複数あれば、どれかを聞く）
+#                 cleanup_candidate   Issue は閉じていて、候補がある。候補で片付けるかを聞く
+#                 nothing             Issue は閉じていて、候補も無い。片付けるものも閉じるものも無い
+#                 blocked_open_pr     Issue を閉じる PR が開いている。作業はまだ終わっていないので閉じない
+#                 blocked_sub_issues  開いている子がある親の Issue。閉じない（親は最後の子を閉じた後に人が閉じる）
+#                 ask_close           どれでもない。ワークツリーの無いタスクと決めつけず、閉じるかを聞く
 set -euo pipefail
 
 # shellcheck source=lib/common.sh
@@ -58,7 +65,13 @@ issue_json="$(dw_read_issue "$issue" number,title,state,subIssuesSummary,closedB
 # 確かなブランチ・候補・開いている PR を求める（dw_issue_work。origin・PR を読めなければ止まる）
 work="$(dw_issue_work "$main_root" "$issue" "$config" "$issue_json")"
 
-jq -n --argjson i "$issue_json" --argjson w "$work" '{
-  issue: {number: $i.number, title: $i.title, state: $i.state, url: $i.url,
-          open_sub_issues: (($i.subIssuesSummary.total // 0) - ($i.subIssuesSummary.completed // 0))}
-} + $w'
+# task-finish がすることを、上から順に当てはまったもので決める（判断をスキルの文章に置かず、bats で組み合わせを確かめるため）
+jq -n --argjson i "$issue_json" --argjson w "$work" '
+  {issue: {number: $i.number, title: $i.title, state: $i.state, url: $i.url,
+           open_sub_issues: (($i.subIssuesSummary.total // 0) - ($i.subIssuesSummary.completed // 0))}} + $w
+  | .action = (
+      if (.branches | length) > 0 then "cleanup"
+      elif .issue.state == "CLOSED" then (if (.candidates | length) > 0 then "cleanup_candidate" else "nothing" end)
+      elif (.open_prs | length) > 0 then "blocked_open_pr"
+      elif .issue.open_sub_issues > 0 then "blocked_sub_issues"
+      else "ask_close" end)'

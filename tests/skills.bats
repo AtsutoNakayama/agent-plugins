@@ -217,12 +217,11 @@ step() { awk -v n="$2" -v end="$3" 'on && ($0 ~ /^###? / || (end != "" && $0 ~ e
   grep -q '「Issue #N に関係するかもしれないブランチ（…）があります」の警告' "$SKILLS/task-start/SKILL.md"
   # 終わった作業のブランチで止まったら、先に task-finish で片付けるよう案内する
   grep -q '先に task-finish でそのブランチを片付けてから' "$SKILLS/task-start/SKILL.md"
-  # shellcheck disable=SC2016 # バッククォートはスキルの本文の文字で、展開させない
-  grep -q '`open_prs` がある：Issue を閉じる PR が開いている' "$SKILLS/task-finish/SKILL.md"
+  # することはスクリプトの action で決め、スキルには値ごとにすることだけを書く（組み合わせは issue-branches.bats）
+  for a in cleanup cleanup_candidate nothing blocked_open_pr blocked_sub_issues ask_close; do
+    grep -q "\`${a}\`" "$SKILLS/task-finish/SKILL.md" || fail "task-finish に action の ${a} の扱いがありません"
+  done
   grep -q '「別の名前のブランチで作業した」' "$SKILLS/task-finish/SKILL.md"
-  # 開いている子がある親の Issue は閉じない（親は最後の子を閉じた後に人が閉じる。設計書 §4）
-  # shellcheck disable=SC2016 # バッククォートはスキルの本文の文字で、展開させない
-  grep -q '`issue.open_sub_issues` が 1 以上：開いている子がある親の Issue なので、閉じずに止める' "$SKILLS/task-finish/SKILL.md"
   grep -q 'argument-hint: "\[Issue番号|ブランチ名\]"' "$SKILLS/task-finish/SKILL.md"
   grep -q 'ワークツリーを作らずに着手した' "$SKILLS/task-cancel/SKILL.md"
 }

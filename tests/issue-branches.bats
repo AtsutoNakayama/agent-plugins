@@ -217,3 +217,35 @@ names() { jq -c --arg k "${1:-branches}" '[.[$k][] | [.name, .local, .remote]]' 
   assert_success
   assert_equal "$(jq -c '[.candidates[] | [.name, .local, .remote, .from, .pr]]' <<<"$json")" '[["old-work",false,true,"pr",6]]'
 }
+
+# 使い方: action_of <状態（OPEN・CLOSED）> <開いている子の数> → $FIX/issue-17.json の状態と子の数を変えて実行し、action を返す
+action_of() {
+  jq --arg s "$1" --argjson n "$2" '. + {state: $s, subIssuesSummary: {total: $n, completed: 0, percentCompleted: 0}}' \
+    "$FIX/issue-17.json" >"$FIX/i" && mv "$FIX/i" "$FIX/issue-17.json"
+  run_branches --issue 17 >/dev/null
+  assert_success
+  jq -r .action <<<"$json"
+}
+
+@test "task-finish がすることを action に出す（確かなブランチ・Issue の状態・開いている PR・開いている子・候補の組み合わせ）" {
+  # どれも無い：開いている Issue なら閉じるかを聞き、閉じていれば何もしない
+  assert_equal "$(action_of OPEN 0)" ask_close
+  assert_equal "$(action_of CLOSED 0)" nothing
+  # 開いている子だけ：閉じない（親は最後の子を閉じた後に人が閉じる）
+  assert_equal "$(action_of OPEN 2)" blocked_sub_issues
+  # Issue を閉じる PR が開いている（フォークの PR。手元に片付けるブランチは無い）：開いている子より先に見る。閉じていれば何もしない
+  link_prs 5:OPEN:patch-1:me/demo:true
+  assert_equal "$(action_of OPEN 2)" blocked_open_pr
+  assert_equal "$(action_of OPEN 0)" blocked_open_pr
+  assert_equal "$(action_of CLOSED 0)" nothing
+  # 候補がある：開いている Issue なら閉じるかを聞き（候補は質問の中で見せる）、閉じていれば候補で片付けるかを聞く
+  link_prs
+  git branch wip/17-try
+  assert_equal "$(action_of OPEN 0)" ask_close
+  assert_equal "$(action_of CLOSED 0)" cleanup_candidate
+  # 確かなブランチがある：ほかの値によらず片付ける（開いている PR は cleanup.sh が止める）
+  git branch feat/17-x
+  link_prs 5:OPEN:patch-1:me/demo:true
+  assert_equal "$(action_of OPEN 2)" cleanup
+  assert_equal "$(action_of CLOSED 0)" cleanup
+}
