@@ -13,7 +13,7 @@ push と PR の作成は GitHub に残るので、必ず手順5でユーザー�
 
 - `${CLAUDE_PLUGIN_ROOT}/scripts/config.sh`：合わせた設定の出力
 - `${CLAUDE_PLUGIN_ROOT}/scripts/pr-create.sh`：タイトルと本文の検証、push、PR の作成、列の移動、Issue のチェックの付与と項目の追加（`--help` で使い方）
-- `${CLAUDE_PLUGIN_ROOT}/scripts/adr-list.sh`：Issue の ADR が既にあるかと、ADR の作成を提案するかの設定（`adr.suggest`）
+- `${CLAUDE_PLUGIN_ROOT}/scripts/adr-list.sh`：Issue の ADR の一覧と、その Issue で ADR の作成を提案するか（`proposal`。設定 `adr.suggest`・ADR の有無・Issue のチェックリストの ADR の項目から決める。Issue の本文も gh で読む）
 
 ## 手順
 
@@ -78,7 +78,7 @@ Issue の「やること」（Issue テンプレートの、作業の項目を�
 ADR を提案するとき（手順2）は、この同じ質問の中で聞く（確認を増やさない）。質問の中と preview に、ADR にすべきと判断した判断と、その理由（「ADR にすべき判断」のどれに当たるか）を入れる。選択肢は次のようにする（選択肢は4つまでなので、「タイトルを変える」は外し、「その他」で受ける）。
 
 - 「この内容で PR を作る」：説明に、ADR は作らないことと、断った記録を Issue に足すことを書く（例：「ブランチを push し、#12 を閉じる PR を作る。ADR は作らず、#12 の『やること』に『~~設定の置き場所の判断を ADR に残す~~（不要）』を足して、次から提案しない」）
-- 「ADR を作ってから PR を作る」：push も PR の作成もせず、adr-create で ADR を作ってコミットし、手順2からやり直す（ADR ができたので、もう提案しない。Issue の「やること」に ADR の項目があれば、手順4でチェックを付ける）
+- 「ADR を作ってから PR を作る」：push も PR の作成もせず、adr-create で ADR を作ってコミットし、手順2からやり直す（ADR ができたので、もう提案しない。Issue のチェックリストに ADR の項目があれば、手順4でチェックを付ける）
 - 「本文を直す」「チェックする項目を変える」
 
 `proposal` が `pending` のとき（手順2。ADR の項目が残っているのに ADR が無い）も、同じく「ADR を作ってから PR を作る」を選択肢に入れる（このときは `--add-task` を渡さず、断った記録も足さない）。

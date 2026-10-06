@@ -120,9 +120,9 @@ base_ahead: required
 設計上の判断をしたときは、`/dev-workflow:task-create` と `/dev-workflow:pr-create` が ADR の作成を提案します。どちらも、それぞれの確認の質問の中で聞くので、確認は増えません。
 
 - 他の案と比べて選んだ判断・破壊的変更・元に戻しにくい判断が、提案の対象です（基準は `adr-create` の SKILL.md の「ADR にすべき判断」）。
-- `task-create` は、Issue に判断が含まれていれば、「やること」に「〜の判断を ADR に残す」を足した下書きを見せます。`pr-create` は、差分に判断があり、その Issue の ADR も「やること」の ADR の項目も無ければ、ADR を作ってから PR を作るかを聞きます。
+- `task-create` は、Issue に判断が含まれていれば、「やること」に「〜の判断を ADR に残す」を足した下書きを見せます。`pr-create` は、差分に判断があり、その Issue の ADR も、Issue のチェックリストの ADR の項目（「〜を ADR に残す」）も無ければ、ADR を作ってから PR を作るかを聞きます。ADR の項目が残っているのに ADR がまだ無ければ、提案ではなく、そのことを伝えて、PR の前に ADR を作れるようにします。
 - その Issue の ADR（front matter の `issue` が同じ ADR）が既にあれば、提案しません。
-- 断ると、Issue の「やること」に `- [ ] ~~〜の判断を ADR に残す~~（不要）` が残り、その Issue では二度と提案しません。
+- 断ると、Issue のチェックリスト（ふつうは「やること」）に `- [ ] ~~〜の判断を ADR に残す~~（不要）` が残り、その Issue では二度と提案しません。
 - 提案そのものを止めるときは、設定の `adr.suggest` を `false` にします。
 
 ```json
