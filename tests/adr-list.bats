@@ -275,3 +275,18 @@ write_adr() {
   assert_success
   assert_equal "$(jq -c '[.proposal, .adr_tasks]' <<<"$output")" '["judge",[]]'
 }
+
+@test "Issue を読むときに --issue が PR の番号なら終了コード 2、読めなければ 1 で止まる（disabled・exists では読まない）" {
+  jq -n '{number: 21, url: "https://github.com/me/demo/pull/21", title: "PR", state: "OPEN", labels: [], body: ""}' >"$FIX/issue-21.json"
+  run_script adr-list.sh --issue 21
+  assert_failure 2
+  assert_output --partial "#21 は PR です"
+  FAKE_FAIL=issue-view run_script adr-list.sh --issue 151
+  assert_failure 1
+  assert_output --partial "#151 を読めません"
+  # Issue を読まないときは、PR の番号でも止まらない
+  echo '{"adr": {"suggest": false}}' >.claude/dev-workflow/config.json
+  run_script adr-list.sh --issue 21
+  assert_success
+  assert_equal "$(jq -c .proposal <<<"$output")" '"disabled"'
+}

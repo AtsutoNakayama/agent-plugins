@@ -30,8 +30,9 @@
 #            Issue の本文を gh で読むのは、pending・done・declined・judge を決めるときだけ
 #   adr_tasks proposal を決めるのに読んだ ADR の項目（checked・text）。Issue を読まなかったときは null
 #
-# 終了コード: 64 引数の誤り / 2 リポジトリの外、設定を読めない、adr.dir・adr.suggest の値の誤り、--issue が PR の番号か
-#             無い番号 / 1 Issue を読めない（通信・認証など）
+# 終了コード: 64 引数の誤り / 2 リポジトリの外、設定を読めない、adr.dir・adr.suggest の値の誤り /
+#             Issue を読むとき（proposal が disabled・exists でないとき）だけ、--issue が PR の番号か無い番号なら 2、
+#             Issue を読めなければ（通信・認証など）1
 set -euo pipefail
 
 # shellcheck source=lib/common.sh
