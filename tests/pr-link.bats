@@ -128,6 +128,7 @@ shows_wt() {
   shows "git worktree add ../wt feat/23-x" "Issue #23: https://github.com/me/demo/issues/23"
   shows "git worktree add --reason 作業 ../wt feat/23-x" "Issue #23: https://github.com/me/demo/issues/23"
   shows "git worktree add --rea 作業 ../wt feat/23-x" "Issue #23: https://github.com/me/demo/issues/23"
+  shows "git worktree add -f -- ../wt feat/23-x" "Issue #23: https://github.com/me/demo/issues/23"
   shows "git worktree add -f ../wt \"feat/23-x\"" "Issue #23: https://github.com/me/demo/issues/23"
   # パスだけのときは、ブランチの名前を拾えないので、今のブランチの Issue も出さない
   git switch -q feat/17-demo

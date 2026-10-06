@@ -659,6 +659,13 @@ silent() {
   git checkout -q -b feat/21-x
   denied "main へは push しません" "env -S \"git push origin 'main'\"" "env -S 'git push origin \"main\"'" \
     "env -S 'git push origin ma\\in'" "env -S 'git push \"origin\" \"feat/21-x:main\"'"
+  # '…' の中では \\ と \' だけを解く（GNU env と同じ）。'a\'' と main は別の語
+  local c
+  c="$(cat <<'EOF'
+env -S "git push origin 'a\\'' main"
+EOF
+)"
+  denied "main へは push しません" "$c"
   # "…" の外の \_ は区切り、中では空白
   denied "強制 push" "env -S 'git\\_push\\_-f'"
   allowed "env -S 'git push origin \"x\\_main\"'"

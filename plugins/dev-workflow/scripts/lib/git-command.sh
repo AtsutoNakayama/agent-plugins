@@ -24,7 +24,8 @@
 #   移った先が分かり、プロジェクトの外へ移って Claude Code が cwd を戻したときにも正しいので、たどる。その後の相対パスへの cd もたどる。
 #   cd sub && git push && cd .. や pushd sub && git push && popd のように、後ろでまた移ると、git push を移る前の場所で
 #   判断してしまう。cd - の後は、移った先を不明とする。外側の場所をまだたどっていないときに積んだ場所へ popd で戻ると、
-#   たどっていない状態（cwd）に戻る（pushd から popd までは、シェルの場所を変えないので）。
+#   たどっていない状態（cwd）に戻る（pushd から popd までは、シェルの場所を変えないので）。ただし ( ) の中でそこへ戻ったときは、
+#   外側は戻っていないので、移った先を不明とする。
 #   <戻す先> には、Claude Code が cwd を戻す先（プロジェクトのルート。$CLAUDE_PROJECT_DIR）を渡す。外側の相対パスへの cd が
 #   プロジェクトの外へ出ると、Claude Code は cwd をそこへ戻すので、cwd が <戻す先> のときは、移った先を不明とする
 #   （プロジェクトの中で <戻す先> へ移ったのと見分けられないので、間違った場所より、不明とする）。
@@ -282,19 +283,25 @@ gc_branch_create() {
 
 # git worktree add <パス> <ブランチ>（-b・-B を付けない形）の、2つ目の位置引数を「<コールバック> <名前>」に渡す。
 # gc_new_branches と違い、作るブランチではなく、既にあるブランチを使う書き方。値を取るオプション（--reason・-b・-B）の
-# 次の語は、位置引数に数えない
+# 次の語は、位置引数に数えない。-- の後ろは、すべて位置引数
 # 使い方: gc_worktree_branch <コールバック> <add の後の引数>...
 gc_worktree_branch() {
-  local cb="$1" w pos=0 next=false
+  local cb="$1" w pos=0 next=false after_dd=false
   shift
   for w in "$@"; do
     if $next; then
       next=false
       continue
     fi
-    if gc_opt "$w" bB "--reason="; then
-      [ -z "$gc_onext" ] || next=true
-      continue
+    if ! $after_dd; then
+      if [ "$w" = -- ]; then
+        after_dd=true
+        continue
+      fi
+      if gc_opt "$w" bB "--reason="; then
+        [ -z "$gc_onext" ] || next=true
+        continue
+      fi
     fi
     pos=$((pos + 1))
     if [ "$pos" -eq 2 ]; then
@@ -579,7 +586,7 @@ gc_dirs() {
   done
 }
 
-# env -S の値を、env と同じく語に分けて、配列 gc_split に入れる。空白で区切り、'…' の中はそのまま読み、
+# env -S の値を、env と同じく語に分けて、配列 gc_split に入れる。空白で区切り、'…' の中は \\ と \' だけを解き、
 # "…" の中と外では、\ の次の文字をそのまま読む（\_ は "…" の外では区切り、中では空白。\t はタブ、\n は改行）。
 # ${VAR} などは展開しない
 # 使い方: gc_split_s <文字列>
@@ -590,7 +597,14 @@ gc_split_s() {
   while [ "$i" -lt "${#s}" ]; do
     c="${s:i:1}"
     if [ "$q" = "'" ]; then
-      if [ "$c" = "'" ]; then q=""; else w+="$c"; fi
+      case "$c${s:i+1:1}" in
+        "\\\\" | "\\'")
+          i=$((i + 1))
+          w+="${s:i:1}"
+          ;;
+        "'"*) q="" ;;
+        *) w+="$c" ;;
+      esac
     elif [ "$c" = \\ ]; then
       i=$((i + 1))
       case "${s:i:1}" in
