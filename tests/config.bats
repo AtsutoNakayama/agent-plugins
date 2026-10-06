@@ -175,10 +175,11 @@ load test_helper
   # .claude/dev-workflow/ のディレクトリや個人の上書き（config.local.json）だけでは、導入したとみなさない
   cd "$REPO"
   [ -d .claude/dev-workflow ]
-  echo '{}' >.claude/dev-workflow/config.local.json
-  run_script config.sh .detected.set_up
+  # 設定の層に set_up や detected.set_up を書いても、判定は変わらず、最上位の set_up も上書きしない
+  echo '{"set_up": "x", "detected": {"set_up": true}}' >.claude/dev-workflow/config.local.json
+  run_script config.sh '[.set_up, .detected.set_up] | tojson'
   assert_success
-  assert_output false
+  assert_output '["x",false]'
   rm .claude/dev-workflow/config.local.json
   # 壊れたユーザーの層も読まないので、止まらない
   echo '{broken' >"$WORKFLOW_USER_DIR/config.json"
@@ -193,6 +194,16 @@ load test_helper
   mark_set_up
   run_script config.sh '[.language, .guides.commit, .detected.set_up] | tojson'
   assert_output "[\"en\",[\"$WORKFLOW_USER_DIR/commit.md\"],true]"
+  # チームの設定に detected.set_up を書いても、判定は変わらない
+  echo '{"detected": {"set_up": false}}' >.claude/dev-workflow/config.json
+  run_script config.sh .detected.set_up
+  assert_output true
+  # detected がオブジェクトでなくても、失敗しない
+  echo '{"detected": false}' >.claude/dev-workflow/config.json
+  run_script config.sh '[.language, .detected.set_up] | tojson'
+  assert_success
+  assert_output '["en",true]'
+  echo '{}' >.claude/dev-workflow/config.json
   # 初期設定をコミットする前に作ったワークツリーには、チームの設定が無い
   git worktree add -q "$TMP/wt" -b feat/1-x
   cd "$TMP/wt"
