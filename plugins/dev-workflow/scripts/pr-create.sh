@@ -31,7 +31,8 @@
 #   6. --check・--add-task があれば、Issue の本文を読み直し、指定した文の項目だけにチェックを付け、項目を足す
 #      （既にある PR のときも行う）。ほかの行は変えない。コードブロックと、行頭（字下げは問わない）の <!-- から --> までの
 #      HTML のコメントの中の行は、項目とみなさない。足す項目は、最初の項目がある節（次の見出しの手前まで）の最後の
-#      空でない行の後に、最初の項目と同じ字下げで置く（改行が \r\n なら \r\n で書く）。項目が無ければ本文の最後に置く
+#      空でない行の後に、最初の項目と同じ字下げで置く（改行が \r\n なら \r\n で書く）。その行がリストの項目でなければ、
+#      空行を挟む。項目が無ければ本文の最後に置く
 set -euo pipefail
 
 # shellcheck source=lib/common.sh
@@ -281,7 +282,9 @@ if ! $dry_run && [ "$(jq -n --argjson c "$to_check" --argjson a "$to_add" '$c + 
         | ([range($f; $end) | select($l[.] | sub("\r$"; "") | test("\\S"))] | last) as $last
         | ($l[$f] | capture("^(?<i>\\s*)").i) as $indent
         | (if $l[$last] | endswith("\r") then "\r" else "" end) as $cr
-        | $l[:$last + 1] + ($a | map($indent + "- [ ] " + . + $cr)) + $l[$last + 1:]
+        # 直前の行がリストの項目でなければ（HTML の塊・区切り線・コードブロックの閉じなど）、その塊に入らないよう空行を挟む
+        | (if $l[$last] | sub("\r$"; "") | test("^\\s*(?:[-*+]|[0-9]+[.)])(?:\\s|$)") then [] else [$cr] end) as $gap
+        | $l[:$last + 1] + $gap + ($a | map($indent + "- [ ] " + . + $cr)) + $l[$last + 1:]
       end
     | join("\n")' <<<"$now_json" \
     | gh issue edit "$issue" --body-file - >/dev/null \

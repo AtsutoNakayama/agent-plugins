@@ -435,7 +435,8 @@ fake_issue_tasks() {
   run_pr --issue 17 --body-file "$TMP/body.md" --add-task NEW
   assert_success
   # shellcheck disable=SC2016 # ``` はコードブロックの囲みで、展開させない
-  assert_equal "$(cat "$TMP/issue-edit-body")" "$(printf -- '## やること\n- [ ] a\n  ```sh\n  echo 1\n\n  # コメント\n  ```\n- [ ] b\n  ```\n  x\n\n  ```\n- [ ] NEW\n\n## 完了条件\n- [ ] c')"
+  # 直前の行（コードブロックの閉じ）はリストの項目ではないので、空行を挟む（同じリストの続きとして表示される）
+  assert_equal "$(cat "$TMP/issue-edit-body")" "$(printf -- '## やること\n- [ ] a\n  ```sh\n  echo 1\n\n  # コメント\n  ```\n- [ ] b\n  ```\n  x\n\n  ```\n\n- [ ] NEW\n\n## 完了条件\n- [ ] c')"
 }
 
 @test "--add-task は、項目の間に空行がある並べ方でも、節の最後に足す" {
@@ -586,4 +587,17 @@ fake_issue_tasks() {
   assert_success
   assert_equal "$(jq -c .added <<<"$json")" '["y"]'
   assert_equal "$(cat "$TMP/issue-edit-body")" "$(printf -- '- [ ] a\n- [ ] x\n- [ ] y')"
+}
+
+@test "--add-task は、節の最後の行がリストの項目でなければ（HTML・区切り線など）、空行を挟んで足す" {
+  setup_branch
+  set_issue_body "$(printf -- '## やること\n- [ ] a\n<details>\n<summary>補足</summary>\n</details>\n## 完了条件')"
+  run_pr --issue 17 --body-file "$TMP/body.md" --add-task NEW
+  assert_success
+  assert_equal "$(cat "$TMP/issue-edit-body")" "$(printf -- '## やること\n- [ ] a\n<details>\n<summary>補足</summary>\n</details>\n\n- [ ] NEW\n## 完了条件')"
+  # $( ) は最後の改行を落とすので、本文は ---\r で終わる
+  set_issue_body "$(printf -- '## やること\r\n- [ ] a\r\n---\r\n')"
+  run_pr --issue 17 --body-file "$TMP/body.md" --add-task NEW
+  assert_success
+  assert_equal "$(od -c "$TMP/issue-edit-body" | tail -4)" "$(printf -- '## やること\r\n- [ ] a\r\n---\r\n\r\n- [ ] NEW\r' | od -c | tail -4)"
 }
