@@ -191,7 +191,8 @@ if $breaking; then
 fi
 
 # --- 2. Issue を作る ------------------------------------------------------------
-issue="$(jq -n --arg t "$title" --arg b "$body" --argjson l "$labels" '{title: $t, body: $b, labels: $l}' \
+# 本文は大きいことがあるので、引数ではなく標準入力で jq に渡す（引数1つの長さには上限がある）
+issue="$(printf '%s' "$body" | jq -Rs --arg t "$title" --argjson l "$labels" '{title: $t, body: ., labels: $l}' \
   | gh api -X POST "repos/$repo_nwo/issues" --input -)" || dw_die "Issue を作れませんでした"
 issue_number="$(jq -r .number <<<"$issue")"
 issue_url="$(jq -r .html_url <<<"$issue")"

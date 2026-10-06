@@ -619,3 +619,13 @@ fake_issue_tasks() {
     assert_equal "$(cat "$TMP/issue-edit-body")" "$(printf -- '## やること\n- [ ] a\n%s\n\n- [ ] NEW\n## 完了条件' "$hr")"
   done
 }
+
+@test "本文が長くても（引数の長さの上限を超える大きさでも）、破壊的変更の確かめと Closes の付け足しをして PR を作る" {
+  setup_branch
+  fake_issue 17 '["feat", "breaking"]'
+  # 日本語は UTF-8 で1文字3バイトなので、6万文字で 180KB ほどになる（Linux の引数1つの上限は 128KiB）
+  { printf '## 概要\n'; head -c 60000 /dev/zero | tr '\0' x | sed 's/x/あ/g'; printf '\n\nBREAKING CHANGE: 設定を直す\n'; } >"$TMP/body.md"
+  run_pr --issue 17 --body-file "$TMP/body.md"
+  assert_success
+  assert_equal "$(jq -r .body <<<"$json" | tail -n 3)" "$(printf 'BREAKING CHANGE: 設定を直す\n\nCloses #17')"
+}

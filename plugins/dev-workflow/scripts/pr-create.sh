@@ -114,7 +114,8 @@ breaking="$(jq --arg b "$DW_BREAKING_LABEL" 'any(.[]; ascii_downcase == $b)' <<<
 # スカッシュのコミットの type に ! が無いと、release-please などが破壊的変更とみなさない
 has_bang() { jq -e --arg s "$1" '$s | test("^[^:]*!:")' <<<null >/dev/null; }
 # スカッシュマージでは PR の本文がコミットの本文になるので、移行のしかたを本文に残す
-has_breaking_note() { jq -e --arg b "$1" '$b | test("(^|\n)BREAKING[ -]CHANGE: *\\S")' <<<null >/dev/null; }
+# 本文は大きいことがあるので、引数ではなく標準入力で jq に渡す（引数1つの長さには上限がある）
+has_breaking_note() { printf '%s' "$1" | jq -Rse 'test("(^|\n)BREAKING[ -]CHANGE: *\\S")' >/dev/null; }
 
 # --- Issue のチェックリスト -----------------------------------------------------
 # 本文を md_scan（lib/common.sh）で読み、チェックリストの項目（items。上から順に {line（0 からの行番号）, checked, text}）と
@@ -173,9 +174,10 @@ if [ -z "$pr_number" ] && $breaking; then
     || dw_die "Issue #${issue} は破壊的変更（${DW_BREAKING_LABEL} ラベル）なので、本文の最後に「BREAKING CHANGE: <移行のしかた>」を書いてください" 64
 fi
 keyword="$(jq -r '.pr.close_keyword' <<<"$config")"
-body="$(jq -rn --arg b "$body" --arg k "$keyword" --arg n "$issue" '
+# 本文は大きいことがあるので、引数ではなく標準入力で jq に渡す（引数1つの長さには上限がある）
+body="$(printf '%s' "$body" | jq -Rrs --arg k "$keyword" --arg n "$issue" '
   # テンプレートの番号が空のままの行（Closes #）を消し、末尾の空行を落とす
-  ($b | split("\n") | map(select(test("^\\s*" + $k + "\\s+#\\s*$"; "i") | not)) | join("\n")
+  (split("\n") | map(select(test("^\\s*" + $k + "\\s+#\\s*$"; "i") | not)) | join("\n")
     | sub("\\s+$"; "")) as $body
   | if $body | test("\\b" + $k + "\\s+#" + $n + "\\b"; "i") then $body
     elif $body == "" then "\($k) #\($n)"
@@ -297,11 +299,12 @@ if ! $dry_run && [ "$(jq -n --argjson c "$to_check" --argjson a "$to_add" '$c + 
     || dw_die "PR #${pr_number} はできていますが、Issue #${issue} のチェックリストを変えられませんでした（もう一度実行すれば変えます）"
 fi
 
-jq -n --argjson i "$issue" --arg branch "$branch" --arg base "$base" --arg title "$title" --arg body "$body" \
+# 本文は大きいことがあるので、引数ではなく標準入力で jq に渡す（引数1つの長さには上限がある）
+printf '%s' "$body" | jq -Rs --argjson i "$issue" --arg branch "$branch" --arg base "$base" --arg title "$title" \
   --argjson labels "$labels" --argjson breaking "$breaking" --argjson draft "$draft" --argjson created "$created" \
   --arg number "$pr_number" --arg url "$pr_url" --argjson status "$status" \
   --argjson tasks "$tasks" --argjson checked "$to_check" --argjson added "$to_add" \
-  --argjson dry "$dry_run" --argjson actions "$actions" '{
+  --argjson dry "$dry_run" --argjson actions "$actions" '. as $body | {
     issue: $i,
     dry_run: $dry,
     branch: $branch,
