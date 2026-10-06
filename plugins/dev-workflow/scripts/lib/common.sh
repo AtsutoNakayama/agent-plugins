@@ -561,19 +561,20 @@ DW_JQ_MD_SCAN='
 
 # Issue の本文の節（「## <見出し>」の行から、次の「## 」の行の前まで）を読む jq の関数。依存を読む next-tasks.sh と、
 # 依存を書く issue-depend.sh とで、節の見つけ方をそろえる（食い違うと、書いた依存が読まれない）。
-# 見出しは、md_scan（DW_JQ_MD_SCAN。pr-create.sh と同じ）が見出しとみなす行のうち、「## 」（## と空白）で始まる行だけ。
-# GitHub と同じく、コードブロックと HTML のコメントの中の行は見出しにしない。見出しの文字は前後の空白と行末の \r を無視して比べる。
-# 同じ見出しの節が複数あれば、全部を読む。入力は .body を持つ Issue。source した側で使う
+# 見出しは「## 」（## と空白）で始まる行だけで、見出しの文字は前後の空白と行末の \r を無視して比べる。同じ見出しの節が
+# 複数あれば、全部を読む。コードブロックの中の「## 」の行も見出しとみなす（md_scan のように除くと、閉じていないコードブロックの後の
+# 節が見えなくなり、issue-depend.sh が実行のたびに節を足してしまう。読むのも書くのもこの決まりなので、食い違わない）。
+# 入力は .body を持つ Issue。source した側で使う
 #   body_lines：本文を行の配列にする（\r は残す）
 #   section_ranges($h)：見出しが $h の節ごとに、{head（見出しの行番号）, end（節の次の行番号）}。中身は head+1 から end-1 まで
 #   section($h)：見出しが $h の節の中身の行（\r は外す）
 #   deps：「依存」の節にある #N の番号（重複は除く）
 # 使い方: jq "$DW_JQ_ISSUE_SECTIONS"' deps'
 # shellcheck disable=SC2016,SC2034 # jq のプログラムなので、$ は展開しない
-DW_JQ_ISSUE_SECTIONS="$DW_JQ_MD_SCAN"'
+DW_JQ_ISSUE_SECTIONS='
   def body_lines: (.body // "") | split("\n");
   def section_ranges($h): body_lines as $l
-    | [(.body // "") | md_scan | .headings[] | select($l[.] | test("^## "))] as $hs
+    | [range(0; $l | length) | select($l[.] | test("^## "))] as $hs
     | [range(0; $hs | length) as $i
         | select($l[$hs[$i]] | gsub("\r"; "") | test("^## [ \t]*" + $h + "[ \t]*$"))
         | {head: $hs[$i], end: ($hs[$i + 1] // ($l | length))}];

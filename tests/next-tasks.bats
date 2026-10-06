@@ -879,7 +879,7 @@ args() { grep "^$1 " "$CALLS" | sed -n "${2:-1}p" | cut -d' ' -f2-; }
   assert_output --partial "開いている PR を読めませんでした"
 }
 
-@test "本文の節は「## 」で始まる見出し（コードブロックの中は除く）だけで区切り、同じ見出しの節が複数あれば全部読む" {
+@test "本文の節は「## 」で始まる行（コードブロックの中も）だけで区切り、同じ見出しの節が複数あれば全部読む" {
   # 依存を書く issue-depend.sh と読み方を共有する（DW_JQ_ISSUE_SECTIONS）
   setup_fake_gh
   item 10 Todo $'## 依存\n- #5\n##依存\n- #6\n```\n## 補足\n```\n- #9\n## 補足\n#7\n## 依存\r\n- #8'
@@ -887,6 +887,6 @@ args() { grep "^$1 " "$CALLS" | sed -n "${2:-1}p" | cut -d' ' -f2-; }
   for n in 5 6 7 8 9; do echo open >"$FIX/state-$n"; done
   run_script next-tasks.sh
   assert_success
-  # コードブロックの中の「## 補足」は見出しではないので、#9 も「依存」の節にある
-  assert_equal "$(out_of '.todo[0].body_deps')" '[5,6,8,9]'
+  # コードブロックの中の「## 補足」も見出しとみなすので、#9 は「補足」の節にある（issue-depend.sh も同じ決まりで書く）
+  assert_equal "$(out_of '.todo[0].body_deps')" '[5,6,8]'
 }

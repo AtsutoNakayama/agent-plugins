@@ -300,11 +300,17 @@ body_of() { cat "$FIX/body-$1"; }
   assert_equal "$(jq -c .added.body <<<"$output")" '[7]'
 }
 
-@test "コードブロックと HTML のコメントの中の「## 依存」は見出しとみなさない（next-tasks.sh・pr-create.sh と同じ）" {
+@test "閉じていないコードブロックがあっても、「## 依存」の節を見つけ、何度実行しても節を足し続けない" {
+  # 見出しをコードブロックの外に限ると、閉じていないコードブロックの後の節が見えず、実行のたびに節を足していた
   setup_fake_gh
-  issue 10 $'## 例\n```\n## 依存\n```\n<!--\n## 依存\n-->\n## 依存\n- なし'
+  issue 10 $'## 背景\n```\nx\n## 依存\n- なし'
   issue 5
   run_script issue-depend.sh --issue 10 --blocked-by 5
   assert_success
-  assert_equal "$(body_of 10)" $'## 例\n```\n## 依存\n```\n<!--\n## 依存\n-->\n## 依存\n- #5'
+  assert_equal "$(body_of 10)" $'## 背景\n```\nx\n## 依存\n- #5'
+  jq --arg b "$(body_of 10)" '.body = $b' "$FIX/issue-10.json" >"$FIX/i" && mv "$FIX/i" "$FIX/issue-10.json"
+  echo '[{"id": 1005}]' >"$FIX/blocked-10.json"
+  run_script issue-depend.sh --issue 10 --blocked-by 5
+  assert_success
+  assert_equal "$(jq -c .added <<<"$output")" '{"dependency":[],"body":[]}'
 }
