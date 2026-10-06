@@ -461,3 +461,19 @@ fake_issue_tasks() {
   assert_success
   assert_equal "$(jq -c '[.tasks[].text]' <<<"$json")" '["a","b","c"]'
 }
+
+@test "PR の番号を Issue として受け取らず、push も PR の作成もせずに止まる" {
+  setup_branch
+  echo '{"url": "https://github.com/me/demo/pull/21", "number": 21, "title": "PR", "state": "OPEN", "labels": [], "body": ""}' >"$FIX/issue-21.json"
+  run_pr --issue 21 --body-file "$TMP/body.md"
+  assert_failure 2
+  assert_output --partial "#21 は PR です。Issue の番号を指定してください"
+  assert_equal "$(called pr-create)" 0
+}
+
+@test "--issue 017 は 17 と同じに扱い、Issue #17 を読んで PR を作る" {
+  setup_branch
+  run_pr --issue 017 --body-file "$TMP/body.md" --dry-run
+  assert_success
+  assert_equal "$(jq -c '[.issue, .title]' <<<"$json")" '[17,"feat: 作業 17"]'
+}

@@ -25,6 +25,195 @@ dw_require() {
   done
 }
 
+# Issue や PR の番号の引数（12 か #12）を、数字だけの番号にして出力する。先頭の 0 はそろえる（017 と 17 は同じ番号）。
+# # だけ・## で始まる値・数字でない値・0（#0 は無い）は、使い方の誤り（64）で終了する。
+# $(...) の中で呼ぶと、set -e のスクリプトはそのまま止まる。
+# 使い方: n="$(dw_number <オプション名> <値> <番号の種類（Issue・PR）>)"
+dw_number() {
+  local v="$2"
+  case "$v" in "#"?*) v="${v#\#}" ;; esac
+  case "$v" in
+    "" | *[!0-9]*) dw_die "$1 には ${3} の番号を指定してください: $2" 64 ;;
+  esac
+  # 桁あふれしないよう、算術式ではなく文字列で先頭の 0 を外す
+  v="${v#"${v%%[!0]*}"}"
+  [ -n "$v" ] || dw_die "$1 には ${3} の番号を指定してください: $2" 64
+  printf '%s\n' "$v"
+}
+
+# Issue の番号の引数を受け取る（dw_number）。使い方: issue="$(dw_issue_number <オプション名> <値>)"
+dw_issue_number() { dw_number "$1" "$2" Issue; }
+
+# Issue を読んで、種類を終了コードで返す（止まらない）。gh issue view は PR の番号でも成功するので、URL で PR を見分ける。
+#   0: Issue（指定した項目と url の JSON を出力する）  2: PR  3: 無い  1: 読めない（gh のエラーを標準エラーに出す）
+# 使い方: json="$(dw_try_read_issue <番号> <JSON の項目（カンマ区切り。url は自動で足す）>)" || rc=$?
+dw_try_read_issue() {
+  local json err
+  err="$(mktemp)"
+  if ! json="$(gh issue view "$1" --json "url,$2" 2>"$err")"; then
+    json="$(cat "$err")"
+    rm -f "$err"
+    case "$json" in
+      *"Could not resolve to"* | *NOT_FOUND*) return 3 ;;
+    esac
+    printf '%s\n' "$json" >&2
+    return 1
+  fi
+  rm -f "$err"
+  case "$(jq -r .url <<<"$json")" in
+    */pull/*) return 2 ;;
+  esac
+  printf '%s\n' "$json"
+}
+
+# Issue を読んで、指定した項目と url の JSON を出力する（dw_try_read_issue）。PR の番号・無い番号なら終了コード 2、
+# ほかの失敗（通信・認証など）は 1 で止まる。$(...) の中で呼ぶと、set -e のスクリプトはそのまま止まる。
+# 使い方: json="$(dw_read_issue <番号> <JSON の項目（カンマ区切り。url は自動で足す）> [見つからないときの名前（既定: Issue）])"
+dw_read_issue() {
+  local json err rc=0 name="${3:-Issue}"
+  err="$(mktemp)"
+  json="$(dw_try_read_issue "$1" "$2" 2>"$err")" || rc=$?
+  case "$rc" in
+    0) rm -f "$err"; printf '%s\n' "$json" ;;
+    2)
+      rm -f "$err"
+      # どの値が PR の番号だったかを示す（既定の Issue のときは、番号だけで分かる）
+      if [ "$name" = Issue ]; then dw_die "#${1} は PR です。Issue の番号を指定してください" 2; fi
+      dw_die "${name} #${1} は PR です。Issue の番号を指定してください" 2
+      ;;
+    3)
+      rm -f "$err"
+      dw_die "${name} #${1} が $(gh repo view --json nameWithOwner -q .nameWithOwner 2>/dev/null || echo 'このリポジトリ') にありません" 2
+      ;;
+    *)
+      json="$(cat "$err")"
+      rm -f "$err"
+      dw_die "${name} #${1} を読めません: $json"
+      ;;
+  esac
+}
+
+# Issue の作業のブランチを探し、「名前<TAB>手元にあるか<TAB>origin にあるか<TAB>確かか」（どれも true か false）を
+# 1行ずつ出力する。2つの段階に分ける（片付けで消してよいブランチと、作業があるかもしれないブランチは別のものなので）。
+#   - 確か（true）：branch.pattern に合い（type は labels.types のどれか）、番号（先頭の 0 はそろえる）が一致するもの。
+#     片付けや取りやめの対象にするのは、これだけ。設定で branch.pattern の形を変えても、その形で判定する
+#   - 候補（false）：確かではないが、名前に「/<番号>-」を含むか「<番号>-」で始まるもの（wip/17-try・feat/17-Fix_Login のほか、
+#     backup/2024-01-15 のような関係の無いものもありうる）。見落とさないために見せるだけで、使う側が自動で消したり、
+#     Issue の作業と決めつけたりしない
+# PR からは探さない（Closes #17, #18 の PR やリリース用の PR のように、別の Issue のブランチまで拾うため）。
+# origin を読めなければ止まる（「origin に無い」と区別できないまま出すと、使う側が片付けを誤るため）。
+# 使い方: dw_issue_branches <メインのワークツリー> <Issue の番号（dw_issue_number でそろえたもの）> <設定の JSON>
+dw_issue_branches() {
+  local names refs
+  # refname:short はタグと同じ名前のブランチを heads/<名前> と出すので、lstrip=2 で refs/heads/ だけを外す
+  names="$(git -C "$1" for-each-ref --format='%(refname:lstrip=2)' refs/heads/ | awk -v k=L 'NF { print k "\t" $0 }')"
+  refs="$(git -C "$1" ls-remote --heads origin 2>/dev/null)" \
+    || dw_die "origin のブランチを読めませんでした（通信や認証を確かめてください）"
+  # 名前の一覧は引数ではなく標準入力で渡し（ブランチが多いと、引数の長さの上限を超えるため）、1回の jq で判定する。
+  # 並べ方は jq の文字の順（ロケールに左右されない。重複を消すときに、別の名前を同じとみなさない）
+  # shellcheck disable=SC2016 # jq の変数を bash に展開させない
+  printf '%s\n%s\n' "$names" "$(sed -n 's|^[0-9a-f]*[[:space:]]*refs/heads/||p' <<<"$refs" | awk -v k=R 'NF { print k "\t" $0 }')" \
+    | jq -R -s -r --argjson c "$3" --arg n "$2" "$DW_JQ_BRANCH_RE"'
+      ($c | branch_re) as $re | ("(^|/)0*" + $n + "-") as $broad
+      | split("\n") | map(select(. != "") | split("\t")) | group_by(.[1])
+      | map({name: .[0][1], l: any(.[]; .[0] == "L"), r: any(.[]; .[0] == "R")})
+      | map(. + {confirmed: (((((try (.name | capture($re)) catch null) // {}).issue // "") | sub("^0+"; "")) == $n)})
+      | map(select(.confirmed or (.name | test($broad))))
+      | .[] | "\(.name)\t\(.l)\t\(.r)\t\(.confirmed)"'
+}
+
+# Issue の作業のブランチと、Issue を閉じる開いている PR を、JSON の {branches, candidates, open_prs} で出力する
+# （issue-branches.sh と task-start.sh --no-worktree が使う。何も変えない）。
+#   branches    確かなブランチ（dw_issue_branches）。[{name, local, remote, worktree（無ければ null）}]。
+#               マージ済みかは見ない（マージの確かめは、厳密に確かめる cleanup.sh に任せる）
+#   candidates  名前が似ているだけのブランチ（from: name）と、Issue を閉じる PR（開いている・マージ済み。今のリポジトリのもの）の
+#               ブランチのうち、手元か origin に残っているもの（from: pr）。[{name, local, remote, worktree, from, pr}]
+#   open_prs    Issue を閉じる PR のうち開いているもの（フォークや別のリポジトリの PR も含む）。[{number, url, branch}]
+# origin・PR を読めなければ止まる。
+# 使い方: dw_issue_work <メインのワークツリー> <Issue の番号> <設定の JSON> <Issue の JSON（closedByPullRequestsReferences を含む）>
+dw_issue_work() {
+  local found branches='[]' candidates='[]' open_prs='[]' b is_local is_remote confirmed wt nwo="" url pr_repo pr head
+  # $(...) の中で呼ばれると set -e は効かないので、止まったときは明示的に抜ける
+  found="$(dw_issue_branches "$1" "$2" "$3")" || exit $?
+  while IFS="$(printf '\t')" read -r b is_local is_remote confirmed; do
+    [ -n "$b" ] || continue
+    wt=""
+    if [ "$is_local" = true ]; then wt="$(dw_live_worktree_of "$1" "$b")"; fi
+    if [ "$confirmed" = true ]; then
+      branches="$(jq -c --arg b "$b" --argjson l "$is_local" --argjson r "$is_remote" --arg w "$wt" \
+        '. + [{name: $b, local: $l, remote: $r, worktree: (if $w == "" then null else $w end)}]' <<<"$branches")"
+    else
+      candidates="$(jq -c --arg b "$b" --argjson l "$is_local" --argjson r "$is_remote" --arg w "$wt" \
+        '. + [{name: $b, local: $l, remote: $r, worktree: (if $w == "" then null else $w end), from: "name", pr: null}]' <<<"$candidates")"
+    fi
+  done <<<"$found"
+  # Issue を閉じる PR（closedByPullRequestsReferences は状態を返さないので、PR ごとに読む）。
+  # 開いているものは open_prs に、今のリポジトリの PR のブランチは、まだ出していなければ候補に足す。
+  # リポジトリの名前は、Issue を閉じる PR があるときだけ読む
+  if jq -e '(.closedByPullRequestsReferences // []) | length > 0' <<<"$4" >/dev/null; then
+    nwo="$(gh repo view --json nameWithOwner -q .nameWithOwner)" || dw_die "リポジトリの名前を読めませんでした"
+  fi
+  while IFS="$(printf '\t')" read -r url pr_repo; do
+    [ -n "$url" ] || continue
+    pr="$(gh pr view "$url" --json number,url,state,headRefName,isCrossRepository)" || dw_die "PR ${url} を読めませんでした"
+    open_prs="$(jq -c --argjson p "$pr" \
+      'if $p.state == "OPEN" then . + [{number: $p.number, url: $p.url, branch: $p.headRefName}] else . end' <<<"$open_prs")"
+    head="$(jq -r 'select((.state == "OPEN" or .state == "MERGED") and (.isCrossRepository | not)) | .headRefName' <<<"$pr")"
+    [ -n "$head" ] && [ "$pr_repo" = "$nwo" ] || continue
+    if jq -e --arg h "$head" 'any(.[]; .name == $h)' <<<"$branches" >/dev/null \
+      || jq -e --arg h "$head" 'any(.[]; .name == $h)' <<<"$candidates" >/dev/null; then
+      continue
+    fi
+    is_local=false
+    if git -C "$1" show-ref --verify --quiet "refs/heads/$head"; then is_local=true; fi
+    is_remote=false
+    if dw_remote_has_branch "$1" "$head"; then is_remote=true; fi
+    # 手元にも origin にも無いブランチ（マージして片付け終えたものなど）は、片付けるものが無いので候補に出さない
+    [ "$is_local" = true ] || [ "$is_remote" = true ] || continue
+    wt=""
+    if [ "$is_local" = true ]; then wt="$(dw_live_worktree_of "$1" "$head")"; fi
+    candidates="$(jq -c --arg b "$head" --argjson l "$is_local" --argjson r "$is_remote" --arg w "$wt" --argjson n "$(jq .number <<<"$pr")" \
+      '. + [{name: $b, local: $l, remote: $r, worktree: (if $w == "" then null else $w end), from: "pr", pr: $n}]' <<<"$candidates")"
+  done < <(jq -r '.closedByPullRequestsReferences // [] | .[]
+    | [.url, (if .repository then "\(.repository.owner.login)/\(.repository.name)" else "" end)] | @tsv' <<<"$4")
+  jq -n --argjson b "$branches" --argjson c "$candidates" --argjson o "$open_prs" '{branches: $b, candidates: $c, open_prs: $o}'
+}
+
+# ブランチを使っているワークツリーの場所。ディレクトリが無い（手で消して記録だけが残った）ものは、無いものとして空を返す。
+# 使い方: dw_live_worktree_of <メインのワークツリー> <ブランチ>
+dw_live_worktree_of() {
+  local p
+  p="$(dw_worktree_of "$1" "$2")"
+  if [ -n "$p" ] && [ -d "$p" ]; then printf '%s\n' "$p"; fi
+}
+
+# ブランチ名を、/ で区切った部分ごとに URL に符号化して出力する。git の参照の API（git/ref/heads/<ブランチ>）のパスに入れるときに使う
+# （# や ? があると、そこでパスが切れて別のブランチを指すため。/ はパスの区切りとして残す）。
+# ブランチの保護など、名前全体を1つの部分として受ける API には、名前全体を @uri で符号化する（/ も %2F にする）。
+# 使い方: dw_uri_path <ブランチ>
+dw_uri_path() { jq -rn --arg b "$1" '$b | split("/") | map(@uri) | join("/")'; }
+
+# ブランチを使っているワークツリーの場所（無ければ空）。
+# 使い方: dw_worktree_of <メインのワークツリー> <ブランチ>
+dw_worktree_of() {
+  git -C "$1" worktree list --porcelain \
+    | awk -v b="refs/heads/$2" '/^worktree /{p=substr($0, 10)} $0 == "branch " b {print p}'
+}
+
+# origin にブランチがあるか。あれば 0、無ければ 1 を返す。読めなければ（通信や認証の失敗）止まる。
+# 読めないのを「無い」と見ると、push 済みの作業を無視して作り直したり、片付けを誤ったりするため。
+# ls-remote の終了コードは、ブランチが無いとき 2、通信などの失敗のときはそれ以外。
+# 使い方: if dw_remote_has_branch <リポジトリ> <ブランチ>; then ...
+dw_remote_has_branch() {
+  local rc=0
+  git -C "$1" ls-remote --exit-code --heads origin "refs/heads/$2" >/dev/null 2>&1 || rc=$?
+  case "$rc" in
+    0) return 0 ;;
+    2) return 1 ;;
+    *) dw_die "origin のブランチを読めませんでした（通信や認証を確かめてください）" ;;
+  esac
+}
+
 # 作業中のリポジトリ（ワークツリー）のルート。
 dw_repo_root() {
   if [ -n "${WORKFLOW_REPO_ROOT:-}" ]; then
@@ -95,17 +284,22 @@ dw_check_json() {
     || dw_die "JSON のオブジェクトとして読めません: $1" 2
 }
 
+# 設定（入力）の branch.pattern を、type と Issue の番号を取り出す正規表現にする jq の定義（dw_parse_branch・dw_issue_branches）
+# jq の変数（$t）を bash に展開させないため、シングルクォートで書く
+# shellcheck disable=SC2016
+DW_JQ_BRANCH_RE='def branch_re: .labels.types as $t | .branch.pattern
+  | gsub("\\{type\\}"; "(?<type>" + ($t | join("|")) + ")")
+  | gsub("\\{issue_number\\}"; "(?<issue>[0-9]+)")
+  | gsub("\\{slug\\}"; "[a-z0-9]+(?:-[a-z0-9]+)*")
+  | "^" + . + "$";'
+
 # ブランチ名を branch.pattern に当て、type と Issue の番号を「<type>|<番号>」で出力する（無いものは空）
 # 区切りを空白にすると、read が先頭の空白を外して、type が空のときに番号を type と取り違える
 # 使い方: dw_parse_branch <設定の JSON> <ブランチ名>
 dw_parse_branch() {
-  jq -r --arg b "$2" '
-    .labels.types as $t
-    | (.branch.pattern
-      | gsub("\\{type\\}"; "(?<type>" + ($t | join("|")) + ")")
-      | gsub("\\{issue_number\\}"; "(?<issue>[0-9]+)")
-      | gsub("\\{slug\\}"; "[a-z0-9]+(?:-[a-z0-9]+)*")
-      | "^" + . + "$") as $re
+  # shellcheck disable=SC2016 # jq の変数（$b・$re）を bash に展開させない
+  jq -r --arg b "$2" "$DW_JQ_BRANCH_RE"'
+    branch_re as $re
     | (try ($b | capture($re)) catch null) // {}
     | "\(.type // "")|\(.issue // "")"' <<<"$1"
 }

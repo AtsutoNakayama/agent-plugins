@@ -84,11 +84,8 @@ if [ -n "$check" ]; then
 fi
 
 [ -n "$issue" ] || dw_die "--issue は必須です" 64
-# スキルの引数の #12 も受ける。# だけは番号が無いので、そのまま残して数字以外として拒否する
-case "$issue" in "#"?*) issue="${issue#\#}" ;; esac
-case "$issue" in
-  *[!0-9]*) dw_die "--issue には数字を指定してください: $issue" 64 ;;
-esac
+# スキルの引数の #12 も受ける（dw_issue_number）
+issue="$(dw_issue_number --issue "$issue")"
 [ -n "$slug" ] || dw_die "--slug は必須です" 64
 
 # 小文字にし、英数字以外（日本語を含む）を - にまとめ、前後の - を除いて 40 文字までにする
@@ -99,8 +96,9 @@ slug="$(printf '%s' "$slug" | LC_ALL=C tr '[:upper:]' '[:lower:]' \
 config="$("$BASH" "$DW_SCRIPTS_DIR/config.sh")"
 if [ -z "$type" ]; then
   dw_require gh
-  types="$(gh issue view "$issue" --json labels \
-    | jq -c --argjson t "$(jq -c '.labels.types' <<<"$config")" '[.labels[].name | select(. as $n | $t | index($n))]')"
+  # PR の番号なら止まる（dw_read_issue）
+  issue_json="$(dw_read_issue "$issue" labels)"
+  types="$(jq -c --argjson t "$(jq -c '.labels.types' <<<"$config")" '[.labels[].name | select(. as $n | $t | index($n))]' <<<"$issue_json")"
   case "$(jq length <<<"$types")" in
     1) type="$(jq -r '.[0]' <<<"$types")" ;;
     0) dw_die "Issue #${issue} に type ラベルがありません（$(jq -r '.labels.types | join(" / ")' <<<"$config") のどれか1つを付けてください）" 2 ;;

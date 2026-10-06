@@ -88,23 +88,16 @@ conflicts=false
 dirty=false
 [ -z "$(git -C "$repo_root" status --porcelain --untracked-files=no)" ] || dirty=true
 
-# 手元のブランチと origin のブランチのずれ。origin にブランチが無ければ null。
-# ls-remote の終了コードは、ブランチが無いとき 2、通信などの失敗のときはそれ以外（0 か 2 でなければ止める）
+# 手元のブランチと origin のブランチのずれ。origin にブランチが無ければ null。origin を読めなければ止まる（dw_remote_has_branch）
 unpushed=null unpulled=null pushed_behind=null pushed_conflicts=null
-remote_rc=0
-git -C "$repo_root" ls-remote --exit-code --heads origin "refs/heads/$branch" >/dev/null 2>&1 || remote_rc=$?
-case "$remote_rc" in
-  0)
-    git -C "$repo_root" fetch -q origin -- "$branch" || dw_die "origin/${branch} を取得できませんでした"
-    unpushed="$(git -C "$repo_root" rev-list --count "refs/remotes/origin/$branch..refs/heads/$branch")"
-    unpulled="$(git -C "$repo_root" rev-list --count "refs/heads/$branch..refs/remotes/origin/$branch")"
-    pushed_behind="$(git -C "$repo_root" rev-list --count "refs/remotes/origin/$branch..$ref")"
-    pushed_conflicts=false
-    [ "$pushed_behind" -eq 0 ] || pushed_conflicts="$(merge_conflicts "refs/remotes/origin/$branch" "$ref")"
-    ;;
-  2) ;;
-  *) dw_die "origin に ${branch} があるかを確かめられませんでした" ;;
-esac
+if dw_remote_has_branch "$repo_root" "$branch"; then
+  git -C "$repo_root" fetch -q origin -- "$branch" || dw_die "origin/${branch} を取得できませんでした"
+  unpushed="$(git -C "$repo_root" rev-list --count "refs/remotes/origin/$branch..refs/heads/$branch")"
+  unpulled="$(git -C "$repo_root" rev-list --count "refs/heads/$branch..refs/remotes/origin/$branch")"
+  pushed_behind="$(git -C "$repo_root" rev-list --count "refs/remotes/origin/$branch..$ref")"
+  pushed_conflicts=false
+  [ "$pushed_behind" -eq 0 ] || pushed_conflicts="$(merge_conflicts "refs/remotes/origin/$branch" "$ref")"
+fi
 
 # --head はブランチ名だけで探すので、fork の同じ名前のブランチからの PR を除く
 pr=null

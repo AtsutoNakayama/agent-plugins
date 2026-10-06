@@ -1,11 +1,16 @@
 #!/usr/bin/env bash
-# Issue の作業を始める。ワークツリーとブランチを作り、Issue を自分に割り当て、Project の start の列に移す。
+# Issue の作業を始める。ワークツリーとブランチを作り（--no-worktree では作らず）、Issue を自分に割り当て、Project の start の列に移す。
 # 何度実行しても同じ結果になる（既にあるワークツリー・ブランチ・割り当ては使い回す）。
 #
-# 使い方: task-start.sh --issue N --slug TEXT [--dry-run]
-#   --issue N      Issue の番号（#N でもよい）
-#   --slug TEXT    ブランチ名の短い説明（英語）。branch-name.sh で整える
-#   --dry-run      変更せず、行う予定の操作だけを出力する
+# 使い方: task-start.sh --issue N (--slug TEXT | --no-worktree) [--dry-run]
+#   --issue N        Issue の番号（#N でもよい）
+#   --slug TEXT      ブランチ名の短い説明（英語）。branch-name.sh で整える
+#   --no-worktree    リポジトリを変えないタスク（調査・Issue の整理など）。1 と 2 を飛ばし、
+#                    割り当てと列の移動だけを行う（branch と worktree は null）。
+#                    Issue に確かなブランチ（branch.pattern に合い番号が一致するもの。マージ済みでも）があれば、作らずに着手せず
+#                    止まる（終了コード 2）。名前が似ているだけのブランチや Issue を閉じる PR のブランチは、警告するだけ（dw_issue_work）。
+#                    後からリポジトリを変えることになったら、--slug を付けてもう一度実行すれば作れる
+#   --dry-run        変更せず、行う予定の操作だけを出力する
 #
 # 親の Issue（サブ Issue を持つ Issue）は作業の単位ではないので、何もせずに止まる（終了コード 2）。作業は子の Issue で進める。
 #
@@ -13,6 +18,7 @@
 #   1. ブランチ名を決める（branch.pattern に従う。既定は {type}/{issue_number}-{slug}）
 #   2. <branch.worktree_dir>/<ブランチ名> にワークツリーを作る（相対パスはメインのワークツリーから）。
 #      ブランチが無ければ、origin に push 済みならそこから、無ければ origin/<base_branch> から作る。
+#      origin を読めなければ（通信や認証の失敗）、push 済みか分からないので、ブランチもワークツリーも作らずに止まる。
 #      ワークツリーの置き場所が git に無視されていなければ、.git/info/exclude に足す（コミットしない手元だけの設定）。
 #      .gitmodules があれば、サブモジュールを初期化する（git submodule update --init --recursive）。
 #      失敗しても（通信できないなど）止めずに警告する。既にあるワークツリーでも、未初期化なら初期化し直す
@@ -34,7 +40,7 @@ need_value() {
   fi
 }
 
-issue="" slug="" dry_run=false
+issue="" slug="" dry_run=false no_worktree=false
 while [ $# -gt 0 ]; do
   case "$1" in
     --issue | --slug)
@@ -46,17 +52,19 @@ while [ $# -gt 0 ]; do
       shift 2
       ;;
     --dry-run) dry_run=true; shift ;;
+    --no-worktree) no_worktree=true; shift ;;
     -h | --help) usage; exit 0 ;;
     *) dw_die "不明な引数です: $1" 64 ;;
   esac
 done
 [ -n "$issue" ] || dw_die "--issue は必須です" 64
-# スキルの引数の #12 も受ける。# だけは番号が無いので、そのまま残して数字以外として拒否する
-case "$issue" in "#"?*) issue="${issue#\#}" ;; esac
-case "$issue" in
-  *[!0-9]*) dw_die "--issue には数字を指定してください: $issue" 64 ;;
-esac
-[ -n "$slug" ] || dw_die "--slug は必須です" 64
+# スキルの引数の #12 も受ける（dw_issue_number）
+issue="$(dw_issue_number --issue "$issue")"
+if $no_worktree; then
+  [ -z "$slug" ] || dw_die "--no-worktree と --slug は一緒に指定できません" 64
+else
+  [ -n "$slug" ] || dw_die "--slug は必須です（ワークツリーを作らないときは --no-worktree）" 64
+fi
 
 repo_root="$(dw_repo_root)" || dw_die "リポジトリの中で実行してください" 64
 main_root="$(dw_main_root "$repo_root")" || dw_die "メインのワークツリーが分かりません"
@@ -68,7 +76,14 @@ actions='[]'
 note() { actions="$(jq -c --arg a "$1" '. + [$a]' <<<"$actions")"; }
 
 # --- Issue ----------------------------------------------------------------------
-issue_json="$(gh issue view "$issue" --json number,title,state,assignees,subIssuesSummary)"
+# PR の番号なら止まる（dw_read_issue。--no-worktree では、PR を割り当てたり列を移したりしてしまうため）。
+# --no-worktree では、Issue を閉じる PR のブランチも見るので closedByPullRequestsReferences も読む（gh 2.73.0 から読める）
+fields=number,title,state,assignees,subIssuesSummary
+if $no_worktree; then
+  dw_require_gh_version "$DW_GH_MIN_VERSION" "Issue を閉じる PR を読む（gh issue view --json closedByPullRequestsReferences）"
+  fields="$fields,closedByPullRequestsReferences"
+fi
+issue_json="$(dw_read_issue "$issue" "$fields")"
 [ "$(jq -r .state <<<"$issue_json")" = OPEN ] || dw_die "Issue #${issue} は閉じています" 2
 # 親の Issue は子をまとめるだけで、親そのものの作業は無い（設計書 §4）。ブランチ・割り当て・列の移動のどれも行わない
 sub_total="$(jq -r '.subIssuesSummary.total // 0' <<<"$issue_json")"
@@ -76,91 +91,110 @@ sub_total="$(jq -r '.subIssuesSummary.total // 0' <<<"$issue_json")"
   || dw_die "Issue #${issue} は親の Issue（子の Issue が ${sub_total} 件）なので、着手しません。子の Issue に着手してください" 2
 title="$(jq -r .title <<<"$issue_json")"
 
-# --- 1. ブランチ名 --------------------------------------------------------------
-branch="$("$BASH" "$DW_SCRIPTS_DIR/branch-name.sh" --issue "$issue" --slug "$slug" | jq -r .branch)"
-# 置き場所が絶対パスならそのまま、相対パスならメインのワークツリーから
-case "$worktree_dir" in
-  /*) path="${worktree_dir%/}/$branch" ;;
-  *) path="$main_root/$worktree_dir/$branch" ;;
-esac
-
-# --- 2. ワークツリーとブランチ --------------------------------------------------
-# そのブランチのワークツリーが既にあれば使い回す
-existing="$(git -C "$main_root" worktree list --porcelain \
-  | awk -v b="refs/heads/$branch" '/^worktree /{p=substr($0, 10)} $0 == "branch " b {print p}')"
-worktree_created=false branch_created=false
-src_ref=""  # 新しく作るワークツリーの中身の元（dry-run で .gitmodules の有無を見る）
-# ディレクトリを手で消すと、git の記録だけが残る。記録を片付けてから作り直す
-if [ -n "$existing" ] && [ ! -d "$existing" ]; then
-  note "消えたワークツリー $existing の記録を片付ける（git worktree prune）"
-  $dry_run || git -C "$main_root" worktree prune
-  existing=""
+# ワークツリーを作らずに着手するときも、Issue に確かなブランチがあれば止まる。黙って着手すると base_branch の上で作業させ、
+# 後で task-finish がそのブランチで行き止まるため。マージ済みかは見ない（終わった作業のブランチなら、先に task-finish で片付けてもらう。
+# 片付けは、マージを厳密に確かめる cleanup.sh が行う）。ブランチは task-finish・task-cancel と同じ dw_issue_work で探し、
+# 上で読んだ Issue をそのまま使う。候補（名前が似ている・Issue を閉じる PR のブランチ）は関係の無いブランチもありうるので、警告するだけ
+if $no_worktree; then
+  # 先に変数で受ける（origin・PR を読めなければ止まる）
+  found="$(dw_issue_work "$main_root" "$issue" "$config" "$issue_json")"
+  list="$(jq -r '[.branches[] | .name + (if .worktree then "（ワークツリー \(.worktree)）" else "" end)] | join("、")' <<<"$found")"
+  [ -z "$list" ] \
+    || dw_die "Issue #${issue} には既にブランチ ${list} があります。ワークツリーを作らずに着手せず、そのブランチで作業してください（終わった作業のブランチなら、先に task-finish で片付けてください）" 2
+  others="$(jq -r '[.candidates[].name] | join("、")' <<<"$found")"
+  [ -z "$others" ] \
+    || dw_warn "Issue #${issue} に関係するかもしれないブランチ（${others}）があります。この Issue の作業なら、そのブランチで作業してください"
 fi
-if [ -n "$existing" ]; then
-  path="$existing"
-else
-  worktree_created=true
-  if git -C "$main_root" show-ref --verify --quiet "refs/heads/$branch"; then
-    src_ref="$branch"
-    note "既にあるブランチ ${branch} のワークツリーを $path に作る"
-    $dry_run || git -C "$main_root" worktree add -q "$path" "$branch"
-  elif [ -n "$(git -C "$main_root" ls-remote --heads origin "refs/heads/$branch" 2>/dev/null)" ]; then
-    # 別のマシンで push 済み（またはローカルだけ消した）ブランチは、push 済みのコミットから続ける
-    branch_created=true
-    src_ref="origin/$branch"
-    note "push 済みの origin/${branch} からブランチ ${branch} を作り、ワークツリーを $path に作る"
-    if ! $dry_run; then
-      git -C "$main_root" fetch -q origin "+refs/heads/$branch:refs/remotes/origin/$branch" \
-        || dw_die "origin/${branch} を取得できませんでした"
-      git -C "$main_root" worktree add -q --track -b "$branch" "$path" "origin/$branch"
-    fi
-  else
-    branch_created=true
-    src_ref="origin/$base"
-    note "origin/${base} からブランチ ${branch} を作り、ワークツリーを $path に作る"
-    if ! $dry_run; then
-      git -C "$main_root" fetch -q origin "$base" || dw_die "origin/${base} を取得できませんでした"
-      # origin/<base> を追跡させない（追跡すると git push の先が base になりうる。push 先は pr-create で決める）
-      git -C "$main_root" worktree add -q --no-track -b "$branch" "$path" "origin/$base"
-    fi
+
+# リポジトリを変えないタスク（--no-worktree）では、ブランチもワークツリーも作らない
+branch="" path="" worktree_created=false branch_created=false
+if ! $no_worktree; then
+  # --- 1. ブランチ名 --------------------------------------------------------------
+  branch="$("$BASH" "$DW_SCRIPTS_DIR/branch-name.sh" --issue "$issue" --slug "$slug" | jq -r .branch)"
+  # 置き場所が絶対パスならそのまま、相対パスならメインのワークツリーから
+  case "$worktree_dir" in
+    /*) path="${worktree_dir%/}/$branch" ;;
+    *) path="$main_root/$worktree_dir/$branch" ;;
+  esac
+
+  # --- 2. ワークツリーとブランチ --------------------------------------------------
+  # そのブランチのワークツリーが既にあれば使い回す
+  existing="$(dw_worktree_of "$main_root" "$branch")"
+  src_ref=""  # 新しく作るワークツリーの中身の元（dry-run で .gitmodules の有無を見る）
+  # ディレクトリを手で消すと、git の記録だけが残る。記録を片付けてから作り直す
+  if [ -n "$existing" ] && [ ! -d "$existing" ]; then
+    note "消えたワークツリー $existing の記録を片付ける（git worktree prune）"
+    $dry_run || git -C "$main_root" worktree prune
+    existing=""
   fi
-fi
-
-# ワークツリーの置き場所がメインのワークツリーの中なら、未追跡のファイルとして見えないよう手元だけで無視する
-case "$worktree_dir" in
-  /* | ../* | ..) ;;
-  *)
-    if ! git -C "$main_root" check-ignore -q "$worktree_dir/x"; then
-      exclude="$(git -C "$main_root" rev-parse --git-common-dir)/info/exclude"
-      case "$exclude" in /*) ;; *) exclude="$main_root/$exclude" ;; esac
-      note "${worktree_dir}/ を $exclude に足す（手元だけで git に無視させる）"
-      if ! $dry_run; then
-        mkdir -p "$(dirname "$exclude")"
-        printf '%s/\n' "${worktree_dir%/}" >>"$exclude"
+  if [ -n "$existing" ]; then
+    path="$existing"
+  else
+    worktree_created=true
+    if git -C "$main_root" show-ref --verify --quiet "refs/heads/$branch"; then
+      src_ref="$branch"
+      note "既にあるブランチ ${branch} のワークツリーを $path に作る"
+      $dry_run || git -C "$main_root" worktree add -q "$path" "$branch"
+    else
+      # origin を読めなければ止まる（dw_remote_has_branch。読めないのを「無い」と見ると、push 済みの作業を無視して base から作り直す）
+      branch_created=true
+      if dw_remote_has_branch "$main_root" "$branch"; then
+        # 別のマシンで push 済み（またはローカルだけ消した）ブランチは、push 済みのコミットから続ける
+        src_ref="origin/$branch"
+        note "push 済みの origin/${branch} からブランチ ${branch} を作り、ワークツリーを $path に作る"
+        if ! $dry_run; then
+          git -C "$main_root" fetch -q origin "+refs/heads/$branch:refs/remotes/origin/$branch" \
+            || dw_die "origin/${branch} を取得できませんでした"
+          git -C "$main_root" worktree add -q --track -b "$branch" "$path" "origin/$branch"
+        fi
+      else
+        src_ref="origin/$base"
+        note "origin/${base} からブランチ ${branch} を作り、ワークツリーを $path に作る"
+        if ! $dry_run; then
+          git -C "$main_root" fetch -q origin "$base" || dw_die "origin/${base} を取得できませんでした"
+          # origin/<base> を追跡させない（追跡すると git push の先が base になりうる。push 先は pr-create で決める）
+          git -C "$main_root" worktree add -q --no-track -b "$branch" "$path" "origin/$base"
+        fi
       fi
     fi
-    ;;
-esac
+  fi
 
-# サブモジュール（テスト用のライブラリなど）は、ワークツリーを作っただけでは空のまま
-submodules=false
-if $worktree_created && $dry_run; then
-  # まだワークツリーが無いので、中身の元で見る。dry-run では fetch しないので、元が手元に無い・古いこともある。
-  # そのときに予定から漏れないよう、メインのワークツリーに .gitmodules があれば予定に出す
-  if git -C "$main_root" cat-file -e "${src_ref}:.gitmodules" 2>/dev/null || [ -f "$main_root/.gitmodules" ]; then
-    submodules=true
+  # ワークツリーの置き場所がメインのワークツリーの中なら、未追跡のファイルとして見えないよう手元だけで無視する
+  case "$worktree_dir" in
+    /* | ../* | ..) ;;
+    *)
+      if ! git -C "$main_root" check-ignore -q "$worktree_dir/x"; then
+        exclude="$(git -C "$main_root" rev-parse --git-common-dir)/info/exclude"
+        case "$exclude" in /*) ;; *) exclude="$main_root/$exclude" ;; esac
+        note "${worktree_dir}/ を $exclude に足す（手元だけで git に無視させる）"
+        if ! $dry_run; then
+          mkdir -p "$(dirname "$exclude")"
+          printf '%s/\n' "${worktree_dir%/}" >>"$exclude"
+        fi
+      fi
+      ;;
+  esac
+
+  # サブモジュール（テスト用のライブラリなど）は、ワークツリーを作っただけでは空のまま
+  submodules=false
+  if $worktree_created && $dry_run; then
+    # まだワークツリーが無いので、中身の元で見る。dry-run では fetch しないので、元が手元に無い・古いこともある。
+    # そのときに予定から漏れないよう、メインのワークツリーに .gitmodules があれば予定に出す
+    if git -C "$main_root" cat-file -e "${src_ref}:.gitmodules" 2>/dev/null || [ -f "$main_root/.gitmodules" ]; then
+      submodules=true
+    fi
+  elif [ -f "$path/.gitmodules" ]; then
+    # 新しく作ったワークツリーなら必ず、既にあるワークツリーなら未初期化のもの（入れ子も含む）があれば初期化する
+    if $worktree_created || git -C "$path" submodule status --recursive 2>/dev/null | grep -q '^-'; then
+      submodules=true
+    fi
   fi
-elif [ -f "$path/.gitmodules" ]; then
-  # 新しく作ったワークツリーなら必ず、既にあるワークツリーなら未初期化のもの（入れ子も含む）があれば初期化する
-  if $worktree_created || git -C "$path" submodule status --recursive 2>/dev/null | grep -q '^-'; then
-    submodules=true
-  fi
-fi
-if $submodules; then
-  note "ワークツリーのサブモジュールを初期化する（git submodule update --init --recursive）"
-  # 出力は JSON だけにするため、git の出力は標準エラーに回す
-  if ! $dry_run && ! git -C "$path" submodule update -q --init --recursive >&2; then
-    dw_warn "サブモジュールを初期化できませんでした。ワークツリーで git submodule update --init --recursive を実行してください（cd ${path}）"
+  if $submodules; then
+    note "ワークツリーのサブモジュールを初期化する（git submodule update --init --recursive）"
+    # 出力は JSON だけにするため、git の出力は標準エラーに回す
+    if ! $dry_run && ! git -C "$path" submodule update -q --init --recursive >&2; then
+      dw_warn "サブモジュールを初期化できませんでした。ワークツリーで git submodule update --init --recursive を実行してください（cd ${path}）"
+    fi
   fi
 fi
 
@@ -193,8 +227,8 @@ jq -n --argjson i "$issue" --arg title "$title" --arg branch "$branch" --arg pat
     issue: $i,
     title: $title,
     dry_run: $dry,
-    branch: $branch,
-    worktree: $path,
+    branch: (if $branch == "" then null else $branch end),
+    worktree: (if $path == "" then null else $path end),
     base: $base,
     created: {worktree: $wc, branch: $bc},
     assigned: $assigned,

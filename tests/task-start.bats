@@ -294,3 +294,168 @@ run_start() {
   assert_success
   jq -e 'any(.actions[]; . == "ワークツリーのサブモジュールを初期化する（git submodule update --init --recursive）")' <<<"$json"
 }
+
+@test "--no-worktree では、ブランチもワークツリーも作らず、割り当てと列の移動だけを行う" {
+  setup_fake_gh
+  setup_origin
+  run_start --issue 17 --no-worktree
+  assert_success
+  assert_equal "$(jq -c '[.branch, .worktree, .created.worktree, .created.branch, .assigned, .status.to]' <<<"$json")" \
+    '[null,null,false,false,true,"In Progress"]'
+  [ ! -e .claude/worktrees ]
+  assert_equal "$(git branch --list 'feat/*')" ""
+  assert_equal "$(git worktree list | wc -l | tr -d ' ')" 1
+  run grep -c worktrees .git/info/exclude
+  assert_output 0
+  assert_equal "$(args edit)" "17 --add-assignee @me"
+  assert_equal "$(args SetField | jq -r '."single-select-option-id"')" O2
+}
+
+@test "--no-worktree の dry-run では、割り当てと列の移動を予定に出すだけ" {
+  setup_fake_gh
+  setup_origin
+  run_start --issue 17 --no-worktree --dry-run
+  assert_success
+  assert_equal "$(jq '.actions | length' <<<"$json")" 2
+  assert_equal "$(called edit)" 0
+  assert_equal "$(called SetField)" 0
+}
+
+@test "--no-worktree で着手した後に --slug で実行すると、ワークツリーとブランチだけを作る" {
+  setup_fake_gh
+  setup_origin
+  run_start --issue 17 --no-worktree
+  fake_issue 17 '["feat"]' OPEN '["me"]'
+  issue_item "In Progress"
+  : >"$CALLS"
+  run_start --issue 17 --slug x
+  assert_success
+  assert_equal "$(jq -c '[.branch, .created.worktree, .created.branch, .assigned]' <<<"$json")" '["feat/17-x",true,true,false]'
+  [ -d .claude/worktrees/feat/17-x ]
+  assert_equal "$(called edit)" 0
+  assert_equal "$(called SetField)" 0
+}
+
+@test "--no-worktree と --slug を一緒に指定すると、何も変えずにエラーになる" {
+  setup_fake_gh
+  setup_origin
+  run_start --issue 17 --no-worktree --slug x
+  assert_failure 64
+  assert_output --partial "--no-worktree と --slug は一緒に指定できません"
+  [ ! -e .claude/worktrees ]
+  assert_equal "$(called edit)" 0
+}
+
+@test "--no-worktree でも、親の Issue には着手しない" {
+  setup_fake_gh
+  setup_origin
+  jq '. + {subIssuesSummary: {total: 2, completed: 0, percentCompleted: 0}}' "$FIX/issue-17.json" >"$FIX/i" \
+    && mv "$FIX/i" "$FIX/issue-17.json"
+  run_start --issue 17 --no-worktree
+  assert_failure 2
+  assert_output --partial "親の Issue"
+  assert_equal "$(called edit)" 0
+  assert_equal "$(called SetField)" 0
+}
+
+@test "origin を読めなければ、「origin に無い」と区別できないので、ブランチもワークツリーも作らずに止まる（dry-run も同じ）" {
+  setup_fake_gh
+  setup_origin
+  git remote set-url origin "$TMP/no-such.git"
+  for mode in --dry-run ""; do
+    run_start --issue 17 --slug x ${mode:+"$mode"}
+    assert_failure 1
+    assert_output --partial "origin のブランチを読めませんでした（通信や認証を確かめてください）"
+  done
+  [ ! -e .claude/worktrees ]
+  assert_equal "$(git branch --list 'feat/*')" ""
+  assert_equal "$(called edit)" 0
+}
+
+@test "PR の番号は Issue として受け取らず、割り当ても列の移動もせずに止まる（--no-worktree でも）" {
+  setup_fake_gh
+  setup_origin
+  echo '{"url": "https://github.com/me/demo/pull/21", "number": 21, "title": "PR", "state": "OPEN", "assignees": [], "labels": [{"name": "feat"}]}' >"$FIX/issue-21.json"
+  for args in "--no-worktree" "--slug x"; do
+    # shellcheck disable=SC2086 # 単語に分けて渡すのが目的
+    run_start --issue 21 $args
+    assert_failure 2
+    assert_output --partial "#21 は PR です。Issue の番号を指定してください"
+  done
+  [ ! -e .claude/worktrees ]
+  assert_equal "$(called edit)" 0
+  assert_equal "$(called SetField)" 0
+}
+
+@test "--no-worktree でも、Issue に既にブランチがあれば着手せず、ブランチとワークツリーの場所を伝えて止まる（dry-run も同じ）" {
+  setup_fake_gh
+  setup_origin
+  git worktree add -q -b feat/17-x "$TMP/wt"
+  for mode in --dry-run ""; do
+    run_start --issue 17 --no-worktree ${mode:+"$mode"}
+    assert_failure 2
+    assert_output --partial "Issue #17 には既にブランチ feat/17-x（ワークツリー $TMP/wt） があります"
+  done
+  assert_equal "$(called edit)" 0
+  assert_equal "$(called SetField)" 0
+}
+
+@test "--no-worktree は、名前が似ているだけのブランチ（branch.pattern に合わない）では止まらず、警告して着手する" {
+  setup_fake_gh
+  setup_origin
+  git push -q origin main:refs/heads/wip/17-try
+  run_start --issue 17 --no-worktree
+  assert_success
+  assert_output --partial "Issue #17 に関係するかもしれないブランチ（wip/17-try）があります"
+  assert_equal "$(called edit)" 1
+}
+
+@test "--no-worktree で止まるとき、手で消したワークツリーの場所は伝えない" {
+  setup_fake_gh
+  setup_origin
+  git worktree add -q -b feat/17-x "$TMP/wt"
+  rm -rf "$TMP/wt"
+  run_start --issue 17 --no-worktree
+  assert_failure 2
+  assert_output --partial "Issue #17 には既にブランチ feat/17-x があります"
+  refute_output --partial "ワークツリー $TMP/wt"
+}
+
+@test "--no-worktree でも、origin を読めなければ、割り当ても列の移動もせずに止まる（dry-run も同じ）" {
+  setup_fake_gh
+  setup_origin
+  git remote set-url origin "$TMP/no-such.git"
+  for mode in --dry-run ""; do
+    run_start --issue 17 --no-worktree ${mode:+"$mode"}
+    assert_failure 1
+    assert_output --partial "origin のブランチを読めませんでした（通信や認証を確かめてください）"
+  done
+  assert_equal "$(called edit)" 0
+  assert_equal "$(called SetField)" 0
+}
+
+@test "--no-worktree は、確かなブランチがあればマージ済みでも止め、終わった作業なら task-finish で片付けるよう伝える" {
+  setup_fake_gh
+  setup_origin
+  git push -q origin main:refs/heads/feat/17-x
+  run_start --issue 17 --no-worktree
+  assert_failure 2
+  assert_output --partial "Issue #17 には既にブランチ feat/17-x があります"
+  assert_output --partial "終わった作業のブランチなら、先に task-finish で片付けてください"
+  assert_equal "$(called edit)" 0
+}
+
+@test "--no-worktree は、Issue を閉じる PR のブランチが残っていれば警告して着手し、残っていなければ警告しない" {
+  setup_fake_gh
+  setup_origin
+  jq '. + {closedByPullRequestsReferences: [{number: 5, url: "https://github.com/me/demo/pull/5", repository: {name: "demo", owner: {login: "me"}}}]}' \
+    "$FIX/issue-17.json" >"$FIX/i" && mv "$FIX/i" "$FIX/issue-17.json"
+  echo '{"number": 5, "url": "https://github.com/me/demo/pull/5", "state": "OPEN", "headRefName": "fix-foo", "isCrossRepository": false}' >"$FIX/pr-5.json"
+  run_start --issue 17 --no-worktree
+  assert_success
+  refute_output --partial "関係するかもしれないブランチ"
+  git push -q origin main:refs/heads/fix-foo
+  run_start --issue 17 --no-worktree
+  assert_success
+  assert_output --partial "Issue #17 に関係するかもしれないブランチ（fix-foo）があります"
+}

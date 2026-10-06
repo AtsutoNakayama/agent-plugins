@@ -4,7 +4,7 @@
 # 使い方: issue-cancel.sh --issue N --reason TEXT [--duplicate-of M] [--branch NAME] [--sub-issues close|keep] [--dry-run]
 #   --issue N           Issue の番号（#N でもよい）
 #   --reason TEXT       閉じる理由（コメントとして残す。代わりに作業する Issue などの参照先も書く）。空白だけなら止まる
-#   --duplicate-of M    重複の元の Issue の番号。付けると duplicate で閉じ、元の Issue に紐付ける（gh 2.88.0 以上）
+#   --duplicate-of M    重複の元の Issue の番号（#M でもよい）。付けると duplicate で閉じ、元の Issue に紐付ける（gh 2.88.0 以上）
 #   --branch NAME       やめた作業のブランチ。そのブランチの開いている PR を同じ理由のコメントを付けて閉じ、
 #                       リモート（origin）のブランチを削除する。手元のワークツリーとブランチは消さない（cleanup.sh --abandon）
 #   --sub-issues MODE   親の Issue（サブ Issue を持つ Issue）を取りやめるときの、開いている子孫（子・孫）の扱い。
@@ -43,11 +43,7 @@ while [ $# -gt 0 ]; do
       case "$1" in
         --issue) issue="$2" ;;
         --reason) reason="$2" ;;
-        --duplicate-of)
-          # # だけを渡されて空になったまま not planned で閉じないよう、# を取った後も値があるか確かめる
-          duplicate_of="${2#\#}"
-          [ -n "$duplicate_of" ] || dw_die "--duplicate-of に値がありません" 64
-          ;;
+        --duplicate-of) duplicate_of="$2" ;;
         --branch) branch="$2" ;;
         --sub-issues)
           case "$2" in
@@ -64,16 +60,12 @@ while [ $# -gt 0 ]; do
   esac
 done
 [ -n "$issue" ] || dw_die "--issue は必須です" 64
-# スキルの引数の #12 も受ける。# だけは番号が無いので、そのまま残して数字以外として拒否する
-case "$issue" in "#"?*) issue="${issue#\#}" ;; esac
-case "$issue" in
-  *[!0-9]*) dw_die "--issue には数字を指定してください: $issue" 64 ;;
-esac
-case "$duplicate_of" in
-  *[!0-9]*) dw_die "--duplicate-of には数字を指定してください: $duplicate_of" 64 ;;
-esac
-# 先頭の 0 を取り除いてから比べる（017 と 17 は同じ Issue）
-if [ -n "$duplicate_of" ] && [ "$((10#$duplicate_of))" -eq "$((10#$issue))" ]; then
+# スキルの引数の #12 も受ける（dw_issue_number）
+issue="$(dw_issue_number --issue "$issue")"
+# # だけを渡されて番号が空のまま not planned で閉じないよう、dw_issue_number が拒否する
+[ -z "$duplicate_of" ] || duplicate_of="$(dw_issue_number --duplicate-of "$duplicate_of")"
+# どちらも先頭の 0 をそろえてあるので、文字列で比べられる（017 と 17 は同じ Issue）
+if [ -n "$duplicate_of" ] && [ "$duplicate_of" = "$issue" ]; then
   dw_die "--duplicate-of に閉じる Issue 自身（#${issue}）は指定できません" 64
 fi
 # 理由の無いまま閉じると経緯が残らないので、空白だけの理由も受け付けない。
@@ -96,28 +88,9 @@ fi
 
 repo_nwo="$(gh repo view --json nameWithOwner -q .nameWithOwner)"
 
-# Issue を読む。gh issue view は PR の番号でも成功するので、URL で PR を見分ける
-# 使い方: read_issue <番号> <JSON の項目> <見つからないときの名前>
-read_issue() {
-  local json err
-  err="$(mktemp)"
-  if ! json="$(gh issue view "$1" --json "url,$2" 2>"$err")"; then
-    json="$(cat "$err")"
-    rm -f "$err"
-    case "$json" in
-      *"Could not resolve to"* | *NOT_FOUND*) dw_die "${3} #${1} が ${repo_nwo} にありません" 2 ;;
-      *) dw_die "${3} #${1} を読めません: $json" ;;
-    esac
-  fi
-  rm -f "$err"
-  case "$(jq -r .url <<<"$json")" in
-    */pull/*) dw_die "#${1} は PR です。Issue の番号を指定してください" 2 ;;
-  esac
-  printf '%s\n' "$json"
-}
-
-found="$(read_issue "$issue" number,title,state,stateReason,comments Issue)"
-[ -z "$duplicate_of" ] || read_issue "$duplicate_of" number "重複の元の Issue" >/dev/null
+# gh issue view は PR の番号でも成功するので、dw_read_issue で PR を見分けて止まる
+found="$(dw_read_issue "$issue" number,title,state,stateReason,comments)"
+[ -z "$duplicate_of" ] || dw_read_issue "$duplicate_of" number "重複の元の Issue" >/dev/null
 
 # コメントした後に閉じるのに失敗して再実行したときは、同じ理由を二重にコメントしない
 commented=true
@@ -182,7 +155,9 @@ fi
 # やめた作業のリモートのブランチ（無ければ空）と、それを head とする開いている PR
 remote="" prs='[]'
 if [ -n "$branch" ]; then
-  if err="$(gh api "repos/$repo_nwo/git/ref/heads/$branch" 2>&1 >/dev/null)"; then
+  # REST のパスに入れるブランチ名は、/ で区切った部分ごとに符号化する（dw_uri_path。# や ? でパスが切れて別のブランチを指さないように）
+  branch_path="$(dw_uri_path "$branch")"
+  if err="$(gh api "repos/$repo_nwo/git/ref/heads/$branch_path" 2>&1 >/dev/null)"; then
     remote="$branch"
   else
     case "$err" in
@@ -253,7 +228,7 @@ for pr_number in $(jq -r '.[].number' <<<"$prs"); do
 done
 if [ -n "$remote" ]; then
   note "リモートのブランチ ${branch} を削除する"
-  $dry_run || gh api -X DELETE "repos/$repo_nwo/git/refs/heads/$branch" >/dev/null 2>&1 \
+  $dry_run || gh api -X DELETE "repos/$repo_nwo/git/refs/heads/$branch_path" >/dev/null 2>&1 \
     || dw_die "Issue #${issue} は閉じましたが、リモートのブランチ ${branch} を削除できませんでした（もう一度実行すると続きから進みます）"
 fi
 

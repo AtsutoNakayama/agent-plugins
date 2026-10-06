@@ -12,8 +12,9 @@
 #             - マージ先: origin/<base_branch>（git fetch origin <base_branch> で最新にする。できなければ警告して
 #               手元の origin/<base_branch> を使う。それも無ければ終了コード 2）
 #             - 基点: git merge-base <マージ先> HEAD
-#             - Issue の番号: ブランチ名（branch.pattern の {issue_number}）。gh で Issue を読み、見つからなければ
-#               Issue は無いものとする（警告）。gh で読めなければ（認証・通信など）、番号は使い、type はブランチ名から決める（警告）
+#             - Issue の番号: ブランチ名（branch.pattern の {issue_number}。先頭の 0 はそろえる）。番号として使えない値（0 など）なら
+#               Issue は無いものとする（警告）。gh で Issue を読み、見つからないか、番号が PR のものなら、Issue は無いものとする（警告）。
+#               gh で読めなければ（認証・通信など）、番号は使い、type はブランチ名から決める（警告）
 #             - type: Issue の type ラベル（labels.types のどれか1つ）。無いか1つに決まらなければ、
 #               ブランチ名（branch.pattern の {type}）。どちらでも決まらなければ無し
 #   --base    基点のコミット。差分のファイルは git diff <基点> で読む
@@ -121,18 +122,29 @@ if [ "$auto" = true ]; then
     || dw_die "マージ先が見つかりません: ${target}（git fetch origin ${base_branch} で取得してください）" 2
   base="$(git merge-base "$target" HEAD)" || dw_die "${target} と HEAD の基点が見つかりません" 2
   branch="$(git symbolic-ref --short -q HEAD || true)"
-  IFS='|' read -r branch_type issue <<<"$(dw_parse_branch "$config" "$branch")"
+  IFS='|' read -r branch_type branch_issue <<<"$(dw_parse_branch "$config" "$branch")"
+  # ブランチ名の番号は、先頭の 0 をそろえる（017 は 17）。Issue の番号として使えない（0 など）ときは、止まらずに Issue は無いものとする
+  issue=""
+  if [ -n "$branch_issue" ] && ! issue="$(dw_issue_number --issue "$branch_issue" 2>/dev/null)"; then
+    dw_warn "ブランチ名の番号 ${branch_issue} は Issue の番号として使えないので、Issue は無いものとして判断します"
+    issue=""
+  fi
   if [ -n "$issue" ]; then
     err="$(mktemp)"
     if ! command -v gh >/dev/null 2>&1; then
       dw_warn "gh が無いので Issue #${issue} を読めません。type はブランチ名から決めます"
-    elif labels="$(gh issue view "$issue" --json labels 2>"$err")"; then
+    elif labels="$(dw_try_read_issue "$issue" labels 2>"$err")"; then
       type="$(jq -r --argjson t "$(jq -c .labels.types <<<"$config")" \
         '[.labels[].name | select(. as $n | $t | index($n))] | if length == 1 then .[0] else "" end' <<<"$labels")"
       [ -z "$type" ] || type_from=issue
     else
-      case "$(cat "$err")" in
-        *NOT_FOUND* | *"Could not resolve to"*)
+      # PR の番号・無い番号なら Issue は無いものとし、読めなければ番号は使う（dw_try_read_issue の終了コード）
+      case "$?" in
+        2)
+          dw_warn "#${issue} は PR なので、Issue は無いものとして判断します"
+          issue=""
+          ;;
+        3)
           dw_warn "Issue #${issue} が見つからないので、Issue は無いものとして判断します"
           issue=""
           ;;
@@ -154,11 +166,8 @@ if [ "$auto" = true ] || [ -n "$base" ] || [ -n "$target" ] || [ -n "$type" ] ||
   if [ -z "$base" ] || [ -z "$target" ]; then
     dw_die "条件で絞り込むには --base と --target の両方を渡してください" 64
   fi
-  # スキルの引数の #12 も受ける。# だけは番号が無いので、そのまま残して数字以外として拒否する
-  case "$issue" in "#"?*) issue="${issue#\#}" ;; esac
-  case "$issue" in
-    "" | *[!0-9]*) [ -z "$issue" ] || dw_die "--issue は Issue の番号にしてください: ${issue}" 64 ;;
-  esac
+  # スキルの引数の #12 も受ける（dw_issue_number）。--issue は任意
+  [ -z "$issue" ] || issue="$(dw_issue_number --issue "$issue")"
   git rev-parse --verify --quiet "$base^{commit}" >/dev/null || dw_die "基点のコミットが見つかりません: ${base}" 2
   git rev-parse --verify --quiet "$target^{commit}" >/dev/null || dw_die "マージ先が見つかりません: ${target}" 2
   filter=true

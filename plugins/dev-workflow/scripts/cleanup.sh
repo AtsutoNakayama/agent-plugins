@@ -74,10 +74,7 @@ actions='[]'
 note() { actions="$(jq -c --arg a "$1" '. + [$a]' <<<"$actions")"; }
 
 # ブランチを使っているワークツリーの場所（無ければ空）
-worktree_of() {
-  git -C "$main_root" worktree list --porcelain \
-    | awk -v b="refs/heads/$1" '/^worktree /{p=substr($0, 10)} $0 == "branch " b {print p}'
-}
+worktree_of() { dw_worktree_of "$main_root" "$1"; }
 
 # 失うものの一覧（--abandon）。使い方: lose <種類> <1行に1つの一覧>
 lost='{"commits": [], "uncommitted": [], "ignored": [], "submodules": []}'
@@ -99,7 +96,9 @@ if $abandon; then
     lose commits "$(git -C "$main_root" log --format='%h %s' "refs/heads/$branch" --not $excludes)"
   fi
 else
-  prs="$(gh pr list --head "$branch" --state all --json number,url,state,mergedAt,headRefOid,baseRefName,closingIssuesReferences)" \
+  # --head はブランチ名だけで探すので、フォークの同じ名前のブランチからの PR を除く（ほかの --head の呼び出しと同じ）
+  prs="$(gh pr list --head "$branch" --state all --json number,url,state,mergedAt,headRefOid,baseRefName,closingIssuesReferences,isCrossRepository \
+    | jq -c 'map(select(.isCrossRepository | not))')" \
     || dw_die "${branch} の PR を取得できませんでした"
   pr="$(jq -c 'map(select(.state == "MERGED")) | sort_by(.mergedAt) | last // empty' <<<"$prs")"
   if [ -z "$pr" ]; then
