@@ -186,3 +186,16 @@ run_common() {
   run_common dw_is_set_up "$TMP/wt"
   assert_success
 }
+
+@test "dw_repo_paths・dw_main_root は、環境に別のリポジトリの GIT_DIR などが export されていても、指定したディレクトリを調べる" {
+  git init -q -b main "$TMP/other"
+  git worktree add -q "$TMP/wt" -b feat/1-x
+  export GIT_DIR="$TMP/other/.git" GIT_WORK_TREE="$TMP/other" GIT_COMMON_DIR="$TMP/other/.git"
+  run_common dw_main_root "$TMP/wt"
+  assert_success
+  assert_output "$REPO"
+  run_common dw_repo_paths "$REPO"
+  assert_success
+  assert_line --index 0 "$REPO/.git"
+  assert_line --index 2 "$REPO"
+}

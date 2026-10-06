@@ -250,10 +250,13 @@ dw_parse_repo_paths() {
 }
 
 # <ディレクトリ> で git が見つけるリポジトリの、git のディレクトリ・リポジトリ・作業ツリーの一番上を出力する（dw_parse_repo_paths）。
-# git は1回だけ起動する。リポジトリが無ければ失敗する
+# git は1回だけ起動する。リポジトリが無ければ失敗する。
+# 環境に GIT_DIR などが export されていると、git -C はそのディレクトリのリポジトリを探さずにそれを使うので、外して起動する
+# （ルートの候補が本当にそのリポジトリのものかを確かめるのに使うため）
 # 使い方: dw_repo_paths <ディレクトリ>
 dw_repo_paths() {
-  dw_parse_repo_paths "$1" "$(git -C "$1" rev-parse --git-dir --git-common-dir --show-toplevel 2>/dev/null || true)"
+  dw_parse_repo_paths "$1" "$(env -u GIT_DIR -u GIT_WORK_TREE -u GIT_COMMON_DIR \
+    git -C "$1" rev-parse --git-dir --git-common-dir --show-toplevel 2>/dev/null || true)"
 }
 
 # <ディレクトリ> の git のディレクトリが <git のディレクトリ>（実体の絶対パス）なら、その作業ツリーの一番上を出力する。違えば失敗する。
