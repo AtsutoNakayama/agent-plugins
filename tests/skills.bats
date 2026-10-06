@@ -207,6 +207,9 @@ frontmatter() { awk 'NR == 1 && $0 == "---" { on = 1; next } on && $0 == "---" {
   # shellcheck disable=SC2016 # バッククォートはスキルの本文の文字で、展開させない
   grep -q '`open_prs` がある：Issue を閉じる PR が開いている' "$SKILLS/task-finish/SKILL.md"
   grep -q '「別の名前のブランチで作業した」' "$SKILLS/task-finish/SKILL.md"
+  # 開いている子がある親の Issue は閉じない（親は最後の子を閉じた後に人が閉じる。設計書 §4）
+  # shellcheck disable=SC2016 # バッククォートはスキルの本文の文字で、展開させない
+  grep -q '`issue.open_sub_issues` が 1 以上：開いている子がある親の Issue なので、閉じずに止める' "$SKILLS/task-finish/SKILL.md"
   grep -q 'argument-hint: "\[Issue番号|ブランチ名\]"' "$SKILLS/task-finish/SKILL.md"
   grep -q 'ワークツリーを作らずに着手した' "$SKILLS/task-cancel/SKILL.md"
 }
