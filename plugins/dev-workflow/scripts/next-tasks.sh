@@ -160,29 +160,40 @@ done
 prs="$(gh pr list --state open --limit 1000 --json number,headRefName,files,closingIssuesReferences)" \
   || dw_die "開いている PR を読めませんでした"
 
-jq -n --argjson todo "$todo" --argjson active "$active" --argjson deps "$deps" --argjson fetched "$fetched" \
-  --argjson in_project "$open_in_project" --argjson hold "$hold" \
-  --argjson prs "$prs" --arg repo "$repo_nwo" --arg owner "$owner" --argjson number "$number" '
+# 重なりの判定
+# shellcheck disable=SC2016
+odefs='
   def ov($a; $b): [$a[] as $x | $b[] as $y
       | select($x == "." or $y == "." or $x == $y or ($x | startswith($y + "/")) or ($y | startswith($x + "/"))) | {a: $x, b: $y}];
   def pr_issues: ([.closingIssuesReferences[]?.number]
       + [.headRefName | capture("^[^/]+/(?<n>[0-9]+)-") | .n | tonumber]) | unique;
+  # 着手中の Issue に、開いている PR のファイル（pr_files）と、変えるパス（paths）と、それが分かるか（area_known）を付ける。
   # 親を残すかは、PR のファイルの数ではなく、PR があるかで決める（ファイルが空の PR もある）
-  ($active | map(. as $i | [$prs[] | select(pr_issues | index($i.number))] as $own
+  def active_paths($prs): map(. as $i | [$prs[] | select(pr_issues | index($i.number))] as $own
     | . + {pr_files: ([$own[].files[]?.path] | unique)}
     | select((.parent | not) or ($own | length > 0)) | if .parent then .areas = [] | .no_files = false else . end
     | .paths = ((.areas + .pr_files) | unique)
-    | .area_known = ((.paths | length > 0) or .no_files) | del(.parent, .no_files))) as $act
-  | ([$act[] | select(.area_known | not) | .number]) as $active_unknown
+    | .area_known = ((.paths | length > 0) or .no_files) | del(.parent, .no_files));
+  def unknown_numbers: [.[] | select(.area_known | not) | .number];
+  # 領域（areas・no_files）を持つ Issue に、着手中の Issue（active_paths の結果）との重なりを付ける
+  def with_overlap($act): . as $t
+    | .area_known = ((.areas | length > 0) or .no_files)
+    | .warnings = (if .no_files then [] else ($act | unknown_numbers | map("着手中の #\(.) は PR も領域も無く、重なるか分からない")) end)
+    | .conflicts_with_active = [$act[] | select(ov($t.areas; .paths) | length > 0) | {issue: .number, paths: ov($t.areas; .paths)}];
+'
+
+jq -n --argjson todo "$todo" --argjson active "$active" --argjson deps "$deps" --argjson fetched "$fetched" \
+  --argjson in_project "$open_in_project" --argjson hold "$hold" \
+  --argjson prs "$prs" --arg repo "$repo_nwo" --arg owner "$owner" --argjson number "$number" "$odefs"'
+  ($active | active_paths($prs)) as $act
+  | ($act | unknown_numbers) as $active_unknown
   | ($todo | map(. as $t
       | ($deps[] | select(.number == $t.number).blockers) as $bl
       | . + {blocked_by: ($bl | map(. + {state: (.state // (if .repo == $repo and (.number | IN($in_project[])) then "open"
                                                           else ($fetched[.number | tostring] // "open") end))})
           | map(select(.state != "closed")))}
       | .waiting = (.blocked_by | length > 0)
-      | .area_known = ((.areas | length > 0) or .no_files)
-      | .warnings = (if .no_files then [] else ($active_unknown | map("着手中の #\(.) は PR も領域も無く、重なるか分からない")) end)
-      | .conflicts_with_active = [$act[] | select(ov($t.areas; .paths) | length > 0) | {issue: .number, paths: ov($t.areas; .paths)}])) as $items
+      | with_overlap($act))) as $items
   | ([$items[] | select((.waiting or .parent) | not)]) as $ready
   | (reduce $ready[] as $r ({sel: [], out: []};
       ([.sel[] | select(ov($r.areas; .areas) | length > 0) | {issue: .number, paths: ov($r.areas; .areas)}]) as $clash
