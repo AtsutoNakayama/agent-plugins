@@ -40,6 +40,18 @@ scaffold() {
   [ ! -e .git ]
 }
 
+@test "eval_repo の origin は、ブランチの削除と fast-forward でない push を拒む" {
+  scaffold eval_repo
+  assert_success
+  run git push -q origin --delete main
+  assert_failure
+  git commit -q --allow-empty -m more
+  git push -q origin main
+  git reset -q --hard HEAD^
+  run git push -q --force origin main
+  assert_failure
+}
+
 @test "eval_repo に渡した設定を config.json に書く" {
   scaffold "eval_repo '{\"project\": {\"owner\": \"me\", \"number\": 4}}'"
   assert_success

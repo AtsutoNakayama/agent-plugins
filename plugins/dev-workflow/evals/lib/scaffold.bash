@@ -13,6 +13,8 @@
 
 # 作業用のディレクトリを、dev-workflow を導入した git リポジトリ（main に最初のコミットが1つ）にする。
 # origin は作業用のディレクトリの中の bare のリポジトリ（.fake-remote.git）で、main を push してある（origin/main がある）。
+# origin は、ブランチの削除と fast-forward でない push を拒む。成功する push は必ずリモートに新しいファイル（objects か refs）を
+# 作るので、grader は、作られたファイルの一覧で push したかを確かめられる。
 # 偽の gh の表（.fake-gh/）も作り、リポジトリの名前（me/demo）・gh のバージョン・ログインしている人（me）の応答を入れる。
 # .fake-gh/ と .fake-remote.git/ は .git/info/exclude で git の対象から外す。
 # PATH の gh が偽物（tests/eval/bin/gh）でなければ、何も作らずに失敗する。run.sh を使わずに claude plugin eval を動かすと、
@@ -39,6 +41,8 @@ eval_repo() {
   git init -q --bare .fake-remote.git
   git remote add origin "$PWD/.fake-remote.git"
   git push -q -u origin main
+  git -C .fake-remote.git config receive.denyDeletes true
+  git -C .fake-remote.git config receive.denyNonFastForwards true
   fake_gh_init
   fake_gh_read 'repo view*' '{"nameWithOwner": "me/demo", "url": "https://github.com/me/demo", "defaultBranchRef": {"name": "main"}}'
   fake_gh_read '--version*' 'gh version 2.96.0 (2026-07-02)'
