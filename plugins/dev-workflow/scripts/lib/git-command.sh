@@ -3,8 +3,7 @@
 # どのサブコマンドを、どのディレクトリ・どのリポジトリに対して実行するかを渡す。フック（guard-git.sh・pr-link.sh）が共有する。
 # common.sh の後に source する。
 #
-# 引用符・エスケープ・$( )・ヒアドキュメント・リダイレクトを考え、; & | 改行 ( ) でコマンドを区切る。パイプラインの各コマンドと、
-# & でバックグラウンドで動かす並びは、( ) と同じくサブシェルとして扱う（移った場所は外に効かない）。
+# 引用符・エスケープ・$( )・ヒアドキュメント・リダイレクトを考え、; & | 改行 ( ) でコマンドを区切る。
 # cd で移った先、pushd・popd で積んだ・戻った場所（シェルと同じく、dirs のスタックを追う）、git -C・env -C で指した先を追う
 # （( ) の中で移った・積んだ分は外に効かない）。cd - の後は、移った先を不明とする。前に付くコマンド（builtin・command・exec・time・nohup・
 # env・timeout・nice）は、そのオプションとともに飛ばす（env -S の値は env と同じく語に分ける）。$( ) の中のコマンドは調べない。
@@ -879,30 +878,12 @@ gc_track_case() {
   done
 }
 
-# コマンドを終えて調べる。sub を付けたとき（| の前）と、| の後ろのコマンドは、パイプラインの中（サブシェル）で動くので、
-# 移った場所とスタックを戻す
-# 使い方: gc_end_command [sub]
 gc_end_command() {
-  local sdir sps san
   gc_flush_word
   skip_word=false
-  if [ "$nwords" -gt 0 ]; then
-    gc_track_case "${words[@]}"
-    if [ "${1:-}" = sub ] || $in_pipe; then
-      sdir="$gc_dir" sps="$pstack" san="$anchored"
-      gc_command "${words[@]}"
-      gc_dir="$sdir" pstack="$sps" anchored="$san"
-    else
-      gc_command "${words[@]}"
-    fi
-    in_pipe=false joined=false
-  fi
+  [ "$nwords" -eq 0 ] || gc_track_case "${words[@]}"
+  [ "$nwords" -eq 0 ] || gc_command "${words[@]}"
   words=() nwords=0
-}
-
-# && や || でつないだ並びの始まりの、場所とスタックを覚える（& で並びごとバックグラウンドで動かすと、そこへ戻す）
-gc_list_start() {
-  ls_dir[dn]="$gc_dir" ls_ps[dn]="$pstack" ls_an[dn]="$anchored"
 }
 
 # i から <区切り> の手前までを cut に入れる（区切りが無ければ最後まで）。
@@ -1154,9 +1135,6 @@ gc_scan() {
   # case の中の深さ（case の時点の dn を積む）
   local case_dn=() cn=0
   local arith_i=0
-  # パイプラインの中か（in_pipe）、&&・||・| の後ろで並びが続くか（joined）、並びの始まりの場所とスタック（gc_list_start）
-  local in_pipe=false joined=false ls_dir=() ls_ps=() ls_an=()
-  gc_list_start
 
   while [ "$i" -lt "$len" ]; do
     gc_window
@@ -1175,46 +1153,11 @@ gc_scan() {
         ;;
       "$nl")
         gc_end_command
-        # &&・||・| の後ろの改行では、並びが続く
-        $joined || gc_list_start
         if [ "$hd_n" -gt 0 ]; then gc_skip_heredocs; else i=$((i + 1)); fi
         ;;
-      ';')
+      ';' | '&' | '|')
         gc_end_command
-        gc_list_start
-        # case の ;& と ;;& の & は、バックグラウンドではない
-        if [ "${rest:1:1}" = '&' ]; then i=$((i + 2)); else i=$((i + 1)); fi
-        ;;
-      '&')
-        case "${rest:1:1}" in
-          '&')
-            gc_end_command
-            joined=true
-            i=$((i + 2))
-            ;;
-          # &> と &>> は、リダイレクト
-          '>') i=$((i + 1)) ;;
-          *)
-            # 並びごとバックグラウンド（サブシェル）で動くので、その並びで移った場所とスタックは、外に効かない
-            gc_end_command
-            gc_dir="${ls_dir[dn]}" pstack="${ls_ps[dn]}" anchored="${ls_an[dn]}"
-            gc_list_start
-            i=$((i + 1))
-            ;;
-        esac
-        ;;
-      '|')
-        if [ "${rest:1:1}" = '|' ]; then
-          gc_end_command
-          i=$((i + 2))
-        else
-          # パイプラインのコマンドは、それぞれサブシェルで動くので、移った場所とスタックは、外に効かない（gc_end_command）
-          gc_end_command sub
-          in_pipe=true
-          # |& は、標準エラーもつなぐパイプ
-          if [ "${rest:1:1}" = '&' ]; then i=$((i + 2)); else i=$((i + 1)); fi
-        fi
-        joined=true
+        i=$((i + 1))
         ;;
       '(')
         gc_end_command
@@ -1225,9 +1168,6 @@ gc_scan() {
           dstack[dn]="$gc_dir"
           pstack_save[dn]="$pstack"
           dn=$((dn + 1))
-          # ( ) の全体がパイプラインの1つのコマンドなので、中のコマンドは、それぞれには戻さない（) で戻す）
-          in_pipe=false
-          gc_list_start
           i=$((i + 1))
         fi
         ;;

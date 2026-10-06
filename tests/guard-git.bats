@@ -204,18 +204,6 @@ silent() {
   allowed "(cd $TMP/wt && git commit -m x)" "cd $TMP/wt && (git status) && git commit -m x"
 }
 
-@test "パイプラインの各コマンドと、& でバックグラウンドで動かす並びの cd・pushd・popd は、外に効かない" {
-  git worktree add -q -b feat/21-x "$TMP/wt"
-  denied "main の上ではコミットしません" "cd ../wt | true; git commit -m x" "cd $TMP/wt & git commit -m x" \
-    "pushd $TMP/wt | cat; git commit -m x" "true | cd $TMP/wt; git commit -m x" "cd $TMP/wt && true & git commit -m x" \
-    "cd $TMP/wt |& cat; git commit -m x" "pushd $TMP/wt && popd | cat && popd; git commit -m x"
-  allowed "cd $TMP/wt && git commit -m x | cat" "cd $TMP/wt &> /dev/null && git commit -m x" \
-    "cd $TMP/wt; true & git commit -m x" "true | (cd $TMP/wt; git commit -m x)" "pushd $TMP/wt && popd | cat && git commit -m x" \
-    "$(printf 'cd %s &&\ngit commit -m x' "$TMP/wt")"
-  # case の ;& と ;;& の & は、バックグラウンドではない
-  allowed "case x in x) cd $TMP/wt ;& y) : ;; esac; git commit -m x"
-}
-
 @test "case のパターンの ) は括弧を閉じない" {
   git worktree add -q -b feat/21-x "$TMP/wt"
   denied "main の上ではコミットしません" "(case x in a) :;; esac; cd $TMP/wt); git commit -m x" \

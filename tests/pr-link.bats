@@ -439,12 +439,6 @@ EOF"
   shows_wt "(pushd ../wt && git push)"
 }
 
-@test "パイプラインの中の cd で移った先は、外に効かない" {
-  make_wt
-  shows "cd $TMP/wt | true; git push" "Issue #17: https://github.com/me/demo/issues/17"
-  [[ "$output" != *"issues/23"* ]] || fail "パイプラインの中で移った先の Issue を出した: $output"
-}
-
 @test "外側の場所をたどる前に積んだ場所へ、( ) の中で戻ったときは、移った先が分からないので何も出さない" {
   make_wt
   # 外側は wt に残るので cwd は wt だが、( ) の中の popd は、実行する前の場所（分からない）へ戻る
