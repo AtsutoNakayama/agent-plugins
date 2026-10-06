@@ -711,7 +711,13 @@ gc_command() {
           case "$k" in -v | -V) return 0 ;; esac
         done
         ;;
-      nohup) ext=true; shift ;;
+      nohup)
+        # nohup -- git push も、git を実行する
+        ext=true
+        shift
+        gc_skip_opts "" "" "$@"
+        shift "$gc_nopt"
+        ;;
       exec)
         ext=true
         shift
@@ -784,14 +790,10 @@ gc_command() {
   esac
   case "$1" in
     cd)
+      # cd -L・-P などのオプションを飛ばす（- は前の場所、-- の後ろは - で始まっても行き先）
       shift
-      while [ $# -gt 0 ]; do
-        case "$1" in
-          -) break ;;
-          -*) shift ;;
-          *) break ;;
-        esac
-      done
+      gc_skip_opts "" "" "$@"
+      shift "$gc_nopt"
       if [ $# -gt 0 ]; then gc_cd "$1"; else gc_cd; fi
       return 0
       ;;

@@ -658,7 +658,7 @@ silent() {
     "env -u FOO git push -f" "env -i git push -f" "env - git push -f" "env -iu FOO git push -f" "env --unset=FOO git push -f" \
     "env --unset FOO git push -f" "env -0 -v git push -f" "env -S 'git push -f'" "env -S '-u FOO' git push -f" \
     "command -p git push -f" "exec -a x git push -f" "exec -cl git push -f" \
-    "timeout 60 nice -n 5 env -u FOO FOO=1 git push -f"
+    "timeout 60 nice -n 5 env -u FOO FOO=1 git push -f" "nohup -- git push -f" "command -- git push -f"
   # command -v・-V は、コマンドを実行しない
   allowed "command -v git push -f" "command -pV git push -f"
 }
@@ -731,4 +731,12 @@ EOF
   # pushd "" は失敗し、pushd -n "" で積んだ場所へ戻っても移らない
   denied "main の上ではコミットしません" "pushd \"\"; git commit -m x" "pushd -n \"\" && popd && git commit -m x"
   allowed "cd; git commit -m x" "cd && git commit -m x"
+}
+
+@test "cd -- の後ろは、- で始まっても行き先として読む" {
+  # $HOME は作業用のブランチのワークツリー、-r は main の上のリポジトリ（REPO）
+  git worktree add -q -b feat/21-x "$TMP/wt"
+  export HOME="$TMP/wt"
+  ln -s "$REPO" "$TMP/-r"
+  denied "main の上ではコミットしません" "cd $TMP && cd -- -r && git commit -m x" "cd $TMP && cd -L -- -r && git commit -m x"
 }
