@@ -574,14 +574,12 @@ DW_AWK_STRIP_CR_BOM='{ sub(/\r$/, "") } FNR == 1 { sub(/^\357\273\277/, "") }'
 DW_AWK_YAML='
     # コメント（行頭か空白の後の #）を消す。引用符の中の #（name: "Build #1" など）は残す。
     # 引用符は、値の始まり（空白・[・, の後）に来たものだけを数える（Bob\047s のような語の中のものは除く）。
-    # 引用符の中のエスケープ（単一引用符の中の \047\047、二重引用符の中の \ の次の文字）は、引用符の終わりとみなさない。
-    # 引用符が閉じていなければ、引用符を数えずに、空白の後の # からを消す
-    function strip(s,   i, c, q, prev, cpos) {
+    # 引用符の中のエスケープ（単一引用符の中の \047\047、二重引用符の中の \ の次の文字）は、引用符の終わりとみなさない
+    function strip(s,   i, c, q, prev) {
       sub(/\r$/, "", s)
-      q = ""; prev = " "; cpos = 0
+      q = ""; prev = " "
       for (i = 1; i <= length(s); i++) {
         c = substr(s, i, 1)
-        if (!cpos && c == "#" && (prev == " " || prev == "\t")) cpos = i
         if (q == "") {
           if (c == "#" && (prev == " " || prev == "\t")) return substr(s, 1, i - 1)
           if ((c == "\"" || c == "\047") && (prev == " " || prev == "\t" || prev == "[" || prev == ",")) q = c
@@ -593,8 +591,6 @@ DW_AWK_YAML='
         }
         prev = c
       }
-      # 引用符が閉じていなければ、引用符を数えずに、空白の後の # からをコメントとして消す
-      if (q != "" && cpos) return substr(s, 1, cpos - 1)
       return s
     }
     function unquote(s) {
