@@ -119,9 +119,10 @@ has_breaking_note() { printf '%s' "$1" | jq -Rse 'test("(^|\n)BREAKING[ -]CHANGE
 
 # --- Issue のチェックリスト -----------------------------------------------------
 # 本文を md_scan（lib/common.sh）で読み、チェックリストの項目（items。上から順に {line（0 からの行番号）, checked, text}）と
-# 見出しの行番号（headings）を出す
-scan_of() { jq -c "$DW_JQ_MD_SCAN"' .body // "" | md_scan' <<<"$1"; }
-tasks="$(jq -c "$DW_JQ_MD_SCAN"' .body // "" | md_scan | .items' <<<"$issue_json")"
+# 見出しの行番号（headings）を出す。2つ目の引数で、そこから取り出す部分を指定できる（jq の起動を増やさないため）
+# 使い方: scan_of <Issue の JSON> [jq のフィルター（既定 .）]
+scan_of() { jq -c "$DW_JQ_MD_SCAN"' .body // "" | md_scan | '"${2:-.}" <<<"$1"; }
+tasks="$(scan_of "$issue_json" .items)"
 # 文が1つの項目にだけ当たらない --check の文を出す（無い・複数ある）
 # shellcheck disable=SC2016 # jq のプログラムなので、$ は展開しない
 unmatched_jq='map(. as $s | select([$t[] | select(.text == $s)] | length != 1))'
