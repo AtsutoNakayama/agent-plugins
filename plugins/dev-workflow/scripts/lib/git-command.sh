@@ -4,9 +4,9 @@
 # common.sh の後に source する。
 #
 # 引用符・エスケープ・$( )・ヒアドキュメント・リダイレクトを考え、; & | 改行 ( ) でコマンドを区切る。
-# cd・pushd・popd で移った先と、git -C で指した先を追う（( ) の中の cd は外に効かない）。cd - の後は、移った先を不明とする。
-# 前に付くだけのコマンド（command・exec・time・nohup・env・timeout・nice）は飛ばす。
-# $( ) の中のコマンドは調べない。sh -c・xargs・sudo や git の別名（alias）を通すと見逃す。
+# cd・pushd で移った先と、git -C で指した先を追う（( ) の中の cd は外に効かない）。cd - の後は、移った先を不明とする。
+# popd は、after を付けたとき（下）だけ扱う（pushd で積んだ場所は追わない）。前に付くだけのコマンド（command・exec・time・
+# nohup・env）は飛ばす。$( ) の中のコマンドは調べない。sh -c・xargs・timeout などや git の別名（alias）を通すと見逃す。
 #
 # 使い方:
 #   gc_scan <コールバック> <コマンドの文字列> <始めのディレクトリ（空なら不明）> [after [<戻す先>]]
@@ -211,12 +211,66 @@ gc_worktree_branch() {
   done
 }
 
+# git push の引数を読んで、次の変数に入れる。guard-git.sh（強制 push・push 先）と pr-link.sh（dry-run）が使う。
+#   gc_push_force   強制 push（--force・-f・--mirror・+<refspec>）なら true。--force-with-lease は含めない
+#   gc_push_dry     dry-run（--dry-run・-n）なら true
+#   gc_push_remote  リモート（無ければ空）
+#   gc_push_refs    refspec の配列
+# 短いオプションはまとめて書ける（-fu・-nu）。値を取るオプション（--repo・--push-option・--receive-pack・--exec・-o）の値は飛ばす。
+# -- の後ろは、オプションとみなさない
+# 使い方: gc_push_args <引数>...
+gc_push_force=false gc_push_dry=false gc_push_remote="" gc_push_refs=()
+# shellcheck disable=SC2034 # gc_push_force・gc_push_dry は呼び出し側（フック）が読む
+gc_push_args() {
+  local after_dd=false expect=false w k c
+  gc_push_force=false gc_push_dry=false gc_push_remote="" gc_push_refs=()
+  for w in "$@"; do
+    if $expect; then
+      expect=false
+      continue
+    fi
+    if ! $after_dd; then
+      case "$w" in
+        --) after_dd=true; continue ;;
+        # --mirror はすべての ref をリモートに合わせて上書き・削除する
+        --force | --mirror) gc_push_force=true; continue ;;
+        --dry-run) gc_push_dry=true; continue ;;
+        --repo | --push-option | --receive-pack | --exec) expect=true; continue ;;
+        --*) continue ;;
+        -?*)
+          # -o は値を取るので、その後ろは値
+          k=1
+          while [ "$k" -lt "${#w}" ]; do
+            c="${w:k:1}"
+            case "$c" in
+              f) gc_push_force=true ;;
+              n) gc_push_dry=true ;;
+              o)
+                [ "$((k + 1))" -lt "${#w}" ] || expect=true
+                break
+                ;;
+            esac
+            k=$((k + 1))
+          done
+          continue
+          ;;
+      esac
+    fi
+    if [ -z "$gc_push_remote" ]; then
+      gc_push_remote="$w"
+    else
+      gc_push_refs+=("$w")
+      case "$w" in +*) gc_push_force=true ;; esac
+    fi
+  done
+}
+
 # --- コマンドごとの解析 -------------------------------------------------------------
 
 # 1つのコマンド（単語の並び）を調べる。cd ならディレクトリを移し、git ならコールバックを呼ぶ。gc_scan の中から呼ぶ。
 # 使い方: gc_command <単語>...
 gc_command() {
-  local target to verb
+  local target to
   # 先頭の環境変数の代入（FOO=1 git push）、前に付くだけのコマンド、予約語（then git push）を飛ばす。
   # 操作の対象を変える代入（GIT_DIR など）は、対象のリポジトリを求めるときに使う
   gc_genv=()
@@ -224,41 +278,7 @@ gc_command() {
     case "$1" in
       GIT_DIR=* | GIT_WORK_TREE=* | GIT_COMMON_DIR=*) gc_genv+=("${1%%=*}=$(gc_expand_home "${1#*=}")"); shift ;;
       [A-Za-z_]*=*) shift ;;
-      command | exec | nohup) shift ;;
-      time)
-        shift
-        [ "${1:-}" != -p ] || shift
-        ;;
-      env)
-        # オプションを飛ばす（-u・-C・-S は値を取る）。後ろの代入（env FOO=1 git push）は、この繰り返しで飛ばす
-        shift
-        while [ $# -gt 0 ]; do
-          case "$1" in
-            -u | -C | -S) [ $# -ge 2 ] || return 0; shift 2 ;;
-            -*) shift ;;
-            *) break ;;
-          esac
-        done
-        ;;
-      timeout)
-        # オプション（-s・-k は値を取る）と、時間を飛ばす
-        shift
-        while [ $# -gt 0 ]; do
-          case "$1" in
-            -s | -k) [ $# -ge 2 ] || return 0; shift 2 ;;
-            -*) shift ;;
-            *) shift; break ;;
-          esac
-        done
-        ;;
-      nice)
-        # -n <値> を飛ばす（-n5・-5・--adjustment=5 は1語）
-        shift
-        case "${1:-}" in
-          -n | --adjustment) [ $# -ge 2 ] || return 0; shift 2 ;;
-          -*) shift ;;
-        esac
-        ;;
+      command | exec | time | nohup | env) shift ;;
       if | then | elif | else | while | until | do | '{' | '!') shift ;;
       *) break ;;
     esac
@@ -267,13 +287,8 @@ gc_command() {
 
   case "$1" in
     popd)
-      # pushd で積んだ場所に戻る。実行した後のディレクトリから始めたときは、外側の popd の後を不明とする（先頭のコメント）
-      if [ "$pn" -gt 0 ]; then
-        pn=$((pn - 1))
-        gc_dir="${pstack[pn]}"
-      else
-        gc_dir=""
-      fi
+      # 実行した後のディレクトリから始めたときは、外側の popd の後を不明とする（先頭のコメント）。
+      # それ以外は、pushd で積んだ場所を追わないので、移らないものとする
       if $after && [ "$dn" -eq 0 ]; then
         gc_dir=""
         anchored=true
@@ -281,7 +296,6 @@ gc_command() {
       return 0
       ;;
     cd | pushd)
-      verb="$1"
       shift
       target=""
       while [ $# -gt 0 ]; do
@@ -291,12 +305,6 @@ gc_command() {
           *) target="$1"; break ;;
         esac
       done
-      if [ "$verb" = pushd ]; then
-        pstack[pn]="$gc_dir"
-        pn=$((pn + 1))
-        # 引数の無い pushd は、積んだ場所と入れ替えるので、移った先を不明とする
-        [ -n "$target" ] || target=-
-      fi
       case "$target" in
         '') to="$(gc_resolve_dir "" "$HOME")" ;;
         -) to="" ;;
@@ -674,8 +682,6 @@ gc_scan() {
   local hd_delims=() hd_strip=() hd_n=0
   # ( ) の中の cd は外に効かないので、( の時点のディレクトリを積んでおき、) で戻す
   local dstack=() dn=0
-  # pushd で積んだ場所（popd で戻る）。( ) の中で積んだ分は外に効かないので、( の時点の数も積む
-  local pstack=() pn=0 pnstack=()
   # case の中の深さ（case の時点の dn を積む）
   local case_dn=() cn=0
   local arith_i=0
@@ -710,7 +716,6 @@ gc_scan() {
           i=$arith_i
         else
           dstack[dn]="$gc_dir"
-          pnstack[dn]=$pn
           dn=$((dn + 1))
           i=$((i + 1))
         fi
@@ -723,7 +728,6 @@ gc_scan() {
         elif [ "$dn" -gt 0 ]; then
           dn=$((dn - 1))
           gc_dir="${dstack[dn]}"
-          pn=${pnstack[dn]}
         fi
         i=$((i + 1))
         ;;

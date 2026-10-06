@@ -11,7 +11,9 @@
 #
 # 決まり（設計書 §9）:
 #   - 同じリンクも、連続で毎回出す（常に見えるようにするため）
-#   - git のコマンドは、操作の対象（cd・git -C で移った先）のリポジトリ・ブランチで判断する
+#   - git のコマンドは、操作の対象（cd・pushd・git -C で移った先、--git-dir・GIT_DIR で指したリポジトリ。gc_target）の
+#     リポジトリ・ブランチで判断する。外側の popd・cd - の後と、プロジェクトのルートからの相対パスへの cd の後は、
+#     移った先が分からないので出さない（scripts/lib/git-command.sh の gc_scan の after）
 #   - Issue の番号が分からないブランチ（main など）では、ブランチから導くリンクは出さない（作った PR・Issue は出す）
 #   - gh が無い・失敗する・解析できないときは、何も出さずに通す。フックは作業を止めない（いつも終了コード 0）
 #   - 導入していないリポジトリ（dw_is_set_up）では、何も出さない（設計書 §1）
@@ -83,30 +85,6 @@ add_event() {
 new_names=()
 add_new_name() { new_names+=("$1"); }
 
-# git push の引数が dry-run（-n・--dry-run）なら成功する。短いオプションはまとめて書ける（-nu）。-o は値を取るので、その後ろは見ない
-# 使い方: push_dry_run <引数>...
-push_dry_run() {
-  local w k
-  for w in "$@"; do
-    case "$w" in
-      --) return 1 ;;
-      --dry-run) return 0 ;;
-      --*) ;;
-      -?*)
-        k=1
-        while [ "$k" -lt "${#w}" ]; do
-          case "${w:k:1}" in
-            n) return 0 ;;
-            o) break ;;
-          esac
-          k=$((k + 1))
-        done
-        ;;
-    esac
-  done
-  return 1
-}
-
 # git の呼び出しを1つ調べ、push・commit・ブランチの作成なら、対象のリポジトリとブランチを覚える（gc_scan のコールバック）。
 # git stash push や git log --grep commit は、サブコマンドが違うので当たらない。
 # ブランチを作るコマンドの名前は、guard-git.sh と同じ書き方（-cname なども）で拾う。-b・-B の無い git worktree add は、
@@ -117,7 +95,11 @@ on_git() {
   shift
   new_names=()
   case "$sub" in
-    push) ! push_dry_run "$@" || return 0 ;;
+    push)
+      # git push -n（--dry-run。-nu のようにまとめた書き方を含む）は push しない
+      gc_push_args "$@"
+      ! $gc_push_dry || return 0
+      ;;
     commit) ;;
     switch | checkout | branch | worktree)
       gc_new_branches add_new_name "$sub" "$@"
@@ -149,11 +131,11 @@ has 'task-start\.sh' && task_start=true
 script_push=false script_commit=false
 has 'pr-create\.sh' && script_push=true
 has 'commit\.sh' && script_commit=true
-cwd_root=""
+cwd_root="" cwd_repo=""
 if $created || $task_start || $script_push || $script_commit; then
   gc_git_dir="$dir" gc_gopts=() gc_genv=()
   gc_target
-  cwd_root="$gc_root"
+  cwd_root="$gc_root" cwd_repo="$gc_repo"
   if [ -n "$cwd_root" ]; then
     cwd_branch="$(gc_branch)"
     ! $script_push || add_event push "$cwd_branch"
@@ -247,7 +229,7 @@ for pass in current create; do
 done
 if $task_start && dw_is_set_up "$cwd_root"; then
   n="$(jq -r 'objects | .issue // empty' <<<"$stdout" 2>/dev/null | head -n 1 || true)"
-  case "$n" in '' | *[!0-9]*) ;; *) add_issue "$cwd_root" "$cwd_root" "$n" ;; esac
+  case "$n" in '' | *[!0-9]*) ;; *) add_issue "$cwd_repo" "$cwd_root" "$n" ;; esac
 fi
 
 # push の PR・CI は、push したリポジトリの今のブランチのもの（Issue が分からないブランチでは出さない）。

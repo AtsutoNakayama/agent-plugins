@@ -73,61 +73,20 @@ base_branch() {
   printf '%s\n' "${base:-main}"
 }
 
-# git push の引数を調べる。使い方: check_push <引数>...
+# git push の引数を調べる（引数の読み方は gc_push_args）。使い方: check_push <引数>...
 check_push() {
-  local force=false remote="" nref=0 after_dd=false expect=false w k c dest current base
-  local refs=()
-  for w in "$@"; do
-    if $expect; then
-      expect=false
-      continue
-    fi
-    if ! $after_dd; then
-      case "$w" in
-        --) after_dd=true; continue ;;
-        # --mirror はすべての ref をリモートに合わせて上書き・削除する
-        --force | --mirror) force=true; continue ;;
-        --repo | --push-option | --receive-pack | --exec) expect=true; continue ;;
-        --*) continue ;;
-        -?*)
-          # 短いオプションはまとめて書ける（-fu）。-o は値を取るので、その後ろは値
-          k=1
-          while [ "$k" -lt "${#w}" ]; do
-            c="${w:k:1}"
-            case "$c" in
-              f) force=true ;;
-              o)
-                [ "$((k + 1))" -lt "${#w}" ] || expect=true
-                break
-                ;;
-            esac
-            k=$((k + 1))
-          done
-          continue
-          ;;
-      esac
-    fi
-    if [ -z "$remote" ]; then
-      remote="$w"
-    else
-      refs+=("$w")
-      nref=$((nref + 1))
-    fi
-  done
-
-  for w in ${refs[@]+"${refs[@]}"}; do
-    case "$w" in +*) force=true ;; esac
-  done
-  $force && deny "強制 push（--force / -f / +<refspec> / --mirror）はしません。必要なら --force-with-lease を使ってください"
+  local w dest current base
+  gc_push_args "$@"
+  ! $gc_push_force || deny "強制 push（--force / -f / +<refspec> / --mirror）はしません。必要なら --force-with-lease を使ってください"
 
   current="$(gc_branch)"
   base="$(base_branch)"
-  if [ "$nref" -eq 0 ]; then
+  if [ "${#gc_push_refs[@]}" -eq 0 ]; then
     [ "$current" != "$base" ] \
       || deny "${base} へは push しません。作業用のブランチ（task-start）で PR を作ってください"
     return 0
   fi
-  for w in "${refs[@]}"; do
+  for w in "${gc_push_refs[@]}"; do
     w="${w#+}"
     case "$w" in
       *:*) dest="${w##*:}" ;;

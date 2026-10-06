@@ -411,12 +411,6 @@ EOF"
   assert_equal "$(args pr-list 1)" "--head feat/23-x --state open --json url,isCrossRepository -q map(select(.isCrossRepository | not)) | .[0].url // empty"
 }
 
-@test "timeout・nice などを前に付けた git も拾う" {
-  shows "timeout 60 git push" "PR を作る:"
-  shows "nice -n 5 git commit -m x" "Issue #17: https://github.com/me/demo/issues/17"
-  shows "time -p git commit -m x" "Issue #17: https://github.com/me/demo/issues/17"
-}
-
 @test "外側の相対パスへの cd で、cwd がプロジェクトのルートなら、外へ出て戻されたのかもしれないので何も出さない" {
   make_wt
   # cwd（REPO）がプロジェクトのルート：cd ../wt がプロジェクトの外なら、Claude Code が cwd を REPO に戻している
@@ -429,17 +423,21 @@ EOF"
   CLAUDE_PROJECT_DIR="$REPO" shows_wt "cd ../wt && git push" "$TMP/wt"
 }
 
-@test "外側の popd の後は、移った先が分からないので何も出さない（( ) の中の pushd・popd はたどる）" {
+@test "外側の popd の後は、移った先が分からないので何も出さない（( ) の中の pushd はたどる）" {
   make_wt
-  silent "pushd $TMP/wt && popd && git push" "pushd $TMP/wt; popd; git commit -m x"
+  silent "pushd $TMP/wt && popd && git push" "pushd $TMP/wt; popd; git commit -m x" "popd; git push"
+  [ "$(called issue-view)" -eq 0 ]
   shows_wt "(pushd ../wt && git push)"
-  shows_wt "(pushd $TMP && pushd wt && popd && cd wt && git push)"
 }
 
 @test "短いオプションをまとめた git push -nu も dry-run とみなし、何も出さない" {
   silent "git push -nu origin feat/17-demo" "git push -vn" "git push --porcelain -n"
   shows "git push -u origin feat/17-demo" "PR を作る:"
   shows "git push -o n origin feat/17-demo" "PR を作る:"
+  # -- の後ろと、値を取るオプションの値は、オプションとみなさない（guard-git.sh と同じ gc_push_args で読む）
+  shows "git push origin -- -n" "PR を作る:"
+  shows "git push --push-option -n origin feat/17-demo" "PR を作る:"
+  shows "git push -o -n origin feat/17-demo" "PR を作る:"
 }
 
 @test "同じリポジトリの別のワークツリーにまたがっても、同じ Issue は1回だけ調べる" {
@@ -478,4 +476,11 @@ EOF"
   run_hook "git branch feat/23-x && git commit -m x && git commit -m y"
   assert_success
   assert_equal "$(jq -r .systemMessage <<<"$output")" "$(printf '関連するリンク:\n- Issue #17: https://github.com/me/demo/issues/17\n- Issue #23: https://github.com/me/demo/issues/23')"
+}
+
+@test "task-start.sh と、同じ Issue のブランチへの commit を続けても、Issue は1回だけ調べる" {
+  run_hook "git commit -m x && bash \"\${CLAUDE_PLUGIN_ROOT}/scripts/task-start.sh\" --issue 17 --slug x" '{"issue": 17, "branch": "feat/17-demo"}'
+  assert_success
+  assert_equal "$(jq -r .systemMessage <<<"$output")" "$(printf '関連するリンク:\n- Issue #17: https://github.com/me/demo/issues/17')"
+  assert_equal "$(called issue-view)" 1
 }
