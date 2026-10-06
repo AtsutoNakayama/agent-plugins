@@ -175,8 +175,22 @@ pos() {
   assert_output --partial "続きは次のファイルを読んでください: $WORKFLOW_USER_DIR/task-flow.md）"
 }
 
-@test "既定の流れに、ワークツリーが要らないタスク（リポジトリを変えない）の進め方が書いてある" {
-  grep -q 'ワークツリーとブランチを作らずに着手できます' "$DEFAULT"
+@test "フックの出力に、ワークツリーが要らないタスク（リポジトリを変えない）の進め方が書いてある" {
+  run_hook
+  assert_success
+  assert_output --partial 'ワークツリーとブランチを作らずに着手できます'
   # shellcheck disable=SC2016 # バッククォートは流れの本文の文字で、展開させない
-  grep -q 'もう一度 `/dev-workflow:task-start` でワークツリーを作ってから変えます' "$DEFAULT"
+  assert_output --partial 'もう一度 `/dev-workflow:task-start` でワークツリーを作ってから変えます'
+}
+
+@test "フックの出力に、Issue の分け方を提案するときは起票の前の相談でも task-create を呼ぶことが書いてある" {
+  run_hook
+  assert_success
+  # shellcheck disable=SC2016 # バッククォートは流れの本文の文字で、展開させない
+  assert_output --partial '起票の前の相談（ファイルを変えない段階）でも、自分で案を作らずに `/dev-workflow:task-create` を呼び'
+  # ファイルを変える作業の流れ（番号の付いた段階）の中ではなく、流れの外の項目にちょうど1つ書く
+  run grep -cF '/dev-workflow:task-create` を呼び' "$DEFAULT"
+  assert_output 1
+  run grep -cE '^- .*/dev-workflow:task-create` を呼び' "$DEFAULT"
+  assert_output 1
 }

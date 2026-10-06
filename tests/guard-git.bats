@@ -541,3 +541,14 @@ silent() {
   mkdir "$TMP/plain"
   denied "強制 push" "cd $TMP/plain && git push --force" "cd $TMP/plain && GIT_DIR=$TMP/nowhere git push --force"
 }
+
+@test "popd は場所を移さない（積んだ場所が無い popd の後でも、main への commit を止める）" {
+  denied "main の上ではコミットしません" "popd; git commit -m x" "popd && git commit -m x"
+  denied "強制 push" "popd; git push -f"
+}
+
+@test "前に付くだけのコマンド（command・exec・time・nohup・env）を飛ばして、git を調べる" {
+  git checkout -q -b feat/21-x
+  denied "強制 push" "command git push -f" "exec git push -f" "time git push -f" "nohup git push -f" "env git push -f" \
+    "env FOO=1 git push -f" "FOO=1 nohup git push -f"
+}
