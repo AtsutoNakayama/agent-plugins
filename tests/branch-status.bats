@@ -359,6 +359,6 @@ queue_removed_fixture() {
   echo '{"data": {"resource": {"isMergeQueueEnabled": true, "mergeQueueEntry": {"state": "QUEUED", "position": 3}}}}' >"$FIX/PrQueue.json"
   run_status
   assert_success
-  # キューを使い、main と衝突しないので取り込まず、並んでいることを案内する
-  assert_equal "$(jq -c .plan <<<"$output")" '{"action":"none","reason":"no_conflict","queue":"queued","fallback":null}'
+  # キューを使い、main と衝突しないので取り込まず、並んでいることを案内する（最新の main を求められたら、遅れているので取り込む）
+  assert_equal "$(jq -c .plan <<<"$output")" '{"action":"none","reason":"no_conflict","queue":"queued","fallback":"merge"}'
 }

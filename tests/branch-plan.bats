@@ -41,12 +41,12 @@ check_plan() {
   check_plan "$P | .pushed_conflicts = null | .pr.merge_state = \"UNKNOWN\"" "recheck merge_state_unknown - push"
 }
 
-@test "キューを使う 3：取り込み済みで未 push でも、push 済みのブランチが衝突しなければ取り込まない" {
-  check_plan "$P" "none merged_not_pushed not_queued -"
+@test "キューを使う 3：取り込み済みで未 push でも、push 済みのブランチが衝突しなければ取り込まない（fallback は push）" {
+  check_plan "$P" "none merged_not_pushed not_queued push"
   # 手元で衝突しないと分かっていれば、GitHub が調べている途中（UNKNOWN）でも待たない
-  check_plan "$P | .pr.merge_state = \"UNKNOWN\"" "none merged_not_pushed not_queued -"
+  check_plan "$P | .pr.merge_state = \"UNKNOWN\"" "none merged_not_pushed not_queued push"
   # 手元で確かめられなくても、GitHub が衝突していないと言っていれば待たない
-  check_plan "$P | .pushed_conflicts = null" "none merged_not_pushed not_queued -"
+  check_plan "$P | .pushed_conflicts = null" "none merged_not_pushed not_queued push"
 }
 
 @test "キューを使う 4：main と衝突するなら取り込む" {
@@ -66,14 +66,15 @@ check_plan() {
   check_plan "$BEHIND | .conflicts = null | .pr.merge_state = \"UNKNOWN\"" "recheck merge_state_unknown - merge"
 }
 
-@test "キューを使う 7：main と衝突していなければ、遅れていても取り込まない" {
+@test "キューを使う 7：main と衝突していなければ、遅れていても取り込まない（fallback は、遅れていれば merge）" {
+  # 遅れていなければ、最新の main を求められても取り込むものが無い
   check_plan "." "none no_conflict not_queued -"
-  check_plan "$BEHIND" "none no_conflict not_queued -"
-  check_plan "$BEHIND | .pr.merge_state = \"BEHIND\"" "none no_conflict not_queued -"
+  check_plan "$BEHIND" "none no_conflict not_queued merge"
+  check_plan "$BEHIND | .pr.merge_state = \"BEHIND\"" "none no_conflict not_queued merge"
   # 手元で衝突しないと分かっていれば、GitHub が調べている途中（UNKNOWN）でも待たない
-  check_plan "$BEHIND | .pr.merge_state = \"UNKNOWN\"" "none no_conflict not_queued -"
+  check_plan "$BEHIND | .pr.merge_state = \"UNKNOWN\"" "none no_conflict not_queued merge"
   # 手元で確かめられなくても、GitHub が衝突していないと言っていれば取り込まない
-  check_plan "$BEHIND | .conflicts = null | .pr.merge_state = \"BLOCKED\"" "none no_conflict not_queued -"
+  check_plan "$BEHIND | .conflicts = null | .pr.merge_state = \"BLOCKED\"" "none no_conflict not_queued merge"
 }
 
 @test "キューの案内：キューでの状態に合わせて queue を出す" {
@@ -83,7 +84,7 @@ check_plan() {
     check_plan ".pr.merge_queue.state = \"$s\" | .pr.merge_queue.position = 1" "none no_conflict queued -"
   done
   check_plan '.pr.merge_queue.removed = {"reason": "merge_conflict", "at": "2026-10-04T16:36:30Z"}' "none no_conflict removed -"
-  check_plan "$P | .pr.merge_queue.removed = {\"reason\": \"failed_checks\", \"at\": \"t\"}" "none merged_not_pushed removed -"
+  check_plan "$P | .pr.merge_queue.removed = {\"reason\": \"failed_checks\", \"at\": \"t\"}" "none merged_not_pushed removed push"
 }
 
 @test "キューの案内は、取り込まない（none）ときだけ出す" {

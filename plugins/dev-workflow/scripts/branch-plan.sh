@@ -14,19 +14,19 @@
 #             merge_state_unknown（衝突するか分からない）・base_mismatch（GitHub と手元で判断が食い違う）
 #   queue     キューの案内。キューを使い、action が none のときだけ。conflict（キューの中で先に並んだ PR と衝突した）・
 #             queued（並んでいる）・removed（外れたまま）・not_queued（入っていない）。ほかは null
-#   fallback  action が recheck のとき、調べ直しても分からなければ、ユーザーに確かめてからすること（merge・push）。
-#             ほかは null
+#   fallback  ユーザーに確かめてからすること（merge・push）。action が recheck なら、調べ直しても分からないとき。
+#             none なら、ユーザーが最新の main を求めたとき（取り込むものが無ければ null）。ほかは null
 #
 # 判断の表（上から順に当てはめる。P は、手元では取り込み済みで、まだ push していないこと：behind が 0 で、
 # pushed_behind が 1 以上。merge_state は PR の mergeStateStatus）
 #   キューを使う（pr.merge_queue.enabled が true）
 #     1. P で、pushed_conflicts が true か merge_state が DIRTY  → push
 #     2. P で、pushed_conflicts が null で merge_state が UNKNOWN → recheck（fallback: push）
-#     3. P で、それ以外                                          → none（merged_not_pushed）
+#     3. P で、それ以外                                          → none（merged_not_pushed。fallback: push）
 #     4. conflicts が true か、merge_state が DIRTY で behind が 1 以上 → merge（conflict）
 #     5. merge_state が DIRTY（behind は 0）                     → ask_base
 #     6. conflicts が null で merge_state が UNKNOWN             → recheck（fallback: merge）
-#     7. それ以外                                                → none（no_conflict）
+#     7. それ以外                                                → none（no_conflict。fallback: behind が 1 以上なら merge）
 #   キューを使わない（PR が無い、キューの状態を読めないときも）
 #     8. P                                                       → push
 #     9. behind が 1 以上                                        → merge（behind）
@@ -67,11 +67,11 @@ jq -c '
       if $merged_not_pushed then
         if .pushed_conflicts == true or $state == "DIRTY" then plan("push"; "merged_not_pushed")
         elif .pushed_conflicts == null and $state == "UNKNOWN" then plan("recheck"; "merge_state_unknown") + {fallback: "push"}
-        else plan("none"; "merged_not_pushed") + {queue: $guide} end
+        else plan("none"; "merged_not_pushed") + {queue: $guide, fallback: "push"} end
       elif .conflicts == true or ($state == "DIRTY" and .behind >= 1) then plan("merge"; "conflict")
       elif $state == "DIRTY" then plan("ask_base"; "base_mismatch")
       elif .conflicts == null and $state == "UNKNOWN" then plan("recheck"; "merge_state_unknown") + {fallback: "merge"}
-      else plan("none"; "no_conflict") + {queue: $guide} end
+      else plan("none"; "no_conflict") + {queue: $guide, fallback: (if .behind >= 1 then "merge" else null end)} end
     else
       if $merged_not_pushed then plan("push"; "merged_not_pushed")
       elif .behind >= 1 then plan("merge"; "behind")
