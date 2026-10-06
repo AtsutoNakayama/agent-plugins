@@ -583,7 +583,7 @@ DW_JQ_ISSUE_SECTIONS='
 '
 
 # 同じリポジトリの Issue を REST で読み、JSON を出力する。REST の issues は PR も返すので、PR の番号と無い番号（404・410）は、
-# 何も出力しない。認証・通信などほかの失敗は、dw_gh_find が理由を伝えて止まる
+# 何も出力しない。認証・通信などほかの失敗は、dw_gh_find が理由を伝えて止まる。issue-create.sh（親の Issue）と issue-depend.sh で使う
 # 使い方: json="$(dw_issue_json <OWNER/NAME> <番号>)"; [ -n "$json" ] || <無いときの処理>
 dw_issue_json() {
   dw_gh_find gh api "repos/$1/issues/$2" | jq -c 'if . == null or .pull_request then empty else . end'

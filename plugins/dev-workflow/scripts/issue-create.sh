@@ -150,8 +150,8 @@ if [ -n "$parent" ]; then
     1 | 2 | 3) ;;
     *) dw_die "sub_issues.max_depth は 1・2・3 のどれかにしてください: $max_depth" 2 ;;
   esac
-  parent_issue="$(dw_gh_find gh api "repos/$repo_nwo/issues/$parent" | jq -c 'if . == null or .pull_request then null else . end')"
-  [ "$parent_issue" != null ] || dw_die "親にする Issue #${parent} がありません（${repo_nwo}）"
+  parent_issue="$(dw_issue_json "$repo_nwo" "$parent")"
+  [ -n "$parent_issue" ] || dw_die "親にする Issue #${parent} がありません（${repo_nwo}）"
   # 親から上へたどり、起票する Issue が何層目になるかを数える（一番上の Issue が 1 層目）。
   # 親の親は別のリポジトリにあることもあるので、応答の API の URL からパスを作る
   depth=2
