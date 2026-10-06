@@ -183,10 +183,14 @@ pos() {
   assert_output --partial 'もう一度 `/dev-workflow:task-start` でワークツリーを作ってから変えます'
 }
 
-@test "既定の流れに、Issue の分け方を提案する前に task-create の手順を読むことが書いてある" {
+@test "フックの出力に、Issue の分け方を提案するときは起票の前の相談でも task-create を呼ぶことが書いてある" {
+  run_hook
+  assert_success
   # shellcheck disable=SC2016 # バッククォートは流れの本文の文字で、展開させない
-  grep -q 'Issue の分け方や作業の構成を提案するときは、提案する前に `/dev-workflow:task-create` の手順を読み' "$DEFAULT"
-  for rule in '親子は「仕様 → 着手できる作業」の2層' 'Story Point は子にだけ付けて、親は空欄' '依存は番号で書く'; do
-    grep -qF "$rule" "$DEFAULT" || fail "「${rule}」が書かれていません"
-  done
+  assert_output --partial '起票の前の相談（ファイルを変えない段階）でも、自分で案を作らずに `/dev-workflow:task-create` を呼び'
+  # ファイルを変える作業の流れ（番号の付いた段階）の中ではなく、流れの外の項目に書く
+  run grep -F '/dev-workflow:task-create` を呼び' "$DEFAULT"
+  assert_output --regexp '^- '
+  run grep -E '^[0-9]+\. .*分け方' "$DEFAULT"
+  assert_failure
 }

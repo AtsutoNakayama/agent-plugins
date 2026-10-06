@@ -365,3 +365,9 @@ step() { awk -v n="$2" -v end="$3" 'on && ($0 ~ /^###? / || (end != "" && $0 ~ e
   grep -q 'agents/perspective-reviewer.md' "$SKILLS/review-perspective-add/SKILL.md" \
     || fail "review-perspective-add に、結果の形を決めるのが agent perspective-reviewer だと書かれていません"
 }
+
+@test "task-create は、分け方の提案でも呼ばれ、起票を頼まれていなければ確認で止まる（#169）" {
+  f="$SKILLS/task-create/SKILL.md"
+  frontmatter "$f" | grep -qF 'Issue の分け方・親子の構成を提案するときに使う' || fail "description に分け方の提案が書かれていません"
+  step "$f" 3 | grep -qF '「この内容で起票する」が選ばれなければ、起票せずに止める' || fail "手順3に、提案だけで止めることが書かれていません"
+}
