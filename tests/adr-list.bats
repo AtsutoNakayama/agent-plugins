@@ -332,3 +332,13 @@ write_adr() {
   assert_success
   assert_equal "$(jq -c .proposal <<<"$output")" '"pending"'
 }
+
+@test "見出しが2つ以上ある ADR は最初の見出しを title にし、残りを読まずに次のファイルへ進む" {
+  mkdir -p docs/adr
+  printf -- '---\nissue: 151\n---\n\n# 一つ目\n\n## 節\n\n# 二つ目\n---\nissue: 9\n---\n' >docs/adr/a.md
+  write_adr docs/adr/b.md "$(printf 'status: accepted\nissue: 151')" "B"
+  run_script adr-list.sh --issue 151
+  assert_success
+  assert_equal "$(jq -c '[.adrs[] | [.path, .issue, .status, .title]]' <<<"$output")" \
+    '[["docs/adr/a.md",151,null,"一つ目"],["docs/adr/b.md",151,"accepted","B"]]'
+}
