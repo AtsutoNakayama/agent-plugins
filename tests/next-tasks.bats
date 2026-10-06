@@ -890,3 +890,13 @@ args() { grep "^$1 " "$CALLS" | sed -n "${2:-1}p" | cut -d' ' -f2-; }
   # コードブロックの中の「## 補足」も見出しとみなすので、#9 は「補足」の節にある（issue-depend.sh も同じ決まりで書く）
   assert_equal "$(out_of '.todo[0].body_deps')" '[5,6,8]'
 }
+
+@test "HTML のコメントの中の「## 依存」も節の見出しとみなし、その中の #N も読む（issue-depend.sh と同じ読み方。既知の制限）" {
+  setup_fake_gh
+  item 10 Todo $'## 依存\n<!--\n- #5\n## 依存\n-->\n- なし'
+  write_page
+  echo open >"$FIX/state-5"
+  run_script next-tasks.sh
+  assert_success
+  assert_equal "$(out_of '.todo[0].body_deps')" '[5]'
+}

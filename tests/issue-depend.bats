@@ -72,7 +72,7 @@ body_of() { cat "$FIX/body-$1"; }
   assert_success
   assert_equal "$(grep '^AddBlockedBy ' "$CALLS")" 'AddBlockedBy 10 1005'
   assert_equal "$(body_of 10)" $'## 背景\nx\n\n## 依存\n- #5'
-  assert_equal "$(jq -c '[.issue, .blocked_by, .added, .dry_run]' <<<"$output")" '[10,[5],{"dependency":[5],"body":[5]},false]'
+  assert_equal "$(jq -c '[.issue, .blocked_by, .added, .dry_run, .all_closed]' <<<"$output")" '[10,[5],{"dependency":[5],"body":[5]},false,false]'
 }
 
 @test "既にある依存の後ろ（次の見出しの前）に足し、空行はそのまま残す。番号は重複を除き、#N でもよい" {
@@ -127,9 +127,9 @@ body_of() { cat "$FIX/body-$1"; }
   assert_equal "$(body_of 11)" $'## 依存\n- #5'
 }
 
-@test "バッククォートで囲んだ「なし」も消し、見出しの外の #N は既にある依存として数えない" {
+@test "見出しの外の #N は、既にある依存として数えない" {
   setup_fake_gh
-  issue 10 $'## 背景\n#5 の後で\n\n## 依存\n- `なし`'
+  issue 10 $'## 背景\n#5 の後で\n\n## 依存\n- なし'
   issue 5
   run_script issue-depend.sh --issue 10 --blocked-by 5
   assert_success
@@ -268,23 +268,27 @@ body_of() { cat "$FIX/body-$1"; }
   run_script issue-depend.sh --issue 11 --blocked-by 5 --blocked-by 6
   assert_success
   assert_line "warn: 依存する Issue #5 は閉じているので、依存に足しません"
-  assert_equal "$(grep -v '^warn:' <<<"$output" | jq -c '[.added, .skipped_closed]')" '[{"dependency":[6],"body":[6]},[5]]'
+  assert_equal "$(grep -v '^warn:' <<<"$output" | jq -c '[.added, .skipped_closed, .all_closed]')" '[{"dependency":[6],"body":[6]},[5],false]'
   assert_equal "$(body_of 11)" $'## 依存\n- #6'
 }
 
-@test "節の中身が「なし」の1行だけなら置き換え（箇条書きでなくても、理由付きでも）、その行の #N は既にある依存として数えない" {
-  # 消す「なし」の行の #5 を既にあるものと数え、#5 が本文から消えていた
+@test "置き換えるのは task-create の書く「- なし」の1行だけで、ほかの書き方の行は残して後ろに足す（その行の #N も既にある依存）" {
+  # 「なし」の書き方を推し量って書き換えると、書き方ごとに例外が増え、使う人の文やコメントを消していた
   setup_fake_gh
   issue 10 $'## 依存\nなし\n\n## 補足\ny'
   issue 11 $'## 依存\n- `なし`（#5 は閉じた）'
+  issue 12 $'## 依存\n<!-- 先に終わらせる Issue -->\n- なし'
+  issue 13 $'## 依存\n+ 特になし'
   issue 5
   issue 7
-  run_script issue-depend.sh --issue 10 --blocked-by 5
-  assert_success
-  assert_equal "$(body_of 10)" $'## 依存\n- #5\n\n## 補足\ny'
-  run_script issue-depend.sh --issue 11 --blocked-by 5 --blocked-by 7
-  assert_success
-  assert_equal "$(body_of 11)" $'## 依存\n- #5\n- #7'
+  for n in 10 11 12 13; do
+    run_script issue-depend.sh --issue "$n" --blocked-by 5 --blocked-by 7
+    assert_success
+  done
+  assert_equal "$(body_of 10)" $'## 依存\nなし\n- #5\n- #7\n\n## 補足\ny'
+  assert_equal "$(body_of 11)" $'## 依存\n- `なし`（#5 は閉じた）\n- #7'
+  assert_equal "$(body_of 12)" $'## 依存\n<!-- 先に終わらせる Issue -->\n- なし\n- #5\n- #7'
+  assert_equal "$(body_of 13)" $'## 依存\n+ 特になし\n- #5\n- #7'
 }
 
 @test "「なし」で始まる文や、ほかの行と並ぶ「なし」は消さず、どの「依存」の節にも無い番号だけを最初の節に足す" {
@@ -300,7 +304,8 @@ body_of() { cat "$FIX/body-$1"; }
   assert_equal "$(jq -c .added.body <<<"$output")" '[7]'
 }
 
-@test "閉じていないコードブロックがあっても、「## 依存」の節を見つけ、何度実行しても節を足し続けない" {
+@test "閉じていないコードブロックの後の「## 依存」も節とみなし（next-tasks.sh と同じ読み方。既知の制限）、何度実行しても節を足し続けない" {
+  # GitHub ではコードとして表示されるが、読む next-tasks.sh と同じ決まりにして、書いた依存が必ず読まれるようにする
   # 見出しをコードブロックの外に限ると、閉じていないコードブロックの後の節が見えず、実行のたびに節を足していた
   setup_fake_gh
   issue 10 $'## 背景\n```\nx\n## 依存\n- なし'
@@ -313,21 +318,6 @@ body_of() { cat "$FIX/body-$1"; }
   run_script issue-depend.sh --issue 10 --blocked-by 5
   assert_success
   assert_equal "$(jq -c .added <<<"$output")" '{"dependency":[],"body":[]}'
-}
-
-@test "「なし」の行は、箇条書きの記号・「特に」・句点が付いていても、HTML のコメントの行と並んでいても置き換える" {
-  setup_fake_gh
-  issue 10 $'## 依存\n<!-- 先に終わらせる Issue -->\n- なし。'
-  issue 11 $'## 依存\n+ 特になし'
-  issue 12 $'## 依存\n1. なし'
-  issue 5
-  for n in 10 11 12; do
-    run_script issue-depend.sh --issue "$n" --blocked-by 5
-    assert_success
-  done
-  assert_equal "$(body_of 10)" $'## 依存\n<!-- 先に終わらせる Issue -->\n- #5'
-  assert_equal "$(body_of 11)" $'## 依存\n- #5'
-  assert_equal "$(body_of 12)" $'## 依存\n- #5'
 }
 
 @test "CRLF の本文の、改行の無い最後の行の後に足すときも、CRLF にそろえる（本文の最後には改行を足さない）" {
@@ -361,6 +351,16 @@ body_of() { cat "$FIX/body-$1"; }
   FAKE_FAIL=Blocked run_script issue-depend.sh --issue 10 --blocked-by 5
   assert_success
   assert_line "warn: 依存する Issue #5 は閉じているので、依存に足しません"
-  assert_equal "$(grep -v '^warn:' <<<"$output" | jq -c '[.added, .skipped_closed]')" '[{"dependency":[],"body":[]},[5]]'
+  assert_equal "$(grep -v '^warn:' <<<"$output" | jq -c '[.added, .skipped_closed, .all_closed]')" '[{"dependency":[],"body":[]},[5],true]'
   assert_equal "$(called Blocked) $(called AddBlockedBy) $(called EditBody)" '0 0 0'
+}
+
+@test "HTML のコメントの中の「## 依存」も節の見出しとみなす（next-tasks.sh と同じ読み方。既知の制限）" {
+  # 読む側と書く側で結果がそろうことを固定する（next-tasks.bats にも同じ本文のテストがある）
+  setup_fake_gh
+  issue 10 $'## 依存\n<!--\n## 依存\n-->\n- なし'
+  issue 5
+  run_script issue-depend.sh --issue 10 --blocked-by 5
+  assert_success
+  assert_equal "$(body_of 10)" $'## 依存\n<!--\n- #5\n## 依存\n-->\n- なし'
 }

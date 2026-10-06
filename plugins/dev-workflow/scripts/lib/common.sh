@@ -564,26 +564,42 @@ DW_JQ_MD_SCAN='
 # 見出しは「## 」（## と空白）で始まる行だけで、見出しの文字は前後の空白と行末の \r を無視して比べる。同じ見出しの節が
 # 複数あれば、全部を読む。コードブロックの中の「## 」の行も見出しとみなす（md_scan のように除くと、閉じていないコードブロックの後の
 # 節が見えなくなり、issue-depend.sh が実行のたびに節を足してしまう。読むのも書くのもこの決まりなので、食い違わない）。
-# 入力は .body を持つ Issue。source した側で使う
+# HTML のコメントの中の「## 」の行も同じく見出しとみなし、その中の #N も読む（既知の制限）。入力は .body を持つ Issue。source した側で使う
 #   body_lines：本文を行の配列にする（\r は残す）
-#   section_ranges($h)：見出しが $h の節ごとに、{head（見出しの行番号）, end（節の次の行番号）}。中身は head+1 から end-1 まで
+#   section_ranges_of($l; $h)：行の配列 $l の、見出しが $h の節ごとに、{head（見出しの行番号）, end（節の次の行番号）}。
+#     中身は head+1 から end-1 まで。本文を何度も分けないよう、分けた行の配列を受け取る
 #   section($h)：見出しが $h の節の中身の行（\r は外す）
 #   deps：「依存」の節にある #N の番号（重複は除く）
 # 使い方: jq "$DW_JQ_ISSUE_SECTIONS"' deps'
 # shellcheck disable=SC2016,SC2034 # jq のプログラムなので、$ は展開しない
 DW_JQ_ISSUE_SECTIONS='
   def body_lines: (.body // "") | split("\n");
-  def section_ranges($h): body_lines as $l
-    | [range(0; $l | length) | select($l[.] | test("^## "))] as $hs
+  def section_ranges_of($l; $h):
+    [range(0; $l | length) | select($l[.] | test("^## "))] as $hs
     | [range(0; $hs | length) as $i
         | select($l[$hs[$i]] | gsub("\r"; "") | test("^## [ \t]*" + $h + "[ \t]*$"))
         | {head: $hs[$i], end: ($hs[$i + 1] // ($l | length))}];
-  def section($h): body_lines as $l | [section_ranges($h)[] as $r | $l[$r.head + 1:$r.end][] | gsub("\r"; "")];
+  def section($h): body_lines as $l | [section_ranges_of($l; $h)[] as $r | $l[$r.head + 1:$r.end][] | gsub("\r"; "")];
   def deps: [section("依存")[] | scan("#([0-9]+)") | .[0] | tonumber] | unique;
 '
 
+# 本文を分けた行の配列（split("\n")。行末の \r は残す）に行を足す jq の関数。改行は本文に合わせる（どれかの行が \r で終われば
+# \r\n）。行ごとに合わせると、CRLF の本文の改行の無い最後の行の後に足したとき、LF が混ざる。pr-create.sh と issue-depend.sh で使う
+#   crlf：本文が \r\n なら "\r"、でなければ ""
+#   insert_after($k; $new)：$k 番目の行の後に、$new（行末の無い文字列の配列）を足す。$k が CRLF の本文の改行の無い最後の行なら、
+#     その行に改行を付け、足した最後の行を改行の無い行にする（本文の最後に改行を足さない）
+# 使い方: jq "$DW_JQ_LINES"' .body | split("\n") | insert_after(0; ["x"]) | join("\n")'
+# shellcheck disable=SC2016,SC2034 # jq のプログラムなので、$ は展開しない
+DW_JQ_LINES='
+  def crlf: if any(.[]; endswith("\r")) then "\r" else "" end;
+  def insert_after($k; $new): crlf as $cr
+    | ($k == length - 1 and $cr != "" and (.[$k] | endswith("\r") | not)) as $last
+    | (if $last then .[$k] += $cr else . end)
+    | .[:$k + 1] + ($new | map(. + $cr) | if $last and length > 0 then .[-1] |= rtrimstr("\r") else . end) + .[$k + 1:];
+'
+
 # 同じリポジトリの Issue を REST で読み、JSON を出力する。REST の issues は PR も返すので、PR の番号と無い番号（404・410）は、
-# 何も出力しない。認証・通信などほかの失敗は、dw_gh_find が理由を伝えて止まる。issue-create.sh（親の Issue）と issue-depend.sh で使う
+# 何も出力しない。認証・通信などほかの失敗は、dw_gh_find が理由を伝えて止まる
 # 使い方: json="$(dw_issue_json <OWNER/NAME> <番号>)"; [ -n "$json" ] || <無いときの処理>
 dw_issue_json() {
   dw_gh_find gh api "repos/$1/issues/$2" | jq -c 'if . == null or .pull_request then empty else . end'

@@ -11,8 +11,10 @@
 #   1. Issue N と、依存する Issue M があるかを確かめる（PR の番号・無い番号か、N が閉じていれば、何も変えずに止まる）。
 #      M が閉じていれば、待つものが無いので、警告して M だけを飛ばす（skipped_closed に出す）
 #   2. M が GitHub の依存関係に無ければ登録する（依存が循環するなど、GitHub が断ったら、その理由を出して止まる）
-#   3. 本文の「## 依存」の節に「#M」が無ければ、最初の節に「- #M」を足す。節の中身が（HTML のコメントの行を除いて）「なし」の
-#      1行だけなら、その行を置き換える（ほかの行は消さない）。節が無ければ、本文の最後に足す
+#   3. 本文の「## 依存」の節に「#M」が無ければ、最初の節に「- #M」を足す。節の中身が task-create の書く「- なし」の1行だけなら、
+#      その行を置き換える（ほかの書き方の行は消さない）。節が無ければ、本文の最後に足す
+#
+# 出力の all_closed は、依存する Issue が全部閉じていて、何も足すものが無かったとき true（task-start が、待たずに着手するかを聞き直す）
 set -euo pipefail
 
 # shellcheck source=lib/common.sh
@@ -104,46 +106,33 @@ done
 
 # --- 3. 本文の「依存」に書く ----------------------------------------------------------
 # 節は next-tasks.sh と同じ読み方（DW_JQ_ISSUE_SECTIONS）で探す。どの「依存」の節にも無い #M だけを、最初の節の最後の行
-# （空行を除く）の後に足す。最初の節の中身が、HTML のコメントの行（テンプレートの説明）を除いて「なし」の1行だけなら、その行を
-# 置き換える（その行の #N は、既にある依存として数えない）。「なし」の行は、箇条書きの記号（- * + 1.）・「特に」・後ろの（理由）や
-# 句点・バッククォートが付いていてもよい。ほかの行は、「なし」で始まっても、使う人の文なので消さない。
-# 足す行の改行は、本文に \r\n があれば \r\n にする（GitHub の画面で書いた本文。最後の行に改行が無くても、本文に合わせる）
+# （空行を除く）の後に足す。最初の節の中身が、task-create の書く「- なし」と同じ1行だけなら、その行を置き換える。
+# 「なし」のほかの書き方（記号・理由・コメントの付いたもの）は見分けない。使う人が自由に書いた文を推し量って書き換えると、
+# 書き方ごとに例外が増え、消してはいけない行を消すため。その行は残し、後ろに足す（next-tasks.sh は #N だけを読むので、判定は変わらない）。
+# 足す行の改行は、本文に合わせる（DW_JQ_LINES）
 # jq の変数（$l など）を bash に展開させないため、シングルクォートで書く
 # shellcheck disable=SC2016
-edit="$DW_JQ_ISSUE_SECTIONS"'
-  def nashi: gsub("[`\r]"; "")
-    | test("^[ \t]*(([-*+]|[0-9]+[.)])[ \t]+)?(特に)?なし[ \t]*([（(].*[）)])?[ \t]*[。.]?[ \t]*$");
-  def comment: gsub("\r"; "") | test("^[ \t]*<!--.*-->[ \t]*$");
+edit="$DW_JQ_ISSUE_SECTIONS$DW_JQ_LINES"'
   (.body // "") as $body
   | body_lines as $l
-  | section_ranges("依存") as $rs
-  | (if $body | test("\r\n") then "\r" else "" end) as $cr
-  | if ($rs | length) == 0 then
-      deps as $have
-      | [$ns[] | select(. as $n | $have | index($n) | not)] as $new
-      | {added: $new,
-         body: (if ($new | length) == 0 then $body
-           else (($body | sub("[\r\n]+$"; "")) as $b | (if $b == "" then "" else $b + $cr + "\n" + $cr + "\n" end)
-             + (["## 依存"] + ($new | map("- #\(.)")) | map(. + $cr + "\n") | join(""))) end)}
-    else
-      ($rs[0]) as $r
-      | [range($r.head + 1; $r.end) | select($l[.] | gsub("\r"; "") | test("\\S"))] as $filled
-      | [$filled[] | select($l[.] | comment | not)] as $text
-      | (if ($text | length) == 1 and ($l[$text[0]] | nashi) then $text[0] else null end) as $nashi
-      | ([$rs[] | range(.head + 1; .end) | select(. != $nashi) | $l[.] | scan("#([0-9]+)") | .[0] | tonumber] | unique) as $have
-      | [$ns[] | select(. as $n | $have | index($n) | not)] as $new
-      | ($nashi // ($filled | last) // $r.head) as $at
-      | {added: $new,
-         body: (if ($new | length) == 0 then $body
-           else [range(0; $l | length) | . as $i
-             | (if $i == $nashi then empty else $l[$i] end),
-               (if $i == $at then ($new[] | "- #\(.)" + $cr) else empty end)]
-             # 改行の無い最後の行の後に足す（置き換える）ときは、足した最後の行を改行の無い行にし、足す前の行には改行を付ける
-             # （置き換えた「なし」の行は消えるので付けない）
-             | if $at == ($l | length) - 1 and $cr != "" and ($l[$at] | endswith("\r") | not)
-               then (if $nashi == null then .[$at] += $cr else . end) | .[-1] |= rtrimstr("\r") else . end
-             | join("\n") end)}
-    end'
+  | section_ranges_of($l; "依存") as $rs
+  | ([$rs[] | $l[.head + 1:.end][] | scan("#([0-9]+)") | .[0] | tonumber] | unique) as $have
+  | [$ns[] | select(. as $n | $have | index($n) | not)] as $new
+  | ($new | map("- #\(.)")) as $items
+  | {added: $new,
+     body: (if ($new | length) == 0 then $body
+       elif ($rs | length) == 0 then
+         ($l | crlf) as $cr
+         | (($body | sub("[\r\n]+$"; "")) as $b | (if $b == "" then "" else $b + $cr + "\n" + $cr + "\n" end)
+           + (["## 依存"] + $items | map(. + $cr + "\n") | join("")))
+       else
+         ($rs[0]) as $r
+         | [range($r.head + 1; $r.end) | select($l[.] | gsub("\r"; "") | test("\\S"))] as $filled
+         | if ($filled | length) == 1 and ($l[$filled[0]] | gsub("\r"; "") | test("^[ \t]*- なし[ \t]*$")) then
+             # 「- なし」の行の後に足してから、その行を消す（改行の無い最後の行でも、改行が本文に合う）
+             $l | insert_after($filled[0]; $items) | del(.[$filled[0]]) | join("\n")
+           else $l | insert_after($filled | last // $r.head; $items) | join("\n") end
+       end)}'
 edited="$(jq -c --argjson ns "$(jq -nc --arg b "$open_numbers" '$b | split(" ") | map(select(. != "") | tonumber)')" "$edit" <<<"$target")"
 added_body="$(jq -r '.added | join(" ")' <<<"$edited")"
 if [ -n "$added_body" ]; then
@@ -158,5 +147,7 @@ jq -n --argjson issue "$issue" --arg url "$(jq -r .html_url <<<"$target")" --arg
   --arg dep "$added_dependency" --arg body "$added_body" --arg closed "$skipped_closed" --argjson dry "$dry_run" \
   --argjson actions "$actions" '
   def nums: split(" ") | map(select(. != "") | tonumber);
-  {issue: $issue, url: $url, dry_run: $dry, blocked_by: ($blocked | nums),
-   added: {dependency: ($dep | nums), body: ($body | nums)}, skipped_closed: ($closed | nums), actions: $actions}'
+  ($blocked | nums) as $b | ($closed | nums) as $c
+  | {issue: $issue, url: $url, dry_run: $dry, blocked_by: $b,
+   added: {dependency: ($dep | nums), body: ($body | nums)}, skipped_closed: $c,
+   all_closed: (($b | length) > 0 and ($b - $c | length) == 0), actions: $actions}'
