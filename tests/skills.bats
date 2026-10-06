@@ -385,6 +385,9 @@ step() { awk -v n="$2" -v end="$3" 'on && ($0 ~ /^###? / || (end != "" && $0 ~ e
     run grep -c '元に戻しにくい判断：' "$SKILLS/$s/SKILL.md"
     assert_output 0
   done
-  # pr-create は、Issue の ADR があれば提案しない
-  grep -q '`adrs` が空でなければ' "$SKILLS/pr-create/SKILL.md" || fail "pr-create が既にある ADR を確かめません"
+  # 提案するかの状態の組み合わせは adr-list.sh の proposal で決め、pr-create はその値ごとにすることだけを書く
+  for v in disabled exists pending "done" declined judge; do
+    grep -q "| \`$v\` |" "$SKILLS/adr-create/SKILL.md" || fail "adr-create に proposal の $v がありません"
+  done
+  grep -q '出力の `proposal` に従う' "$SKILLS/pr-create/SKILL.md" || fail "pr-create が proposal に従いません"
 }

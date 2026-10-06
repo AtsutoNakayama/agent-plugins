@@ -1,6 +1,20 @@
 #!/usr/bin/env bats
 
 load test_helper
+load fake_gh
+
+# --issue で Issue の本文を読むので、偽の gh を使う。Issue #151・#7・#9 は、本文が空の Issue にしておく
+setup() {
+  test_helper_setup
+  setup_fake_gh
+  echo '{}' >.claude/dev-workflow/config.json
+  for n in 151 7 9; do fake_issue "$n" '["feat"]'; done
+}
+
+# 使い方: issue_body <番号> <本文>
+issue_body() {
+  jq --arg b "$2" '. + {body: $b}' "$FIX/issue-$1.json" >"$TMP/i.json" && mv "$TMP/i.json" "$FIX/issue-$1.json"
+}
 
 # ADR を1つ書く。使い方: write_adr <パス> <front matter の行（改行区切り。空なら front matter なし）> [見出し]
 write_adr() {
@@ -187,4 +201,66 @@ write_adr() {
   run_script adr-list.sh --issue 151
   assert_success
   assert_equal "$(jq -c '[.adrs[] | [.path, .status]]' <<<"$output")" '[["docs/adr/a.md","accepted"],["docs/adr/b.md","a # b"]]'
+}
+
+@test "--issue が無ければ、proposal と adr_tasks は null で、Issue を読まない" {
+  run_script adr-list.sh
+  assert_success
+  assert_equal "$(jq -c '[.proposal, .adr_tasks]' <<<"$output")" '[null,null]'
+  assert_equal "$(called issue-view)" 0
+}
+
+@test "proposal：adr.suggest が false なら disabled、その Issue の ADR があれば exists で、どちらも Issue を読まない" {
+  issue_body 151 "$(printf -- '- [ ] 判断を ADR に残す')"
+  echo '{"adr": {"suggest": false}}' >.claude/dev-workflow/config.json
+  run_script adr-list.sh --issue 151
+  assert_success
+  assert_equal "$(jq -c '[.proposal, .adr_tasks]' <<<"$output")" '["disabled",null]'
+  echo '{}' >.claude/dev-workflow/config.json
+  write_adr docs/adr/000151-x.md "issue: 151" "x"
+  run_script adr-list.sh --issue 151
+  assert_success
+  assert_equal "$(jq -c '[.proposal, .adr_tasks]' <<<"$output")" '["exists",null]'
+  assert_equal "$(called issue-view)" 0
+}
+
+@test "proposal：ADR の項目が無ければ judge（ADR を含まない項目と、コードブロックの中の項目は数えない）" {
+  # shellcheck disable=SC2016 # ``` はコードブロックの囲みで、展開させない
+  issue_body 151 "$(printf -- '## やること\n- [ ] 実装する\n```\n- [ ] 判断を ADR に残す\n```')"
+  run_script adr-list.sh --issue 151
+  assert_success
+  assert_equal "$(jq -c '[.proposal, .adr_tasks]' <<<"$output")" '["judge",[]]'
+  assert_equal "$(args issue-view)" "151 --json url,body"
+}
+
+@test "proposal：取り消し線もチェックも無い ADR の項目があれば pending（ほかの項目が断った記録やチェック済みでも）" {
+  issue_body 151 "$(printf -- '- [ ] ~~一つ目を ADR に残す~~（不要）\n- [x] 二つ目を ADR に残す\n- [ ] 三つ目を ADR に残す')"
+  run_script adr-list.sh --issue 151
+  assert_success
+  assert_equal "$(jq -c .proposal <<<"$output")" '"pending"'
+  assert_equal "$(jq -c '[.adr_tasks[].text]' <<<"$output")" '["~~一つ目を ADR に残す~~（不要）","二つ目を ADR に残す","三つ目を ADR に残す"]'
+}
+
+@test "proposal：取り消し線の無い ADR の項目がすべてチェック済みなら done" {
+  issue_body 151 "$(printf -- '- [ ] ~~一つ目を ADR に残す~~（不要）\n- [x] 二つ目を ADR に残す')"
+  run_script adr-list.sh --issue 151
+  assert_success
+  assert_equal "$(jq -c .proposal <<<"$output")" '"done"'
+}
+
+@test "proposal：ADR の項目が取り消し線だけなら（チェックがあっても）declined" {
+  issue_body 151 "$(printf -- '- [ ] ~~一つ目を ADR に残す~~（不要）\n- [x] ~~二つ目を ADR に残す~~')"
+  run_script adr-list.sh --issue 151
+  assert_success
+  assert_equal "$(jq -c .proposal <<<"$output")" '"declined"'
+  # 途中だけの取り消し線は、断った記録とみなさない
+  issue_body 151 "$(printf -- '- [ ] 判断を ~~ADR~~ に残す')"
+  run_script adr-list.sh --issue 151
+  assert_equal "$(jq -c .proposal <<<"$output")" '"pending"'
+}
+
+@test "--issue が PR の番号か無い番号なら止まる" {
+  run_script adr-list.sh --issue 404
+  assert_failure 2
+  assert_output --partial "#404 が"
 }

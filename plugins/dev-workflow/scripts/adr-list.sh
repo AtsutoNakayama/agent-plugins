@@ -1,10 +1,11 @@
 #!/usr/bin/env bash
 # ADR の置き場所（設定の adr.dir）にある ADR を一覧にし、JSON で出力する。
-# task-create・pr-create が、ADR の作成を提案する前に、その Issue の ADR が既にあるかを確かめるのに使う。
+# task-create・pr-create が、ADR の作成を提案するかを決めるのに使う。
 #
 # 使い方: adr-list.sh [--issue N]
 #
-#   --issue N  front matter の issue が N の ADR だけを出す（#N でもよい。先頭の 0 はそろえる）
+#   --issue N  front matter の issue が N の ADR だけを出し、その Issue で ADR の作成を提案するか（proposal）も決める
+#              （#N でもよい。先頭の 0 はそろえる）
 #
 # 置き場所の直下の *.md を読み、ファイル名の順（ロケールに左右されない文字の順）に出す（下のディレクトリは読まない）。置き場所が無ければ、ADR は無いものとする。
 # front matter（先頭の --- から次の --- まで）の issue・status と、最初の「# 」の見出しを読む。行末の CR と先頭の BOM は外して読む。
@@ -16,8 +17,20 @@
 #   suggest  設定の adr.suggest（task-create・pr-create で ADR の作成を提案するか。既定 true）
 #   issue    --issue の番号（無ければ null）
 #   adrs     ADR の一覧。path（リポジトリのルートからの相対パス）・issue・status・title（無ければ null）
+#   proposal --issue のとき、その Issue で ADR の作成を提案するか（--issue が無ければ null）。上から順に決める
+#              disabled  adr.suggest が false。提案しない
+#              exists    その Issue の ADR がある（adrs が空でない）。提案しない
+#              pending   Issue のチェックリストに、取り消し線もチェックも無い ADR の項目がある。提案ではなく、
+#                        ADR の項目が残っていて ADR がまだ無いことを伝える
+#              done      ADR の項目にチェックがある（ほかの置き場所に残したなど）。提案しない
+#              declined  ADR の項目が取り消し線（~~…~~ で始まる）だけ。提案を断った記録なので、提案しない
+#              judge     ADR の項目が無い。AI が差分から、ADR にすべき判断があるかを判断する
+#            ADR の項目は、Issue の本文のチェックリストの項目（md_scan）のうち、文に「ADR」を含むもの。
+#            Issue の本文を gh で読むのは、pending・done・declined・judge を決めるときだけ
+#   adr_tasks proposal を決めるのに読んだ ADR の項目（checked・text）。Issue を読まなかったときは null
 #
-# 終了コード: 64 引数の誤り / 2 リポジトリの外、設定を読めない、adr.dir・adr.suggest の値の誤り
+# 終了コード: 64 引数の誤り / 2 リポジトリの外、設定を読めない、adr.dir・adr.suggest の値の誤り、--issue が PR の番号か
+#             無い番号 / 1 Issue を読めない（通信・認証など）
 set -euo pipefail
 
 # shellcheck source=lib/common.sh
@@ -86,7 +99,7 @@ if [ -d "$repo_root/$adr_dir" ]; then
 fi
 
 # shellcheck disable=SC2016 # jq の変数を bash に展開させない
-printf '%s' "$rows" | jq -R -s --arg files "$files" --arg dir "$adr_dir" --argjson suggest "$suggest" --arg want "$issue" '
+out="$(printf '%s' "$rows" | jq -R -s --arg files "$files" --arg dir "$adr_dir" --argjson suggest "$suggest" --arg want "$issue" '
   def nz: if . == "" then null else . end;
   # issue の値は、前後の # と先頭の 0 を外して、数字だけなら番号にする
   def num: ltrimstr("#") | if test("^[0-9]+$") and test("[1-9]") then tonumber else null end;
@@ -97,4 +110,23 @@ printf '%s' "$rows" | jq -R -s --arg files "$files" --arg dir "$adr_dir" --argjs
   | sort_by(.path)
   | (if $want == "" then null else ($want | tonumber) end) as $n
   | {dir: $dir, suggest: $suggest, issue: $n,
-     adrs: (if $n == null then . else map(select(.issue == $n)) end)}'
+     adrs: (if $n == null then . else map(select(.issue == $n)) end)}')"
+
+# 提案するかは、状態の組み合わせだけで決まるので、ここで決める（AI が判断するのは judge のときの差分だけ）
+proposal=null adr_tasks=null
+if [ -n "$issue" ]; then
+  if [ "$suggest" = false ]; then
+    proposal='"disabled"'
+  elif [ "$(jq '.adrs | length' <<<"$out")" -gt 0 ]; then
+    proposal='"exists"'
+  else
+    issue_json="$(dw_read_issue "$issue" body)"
+    adr_tasks="$(jq -c "$DW_JQ_MD_SCAN"' .body // "" | md_scan | .items | map(select(.text | test("ADR")) | {checked, text})' <<<"$issue_json")"
+    proposal="$(jq -c 'def struck: .text | test("^~~.+~~");
+      if any(.[]; (struck | not) and (.checked | not)) then "pending"
+      elif any(.[]; (struck | not) and .checked) then "done"
+      elif length > 0 then "declined"
+      else "judge" end' <<<"$adr_tasks")"
+  fi
+fi
+jq --argjson p "$proposal" --argjson t "$adr_tasks" '. + {proposal: $p, adr_tasks: $t}' <<<"$out"
