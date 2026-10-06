@@ -22,9 +22,11 @@ agent-plugins/
 │   ├── hooks/         # ガードレール
 │   ├── review/        # 共通のレビュー観点
 │   ├── templates/     # スキルが使うテンプレート（ADR・Issue・PR など）
-│   └── scripts/       # スキルから呼ぶスクリプト（lib/common.sh を含む）
-│       └── setup/     # リポジトリの初期設定用
+│   ├── scripts/       # スキルから呼ぶスクリプト（lib/common.sh を含む）
+│   │   └── setup/     # リポジトリの初期設定用
+│   └── evals/         # スキルの振る舞いを確かめる claude plugin eval のケース（tests/eval/run.sh で実行する）
 └── tests/
+    └── eval/          # eval の実行のスクリプトと偽の gh（CONTRIBUTING.md の「スキルの振る舞いを eval で確かめる」）
 ```
 
 ### 効く範囲（導入したリポジトリ）
