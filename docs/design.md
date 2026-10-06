@@ -31,7 +31,7 @@ agent-plugins/
 - プラグインは、**導入したリポジトリの中でだけ効く**。インストールの範囲（ユーザー単位・プロジェクト単位）に関わらず、プラグインの側で判定する（[ADR 000219](adr/000219-limit-scope-to-set-up-repos.md)）。
 - **導入したリポジトリ**は、チームの設定 `.claude/dev-workflow/config.json` があるリポジトリ（`lib/common.sh` の `dw_is_set_up`）。初期設定（repo-setup）が作るファイルで、中身は空（`{}`）でもよい。ワークツリーに無くても、メインのワークツリー（`dw_main_root`）にあれば導入したとみなす。`.claude/dev-workflow/` のディレクトリや `config.local.json` だけでは、導入したとみなさない。
 - 導入していないリポジトリ（リポジトリの外を含む）では、次のものが効かない。
-  - フック（§9）：`guard-git.sh`・`task-flow.sh`・`pr-link.sh` は何もしない。`guard-git.sh` は、操作の対象のリポジトリで判断する。対象は、コマンドと同じオプション・環境変数（`--git-dir`・`GIT_DIR` など）で `git rev-parse --git-common-dir` を実行して求め、ルートの候補を、その場所で git が同じリポジトリを見つけるかで確かめる。ルートが分からなければ（bare リポジトリなど）、HEAD にコミットされたチームの設定で判断し、git がリポジトリを見つけられなければ、既定の設定で調べる。設定（`base_branch`・`branch.pattern`）も同じ対象から読む（[ADR 000219](adr/000219-resolve-guard-git-target-repo.md)）。
+  - フック（§9）：`guard-git.sh`・`task-flow.sh`・`pr-link.sh` は何もしない。`guard-git.sh` は、操作の対象のリポジトリで判断する。対象は、コマンドと同じオプション・環境変数（`--git-dir`・`GIT_DIR` など。値の先頭の `~`・`$HOME` は展開する）で `git rev-parse --git-common-dir` を実行して求め、ルートの候補を、その場所で git が同じリポジトリを見つけるかで確かめる。設定（`base_branch`・`branch.pattern`）も同じ対象から読む。ルートが分からなければ（bare リポジトリ、ワークツリーの git のディレクトリを指したときなど）、HEAD にコミットされたチームの設定で導入したかを判断し、`base_branch` はそのチームの設定、ユーザーの層の順に読み、ブランチ名は確かめない。git がリポジトリを見つけられなければ、導入したものとみなし、ユーザーの層の設定（無ければ既定）で調べる（[ADR 000219](adr/000219-resolve-guard-git-target-repo.md)）。
   - ユーザーの層（`~/.claude/dev-workflow/`）：設定（`config.json`）・文章のガイド（`*.md`）・レビューの観点（`review/*.md`）・タスクの進め方の追記（`task-flow.md`）を読まない。スキルはプラグインの既定とリポジトリの層だけで動く。
 - 導入したリポジトリの中では、ユーザーの層も効く。
 - 初期設定（repo-setup）は、`.claude/dev-workflow/config.json` を作るまでは導入していないリポジトリで動くので、それまでの手順ではユーザーの層の設定を読まない。
@@ -336,6 +336,7 @@ Todo が増えたとき、どれから着手するか、同時に進めてよい
 | `branch-status.sh` | 作業用のブランチの、base_branch に対する遅れ・先行、追跡しているファイルの未コミットの変更（未追跡のファイルは除く）、origin のブランチとのずれ、開いている PR のマージ状態（`merge_state`）を調べる。変更はしない（origin からの取得だけ行う） |
 | `merge-group-check.sh` | 必須のチェックを出すワークフローが、マージキューの merge_group のイベントでも動くかを確かめる（base_branch のワークフローを API で読み、チェックの名前とジョブを突き合わせ、ジョブの `if:` で `merge_group` を除いていないかも見る）。何も変えない。`setup-repo.sh` と `doctor.sh` が使う |
 | `cleanup.sh` | マージを確認し、ワークツリーとブランチを削除し、main を最新にし、PR が閉じる Issue の状態（`issues`）を出す。未コミットの変更や git が無視するファイルがあれば、何も消さずに止まる（無視するファイルは `--remove-ignored` で消せる）。`--abandon` では、マージの確認・main の更新・Issue の状態の確認を飛ばし、失うものを一覧にして削除する |
+| `main-root.sh` | メインのワークツリーのルート（`main_root`）を出す。task-finish・task-cancel が、削除するワークツリーの外へ移る先に使う（`lib/common.sh` の `dw_main_root`。サブモジュールや bare リポジトリ＋ワークツリーの配置でも、確かめて求める） |
 
 | 初期設定用（`plugins/dev-workflow/scripts/setup/`） | 役割 |
 |---|---|
