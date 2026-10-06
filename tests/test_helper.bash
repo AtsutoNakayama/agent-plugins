@@ -32,6 +32,13 @@ mark_set_up() {
   [ -f "${1:-$REPO}/.claude/dev-workflow/config.json" ] || echo '{}' >"${1:-$REPO}/.claude/dev-workflow/config.json"
 }
 
+# サブモジュール（$TMP/super/sm。中身は REPO）を作る
+make_submodule() {
+  git init -q -b main "$TMP/super"
+  git -C "$TMP/super" commit -q --allow-empty -m init
+  git -C "$TMP/super" -c protocol.file.allow=always submodule add -q "$REPO" sm
+}
+
 setup() {
   test_helper_setup
 }

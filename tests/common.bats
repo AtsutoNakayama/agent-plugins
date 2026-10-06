@@ -11,13 +11,6 @@ run_fn() {
   run "${TEST_BASH:-bash}" -c '. "$1"; shift; "$@"' _ "$SCRIPTS/lib/common.sh" "$@"
 }
 
-# サブモジュール（$TMP/super/sm。中身は REPO）を作る
-make_submodule() {
-  git init -q -b main "$TMP/super"
-  git -C "$TMP/super" commit -q --allow-empty -m init
-  git -C "$TMP/super" -c protocol.file.allow=always submodule add -q "$REPO" sm
-}
-
 @test "dw_main_root は、普通のリポジトリとそのワークツリーで、メインのワークツリーを返す" {
   git worktree add -q "$TMP/wt" -b feat/1-x
   run_fn dw_main_root "$REPO"

@@ -1,5 +1,7 @@
 #!/usr/bin/env bats
 # main を守るフック（hooks/guard-git.sh）。
+# bats はテストごとにサブシェルで動くので、変数（HOME など）の変更がテスト内に閉じるのは意図どおり
+# shellcheck disable=SC2030,SC2031
 
 load test_helper
 
@@ -416,9 +418,7 @@ silent() {
 }
 
 @test "サブモジュールは、サブモジュールのチームの設定で判断する（そのワークツリーや、外から指したときも）" {
-  git init -q -b main "$TMP/super"
-  git -C "$TMP/super" commit -q --allow-empty -m init
-  git -C "$TMP/super" -c protocol.file.allow=always submodule add -q "$REPO" sm
+  make_submodule
   git -C "$TMP/super/sm" switch -q main
   mark_set_up "$TMP/super/sm"
   git -C "$TMP/super/sm" worktree add -q "$TMP/smwt" -b feat/1-x
@@ -465,7 +465,7 @@ silent() {
   denied "強制 push" 'cd ~/other && GIT_DIR=~/repo/.git git push --force' 'cd ~/other && git --git-dir=$HOME/repo/.git push --force'
 }
 
-@test "ワークツリーの git のディレクトリを GIT_DIR で指したときは、今のディレクトリのワークツリーではなく、HEAD にコミットしたチームの設定で判断する" {
+@test "ワークツリーの git のディレクトリを GIT_DIR で指したときは、今のディレクトリのワークツリーではなく、指したワークツリーの設定で判断する" {
   git worktree add -q "$TMP/wt" -b develop
   mkdir -p "$TMP/wt/.claude/dev-workflow"
   echo '{"base_branch": "develop"}' >"$TMP/wt/.claude/dev-workflow/config.json"
@@ -473,6 +473,50 @@ silent() {
   git -C "$TMP/wt" commit -q -m setup
   # 今のディレクトリ（REPO）の base_branch は main。対象（wt）は develop の上で、base_branch は develop
   denied "develop の上ではコミットしません" "GIT_DIR=$REPO/.git/worktrees/wt git commit -m x"
+}
+
+@test "ワークツリーの git のディレクトリを指したとき、そのワークツリーにチームの設定が無くても、メインのワークツリーにあれば守る" {
+  # 初期設定より前に作ったブランチのワークツリー（チームの設定がコミットされていない）
+  git worktree add -q "$TMP/wt" -b old
+  denied "強制 push" "GIT_DIR=$REPO/.git/worktrees/wt git push --force" "git --git-dir=$TMP/wt/.git push --force"
+}
+
+@test "GIT_WORK_TREE で同じリポジトリの別のワークツリーを指しても、そのワークツリーの設定では判断しない" {
+  git worktree add -q "$TMP/wt" -b feat/1-x
+  mkdir -p "$TMP/wt/.claude/dev-workflow"
+  echo '{"base_branch": "develop"}' >"$TMP/wt/.claude/dev-workflow/config.json"
+  # git のディレクトリ（HEAD）は REPO（main の上）のもの。base_branch も REPO の設定（main）で判断する
+  denied "main の上ではコミットしません" "GIT_WORK_TREE=$TMP/wt git commit -m x"
+}
+
+@test "--opt=値 の ~ はシェルが展開しないので展開せず、cd・git -C の先の \$HOME は展開する" {
+  export HOME="$TMP"
+  git init -q -b main "$TMP/other"
+  # git には ~/other/.git がそのまま渡り、リポジトリが見つからないので、守りを外さないよう調べる
+  denied "強制 push" "git --git-dir=~/other/.git push --force"
+  # 導入していないリポジトリを、cd・git -C の $HOME で指せば止めない
+  # shellcheck disable=SC2016
+  silent 'cd $HOME/other && git push --force' 'git -C ${HOME}/other push --force'
+}
+
+@test "--work-tree・GIT_WORK_TREE の値の ~・\$HOME も展開し、値が \$HOME だけでも展開する" {
+  export HOME="$TMP"
+  git init -q -b main "$TMP/other"
+  git init -q -b main --separate-git-dir "$TMP/sep.git" "$TMP/sep"
+  mark_set_up "$TMP/sep"
+  # 作業ツリーを展開して求められれば、そのルートの規約でブランチ名を確かめる
+  # shellcheck disable=SC2016
+  warned foo 'cd ~/other && git --git-dir $HOME/sep.git --work-tree ~/sep switch -c foo' \
+    'cd ~/other && GIT_DIR=$HOME/sep.git GIT_WORK_TREE=${HOME}/sep git switch -c foo'
+  # 値が $HOME だけの作業ツリー（dotfiles の bare リポジトリの使い方）
+  git init -q --bare "$TMP/dot.git"
+  # shellcheck disable=SC2016
+  silent 'git --git-dir=$HOME/dot.git --work-tree=$HOME push --force'
+  git add .claude/dev-workflow/config.json
+  git commit -q -m setup
+  git clone -q --bare "$REPO" "$TMP/dot2.git"
+  # shellcheck disable=SC2016
+  denied "強制 push" 'git --git-dir=$HOME/dot2.git --work-tree=$HOME push --force'
 }
 
 @test "ルートが分からない対象は、HEAD にコミットしたチームの設定、ユーザーの層の順に base_branch を読み、ブランチ名は確かめない" {

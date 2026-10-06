@@ -38,22 +38,15 @@ dir="$( (cd "${cwd:-.}" && pwd -P) 2>/dev/null || true)"
 
 deny() { dw_die "$1" 2; }
 
-# 基準のディレクトリからの相対パスを絶対パスにする。分からなければ空を出力する。
+# 基準のディレクトリからの相対パスを絶対パスにする（先頭の ~・$HOME は expand_home で展開する）。分からなければ空を出力する。
 # 使い方: resolve_dir <基準のディレクトリ（空なら不明）> <パス>
 resolve_dir() {
-  local base="$1" p="$2"
-  # ~ はシェルが展開する前の文字として比べる
-  # shellcheck disable=SC2088
+  local p
+  p="$(expand_home "$2")"
   case "$p" in
-    '~') p="$HOME" ;;
-    '~/'*) p="$HOME/${p#\~/}" ;;
-    /*) ;;
-    *)
-      [ -n "$base" ] || return 0
-      p="$base/$p"
-      ;;
+    /*) dw_abs_dir / "$p" || true ;;
+    *) [ -z "$1" ] || dw_abs_dir "$1" "$p" || true ;;
   esac
-  (cd "$p" 2>/dev/null && pwd -P) || true
 }
 
 # git の操作の対象（ディレクトリと、git のグローバルオプション・対象を変える環境変数）で git を実行する。
@@ -64,29 +57,31 @@ git_at() {
 }
 
 # 操作の対象を求めて、trepo と troot に入れる。check_command がコマンドごとに1回だけ呼び、導入したかの判定（target_set_up）と、
-# 設定（base_branch・branch.pattern）を読むリポジトリの、どちらにも使う。
+# 設定（base_branch・branch.pattern）を読むリポジトリの、どちらにも使う。git は rev-parse を1回だけ起動する。
 #   trepo  対象のリポジトリ（--git-common-dir の実体の絶対パス。ワークツリーなら元のリポジトリ）。git が見つけられなければ空
-#   troot  対象のリポジトリの作業ツリーの一番上。確かめられなければ空
+#   troot  対象の作業ツリーの一番上。確かめられなければ空
 # オプションも環境変数も無ければ、--show-toplevel（git がそのコマンドで使う作業ツリー）がそのままルート。
 # --git-dir・GIT_DIR などがあると、--show-toplevel は今のディレクトリを返すことがある（作業ツリーを指定しないとき）ので、
-# その場所で git が同じリポジトリを見つけるかで確かめ（dw_root_if_repo）、だめならリポジトリのメインのワークツリー（dw_repo_main_root）。
-# .git の中など、--show-toplevel が答えないときも同じ。ワークツリー（git worktree add）の git のディレクトリを指したときは、
-# 同じリポジトリの別のワークツリーと見分けられないので、ルートは分からないものとする。git は1回だけ起動する
+# その場所の git のディレクトリが対象のものと同じかで確かめる（dw_root_if_repo。同じリポジトリの別のワークツリーとも見分ける）。
+# 違えば、対象がメインのリポジトリならメインのワークツリー（dw_repo_main_root）、ワークツリー（git worktree add）の git の
+# ディレクトリなら、その gitdir ファイルが記録するワークツリー（dw_worktree_root）。.git の中など、--show-toplevel が答えないときも同じ
 target_resolve() {
-  local out gd c top
+  local gd c top
   trepo="" troot=""
   [ -n "$git_dir" ] || return 0
-  out="$(git_at rev-parse --git-dir --git-common-dir --show-toplevel || true)"
-  { IFS= read -r gd; IFS= read -r c; IFS= read -r top; } <<<"$out" || true
-  [ -n "${gd:-}" ] && [ -n "${c:-}" ] || return 0
-  trepo="$(dw_abs_dir "$git_dir" "$c" || true)"
-  [ -n "$trepo" ] || return 0
+  { IFS= read -r gd; IFS= read -r c; IFS= read -r top; } <<<"$(dw_parse_repo_paths "$git_dir" \
+    "$(git_at rev-parse --git-dir --git-common-dir --show-toplevel || true)" || true)" || true
+  [ -n "${c:-}" ] || return 0
+  trepo="$c"
   if [ "${#gopts[@]}" -eq 0 ] && [ "${#genv[@]}" -eq 0 ] && [ -n "${top:-}" ]; then
     troot="$top"
     return 0
   fi
-  [ "$(dw_abs_dir "$git_dir" "$gd" || true)" = "$trepo" ] || return 0
-  troot="$(dw_root_if_repo "${top:-}" "$trepo" || dw_repo_main_root "$trepo" || true)"
+  if [ "$gd" = "$trepo" ]; then
+    troot="$(dw_root_if_repo "${top:-}" "$gd" || dw_repo_main_root "$trepo" || true)"
+  else
+    troot="$(dw_root_if_repo "${top:-}" "$gd" || dw_worktree_root "$gd" || true)"
+  fi
 }
 
 # 操作の対象が、導入したリポジトリなら成功し、導入していなければ 1 を返す（設計書 §1）。target_resolve の後に呼ぶ。
@@ -118,19 +113,27 @@ base_branch() {
   printf '%s\n' "${base:-main}"
 }
 
-# コマンドの文字列の値の先頭にある ~・$HOME・${HOME} を展開する（シェルが展開する前の文字列を見ているため）。
-# --git-dir・--work-tree・GIT_DIR などの値に使う。ほかの変数は展開しない（対象が分からなければ、守りを外さないよう調べる）
-# 使い方: expand_home <値>
+# コマンドの文字列の値の先頭にある ~・$HOME・${HOME} を、シェルと同じく展開する（シェルが展開する前の文字列を見ているため）。
+# ~ をシェルが展開するのは、語の先頭（cd ~/x・--git-dir ~/x）と代入の値（GIT_DIR=~/x）だけで、--git-dir=~/x のような
+# オプションの値には展開しないので、そのときは no-tilde を渡す。ほかの変数は展開しない（対象が分からなければ、守りを外さないよう調べる）
+# 使い方: expand_home <値> [no-tilde]
 expand_home() {
+  local v="$1"
   # ~ と $HOME はシェルが展開する前の文字として比べる
   # shellcheck disable=SC2088,SC2016
-  case "$1" in
-    '~' | '$HOME' | '${HOME}') printf '%s\n' "$HOME" ;;
-    '~/'*) printf '%s\n' "$HOME/${1#\~/}" ;;
-    '$HOME/'*) printf '%s\n' "$HOME/${1#\$HOME/}" ;;
-    '${HOME}/'*) printf '%s\n' "$HOME/${1#\$\{HOME\}/}" ;;
-    *) printf '%s\n' "$1" ;;
+  if [ "${2:-}" != no-tilde ]; then
+    case "$v" in
+      '~') v="$HOME" ;;
+      '~/'*) v="$HOME/${v#\~/}" ;;
+    esac
+  fi
+  # shellcheck disable=SC2016
+  case "$v" in
+    '$HOME' | '${HOME}') v="$HOME" ;;
+    '$HOME/'*) v="$HOME/${v#\$HOME/}" ;;
+    '${HOME}/'*) v="$HOME/${v#\$\{HOME\}/}" ;;
   esac
+  printf '%s\n' "$v"
 }
 
 # git push の引数を調べる。使い方: check_push <引数>...
@@ -345,7 +348,7 @@ check_command() {
         [ $# -ge 2 ] || return 0
         shift 2
         ;;
-      --git-dir=* | --work-tree=*) gopts+=("${1%%=*}=$(expand_home "${1#*=}")"); shift ;;
+      --git-dir=* | --work-tree=*) gopts+=("${1%%=*}=$(expand_home "${1#*=}" no-tilde)"); shift ;;
       -*) shift ;;
       *) break ;;
     esac

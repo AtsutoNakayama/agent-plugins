@@ -47,28 +47,38 @@ dw_abs_dir() {
   (cd "$p" 2>/dev/null && pwd -P)
 }
 
-# <ディレクトリ> で git が見つけるリポジトリの、git のディレクトリ・リポジトリ（--git-common-dir。ワークツリーなら元のリポジトリ）・
-# 作業ツリーの一番上を、実体の絶対パスで1行ずつ出力する（作業ツリーが無い bare リポジトリや .git の中では、3行目は空）。
+# git rev-parse --git-dir --git-common-dir --show-toplevel の出力を、<基準のディレクトリ>（rev-parse を実行した場所）から
+# 実体の絶対パスにして、git のディレクトリ・リポジトリ（--git-common-dir。ワークツリーなら元のリポジトリ）・作業ツリーの一番上を、
+# 1行ずつ出力する（作業ツリーが無い bare リポジトリや .git の中では、3行目は空）。読めなければ失敗する。
+# rev-parse を git -C で起動する dw_repo_paths と、オプションや環境変数を付けて起動する guard-git の、どちらも使う
+# 使い方: dw_parse_repo_paths <基準のディレクトリ> <rev-parse の出力>
+dw_parse_repo_paths() {
+  local gd c top
+  { IFS= read -r gd; IFS= read -r c; IFS= read -r top; } <<<"$2" || true
+  [ -n "${gd:-}" ] && [ -n "${c:-}" ] || return 1
+  gd="$(dw_abs_dir "$1" "$gd")" && c="$(dw_abs_dir "$1" "$c")" || return 1
+  printf '%s\n%s\n%s\n' "$gd" "$c" "${top:-}"
+}
+
+# <ディレクトリ> で git が見つけるリポジトリの、git のディレクトリ・リポジトリ・作業ツリーの一番上を出力する（dw_parse_repo_paths）。
 # git は1回だけ起動する。リポジトリが無ければ失敗する
 # 使い方: dw_repo_paths <ディレクトリ>
 dw_repo_paths() {
-  local out gd c top
-  out="$(git -C "$1" rev-parse --git-dir --git-common-dir --show-toplevel 2>/dev/null || true)"
-  { IFS= read -r gd; IFS= read -r c; IFS= read -r top; } <<<"$out" || true
-  [ -n "${gd:-}" ] && [ -n "${c:-}" ] || return 1
-  printf '%s\n%s\n%s\n' "$(dw_abs_dir "$1" "$gd" || true)" "$(dw_abs_dir "$1" "$c" || true)" "${top:-}"
+  dw_parse_repo_paths "$1" "$(git -C "$1" rev-parse --git-dir --git-common-dir --show-toplevel 2>/dev/null || true)"
 }
 
-# <ディレクトリ> で git が <リポジトリ>（--git-common-dir の実体の絶対パス）を見つけるなら、その作業ツリーの一番上を出力する。
-# 違えば失敗する。git の内部の配置から考えたルートの候補が、本当にそのリポジトリのものかを確かめるのに使う。
+# <ディレクトリ> の git のディレクトリが <git のディレクトリ>（実体の絶対パス）なら、その作業ツリーの一番上を出力する。違えば失敗する。
+# git の内部の配置から考えたルートの候補が、本当にそのリポジトリ（ワークツリーなら、そのワークツリー）のものかを確かめるのに使う。
+# リポジトリ（--git-common-dir）ではなく git のディレクトリで比べるのは、同じリポジトリの別のワークツリーと見分けるため
+# （メインのワークツリーの git のディレクトリは、リポジトリと同じ）。
 # 3つ目の引数に bare を渡すと、作業ツリーが無くても（bare リポジトリ＋ワークツリーの配置の、.git ファイルを置いたディレクトリなど）、
 # そのディレクトリを出力する
-# 使い方: dw_root_if_repo <ディレクトリ（空なら失敗）> <リポジトリ> [bare]
+# 使い方: dw_root_if_repo <ディレクトリ（空なら失敗）> <git のディレクトリ> [bare]
 dw_root_if_repo() {
   local gd c top
   [ -n "$1" ] || return 1
   { IFS= read -r gd; IFS= read -r c; IFS= read -r top; } <<<"$(dw_repo_paths "$1" || true)" || true
-  [ -n "${c:-}" ] && [ "$c" = "$2" ] || return 1
+  [ -n "${gd:-}" ] && [ "$gd" = "$2" ] || return 1
   if [ -n "${top:-}" ]; then
     printf '%s\n' "$top"
   elif [ "${3:-}" = bare ]; then
@@ -76,6 +86,16 @@ dw_root_if_repo() {
   else
     return 1
   fi
+}
+
+# <git のディレクトリ>（ワークツリーの .git/worktrees/<名前>）が記録している、そのワークツリーの一番上を出力する。
+# git はワークツリーの .git ファイルの場所を gitdir ファイルに書いているので、それを dw_root_if_repo で確かめる。分からなければ失敗する
+# 使い方: dw_worktree_root <git のディレクトリ>
+dw_worktree_root() {
+  local f
+  [ -f "$1/gitdir" ] || return 1
+  f="$(cat "$1/gitdir")"
+  dw_root_if_repo "$(dw_abs_dir "$1" "$(dirname "$f")" || true)" "$1"
 }
 
 # <リポジトリ>（--git-common-dir の実体の絶対パス）のメインのワークツリーのルートを出力する。分からなければ失敗する。
