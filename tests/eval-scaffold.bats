@@ -51,11 +51,24 @@ scaffold() {
   assert_equal "$(jq -c '[.number, .title, .labels[0].name, .state, .body]' <<<"$output")" '[7,"タイトル","fix","OPEN","## やること"]'
 }
 
-@test "fake_gh_writes の後、起票や PR の作成に成功したように答え、呼び出しを記録する" {
+@test "fake_gh_writes の後、起票や PR の作成に成功したように答え、書き込みとして記録する" {
   scaffold "eval_repo && fake_gh_writes"
   assert_success
   assert_equal "$(gh issue create --title t)" "https://github.com/me/demo/issues/99"
-  run grep -c '^issue create' .fake-gh/calls
+  assert_equal "$(gh pr close 2 && echo ok)" ok
+  assert_equal "$(gh api -X POST repos/me/demo/issues/99/dependencies/blocked_by -F issue_id=1)" '{}'
+  assert_equal "$(wc -l <.fake-gh/writes | tr -d ' ')" 3
+}
+
+@test "fake_gh_writes の後、issue-create.sh が起票まで進み、書き込みとして記録される" {
+  scaffold "eval_repo && fake_gh 'label list*' '[]' && fake_gh_writes"
+  assert_success
+  printf '本文' >"$TMP/body.md"
+  # Project が未設定という警告（標準エラー）は見ない
+  run "${TEST_BASH:-bash}" -c "\"\$0\" \"$SCRIPTS/issue-create.sh\" --title t --type feat --body-file \"$TMP/body.md\" 2>/dev/null" "${TEST_BASH:-bash}"
+  assert_success
+  assert_equal "$(jq -r .number <<<"$output")" 99
+  run grep -c '^api -X POST repos/me/demo/issues ' .fake-gh/writes
   assert_output 1
 }
 

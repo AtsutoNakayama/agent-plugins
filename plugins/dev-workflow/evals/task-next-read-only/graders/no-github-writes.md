@@ -1,7 +1,7 @@
 ---
+# 偽の gh（tests/eval/bin/fake-gh.sh）が、GitHub に書き込む呼び出しを .fake-gh/writes に記録する。空なら書き込んでいない
 type: regex
-target: { source: file, path: .fake-gh/calls }
-pattern: '^(issue (create|edit|comment|close)|pr (create|edit|comment)|project item-(add|edit)|api graphql [A-Za-z]*(Add|Set|Update|Create))'
-flags: m
+target: { source: file, path: .fake-gh/writes }
+pattern: '\S'
 match: not_contains
 ---

@@ -4,8 +4,7 @@
 load test_helper
 
 # 表は、ケースの準備と同じ処理（scaffold.bash の fake_gh_init・fake_gh）で作る
-# shellcheck source=../plugins/dev-workflow/evals/lib/scaffold.bash
-. "$BATS_TEST_DIRNAME/../plugins/dev-workflow/evals/lib/scaffold.bash"
+load ../plugins/dev-workflow/evals/lib/scaffold
 
 setup() {
   test_helper_setup
@@ -84,4 +83,49 @@ run_fake_gh() {
   run_fake_gh issue list
   assert_failure
   assert_output --partial ".fake-gh/routes が見つかりません"
+}
+
+@test "読むだけの呼び出しは .fake-gh/writes に記録しない" {
+  fake_gh '*' '{}'
+  run_fake_gh repo view --json nameWithOwner
+  run_fake_gh issue view 1 --json body
+  run_fake_gh -R me/demo issue list --state open
+  run_fake_gh pr list --head x
+  run_fake_gh project item-list 4 --owner me
+  run_fake_gh api user
+  run_fake_gh api --paginate "repos/me/demo/issues/1/dependencies/blocked_by?per_page=100"
+  run_fake_gh api -X GET repos/me/demo/issues/1
+  run_fake_gh search issues login
+  run_fake_gh auth status
+  run_fake_gh --version
+  assert_equal "$(cat .fake-gh/writes)" ""
+  assert_equal "$(wc -l <.fake-gh/calls | tr -d ' ')" 11
+}
+
+@test "書き込む呼び出しは .fake-gh/writes に記録する（REST・サブコマンド・-R の後）" {
+  fake_gh '*' '{}'
+  run_fake_gh api -X POST repos/me/demo/issues --input -
+  run_fake_gh api --method=patch repos/me/demo/labels/x
+  run_fake_gh api -XDELETE repos/me/demo/git/refs/heads/x
+  run_fake_gh api repos/me/demo/issues/1/comments -f body=x
+  run_fake_gh issue create --title t
+  run_fake_gh -R me/demo issue close 1
+  run_fake_gh --repo me/demo pr merge 2
+  run_fake_gh pr close 2
+  run_fake_gh project item-edit --id x
+  run_fake_gh label create x
+  assert_equal "$(wc -l <.fake-gh/writes | tr -d ' ')" 10
+  assert_equal "$(head -n 1 .fake-gh/writes)" "api -X POST repos/me/demo/issues --input -"
+}
+
+@test "gh api graphql は、mutation なら書き込み、query なら読むだけとして記録する" {
+  fake_gh 'api graphql *' '{"data": {}}'
+  run "${TEST_BASH:-bash}" -c "printf '%s' '{\"query\": \"query TodoItems { x }\"}' | \"$FAKE_GH\" api graphql --input -"
+  assert_success
+  assert_equal "$(cat .fake-gh/writes)" ""
+  run "${TEST_BASH:-bash}" -c "printf '%s' '{\"query\": \"mutation SetField { x }\"}' | \"$FAKE_GH\" api graphql --input -"
+  assert_success
+  run_fake_gh api graphql -f 'query=mutation AddItem { x }'
+  assert_success
+  assert_equal "$(cat .fake-gh/writes)" "$(printf '%s\n' 'api graphql SetField {}' 'api graphql AddItem {}')"
 }
