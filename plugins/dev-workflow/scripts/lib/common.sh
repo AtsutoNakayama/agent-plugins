@@ -581,12 +581,21 @@ DW_JQ_ISSUE_SECTIONS="$DW_JQ_MD_SCAN"'
   def deps: [section("依存")[] | scan("#([0-9]+)") | .[0] | tonumber] | unique;
 '
 
-# 同じリポジトリの Issue を REST で読み、「数値の id 状態（open か closed）」を出力する。依存関係（blocked by）の登録には、
-# node id ではなく数値の id を使う。REST の issues は PR も返すので、PR の番号と無い番号（404・410）は、何も出力しない。
-# 認証・通信などほかの失敗は、dw_gh_find が理由を伝えて止まる。issue-create.sh と issue-depend.sh で使う
+# 同じリポジトリの Issue を REST で読み、JSON を出力する。REST の issues は PR も返すので、PR の番号と無い番号（404・410）は、
+# 何も出力しない。認証・通信などほかの失敗は、dw_gh_find が理由を伝えて止まる
+# 使い方: json="$(dw_issue_json <OWNER/NAME> <番号>)"; [ -n "$json" ] || <無いときの処理>
+dw_issue_json() {
+  dw_gh_find gh api "repos/$1/issues/$2" | jq -c 'if . == null or .pull_request then empty else . end'
+}
+
+# dw_issue_json の Issue の「数値の id 状態（open か closed）」を出力する（無ければ何も出力しない）。依存関係（blocked by）の
+# 登録には、node id ではなく数値の id を使う。issue-create.sh と issue-depend.sh で使う
 # 使い方: ref="$(dw_issue_ref <OWNER/NAME> <番号>)"; [ -n "$ref" ] || <無いときの処理>
 dw_issue_ref() {
-  dw_gh_find gh api "repos/$1/issues/$2" | jq -r 'if . == null or .pull_request then empty else "\(.id) \(.state)" end'
+  local json
+  # $(...) の中では set -e が効かないので、読めなかったとき（dw_gh_find が止まったとき）の終了コードを、自分で返す
+  json="$(dw_issue_json "$1" "$2")" || return
+  [ -z "$json" ] || jq -r '"\(.id) \(.state)"' <<<"$json"
 }
 
 # Issue <番号> の依存関係（blocked by）に、数値の id <依存する Issue の id> を登録する。失敗したら 0 以外を返す（gh の理由は標準エラー）

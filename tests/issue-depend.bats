@@ -214,31 +214,6 @@ body_of() { cat "$FIX/body-$1"; }
   assert_equal "$(cat "$CALLS")" ''
 }
 
-@test "Issue か依存する Issue が閉じていれば、何も変えずに止まる" {
-  setup_fake_gh
-  issue 10 $'## 依存\n- なし' "" closed
-  issue 11 $'## 依存\n- なし'
-  issue 5 "" "" closed
-  run_script issue-depend.sh --issue 10 --blocked-by 6
-  assert_failure 2
-  assert_output --partial "Issue #10 は閉じています"
-  run_script issue-depend.sh --issue 11 --blocked-by 5
-  assert_failure 2
-  assert_output --partial "依存する Issue #5 は閉じています"
-  assert_equal "$(grep -cvE '^GetIssue ' "$CALLS")" 0
-}
-
-@test "箇条書きでない「なし」の行も消し、どの「依存」の節にも無い番号だけを最初の節に足す" {
-  setup_fake_gh
-  issue 10 $'## 依存\nなし\n\n## 補足\ny\n## 依存\n- #6\n- なし（今のところ）'
-  issue 5
-  issue 6
-  run_script issue-depend.sh --issue 10 --blocked-by 5 --blocked-by 6
-  assert_success
-  assert_equal "$(body_of 10)" $'## 依存\n- #5\n\n## 補足\ny\n## 依存\n- #6'
-  assert_equal "$(jq -c .added.body <<<"$output")" '[5]'
-}
-
 @test "「## 」で始まらない行（##依存）は見出しとみなさず、next-tasks.sh と同じく節を足す" {
   # 見出しの読み方が next-tasks.sh と違い、足した依存が task-next に読まれないことがあった
   setup_fake_gh
@@ -277,4 +252,59 @@ body_of() { cat "$FIX/body-$1"; }
   assert_failure 1
   assert_output --partial "Issue #10 の依存関係を読めませんでした"
   assert_equal "$(called AddBlockedBy) $(called EditBody)" '0 0'
+}
+
+@test "Issue が閉じていれば止まり、依存する Issue が閉じていれば、警告してその Issue だけを飛ばす" {
+  # 確かめた後で、着手中の Issue の PR がマージされて閉じることもある。1つが閉じただけで、ほかの依存まで足さずに止まっていた
+  setup_fake_gh
+  issue 10 $'## 依存\n- なし' "" closed
+  issue 11 $'## 依存\n- なし'
+  issue 5 "" "" closed
+  issue 6
+  run_script issue-depend.sh --issue 10 --blocked-by 6
+  assert_failure 2
+  assert_output --partial "Issue #10 は閉じています"
+  assert_equal "$(called AddBlockedBy) $(called EditBody)" '0 0'
+  run_script issue-depend.sh --issue 11 --blocked-by 5 --blocked-by 6
+  assert_success
+  assert_line "warn: 依存する Issue #5 は閉じているので、依存に足しません"
+  assert_equal "$(grep -v '^warn:' <<<"$output" | jq -c '[.added, .skipped_closed]')" '[{"dependency":[6],"body":[6]},[5]]'
+  assert_equal "$(body_of 11)" $'## 依存\n- #6'
+}
+
+@test "節の中身が「なし」の1行だけなら置き換え（箇条書きでなくても、理由付きでも）、その行の #N は既にある依存として数えない" {
+  # 消す「なし」の行の #5 を既にあるものと数え、#5 が本文から消えていた
+  setup_fake_gh
+  issue 10 $'## 依存\nなし\n\n## 補足\ny'
+  issue 11 $'## 依存\n- `なし`（#5 は閉じた）'
+  issue 5
+  issue 7
+  run_script issue-depend.sh --issue 10 --blocked-by 5
+  assert_success
+  assert_equal "$(body_of 10)" $'## 依存\n- #5\n\n## 補足\ny'
+  run_script issue-depend.sh --issue 11 --blocked-by 5 --blocked-by 7
+  assert_success
+  assert_equal "$(body_of 11)" $'## 依存\n- #5\n- #7'
+}
+
+@test "「なし」で始まる文や、ほかの行と並ぶ「なし」は消さず、どの「依存」の節にも無い番号だけを最初の節に足す" {
+  # 「なし」で始まる使う人の文まで消していた
+  setup_fake_gh
+  issue 10 $'## 依存\nなしでも動くが、#3 の後が望ましい\n\n## 依存\n- #6\n- なし'
+  issue 3
+  issue 6
+  issue 7
+  run_script issue-depend.sh --issue 10 --blocked-by 3 --blocked-by 6 --blocked-by 7
+  assert_success
+  assert_equal "$(body_of 10)" $'## 依存\nなしでも動くが、#3 の後が望ましい\n- #7\n\n## 依存\n- #6\n- なし'
+  assert_equal "$(jq -c .added.body <<<"$output")" '[7]'
+}
+
+@test "コードブロックと HTML のコメントの中の「## 依存」は見出しとみなさない（next-tasks.sh・pr-create.sh と同じ）" {
+  setup_fake_gh
+  issue 10 $'## 例\n```\n## 依存\n```\n<!--\n## 依存\n-->\n## 依存\n- なし'
+  issue 5
+  run_script issue-depend.sh --issue 10 --blocked-by 5
+  assert_success
+  assert_equal "$(body_of 10)" $'## 例\n```\n## 依存\n```\n<!--\n## 依存\n-->\n## 依存\n- #5'
 }
