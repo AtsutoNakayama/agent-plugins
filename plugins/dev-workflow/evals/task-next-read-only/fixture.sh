@@ -21,8 +21,8 @@ items="$(jq -s '.' \
   <(item 10 "認証 API を作る" "In Progress" "## やること${nl}- [ ] API を作る${nl}${nl}## 変更するファイル・領域${nl}- src/auth/${nl}${nl}## 依存${nl}- なし"))"
 fake_gh_read 'api graphql TodoItems' "$(jq -n --argjson nodes "$items" \
   '{data: {repositoryOwner: {projectV2: {items: {pageInfo: {hasNextPage: false, endCursor: null}, nodes: $nodes}}}}}')"
-fake_gh_read 'api --paginate repos/me/demo/issues/*/dependencies/blocked_by*' '[]'
-fake_gh_read 'pr list*' '[]'
+# 依存関係（blocked by）は無い。--paginate の位置によらず当たるよう、api の後を * にする
+fake_gh_read 'api *repos/me/demo/issues/*/dependencies/blocked_by*' '[]'
 
 # プラグインが無いとき（比べるための実行）、Claude は gh project item-list・gh issue list・gh issue view で読む。
 # 読むだけなので表で宣言し、同じ Issue を読めるようにする（宣言しないと書き込みとして数えられ、比べられない）
@@ -32,8 +32,7 @@ fake_gh_read 'project item-list*' "$(jq -n --argjson nodes "$items" \
        url: .content.url, repository: "me/demo"}}], totalCount: ($nodes | length)}')"
 fake_gh_read 'issue list*' "$(jq -n --argjson nodes "$items" \
   '[$nodes[].content | {number, title, state, body, url, labels: [{name: "feat"}]}]')"
-for n in 10 11 12 13; do
-  fake_issue "$n" "$(jq -r --argjson n "$n" '.[] | select(.content.number == $n) | .content.title' <<<"$items")" feat \
-    "$(jq -r --argjson n "$n" '.[] | select(.content.number == $n) | .content.body' <<<"$items")"
-done
-fake_gh_writes
+while IFS= read -r issue; do
+  fake_issue_json "$issue"
+done < <(jq -c '.[].content | {number, title, body, labels: [{name: "feat"}]}' <<<"$items")
+fake_gh_defaults

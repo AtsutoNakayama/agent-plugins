@@ -85,8 +85,8 @@ scaffold() {
   done
 }
 
-@test "fake_gh_writes の後、起票や PR の作成に成功したように答え、書き込みとして記録する" {
-  scaffold "eval_repo && fake_gh_writes"
+@test "fake_gh_defaults の後、起票や PR の作成に成功したように答え、書き込みとして記録する" {
+  scaffold "eval_repo && fake_gh_defaults"
   assert_success
   assert_equal "$(gh issue create --title t)" "https://github.com/me/demo/issues/99"
   assert_equal "$(gh pr close 2 && echo ok)" ok
@@ -94,8 +94,24 @@ scaffold() {
   assert_equal "$(wc -l <.fake-gh/writes | tr -d ' ')" 3
 }
 
-@test "fake_gh_writes の後、issue-create.sh が起票まで進み、書き込みとして記録される" {
-  scaffold "eval_repo && fake_gh_read 'label list*' '[]' && fake_gh_writes"
+@test "fake_gh_defaults の後、よく使う読むだけの呼び出しに答え、書き込みとして数えない" {
+  scaffold "eval_repo && fake_gh_defaults"
+  assert_success
+  gh pr status >/dev/null
+  gh search issues login >/dev/null
+  gh project field-list 4 --owner me --format json >/dev/null
+  gh issue list --state open --json number >/dev/null
+  assert_equal "$(wc -l <.fake-gh/writes | tr -d ' ')" 0
+}
+
+@test "fake_gh_defaults より前にケースで足した行が、既定の行より先に当たる" {
+  scaffold "eval_repo && fake_gh_read 'issue list*' '[{\"number\": 5}]' && fake_gh_defaults"
+  assert_success
+  assert_equal "$(gh issue list --json number -q '.[0].number')" 5
+}
+
+@test "fake_gh_defaults の後、issue-create.sh が起票まで進み、書き込みとして記録される" {
+  scaffold "eval_repo && fake_gh_defaults"
   assert_success
   printf '本文' >"$TMP/body.md"
   # Project が未設定という警告（標準エラー）は見ない
