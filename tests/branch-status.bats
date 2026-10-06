@@ -19,15 +19,33 @@ setup_branch() {
   git commit -q -m "feat: work"
 }
 
+# origin の main を進める別の作業場所（$TMP/other）を用意する。無ければ clone し、あれば origin の main を取り込む
+other_clone() {
+  if [ -d "$TMP/other" ]; then
+    git -C "$TMP/other" pull -q origin main
+  else
+    git clone -q "$TMP/origin.git" "$TMP/other"
+  fi
+}
+
 # origin の main に、別の PR がマージされたことにする（main を n 個進める）
 advance_main() {
   local i
-  git clone -q "$TMP/origin.git" "$TMP/other"
+  other_clone
   for i in $(seq 1 "$1"); do
     echo "$i" >"$TMP/other/main-$i.txt"
     git -C "$TMP/other" add .
     git -C "$TMP/other" commit -q -m "main $i"
   done
+  git -C "$TMP/other" push -q origin main
+}
+
+# origin の main に、ブランチの work.txt と衝突する変更（work.txt を別の内容で作る）がマージされたことにする
+conflict_main() {
+  other_clone
+  echo other >"$TMP/other/work.txt"
+  git -C "$TMP/other" add work.txt
+  git -C "$TMP/other" commit -q -m "main: work"
   git -C "$TMP/other" push -q origin main
 }
 
@@ -163,4 +181,184 @@ run_status() {
   git push -q origin --delete feat/17-x
   run_status
   assert_equal "$(jq -c '[.unpushed, .unpulled]' <<<"$output")" "[null,null]"
+}
+
+@test "PR のマージキューの状態（有効か・並んでいるときの状態と順番）を、PR の URL から読んで出す" {
+  setup_branch
+  echo '[{"number": 5, "url": "https://github.com/me/demo/pull/5", "mergeStateStatus": "CLEAN", "isCrossRepository": false}]' >"$FIX/pr-list.json"
+  echo '{"data": {"resource": {"isMergeQueueEnabled": true, "mergeQueueEntry": {"state": "UNMERGEABLE", "position": 2}}}}' >"$FIX/PrQueue.json"
+  run_status
+  assert_success
+  assert_equal "$(jq -c '.pr | [.merge_state, .merge_queue]' <<<"$output")" '["CLEAN",{"enabled":true,"state":"UNMERGEABLE","position":2,"removed":null}]'
+  assert_equal "$(grep '^PrQueue ' "$CALLS")" 'PrQueue {"url":"https://github.com/me/demo/pull/5"}'
+}
+
+@test "キューに並んでいなければ state・position は null、キューが無ければ enabled は false" {
+  setup_branch
+  echo '[{"number": 5, "url": "https://github.com/me/demo/pull/5", "mergeStateStatus": "CLEAN", "isCrossRepository": false}]' >"$FIX/pr-list.json"
+  echo '{"data": {"resource": {"isMergeQueueEnabled": true, "mergeQueueEntry": null}}}' >"$FIX/PrQueue.json"
+  run_status
+  assert_equal "$(jq -c .pr.merge_queue <<<"$output")" '{"enabled":true,"state":null,"position":null,"removed":null}'
+  echo '{"data": {"resource": {"isMergeQueueEnabled": false, "mergeQueueEntry": null}}}' >"$FIX/PrQueue.json"
+  run_status
+  assert_equal "$(jq -c .pr.merge_queue <<<"$output")" '{"enabled":false,"state":null,"position":null,"removed":null}'
+}
+
+@test "マージキューの状態を取得できなくても、PR は出す（merge_queue は null）" {
+  setup_branch
+  echo '[{"number": 5, "url": "https://github.com/me/demo/pull/5", "mergeStateStatus": "DIRTY", "isCrossRepository": false}]' >"$FIX/pr-list.json"
+  FAKE_FAIL=PrQueue run_status
+  assert_success
+  assert_equal "$(jq -c '.pr | [.number, .merge_state, .merge_queue]' <<<"$output")" '[5,"DIRTY",null]'
+}
+
+@test "PR が無ければ、マージキューの状態は問い合わせない" {
+  setup_branch
+  run_status
+  assert_success
+  assert_equal "$(grep -c '^PrQueue ' "$CALLS")" 0
+}
+
+# キューから外れた PR の応答。$1 は最後のキューの出入りのイベント（JSON）
+queue_removed_fixture() {
+  echo '[{"number": 5, "url": "https://github.com/me/demo/pull/5", "mergeStateStatus": "CLEAN", "isCrossRepository": false}]' >"$FIX/pr-list.json"
+  jq -n --argjson ev "$1" '{data: {resource: {isMergeQueueEnabled: true, mergeQueueEntry: null,
+    timelineItems: {nodes: [$ev]}}}}' >"$FIX/PrQueue.json"
+}
+
+@test "衝突してキューから外れたままの PR は、外れた理由と時刻を removed に出す（state は null でも見分けられる）" {
+  setup_branch
+  queue_removed_fixture '{"__typename": "RemovedFromMergeQueueEvent", "reason": "merge_conflict", "createdAt": "2026-10-04T16:36:30Z"}'
+  run_status
+  assert_success
+  assert_equal "$(jq -c '.pr | [.merge_state, .merge_queue]' <<<"$output")" \
+    '["CLEAN",{"enabled":true,"state":null,"position":null,"removed":{"reason":"merge_conflict","at":"2026-10-04T16:36:30Z"}}]'
+}
+
+@test "外れた後に push したかは見ない（コミットの時刻は手元でコミットした時刻なので、外れた時刻と比べない）" {
+  setup_branch
+  queue_removed_fixture '{"__typename": "RemovedFromMergeQueueEvent", "reason": "merge_conflict", "createdAt": "2026-10-04T16:36:30Z"}'
+  # 外れた時刻より新しいコミットがあっても、removed は残る
+  jq '.data.resource.commits = {nodes: [{commit: {committedDate: "2026-10-04T17:00:00Z"}}]}' "$FIX/PrQueue.json" >"$FIX/q" && mv "$FIX/q" "$FIX/PrQueue.json"
+  run_status
+  assert_equal "$(jq -r .pr.merge_queue.removed.reason <<<"$output")" merge_conflict
+}
+
+@test "キューから外れた後に入れ直していれば（最後のイベントが入れたもの）、removed は null" {
+  setup_branch
+  queue_removed_fixture '{"__typename": "AddedToMergeQueueEvent"}'
+  run_status
+  assert_equal "$(jq -c .pr.merge_queue.removed <<<"$output")" null
+}
+
+@test "main を取り込むと衝突するかを、手元で確かめて conflicts に出す（作業ツリーとブランチは変えない）" {
+  setup_branch
+  advance_main 1
+  run_status
+  assert_equal "$(jq -c '[.behind, .conflicts]' <<<"$output")" "[1,false]"
+  conflict_main
+  head="$(git rev-parse HEAD)"
+  run_status
+  assert_success
+  assert_equal "$(jq -c '[.behind, .conflicts, .dirty]' <<<"$output")" "[2,true,false]"
+  assert_equal "$(git rev-parse HEAD)" "$head"
+  assert_equal "$(cat work.txt)" work
+}
+
+@test "main が進んでいなければ conflicts は false" {
+  setup_branch
+  run_status
+  assert_equal "$(jq -c .conflicts <<<"$output")" false
+}
+
+@test "衝突を確かめられない（git merge-tree --write-tree の無い古い git）ときは conflicts は null" {
+  setup_branch
+  advance_main 1
+  real_git="$(command -v git)"
+  # merge-tree だけを、古い git と同じく使い方の誤り（129）で失敗させる
+  # shellcheck disable=SC2016 # 偽の git の中身なので、$@ はここでは展開しない
+  printf '#!/usr/bin/env bash\nfor a in "$@"; do [ "$a" = merge-tree ] && exit 129; done\nexec "%s" "$@"\n' "$real_git" >"$TMP/bin/git"
+  chmod +x "$TMP/bin/git"
+  git push -q origin feat/17-x
+  run_status
+  assert_success
+  assert_equal "$(jq -c '[.behind, .conflicts, .pushed_behind, .pushed_conflicts]' <<<"$output")" "[1,null,1,null]"
+}
+
+@test "手元で main を取り込んだが push していなければ、pushed_behind に push 済みのブランチの遅れを出す" {
+  setup_branch
+  git push -q origin feat/17-x
+  advance_main 2
+  run_status
+  assert_equal "$(jq -c '[.behind, .pushed_behind]' <<<"$output")" "[2,2]"
+  git merge -q --no-edit origin/main
+  run_status
+  # 手元は最新だが、push 済みのブランチはまだ遅れている
+  assert_equal "$(jq -c '[.up_to_date, .unpushed, .pushed_behind]' <<<"$output")" "[true,3,2]"
+  git push -q origin feat/17-x
+  run_status
+  assert_equal "$(jq -c '[.up_to_date, .unpushed, .pushed_behind]' <<<"$output")" "[true,0,0]"
+}
+
+@test "取り込みと関係の無いコミットだけが push されていなくても、pushed_behind は 0" {
+  setup_branch
+  git push -q origin feat/17-x
+  echo a >a.txt
+  git add a.txt
+  git commit -q -m "feat: a"
+  run_status
+  assert_equal "$(jq -c '[.up_to_date, .unpushed, .pushed_behind]' <<<"$output")" "[true,1,0]"
+}
+
+@test "origin にブランチが無ければ pushed_behind は null" {
+  setup_branch
+  run_status
+  assert_equal "$(jq -c .pushed_behind <<<"$output")" null
+}
+
+@test "手元で衝突を直して取り込んだが push していなければ、push 済みのブランチの衝突を pushed_conflicts に出す" {
+  setup_branch
+  git push -q origin feat/17-x
+  conflict_main
+  git fetch -q origin main
+  git merge -q --no-edit origin/main >/dev/null 2>&1 || true
+  echo resolved >work.txt
+  git add work.txt
+  git commit -q --no-edit
+  run_status
+  assert_success
+  # 手元は取り込み済みで衝突しないが、push 済みのブランチはまだ衝突する
+  assert_equal "$(jq -c '[.up_to_date, .conflicts, .pushed_behind, .pushed_conflicts]' <<<"$output")" "[true,false,1,true]"
+}
+
+@test "push 済みのブランチが遅れていても、衝突しなければ pushed_conflicts は false" {
+  setup_branch
+  git push -q origin feat/17-x
+  advance_main 1
+  run_status
+  assert_equal "$(jq -c '[.pushed_behind, .pushed_conflicts]' <<<"$output")" "[1,false]"
+}
+
+@test "origin にブランチが無ければ pushed_conflicts は null、遅れていなければ false" {
+  setup_branch
+  run_status
+  assert_equal "$(jq -c .pushed_conflicts <<<"$output")" null
+  git push -q origin feat/17-x
+  run_status
+  assert_equal "$(jq -c .pushed_conflicts <<<"$output")" false
+}
+
+@test "次にすること（plan）を、branch-plan.sh の判断で出す" {
+  setup_branch
+  advance_main 1
+  run_status
+  assert_success
+  # PR が無いので、キューを使わないものとして、遅れていれば取り込む
+  assert_equal "$(jq -c .plan <<<"$output")" '{"action":"merge","reason":"behind","queue":null,"fallback":null}'
+  echo '[{"number": 5, "url": "https://github.com/me/demo/pull/5", "mergeStateStatus": "BEHIND", "isCrossRepository": false}]' >"$FIX/pr-list.json"
+  echo '{"data": {"resource": {"isMergeQueueEnabled": true, "mergeQueueEntry": {"state": "QUEUED", "position": 3}}}}' >"$FIX/PrQueue.json"
+  run_status
+  assert_success
+  # キューを使い、main と衝突しないので取り込まず、並んでいることを案内する（最新の main を求められたら、遅れているので取り込む）
+  assert_equal "$(jq -c .plan <<<"$output")" '{"action":"none","reason":"no_conflict","queue":"queued","fallback":"merge"}'
 }

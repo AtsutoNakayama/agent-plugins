@@ -1,6 +1,6 @@
 ---
 name: repo-setup
-description: リポジトリの初期設定（type ラベルと breaking ラベル、GitHub Project、スカッシュのみのマージとルールセット、PR / Issue テンプレート、レビューに使うモデル）を対話的に行う。新しいリポジトリで開発ワークフローを使い始めるときに使う。
+description: リポジトリの初期設定（type ラベルと breaking ラベル、GitHub Project と保留の列、スカッシュのみのマージとルールセット、PR / Issue テンプレート、レビューに使うモデル）を対話的に行う。新しいリポジトリで開発ワークフローを使い始めるときに使う。
 ---
 
 # リポジトリの初期設定
@@ -33,6 +33,7 @@ description: リポジトリの初期設定（type ラベルと breaking ラベ�
 `config.sh` で今の設定を、`setup-repo.sh --dry-run` でマージキューを使えるか（`merge_queue.available`）と今使っているか（`merge_queue.enabled`）を、`setup-models.sh`（引数なし）でレビューのモデルを決めてあるか（`review.decided`）を読み、決まっていないことだけを AskUserQuestion でまとめて聞く。
 
 - **Project**：`project.number` が設定済みなら聞かない。無ければ「新しく作る（名前。既定はリポジトリ名）」か「既存の Project に接続する（番号）」か
+- **保留の列**：`status.hold` が設定済みなら聞かない。無ければ、今は着手できない Issue（外の条件を待つもの。例：試用期間が終わるまで着手できない）を置く列を、Project に作るか（列名。例：`On Hold`）作らないかを聞く。選択肢の説明には、作ると、その列にある Issue は task-next の候補から外れ、task-next が件数と番号を伝えること、作らなければ今までどおりの動きになることを書く。作るなら `--hold-column <列名>` を付ける（Status 列に足し、`.claude/dev-workflow/config.json` の `status.hold` に書く）。列名は Todo・In Progress・Done などのほかの役割の列と別の名前にする
 - **GitHub の既定のラベル**（bug・enhancement など）：削除する（おすすめ）か残すか。削除すると、付いている Issue からも外れる
 - **マージに必要な承認の数**：0（おすすめ。1人で開発するとき）か 1 以上か
 - **マージの前に成功を求める CI のチェック**：既に決まっていれば聞かない。名前は、チームの CI でそのチェックが一度動いたものにする（CI が無い、または動いたことのない名前を指定すると、マージできなくなる）。CI が無ければ「求めない」にする（そのままでは `doctor.sh` が必須のチェックが無いと毎回警告するので、止めたければ `.claude/dev-workflow/config.json` に `"require_status_checks": false` を書くよう伝える）。指定するときは `--required-check <名前>` を名前ごとに付ける。CI 全体の結果をまとめるジョブがあれば、その名前だけを指定する

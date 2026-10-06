@@ -207,6 +207,105 @@ called() { grep -c "^$1 " "$CALLS" || true; }
   assert_equal "$opts" '[["O1","Todo"],["OB","Blocked"],["O2","In Progress"],[null,"In Review"],["O3","Done"],["OX","Archive"]]'
 }
 
+@test "保留の列（hold）が設定されていれば、todo の列の後ろ（start の列の前）に追加する" {
+  setup_fake_gh
+  echo '{"status": {"hold": "On Hold"}}' >.claude/dev-workflow/config.json
+  run_setup
+  assert_success
+  opts="$(grep '^UpdateStatus ' "$CALLS" | cut -d' ' -f2- | jq -c '[.opts[] | [.id, .name]]')"
+  assert_equal "$opts" '[["O1","Todo"],[null,"On Hold"],["O2","In Progress"],["O3","Done"]]'
+}
+
+@test "保留の列（hold）が既定（null）なら、Status 列を変えない" {
+  setup_fake_gh
+  run_setup
+  assert_success
+  assert_equal "$(called UpdateStatus)" 0
+}
+
+@test "役割の列名が空文字（hold や pr_opened）なら、未設定として Status 列に足さない" {
+  setup_fake_gh
+  echo '{"status": {"hold": "", "pr_opened": ""}}' >.claude/dev-workflow/config.json
+  run_setup
+  assert_success
+  assert_equal "$(called UpdateStatus)" 0
+}
+
+@test "--hold-column は、設定に無くても保留の列を追加し、--write-config なら status.hold を書き込む" {
+  setup_fake_gh
+  echo '{"language": "en"}' >.claude/dev-workflow/config.json
+  run_setup --hold-column "On Hold" --write-config
+  assert_success
+  opts="$(grep '^UpdateStatus ' "$CALLS" | cut -d' ' -f2- | jq -c '[.opts[] | [.id, .name]]')"
+  assert_equal "$opts" '[["O1","Todo"],[null,"On Hold"],["O2","In Progress"],["O3","Done"]]'
+  assert_equal "$(jq -c . .claude/dev-workflow/config.json)" \
+    '{"language":"en","project":{"owner":"me","number":7},"status":{"hold":"On Hold"}}'
+}
+
+@test "--hold-column は、dry-run では設定を書かず、予定に出す" {
+  setup_fake_gh
+  echo '{"language": "en"}' >.claude/dev-workflow/config.json
+  run_setup --hold-column "On Hold" --write-config --dry-run
+  assert_success
+  assert_equal "$(jq -c . .claude/dev-workflow/config.json)" '{"language":"en"}'
+  assert_equal "$(jq '[.actions[] | select(contains("status.hold を「On Hold」にする"))] | length' <<<"$json")" 1
+}
+
+@test "--hold-column は、status.hold が同じならファイルを書き直さず、予定にも出さない" {
+  setup_fake_gh
+  printf '%s\n' '{"project":{"owner":"me","number":9},"status":{"hold":"On Hold"}}' >.claude/dev-workflow/config.json
+  fix ProjectView.json '{"id": "P9", "number": 9, "title": "demo", "url": "u", "owner": {"login": "me", "type": "User"}}'
+  run_setup --hold-column "On Hold" --write-config
+  assert_success
+  assert_equal "$(cat .claude/dev-workflow/config.json)" '{"project":{"owner":"me","number":9},"status":{"hold":"On Hold"}}'
+  assert_equal "$(jq '[.actions[] | select(contains("config.json"))] | length' <<<"$json")" 0
+}
+
+@test "--hold-column で保留の列を別の名前に変えるとき、古い列に Issue が残っていれば、何も変えずに止まる" {
+  setup_fake_gh
+  printf '%s\n' '{"project":{"owner":"me","number":9},"status":{"hold":"On Hold"}}' >.claude/dev-workflow/config.json
+  fix ProjectView.json '{"id": "P9", "number": 9, "title": "demo", "url": "u", "owner": {"login": "me", "type": "User"}}'
+  detail '[]' '[{"id": "O1", "name": "Todo"}, {"id": "OH", "name": "On Hold"}, {"id": "O2", "name": "In Progress"},
+    {"id": "O3", "name": "Done"}]' true
+  issues '[{"number": 1, "items": [{"id": "IT1", "project": "P9", "status": "On Hold"}]},
+    {"number": 2, "items": [{"id": "IT2", "project": "P9", "status": "Todo"}]},
+    {"number": 3, "items": [{"id": "IT3", "project": "P9", "status": "On Hold"}]},
+    {"number": 4, "items": []}]'
+  for mode in --dry-run ""; do
+    run_setup --hold-column Waiting --write-config ${mode:+"$mode"}
+    assert_failure 2
+    assert_output --partial "保留の列「On Hold」に Issue が残っています（#1・#3）。task-status で新しい列「Waiting」へ移してから、もう一度実行してください"
+  done
+  # Project の列も、リポジトリとの紐付けも、Issue も、設定も変えない
+  assert_equal "$(grep -cE '^(Create|Link|Update|Add|Set)' "$CALLS" || true)" 0
+  assert_equal "$(cat .claude/dev-workflow/config.json)" '{"project":{"owner":"me","number":9},"status":{"hold":"On Hold"}}'
+}
+
+@test "--hold-column で保留の列を別の名前に変えるとき、古い列にこのリポジトリの Issue が無ければ、新しい列を足して設定を書き換える" {
+  setup_fake_gh
+  printf '%s\n' '{"project":{"owner":"me","number":9},"status":{"hold":"On Hold"}}' >.claude/dev-workflow/config.json
+  fix ProjectView.json '{"id": "P9", "number": 9, "title": "demo", "url": "u", "owner": {"login": "me", "type": "User"}}'
+  detail '["R1"]' '[{"id": "O1", "name": "Todo"}, {"id": "OH", "name": "On Hold"}, {"id": "O2", "name": "In Progress"},
+    {"id": "O3", "name": "Done"}]' true
+  # ほかの Project で古い列名にある Issue は数えない
+  issues '[{"number": 1, "items": [{"id": "IT1", "project": "P9", "status": "Todo"}, {"id": "ITX", "project": "OTHER", "status": "On Hold"}]}]'
+  run_setup --hold-column Waiting --write-config
+  assert_success
+  opts="$(grep '^UpdateStatus ' "$CALLS" | cut -d' ' -f2- | jq -c '[.opts[] | [.id, .name]]')"
+  # 新しい列は設定の順のとおり Todo の後ろに入り、古い列は利用者が足した列と同じく、位置を変えずに残す
+  assert_equal "$opts" '[["O1","Todo"],[null,"Waiting"],["OH","On Hold"],["O2","In Progress"],["O3","Done"]]'
+  assert_equal "$(jq -c .status .claude/dev-workflow/config.json)" '{"hold":"Waiting"}'
+}
+
+@test "保留の列がほかの役割の列と同じ名前なら、何も変えずに止まる" {
+  setup_fake_gh
+  run_setup --hold-column Todo --write-config
+  assert_failure 2
+  assert_output --partial "保留の列（status.hold）は、ほかの役割（status.todo）と別の列名にしてください: Todo"
+  assert_equal "$(called CreateProject)" 0
+  [ ! -f .claude/dev-workflow/config.json ]
+}
+
 @test "設定の順で前にある列が1つも無ければ、後ろにある列の前に追加する" {
   setup_fake_gh
   detail '["R1"]' '[{"id": "OX", "name": "Archive"}, {"id": "O3", "name": "Done"}]' true

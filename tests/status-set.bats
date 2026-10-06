@@ -38,6 +38,21 @@ load fake_gh
   assert_equal "$(args SetField | jq -r .id)" IT9
 }
 
+@test "役割 hold は設定の保留の列に移し、既定（null）なら何もしない" {
+  setup_fake_gh
+  run_script status-set.sh --issue 17 --to hold
+  assert_success
+  assert_equal "$(jq -r .skipped <<<"$output")" true
+  assert_equal "$(called SetField)" 0
+
+  echo '{"project": {"owner": "me", "number": 4}, "status": {"hold": "On Hold"}}' >"$REPO/.claude/dev-workflow/config.json"
+  jq '.[0].options += [{id: "O4", name: {raw: "On Hold"}}]' "$FIX/ProjectFields.json" >"$TMP/f.json" && mv "$TMP/f.json" "$FIX/ProjectFields.json"
+  run_script status-set.sh --issue 17 --to hold
+  assert_success
+  assert_equal "$(args SetField | jq -r '."single-select-option-id"')" O4
+  assert_equal "$(jq -c '[.from, .to, .changed]' <<<"$output")" '["Todo","On Hold",true]'
+}
+
 @test "役割の列が null（既定の pr_opened）なら何もしない" {
   setup_fake_gh
   run_script status-set.sh --issue 17 --to pr_opened
