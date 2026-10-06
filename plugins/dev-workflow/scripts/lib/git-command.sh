@@ -189,11 +189,12 @@ gc_opt() {
 # コールバックは、読むのをやめるときに gc_stop=true とする。gc_argn に、読み終えた語の数（やめた語を含まない）を入れる。
 # コールバックは普通の文として呼ぶので、その中でも set -e が効き、終了コードは見ない（0 以外ならフックが止まる）。
 # コールバックは、呼び出し元の local の変数を読み書きできる（呼び出し元の中から呼ばれるため）。
+# gc_stop は、入るときの値を覚えて、出るときに戻す（コールバックの中で gc_args を呼んでも、外側の読み取りを止めない）。
 # 使い方: gc_args <コールバック> <値を取る短いオプションの文字> <長いオプション（gc_opt と同じ）> <引数>...
 gc_argn=0 gc_stop=false
 gc_args() {
   # コールバックが呼び出し元の変数（cb など）を読めるよう、作業用の変数は ga_ で始める
-  local ga_cb="$1" ga_shorts="$2" ga_longs="$3" ga_w ga_k ga_dd=false ga_next="" ga_rc
+  local ga_cb="$1" ga_shorts="$2" ga_longs="$3" ga_w ga_k ga_dd=false ga_next="" ga_rc ga_stop="$gc_stop"
   shift 3
   gc_argn=0 gc_stop=false
   for ga_w in "$@"; do
@@ -225,10 +226,14 @@ gc_args() {
           ;;
       esac
     fi
-    ! $gc_stop || return 0
+    if $gc_stop; then
+      gc_stop="$ga_stop"
+      return 0
+    fi
     gc_argn=$((gc_argn + 1))
   done
   [ -z "$ga_next" ] || "$ga_cb" opt "$ga_next" "" missing
+  gc_stop="$ga_stop"
 }
 
 # 前に付くコマンド（timeout・nice・env など）のオプションを読む（gc_args）。最初のオプションでない語で止まる

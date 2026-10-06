@@ -42,3 +42,10 @@ run_gc() {
   run_gc '' eval 'gc_skip_opts u "--unset=" -i git; echo "$gc_nopt ${gc_optn[*]}"'
   assert_output "1 -i"
 }
+
+@test "gc_args は、コールバックの中で gc_args を呼んでも、外側の読み取りを止めない" {
+  # コールバックの中の gc_skip_opts は、x で止まる（gc_stop を使う）
+  run_gc 'cb() { gc_skip_opts "" "" x; echo "[$1]"; }' gc_create_opts cb cC "--create=" -c a -c b
+  assert_success
+  assert_output "$(printf '[a]\n[b]')"
+}
