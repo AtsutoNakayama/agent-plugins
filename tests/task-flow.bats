@@ -194,3 +194,14 @@ pos() {
   run grep -cE '^- .*/dev-workflow:task-create` を呼び' "$DEFAULT"
   assert_output 1
 }
+
+@test "フックの出力に、スキルの外でも開発者への質問は AskUserQuestion で出し、内容を質問の中にも入れることが書いてある" {
+  run_hook
+  assert_success
+  assert_output --partial 'スキルの外でも'
+  assert_output --partial '開発者に判断を求める質問や確認は、選択肢を文章に並べた平文ではなく、AskUserQuestion で出します'
+  assert_output --partial '質問の中（質問の文や選択肢の preview）にも入れます'
+  # ファイルを変える作業の流れ（番号の付いた段階）の中ではなく、流れの外の項目に書く
+  run grep -cE '^- スキルの外でも.*AskUserQuestion で出します' "$DEFAULT"
+  assert_output 1
+}
