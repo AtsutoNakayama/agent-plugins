@@ -1,7 +1,12 @@
 #!/usr/bin/env bash
 # Project の Todo の Issue を並び順に読み、次に着手すべきものと、同時に進められる組を JSON で出力する。何も変えない。
 #
-# 使い方: next-tasks.sh
+# 使い方: next-tasks.sh [--issue N]
+#   --issue N   Issue N（#N でもよい）と着手中の Issue との重なりだけを出す（task-start が着手する前に確かめる）。
+#               N は Project のどの列にあっても、Project に無くてもよい。N が着手中の列にあれば、着手中から除く。
+#               重なりの判定は Todo の各 Issue と同じ。依存は読まず、todo・next・parallel・hold は出さない。
+#               出力は {repo, project, issue: {number, title, url, areas, areas_ignored, area_known, warnings,
+#               conflicts_with_active}, active_unknown, in_progress}
 #
 # 並び順は Project 上の並び（手動で並べ替えた順）。依存（GitHub の blocked by と、本文の「依存」の #N）に
 # 閉じていない Issue（開いている・見つからない）があれば waiting にする。コンフリクトの見込みは、本文の「変更するファイル・領域」と、
@@ -26,8 +31,14 @@ dw_require gh jq
 # macOS の BSD sed が日本語で失敗しないよう、バイト列として扱わせる
 usage() { LC_ALL=C sed -n '2,/^[^#]/{/^[^#]/d;s/^# \{0,1\}//;p;}' "$0"; }
 
+target=""
 while [ $# -gt 0 ]; do
   case "$1" in
+    --issue)
+      { [ $# -ge 2 ] && [ -n "$2" ]; } || dw_die "--issue に値がありません" 64
+      target="$(dw_issue_number --issue "$2")"
+      shift 2
+      ;;
     -h | --help) usage; exit 0 ;;
     *) dw_die "不明な引数です: $1" 64 ;;
   esac
@@ -121,11 +132,56 @@ defs='
 '
 
 repo_issue_dir="repos/$repo_nwo/issues"
-todo="$(jq -c "$defs"'[.[] | select(.status == $todo) | . + {areas: areas, areas_ignored: areas_ignored, body_deps: deps, no_files: no_files} | del(.body)]' \
-  --arg todo "$todo_col" <<<"$issues")"
-active="$(jq -c "$defs"'[.[] | select(.status | IN($active[])) | {number, title, parent, areas: areas, no_files: no_files} ]' \
-  --argjson active "$active_cols" <<<"$issues")"
+# --issue では、指定した Issue だけを、Todo の Issue と同じ定義で領域にする（Todo の Issue は扱わない）
+if [ -n "$target" ]; then
+  target_item="$(dw_read_issue "$target" number,title,body \
+    | jq -c "$defs"'{number, title, url, areas: areas, areas_ignored: areas_ignored, no_files: no_files}')"
+else
+  todo="$(jq -c "$defs"'[.[] | select(.status == $todo) | . + {areas: areas, areas_ignored: areas_ignored, body_deps: deps, no_files: no_files} | del(.body)]' \
+    --arg todo "$todo_col" <<<"$issues")"
+fi
+# 指定した Issue が着手中の列にあれば（着手し直すとき）、自分とは重ならないので除く
+active="$(jq -c "$defs"'[.[] | select((.status | IN($active[])) and .number != $target) | {number, title, parent, areas: areas, no_files: no_files} ]' \
+  --argjson active "$active_cols" --argjson target "${target:-0}" <<<"$issues")"
 hold="$(jq -c --arg hold "$hold_col" '[.[] | select($hold != "" and .status == $hold) | {number, title, url}]' <<<"$issues")"
+
+# 着手中の Issue の開いている PR が変えているファイル。PR の Issue は、ブランチ名（<type>/<番号>-…）か Closes で決める
+prs="$(gh pr list --state open --limit 1000 --json number,headRefName,files,closingIssuesReferences)" \
+  || dw_die "開いている PR を読めませんでした"
+
+# 重なりの判定。Todo の各 Issue と --issue の Issue とで、同じものを使う
+# shellcheck disable=SC2016
+odefs='
+  def ov($a; $b): [$a[] as $x | $b[] as $y
+      | select($x == "." or $y == "." or $x == $y or ($x | startswith($y + "/")) or ($y | startswith($x + "/"))) | {a: $x, b: $y}];
+  def pr_issues: ([.closingIssuesReferences[]?.number]
+      + [.headRefName | capture("^[^/]+/(?<n>[0-9]+)-") | .n | tonumber]) | unique;
+  # 着手中の Issue に、開いている PR のファイル（pr_files）と、変えるパス（paths）と、それが分かるか（area_known）を付ける。
+  # 親を残すかは、PR のファイルの数ではなく、PR があるかで決める（ファイルが空の PR もある）
+  def active_paths($prs): map(. as $i | [$prs[] | select(pr_issues | index($i.number))] as $own
+    | . + {pr_files: ([$own[].files[]?.path] | unique)}
+    | select((.parent | not) or ($own | length > 0)) | if .parent then .areas = [] | .no_files = false else . end
+    | .paths = ((.areas + .pr_files) | unique)
+    | .area_known = ((.paths | length > 0) or .no_files) | del(.parent, .no_files));
+  def unknown_numbers: [.[] | select(.area_known | not) | .number];
+  # 領域（areas・no_files）を持つ Issue に、着手中の Issue（active_paths の結果）との重なりを付ける
+  def with_overlap($act): . as $t
+    | .area_known = ((.areas | length > 0) or .no_files)
+    | .warnings = (if .no_files then [] else ($act | unknown_numbers | map("着手中の #\(.) は PR も領域も無く、重なるか分からない")) end)
+    | .conflicts_with_active = [$act[] | select(ov($t.areas; .paths) | length > 0) | {issue: .number, paths: ov($t.areas; .paths)}];
+'
+
+# --issue では、依存は読まずに、指定した Issue の重なりだけを出す
+if [ -n "$target" ]; then
+  jq -n --argjson target "$target_item" --argjson active "$active" --argjson prs "$prs" \
+    --arg repo "$repo_nwo" --arg owner "$owner" --argjson number "$number" "$odefs"'
+    ($active | active_paths($prs)) as $act
+    | {repo: $repo, project: {owner: $owner, number: $number},
+       issue: ($target | with_overlap($act) | del(.no_files)),
+       active_unknown: ($act | unknown_numbers),
+       in_progress: $act}'
+  exit 0
+fi
 
 # 各 Todo の Issue の依存関係（blocked by）を読み、本文の依存と合わせて、閉じているかを調べる
 # 依存先は別のリポジトリの Issue でもありうるので、リポジトリと番号の組で区別する（本文の #N は、このリポジトリの Issue）
@@ -155,32 +211,6 @@ for d in $(jq -r --argjson o "$open_in_project" --arg repo "$repo_nwo" \
   [ "$s" != null ] || s=not_found
   fetched="$(jq -c --arg d "$d" --arg s "$s" '. + {($d): ($s | ascii_downcase)}' <<<"$fetched")"
 done
-
-# 着手中の Issue の開いている PR が変えているファイル。PR の Issue は、ブランチ名（<type>/<番号>-…）か Closes で決める
-prs="$(gh pr list --state open --limit 1000 --json number,headRefName,files,closingIssuesReferences)" \
-  || dw_die "開いている PR を読めませんでした"
-
-# 重なりの判定
-# shellcheck disable=SC2016
-odefs='
-  def ov($a; $b): [$a[] as $x | $b[] as $y
-      | select($x == "." or $y == "." or $x == $y or ($x | startswith($y + "/")) or ($y | startswith($x + "/"))) | {a: $x, b: $y}];
-  def pr_issues: ([.closingIssuesReferences[]?.number]
-      + [.headRefName | capture("^[^/]+/(?<n>[0-9]+)-") | .n | tonumber]) | unique;
-  # 着手中の Issue に、開いている PR のファイル（pr_files）と、変えるパス（paths）と、それが分かるか（area_known）を付ける。
-  # 親を残すかは、PR のファイルの数ではなく、PR があるかで決める（ファイルが空の PR もある）
-  def active_paths($prs): map(. as $i | [$prs[] | select(pr_issues | index($i.number))] as $own
-    | . + {pr_files: ([$own[].files[]?.path] | unique)}
-    | select((.parent | not) or ($own | length > 0)) | if .parent then .areas = [] | .no_files = false else . end
-    | .paths = ((.areas + .pr_files) | unique)
-    | .area_known = ((.paths | length > 0) or .no_files) | del(.parent, .no_files));
-  def unknown_numbers: [.[] | select(.area_known | not) | .number];
-  # 領域（areas・no_files）を持つ Issue に、着手中の Issue（active_paths の結果）との重なりを付ける
-  def with_overlap($act): . as $t
-    | .area_known = ((.areas | length > 0) or .no_files)
-    | .warnings = (if .no_files then [] else ($act | unknown_numbers | map("着手中の #\(.) は PR も領域も無く、重なるか分からない")) end)
-    | .conflicts_with_active = [$act[] | select(ov($t.areas; .paths) | length > 0) | {issue: .number, paths: ov($t.areas; .paths)}];
-'
 
 jq -n --argjson todo "$todo" --argjson active "$active" --argjson deps "$deps" --argjson fetched "$fetched" \
   --argjson in_project "$open_in_project" --argjson hold "$hold" \
