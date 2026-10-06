@@ -76,16 +76,24 @@ agent-plugins/
 - 基本はリポジトリごとに Project を1つ持つ。関連する複数のリポジトリで1つの Project を共有してもよい。
 - 既定の列：`Todo / In Progress / Done`。
 - 役割（どの場面で移すか）と列名の対応を設定ファイルに書く。スキルが自動で移すのは、役割が決まっている列だけ。利用者が追加した列（例：`Blocked`）へは、指示されたときに `task-status` で移す。
-- `setup-project.sh` は、設定の列が Project に無ければ足す。足す列は、設定の順（`todo`・`start`・`pr_opened`・`done`）でそれより前にある列の後ろに入れる（例：`pr_opened` の `In Review` は `In Progress` の後ろ、`Done` の前）。既存の列と、利用者が足した列の位置は変えない。
+- `setup-project.sh` は、設定の列が Project に無ければ足す。足す列は、設定の順（`todo`・`hold`・`start`・`pr_opened`・`done`）でそれより前にある列の後ろに入れる（例：`pr_opened` の `In Review` は `In Progress` の後ろ、`Done` の前。`hold` の列は `Todo` の後ろ）。既存の列と、利用者が足した列の位置は変えない。
 
 ```jsonc
 "status": {
   "todo": "Todo",
+  "hold": null,        // 任意の項目。今は着手できない Issue を置く保留の列。既定では使わない
   "start": "In Progress",
   "pr_opened": null,   // 任意の項目。既定では PR 作成時に列を移さない
   "done": "Done"
 }
 ```
+
+- **保留の列（`hold`）**：外の条件を待っていて今は着手できない Issue（例：試用期間が終わるまで着手できない）を置く列。この列の Issue は task-next の候補から外れる（[ADR 000195](adr/000195-hold-status-column.md)）。
+  - 任意の役割で、既定は null（使わない）。null なら、どのスキルの動きも変わらない。repo-setup で作るかを聞き、作るなら列名を `.claude/dev-workflow/config.json` に書き（`setup-project.sh --hold-column`）、Status 列に足す。
+  - スキルが自動でこの列へ移すことは無い。移すのも Todo に戻すのも、利用者が `task-status` で行う（役割の名前 `hold`・`todo` でも、列名でも指定できる）。task-next は、この列の Issue の件数と番号を伝え、条件がそろったものを Todo に戻すよう案内する（戻し忘れを防ぐ）。
+  - ほかの役割の列と同じ名前にはできない（同じだと、保留の Issue が Todo や着手中にも数えられる）。`setup-project.sh` と `next-tasks.sh` は、同じ名前なら止まる。
+  - `setup-project.sh --hold-column --write-config` で保留の列を別の列に変えるとき、今の列にこのリポジトリの開いている Issue が残っていれば、Project も設定も変えずに止まる（残ったまま設定だけを変えると、その Issue は Todo でも保留でもなくなり、task-next のどこにも出なくなる）。先に `task-status` で新しい列へ移すか、列の名前を変えるだけなら、Project の画面で列の名前を変えて、設定の `status.hold` も同じ名前にする。
+  - Iteration とは独立に使える。
 
 - **Story Point**：数値の項目。使える値はフィボナッチ数の 1, 2, 3, 5, 8, 13, 21, 34 に固定し（設定では変えられない）、スクリプトで検証する。起票時は AI が見積もりを提案し、ユーザーが確定する（空欄も可）。21 と 34 は見積もりの精度が低いので分割を提案し、それでもよければそのまま設定する。34 より大きい作業は分割する。
 - **Project への自動追加**：Project に組み込みの Auto-add を使う。有効にする API は無いので、Web の画面で1回だけ手動で有効にする。`setup-project.sh` が手順を表示し、有効になったかを API で確認する。
@@ -150,7 +158,7 @@ agent-plugins/
 - 観点ファイルの frontmatter には、実行する条件を書ける：`types`（変更の type がこのどれかのとき。type は Issue の type ラベル、Issue が無いか1つに決まらなければブランチ名の type。type が分からなければ外す）、`paths`（差分のファイルがこのパターンに当たるとき。`.gitignore` や GitHub Actions と同じ書き方にするため、git の pathspec の glob で当て、`!` で除外できる）、`issue: required`（Issue があるときだけ）、`base_ahead: required`（マージ先が基点より進んでいるときだけ）。複数書けば、すべてに当てはまるときだけ実行する。書かなければ毎回実行する。当てはまらない観点は、サブエージェントを起動する前に外す（当てはまらない変更でも観点ごとに Issue や差分を読むコストがかかり、観点が増えるほど無駄が増えるため）。外した観点とその理由はユーザーに伝える。
 - 観点を外すかどうかは、スクリプトのルールだけで決める。基点・マージ先・Issue の番号・type は `review-perspectives.sh --auto` が設定とブランチ名と Issue から決めて出力し、review スキルはその結果どおりに起動する（スキルの文章の解釈で入力を組み立てると、読み違いや渡し忘れが起こるため）。観点の本文では、条件で決まることを判断し直さない。Issue を読めない・マージ先を最新にできないときは警告して続け、マージ先が無いときはレビューを止める。
 - 組み込みの `/code-review` も、同梱の観点 `code-review` として観点ファイルで扱う。frontmatter の `builtin: code-review` は、本文の代わりに組み込みのコマンドを実行する印。条件は書かず、毎回実行する。止めたり条件を付けたりするのは、ほかの観点と同じく上位の層に同じ名前のファイルを置いて行う。
-- 同梱の観点の条件：`regression-test` は `types: [fix]`、`issue-requirements` は `issue: required`、`main-drift`（マージ先に後から入った変更との食い違いを見る）は `base_ahead: required`。`docs-sync` は、どの変更でも説明が古くなりうるので条件を付けない。どのリポジトリでも成り立つ観点は同梱し、そのリポジトリだけの観点はリポジトリの層に置く。
+- 同梱の観点の条件：`regression-test` は `types: [fix]`、`test-coverage`（変えた振る舞いを確かめるテストがあるかを見る）は `types: [feat, refactor, perf]`、`issue-requirements` は `issue: required`、`main-drift`（マージ先に後から入った変更との食い違いを見る）は `base_ahead: required`。`docs-sync` は、どの変更でも説明が古くなりうるので条件を付けない。どのリポジトリでも成り立つ観点は同梱し、そのリポジトリだけの観点はリポジトリの層に置く。
   - `main-drift` は、`branch-update` スキルやマージキューがあっても残す（#158）。`branch-update` は base_branch を取り込む作業そのもの（衝突を直す。キューを使わないリポジトリでは遅れも解く。キューを使うリポジトリでは、main と衝突したときだけ取り込む。[ADR 000210](adr/000210-merge-main-only-on-conflict-with-queue.md)）で、取り込んだ後はテストとチェックの成否しか見ない。キューの CI も同じである。そのため、テストが通ってしまう食い違いは拾えない。たとえば、古い置き場所に設定を書くテスト（設定が読まれず既定値で通る）、改名されたスクリプトを呼ぶ SKILL.md（Markdown はテストされない）、先に入った変更と同じものの二重実装である。`main-drift` は PR を出す前のレビューで差分を読み、これらを見つける。テストで見つかる食い違いは両方が拾うが、`main-drift` のほうが PR の前に見つけられるので、キューから外れて並び直す手戻りが減る。逆に、衝突（同じ行を両方で変えたもの）は `main-drift` では指摘せず、`branch-update` で取り込むときに直す。
 - `review-perspectives.sh` は観点の本文を出力せず、使う観点（名前・title・層・パス・builtin）と、条件で外した観点（理由つき）・止めた観点・形式の誤ったファイルの一覧を出力する。条件で絞り込むのは、`--auto`（または基点とマージ先）を渡したときだけで、そのときは絞り込みに使った値（`context`）も出力する。`--auto` のときは、周回の上限 `review.max_rounds` も検査して `context.max_rounds` に出し、1以上の整数でなければ止まる（反映の後ではなく、レビューの前に誤りに気づくため）。同じく、レビューに使うモデル `review.model` も、リポジトリの層からだけ読んで検査して `context.model` に出し、null か使えるモデルでなければ止まる。本文はサブエージェントが読む（トークン削減のため）。形式の誤ったファイル（条件の書き方の誤りを含む）は警告して使わず（下位の層の同じ名前の観点も使わない）、レビューは止めない。
 - 観点ファイルは `review-perspective-add` スキルで作れる。置く層（`~/.claude/dev-workflow/review/` か `<repo>/.claude/dev-workflow/review/`）はユーザーが選ぶ。同じ層の同じ名前のファイルは上書きせず、ほかの層の同じ名前の観点を置き換えるときは確認を取る。
@@ -227,9 +235,10 @@ Todo が増えたとき、どれから着手するか、同時に進めてよい
 - **依存**：次のどれかで、まだ閉じていない Issue があれば、その Issue は候補に入れない（理由と、待っている Issue の番号を添えて「待ち」に出す）。
   - GitHub の Issue の依存関係（blocked by。REST の `issues/{番号}/dependencies/blocked_by`）
   - 本文の「依存」の見出しにある `#N`（「なし」なら無し）
-  - 依存先が Todo や着手中（In Progress と、設定されていれば `pr_opened` の列）の Issue のときも、終わっていないので待ちになる。
+  - 依存先が Todo や保留（設定されていれば `hold` の列）や着手中（In Progress と、設定されていれば `pr_opened` の列）の Issue のときも、終わっていないので待ちになる。
   - 本文の「依存」に書かれた番号の Issue が見つからないとき（書き間違い・削除）は、閉じたと分からないので待ちのままにし、状態を `not_found` として伝える（1件の書き間違いで、全体の提案が止まらないようにする）。
 - **親の Issue**：サブ Issue を持つ Issue（`subIssuesSummary.total` が 1 以上）は、候補に入れない（理由を添えて「親の Issue」として出す）。親には着手しない（§4）ので、勧めると、着手したセッションが止まる。AI は開いている子を案内し、開いている子が無ければ親を閉じるよう伝える。
+- **保留の Issue**：`hold` の列が設定されていれば、その列の Issue は候補に入れず、番号とタイトルを `hold` に出す（§4）。AI は件数と番号を伝え、条件がそろったものは `task-status` で Todo に戻すよう案内する。
 - **コンフリクトの見込み**：警告するだけで、着手を止めない。
   - 着手中の Issue は、`start` の列（既定 `In Progress`）と、`pr_opened` が設定されていればその列（例：`In Review`）にある Issue。親の Issue は、その列にあっても、開いている PR が無ければ作業が無いので、着手中として数えない。PR を出した後で子が付いた親は、PR のファイルだけで重なりを見る（親の本文の領域は、子の作業をまとめたものなので使わない）。`pr_opened` を設定したリポジトリでは、PR を出した Issue はその列へ移るが、PR はまだマージされていないので、着手中として数える。
   - 本文の「変更するファイル・領域」に書かれたパス（ファイルかディレクトリ）と、着手中の Issue の領域・開いている PR が変えているファイルを使う。パスの一方がもう一方の接頭辞なら（`plugins/dev-workflow/scripts/` と `plugins/dev-workflow/scripts/status-set.sh` など）、重なると見なす。末尾の `/**`・`/*` は外してディレクトリとして扱い、`.` はリポジトリ全体として全部と重なる。
@@ -240,7 +249,7 @@ Todo が増えたとき、どれから着手するか、同時に進めてよい
   - **過去（マージ済み）の PR のファイルは使わない**。マージ済みの変更は main に入っていて、これから着手する Issue とは、PR ではなく main の差分として向き合うため（コンフリクトの見込みは、まだマージされていない作業との間で見る）。また、起票前の Issue に対応する PR は無く、Issue と過去の PR を結び付ける手段も無い。
 - **提案の組み立て**：待ちの Issue と親の Issue を除いた候補を上から順に見る。1番目を「次に着手するもの」とし、2番目以降は、これまでに選んだものと領域が重ならず、着手中の PR とも重ならなければ、同時に進められる組に足す。重なるものは「並列にできない」と、重なる相手とパスを添えて出す。
 - **Issue 本文の「変更するファイル・領域」**：Issue テンプレートと `task-create` の下書きに、この欄を足す（任意。`plugins/dev-workflow/scripts/` のようにパスで1行ずつ書き、分からなければ「不明」と書く）。起票の時点では書けないことも多いので、必須にはしない。
-- **スクリプト**：`next-tasks.sh` が、Todo の Issue（並び順・タイトル・Story Point）・依存（出どころ・リポジトリ・閉じているか）・領域・着手中の PR のファイルを JSON で返す。待ち・親の Issue の判定と重なりの判定もスクリプトが行い、どれを提案するかの説明と文章は AI が担当する。
+- **スクリプト**：`next-tasks.sh` が、Todo の Issue（並び順・タイトル・Story Point）・依存（出どころ・リポジトリ・閉じているか）・領域・着手中の PR のファイルと、保留の列にある Issue（`hold`。設定されていれば）を JSON で返す。待ち・親の Issue・保留の Issue の判定と重なりの判定もスクリプトが行い、どれを提案するかの説明と文章は AI が担当する。
 
 ### ADR（設計上の判断の記録）
 
@@ -311,7 +320,7 @@ Todo が増えたとき、どれから着手するか、同時に進めてよい
 | `config.sh` | 5つの層を合わせた設定を出力する |
 | `issue-create.sh` | 起票、ラベルの付与、Project への追加、列と Story Point の設定、依存関係（blocked by）の登録、親の Issue への紐付け（サブ Issue） |
 | `status-set.sh` | 列を移す |
-| `next-tasks.sh` | Todo の Issue を Project の並び順で読み、依存（blocked by と本文の「依存」）・本文の「変更するファイル・領域」・着手中の PR のファイルを添えて JSON で返す。待ち・親の Issue と、領域の重なりも判定する。何も変えない |
+| `next-tasks.sh` | Todo の Issue を Project の並び順で読み、依存（blocked by と本文の「依存」）・本文の「変更するファイル・領域」・着手中の PR のファイルを添えて JSON で返す。待ち・親の Issue・保留の Issue（`status.hold` が設定されていれば）と、領域の重なりも判定する。何も変えない |
 | `branch-name.sh` | ブランチ名を作り、検証する |
 | `task-start.sh` | ワークツリーの作成（サブモジュールの初期化を含む）、割り当て、In Progress への移動。親の Issue では何もせずに止まる |
 | `review-perspectives.sh` | 観点ファイルを集める。`--auto`（または `--base` と `--target`）を渡すと、観点ごとの実行する条件（`types`・`paths`・`issue`・`base_ahead`）に当てはまらない観点を外し、理由つきで `skipped` に出す |
@@ -328,7 +337,7 @@ Todo が増えたとき、どれから着手するか、同時に進めてよい
 | 初期設定用（`plugins/dev-workflow/scripts/setup/`） | 役割 |
 |---|---|
 | `setup-labels.sh` | ラベルを登録する（何度実行しても同じ結果になる） |
-| `setup-project.sh` | Project を作るか既存のものに接続し、リポジトリと紐付け、Story Point の項目を追加し、列を揃え、自動追加の設定を案内する |
+| `setup-project.sh` | Project を作るか既存のものに接続し、リポジトリと紐付け、Story Point の項目を追加し、列を揃え（`--hold-column` なら保留の列も足して設定に書く）、自動追加の設定を案内する |
 | `setup-repo.sh` | マージ方法の設定と、ルールセットの登録。必須のチェックのワークフローが merge_group で動くかも確かめる |
 | `setup-models.sh` | レビューに使うモデル（`review.model`）を、このリポジトリの選んだ層（local・team）の設定ファイルに書く。引数が無ければ、どの層で決めてあるかを出力するだけ。上位の層が別の値を決めていて効かなければ警告する。local に書くとき、そのファイルが git に無視されていない・既にコミットしてあるときは警告する（`setup-all.sh` が `next_steps` で、`.gitignore` に足す・`git rm --cached` で追跡を外すよう案内する。`.gitignore` に当たるかだけでは、コミット済みのファイルを見分けられないため、追跡しているかも確かめる） |
 | `setup-all.sh` | 上の4つを実行し、`.claude/dev-workflow/config.json` と各テンプレートを作る |

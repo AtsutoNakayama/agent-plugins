@@ -5,6 +5,7 @@
 #   --keep-defaults         GitHub の既定のラベルを削除しない
 #   --number N              既存の Project に接続する
 #   --title TITLE           Project の名前で探し、無ければその名前で作る（既定: リポジトリ名）
+#   --hold-column NAME      保留の列（status.hold）を Project の Status 列に足し、.claude/dev-workflow/config.json に書く
 #   --require-approval N    マージに必要な承認の数（既定: 今の値のまま。新しく作るときは 0）
 #   --required-check NAME   マージの前に成功を求めるチェックの名前（繰り返し指定できる。既定: 必須のチェックの一覧に触れない）
 #   --merge-queue           マージキューを使う（使えないリポジトリでは止まる）
@@ -16,6 +17,7 @@
 # 行うこと:
 #   1. setup-labels.sh：type ラベルと breaking ラベルの登録
 #   2. setup-project.sh --write-config：Project の作成・接続と、.claude/dev-workflow/config.json への書き込み
+#      （--hold-column なら、保留の列を足し、status.hold も書く）
 #   3. setup-repo.sh：マージ方法の設定と、ルールセットの登録（必須のチェックのワークフローが merge_group で動くかも確かめる）
 #   4. setup-models.sh：レビューのモデル（review.model）を、このリポジトリの選んだ層に書く。--review-model が無ければ、今の設定を読むだけ
 #   5. PR テンプレート（.github/pull_request_template.md）と Issue テンプレート
@@ -39,12 +41,13 @@ need_value() {
 }
 
 labels_args=() project_args=() repo_args=() models_args=() dry_run=false
-review_model_given=false models_scope=""
+review_model_given=false models_scope="" hold=""
 while [ $# -gt 0 ]; do
   case "$1" in
-    --number | --title)
+    --number | --title | --hold-column)
       need_value "$@"
       project_args+=("$1" "$2")
+      [ "$1" != --hold-column ] || hold="$2"
       shift 2
       ;;
     --require-approval | --required-check)
@@ -164,6 +167,10 @@ if $dry_run; then
     && jq -e --argjson p "$project" \
       '.project.owner == $p.project.owner and .project.number == $p.project.number' .claude/dev-workflow/config.json >/dev/null 2>&1; then
     config_changes=false
+  fi
+  # 保留の列を、今の設定と違う名前で書く予定なら、config.json が変わる
+  if [ -n "$hold" ] && ! jq -e --arg h "$hold" '.status.hold == $h' .claude/dev-workflow/config.json >/dev/null 2>&1; then
+    config_changes=true
   fi
   # レビューのモデルをチームの層に書く予定なら、config.json が変わる
   if jq -e --arg f "$repo_root/.claude/dev-workflow/config.json" '.changed and .file == $f' <<<"$models" >/dev/null; then

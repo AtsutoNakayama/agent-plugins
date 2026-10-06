@@ -45,10 +45,10 @@ args_of() { grep "^$1" "$CALLS" | tail -n 1 | sed "s/^$1 \{0,1\}//"; }
 
 @test "4つのスクリプトにオプションを振り分けて実行する" {
   setup_fake_plugin
-  run_all --keep-defaults --number 3 --title Board --require-approval 1 --review-model opus --models-scope local
+  run_all --keep-defaults --number 3 --title Board --hold-column "On Hold" --require-approval 1 --review-model opus --models-scope local
   assert_success
   assert_equal "$(args_of setup-labels)" "[--keep-defaults]"
-  assert_equal "$(args_of setup-project)" "[--write-config] [--number] [3] [--title] [Board]"
+  assert_equal "$(args_of setup-project)" "[--write-config] [--number] [3] [--title] [Board] [--hold-column] [On Hold]"
   assert_equal "$(args_of setup-repo)" "[--require-approval] [1]"
   assert_equal "$(args_of setup-models)" "[--review-model] [opus] [--scope] [local]"
 }
@@ -199,6 +199,21 @@ committed_config() {
   git -c user.name=t -c user.email=t@example.com commit -q -am config2
   run_all --dry-run
   assert_equal "$(jq -r '.next_steps[0]' <<<"$json")" ".claude/dev-workflow/config.json をコミットし、PR で main にマージする"
+}
+
+@test "dry-run で --hold-column の列名が設定の status.hold と違えば、project が同じでも変わるとみなす" {
+  setup_fake_plugin
+  committed_config '{"project": {"owner": "me", "number": 3}}'
+  echo '{"actions": [], "project": {"owner": "me", "number": 3, "created": false}, "workflows": {"auto_add": true}}' >"$FIX/setup-project.json"
+  run_all --dry-run --hold-column "On Hold"
+  assert_success
+  assert_equal "$(jq -r '.next_steps[0]' <<<"$json")" ".claude/dev-workflow/config.json をコミットし、PR で main にマージする"
+
+  echo '{"project": {"owner": "me", "number": 3}, "status": {"hold": "On Hold"}}' >.claude/dev-workflow/config.json
+  git -c user.name=t -c user.email=t@example.com commit -q -am hold
+  run_all --dry-run --hold-column "On Hold"
+  assert_success
+  assert_equal "$(jq -c .next_steps <<<"$json")" '[]'
 }
 
 @test "dry-run で Project を新しく作る予定なら、owner だけの設定でも変わるとみなす" {
