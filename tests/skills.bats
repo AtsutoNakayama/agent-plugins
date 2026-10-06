@@ -244,6 +244,8 @@ step() { awk -v n="$2" -v end="${3:-^###? }" 'on && $0 ~ end { exit } $0 ~ ("^##
   assert_equal "$tools" "Read, Grep, Glob, Bash"
   grep -q '1つずつ実行し.*`&&`' "$AGENT" \
     || fail "agent の定義に、Bash のコマンドを1つずつ実行する決まりがありません（つなぐと承認されないことがある）"
+  grep -q '観点ファイルがつないだコマンド.*1つずつに分けて' "$AGENT" \
+    || fail "agent の定義に、観点ファイルがつないだコマンドを指示したときの扱いがありません"
 
   f="$SKILLS/review/SKILL.md"
   step3="$(step "$f" 3)"
