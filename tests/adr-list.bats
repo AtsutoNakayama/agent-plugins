@@ -180,3 +180,11 @@ write_adr() {
   assert_equal "$(jq -c '.adrs' <<<"$output")" \
     '[{"path":"docs/adr/000151-bom.md","issue":151,"status":"accepted","title":"BOM"},{"path":"docs/adr/000151-crlf.md","issue":151,"status":"accepted","title":"CRLF"}]'
 }
+
+@test "引用符で囲んでいない値の、空白の後の # からのコメントは外す" {
+  write_adr docs/adr/a.md "$(printf 'status: accepted  # 決めた\nissue: 151 # 後から残した')" "a"
+  write_adr docs/adr/b.md "$(printf 'status: \"a # b\"\nissue: #151')" "b"
+  run_script adr-list.sh --issue 151
+  assert_success
+  assert_equal "$(jq -c '[.adrs[] | [.path, .status]]' <<<"$output")" '[["docs/adr/a.md","accepted"],["docs/adr/b.md","a # b"]]'
+}
