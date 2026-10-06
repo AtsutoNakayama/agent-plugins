@@ -92,12 +92,19 @@ out_of() { jq -c "$1" <<<"$output"; }
   assert_equal "$(args PrView 2 | cut -d' ' -f1)" 5
 }
 
-@test "--pr が数字でなければ、使い方の誤りで止まる" {
+@test "--pr の先頭の 0 はそろえる（005 も 5 の PR を読む。番号の受け取り方は Issue と同じ）" {
   setup_fake_gh
-  for v in abc '#' 5x; do
+  run_script pr-feedback.sh --pr 005
+  assert_success
+  assert_equal "$(args PrView 1 | cut -d' ' -f1)" 5
+}
+
+@test "--pr が PR の番号でなければ（数字でない・# だけ・## で始まる・0）、使い方の誤りで止まる" {
+  setup_fake_gh
+  for v in abc '#' 5x '##5' 0 000; do
     run_script pr-feedback.sh --pr "$v"
     assert_failure 64
-    assert_output --partial "--pr には数字を指定してください: $v"
+    assert_output --partial "--pr には PR の番号を指定してください: $v"
   done
   run_script pr-feedback.sh --pr
   assert_failure 64

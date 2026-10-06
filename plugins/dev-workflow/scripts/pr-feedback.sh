@@ -50,12 +50,8 @@ while [ $# -gt 0 ]; do
     *) dw_die "不明な引数です: $1" 64 ;;
   esac
 done
-if [ -n "$pr" ]; then
-  case "$pr" in "#"?*) pr="${pr#\#}" ;; esac
-  case "$pr" in
-    *[!0-9]*) dw_die "--pr には数字を指定してください: $pr" 64 ;;
-  esac
-fi
+# スキルの引数の #5 も受け、先頭の 0 をそろえる（dw_number。Issue の番号と同じ受け取り方）
+[ -z "$pr" ] || pr="$(dw_number --pr "$pr" PR)"
 
 handlers="$("$BASH" "$DW_SCRIPTS_DIR/config.sh" '.pr_respond.handlers // {}' | jq -c .)"
 jq -e 'type == "object" and all(.[]; type == "string" and . != "")' >/dev/null <<<"$handlers" \
