@@ -279,6 +279,13 @@ silent() {
   warned Feat/1-x "git switch -c Feat/1-x"
 }
 
+@test "ブランチを作るオプションを略して書いても、git と同じに読んで警告する" {
+  warned foo "git switch --cre foo" "git switch --force-c foo" "git switch --orph=foo" "git checkout --orph foo" \
+    "git branch --forc foo main" "git branch --tr foo origin/main"
+  # switch の --force（--discard-changes）は値を取らないので、次の語を作るブランチと読まない
+  silent "git switch --force foo"
+}
+
 @test "1つのコマンドで複数のブランチを作れば、まとめて警告する" {
   run_hook "git branch foo && git branch feat/1-ok && git branch bar"
   assert_success

@@ -127,6 +127,7 @@ shows_wt() {
   git switch -q main
   shows "git worktree add ../wt feat/23-x" "Issue #23: https://github.com/me/demo/issues/23"
   shows "git worktree add --reason 作業 ../wt feat/23-x" "Issue #23: https://github.com/me/demo/issues/23"
+  shows "git worktree add --rea 作業 ../wt feat/23-x" "Issue #23: https://github.com/me/demo/issues/23"
   shows "git worktree add -f ../wt \"feat/23-x\"" "Issue #23: https://github.com/me/demo/issues/23"
   # パスだけのときは、ブランチの名前を拾えないので、今のブランチの Issue も出さない
   git switch -q feat/17-demo
@@ -508,6 +509,12 @@ EOF"
   make_wt
   shows_wt "env -C ../wt git commit -m x"
   shows_wt "env --chdir=$TMP/wt git push"
+}
+
+@test "git commit の略した --dry-run（--dry）も dry-run とみなし、-m などの値は --dry-run と読まない" {
+  silent "git commit --dry -m x" "git commit -a --dry-r"
+  shows "git commit -m --dry-run" "Issue #17: https://github.com/me/demo/issues/17"
+  shows "git commit -F - --author --dry-run" "Issue #17: https://github.com/me/demo/issues/17"
 }
 
 @test "git push の略した --dry-run（--dry など）も dry-run とみなし、--recurse-submodules の値をリモートと読まない" {

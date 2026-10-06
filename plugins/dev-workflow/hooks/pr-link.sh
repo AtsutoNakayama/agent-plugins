@@ -101,10 +101,9 @@ on_git() {
       ! $gc_push_dry || return 0
       ;;
     commit)
-      # git commit --dry-run は commit しない
-      for k in "$@"; do
-        [ "$k" != --dry-run ] || return 0
-      done
+      # git commit --dry-run（略した形も）は commit しない
+      gc_commit_args "$@"
+      ! $gc_commit_dry || return 0
       ;;
     switch | checkout | branch | worktree)
       gc_new_branches add_new_name "$sub" "$@"

@@ -104,16 +104,122 @@ gc_target() {
 # 操作の対象の今のブランチを出力する（detached HEAD や分からないときは空）
 gc_branch() { gc_git symbolic-ref --short -q HEAD || true; }
 
+# --- オプションの読み方 -------------------------------------------------------------
+
+# 1語のオプションを読む。git や getopt と同じく、短いオプションはまとめて書け（-qc name）、値をくっつけても書ける
+# （-cname）。長いオプションは --name=value とも書け、略して書ける（--cre name）。略さない名前と同じものを先に、
+# 無ければ頭が同じものを、<長いオプション> の並びの順に探す（曖昧な略し方では、コマンドが失敗して何もしないので、どれでもよい）。
+# <長いオプション> には、値を取るものを末尾に = を付けて並べる。値を取らないものは、略した形を読みたいときと、
+# 値を取るものの頭と同じ名前（switch の --force と --force-create）を見分けたいときに並べる。
+# - と -- はオプションとみなさない（呼び出し側で扱う）。オプションでなければ 1 を返す。
+# 使い方: gc_opt <語> <値を取る短いオプションの文字> <長いオプション（空白区切り）>
+#   gc_on    オプションの名前（-c・--create。略した長いオプションは略さない名前、知らない長いオプションは書いたまま）の配列
+#   gc_ov    オプションの値（値を取らない、または次の語が値なら空）の配列
+#   gc_oa    値をくっつけて書いたか（-C~/x・--chdir=~/x なら true）の配列
+#   gc_onext 次の語が値になるオプションの名前（無ければ空）
+gc_on=() gc_ov=() gc_oa=() gc_onext=""
+gc_opt() {
+  local w="$1" shorts="$2" longs="$3" k c l name long=""
+  gc_on=() gc_ov=() gc_oa=() gc_onext=""
+  case "$w" in
+    - | --) return 1 ;;
+    --*)
+      name="${w%%=*}"
+      # 長いオプションの名前は空白も * なども含まないので、分けて並べる
+      # shellcheck disable=SC2086
+      for l in $longs; do
+        if [ "${l%=}" = "$name" ]; then
+          long="$l"
+          break
+        fi
+      done
+      if [ -z "$long" ]; then
+        # shellcheck disable=SC2086
+        for l in $longs; do
+          case "${l%=}" in
+            "$name"*)
+              long="$l"
+              break
+              ;;
+          esac
+        done
+      fi
+      [ -n "$long" ] || long="$name"
+      case "$long" in
+        *=)
+          case "$w" in
+            *=*) gc_on+=("${long%=}") gc_ov+=("${w#*=}") gc_oa+=(true) ;;
+            *) gc_onext="${long%=}" ;;
+          esac
+          ;;
+        *) gc_on+=("$long") gc_ov+=("") gc_oa+=(false) ;;
+      esac
+      ;;
+    -*)
+      # 値を取る文字の後ろが残っていれば、それが値（-cname）。残っていなければ次の語が値
+      k=1
+      while [ "$k" -lt "${#w}" ]; do
+        c="${w:k:1}"
+        case "$shorts" in
+          *"$c"*)
+            if [ "$((k + 1))" -lt "${#w}" ]; then
+              gc_on+=("-$c") gc_ov+=("${w:k+1}") gc_oa+=(true)
+            else
+              gc_onext="-$c"
+            fi
+            return 0
+            ;;
+        esac
+        gc_on+=("-$c") gc_ov+=("") gc_oa+=(false)
+        k=$((k + 1))
+      done
+      ;;
+    *) return 1 ;;
+  esac
+}
+
+# 前に付くコマンド（timeout・nice・env など）のオプションを読む（読み方は gc_opt）。最初のオプションでない語か -- で止まる
+# （-- も数える）。
+# 使い方: gc_skip_opts <値を取る短いオプションの文字> <長いオプション（gc_opt と同じ）> <引数>...
+#   gc_nopt  オプションの語の数
+#   gc_optn・gc_optv・gc_opta  オプションの名前・値・値をくっつけて書いたか（gc_opt の gc_on・gc_ov・gc_oa を並べたもの）
+gc_nopt=0 gc_optn=() gc_optv=() gc_opta=()
+gc_skip_opts() {
+  local shorts="$1" longs="$2" w n=0 next=""
+  shift 2
+  gc_optn=() gc_optv=() gc_opta=()
+  for w in "$@"; do
+    n=$((n + 1))
+    if [ -n "$next" ]; then
+      gc_optn+=("$next") gc_optv+=("$w") gc_opta+=(false)
+      next=""
+      continue
+    fi
+    [ "$w" != -- ] || break
+    if ! gc_opt "$w" "$shorts" "$longs"; then
+      n=$((n - 1))
+      break
+    fi
+    gc_optn+=(${gc_on[@]+"${gc_on[@]}"}) gc_optv+=(${gc_ov[@]+"${gc_ov[@]}"}) gc_opta+=(${gc_oa[@]+"${gc_oa[@]}"})
+    next="$gc_onext"
+  done
+  # 値の無いまま終わった
+  if [ -n "$next" ]; then
+    gc_optn+=("$next") gc_optv+=("") gc_opta+=(false)
+  fi
+  gc_nopt=$n
+}
+
 # ブランチを作る git のコマンドから、作るブランチの名前を探し、名前ごとに「<コールバック> <名前>」を呼ぶ。
 # 対象は git switch -c/-C/--create/--force-create/--orphan、git checkout -b/-B/--orphan、git worktree add -b/-B、git branch <名前>。
-# 短いオプションはまとめて書け（-qc name）、名前をくっつけても書ける（-cname）。
+# オプションの読み方は gc_opt（-qc name・-cname・--cre name）。
 # 使い方: gc_new_branches <コールバック> <サブコマンド> <引数>...
 gc_new_branches() {
   local cb="$1" sub="$2"
   shift 2
   case "$sub" in
-    switch) gc_create_opts "$cb" cC "--create --force-create --orphan" "$@" ;;
-    checkout) gc_create_opts "$cb" bB "--orphan" "$@" ;;
+    switch) gc_create_opts "$cb" cC "--create= --force-create= --orphan= --force" "$@" ;;
+    checkout) gc_create_opts "$cb" bB "--orphan=" "$@" ;;
     branch) gc_branch_create "$cb" "$@" ;;
     worktree)
       if [ "${1:-}" = add ]; then
@@ -124,63 +230,50 @@ gc_new_branches() {
   esac
 }
 
-# git switch・git checkout・git worktree add の引数から、作るブランチの名前を探す。
-# 使い方: gc_create_opts <コールバック> <値を取る短いオプションの文字> <値を取る長いオプション（空白区切り）> <引数>...
+# git switch・git checkout・git worktree add の引数から、作るブランチの名前を探す。<値を取る…> には、ブランチを作る
+# オプションだけを並べる（ほかのオプションは値を取らないものとして読む。値はオプションの形でなければ読み飛ばされる）。
+# オプションは名前の後ろにも書けるので、-- までのすべての語を見る。
+# 使い方: gc_create_opts <コールバック> <値を取る短いオプションの文字> <長いオプション（gc_opt と同じ）> <引数>...
 gc_create_opts() {
-  local cb="$1" shorts="$2" longs=" $3 " expect=false w k c
+  local cb="$1" shorts="$2" longs="$3" w k next=""
   shift 3
   for w in "$@"; do
-    if $expect; then
-      expect=false
+    if [ -n "$next" ]; then
+      next=""
       "$cb" "$w"
       continue
     fi
-    case "$w" in
-      --) return 0 ;;
-      --*=*)
-        case "$longs" in *" ${w%%=*} "*) "$cb" "${w#*=}" ;; esac
-        ;;
-      --*)
-        case "$longs" in *" $w "*) expect=true ;; esac
-        ;;
-      -?*)
-        # 短いオプションはまとめて書ける（-qc name）。値を取る文字の後ろが残っていれば、それが値（-cname）
-        k=1
-        while [ "$k" -lt "${#w}" ]; do
-          c="${w:k:1}"
-          case "$shorts" in
-            *"$c"*)
-              if [ "$((k + 1))" -lt "${#w}" ]; then
-                "$cb" "${w:k+1}"
-              else
-                expect=true
-              fi
-              break
-              ;;
-          esac
-          k=$((k + 1))
-        done
-        ;;
-    esac
+    [ "$w" != -- ] || return 0
+    gc_opt "$w" "$shorts" "$longs" || continue
+    k=0
+    while [ "$k" -lt "${#gc_on[@]}" ]; do
+      ! "${gc_oa[k]}" || "$cb" "${gc_ov[k]}"
+      k=$((k + 1))
+    done
+    next="$gc_onext"
   done
 }
 
 # git branch の引数を調べる。ブランチを作るとき（一覧・削除・名前の変更などのオプションが無く、名前がある）だけ名前を渡す。
-# オプションは名前の後ろにも書けるので（git branch bar -d）、すべての引数を見てから判断する
+# オプションは名前の後ろにも書けるので（git branch bar -d）、すべての引数を見てから判断する。
+# 作るときに使えるオプション（略した形も。gc_opt）だけなら続ける
 # 使い方: gc_branch_create <コールバック> <引数>...
 gc_branch_create() {
-  local cb="$1" w after_dd=false name=""
+  local cb="$1" w k after_dd=false name=""
+  local create=" --force --track --no-track --quiet --create-reflog --recurse-submodules --color --no-color "
   shift
   for w in "$@"; do
     if ! $after_dd; then
       case "$w" in
         --) after_dd=true; continue ;;
-        --force | --track | --track=* | --no-track | --quiet | --create-reflog | --recurse-submodules | --color | --color=* | --no-color) continue ;;
-        # 短いオプションはまとめて書ける（-ft）。作るときに使う f・t・q だけなら続ける
-        -*[!ftq]*) return 0 ;;
-        -?*) continue ;;
-        -*) return 0 ;;
+        -) return 0 ;;
       esac
+      if gc_opt "$w" "" "$create"; then
+        for k in ${gc_on[@]+"${gc_on[@]}"}; do
+          case "$create -f -t -q " in *" $k "*) ;; *) return 0 ;; esac
+        done
+        continue
+      fi
     fi
     [ -n "$name" ] || name="$w"
   done
@@ -188,28 +281,26 @@ gc_branch_create() {
 }
 
 # git worktree add <パス> <ブランチ>（-b・-B を付けない形）の、2つ目の位置引数を「<コールバック> <名前>」に渡す。
-# gc_new_branches と違い、作るブランチではなく、既にあるブランチを使う書き方。値を取るオプション（--reason・-b・-B）の次の語は、
-# 位置引数に数えない
+# gc_new_branches と違い、作るブランチではなく、既にあるブランチを使う書き方。値を取るオプション（--reason・-b・-B）の
+# 次の語は、位置引数に数えない
 # 使い方: gc_worktree_branch <コールバック> <add の後の引数>...
 gc_worktree_branch() {
-  local cb="$1" w pos=0 skip=false
+  local cb="$1" w pos=0 next=false
   shift
   for w in "$@"; do
-    if $skip; then
-      skip=false
+    if $next; then
+      next=false
       continue
     fi
-    case "$w" in
-      --reason | -b | -B) skip=true ;;
-      -*) ;;
-      *)
-        pos=$((pos + 1))
-        if [ "$pos" -eq 2 ]; then
-          "$cb" "$w"
-          return 0
-        fi
-        ;;
-    esac
+    if gc_opt "$w" bB "--reason="; then
+      [ -z "$gc_onext" ] || next=true
+      continue
+    fi
+    pos=$((pos + 1))
+    if [ "$pos" -eq 2 ]; then
+      "$cb" "$w"
+      return 0
+    fi
   done
 }
 
@@ -217,52 +308,35 @@ gc_worktree_branch() {
 #   gc_push_force   強制 push（--force・-f・--mirror・+<refspec>）なら true。--force-with-lease は含めない
 #   gc_push_dry     dry-run（--dry-run・-n）なら true
 #   gc_push_refs    refspec の配列（リモートの後ろの引数）
-# 短いオプションはまとめて書ける（-fu・-nu）。値を取るオプション（--repo・--push-option・--receive-pack・--exec・
-# --recurse-submodules・-o）の値（次の語）は飛ばす。長いオプションは、git と同じく略して書ける（--mirr・--dry・--recu）。
-# 略した形が曖昧なとき（--forc）は、git が失敗して push しないので、どう読んでもよい。-- の後ろは、オプションとみなさない
+# オプションの読み方は gc_opt（-fu・--mirr・--dry・--recu check）。値を取るオプション（--repo・--push-option・--receive-pack・
+# --exec・--recurse-submodules・-o）の値は飛ばす。-- の後ろは、オプションとみなさない
 # 使い方: gc_push_args <引数>...
 gc_push_force=false gc_push_dry=false gc_push_refs=()
 # shellcheck disable=SC2034 # gc_push_force・gc_push_dry は呼び出し側（フック）が読む
 gc_push_args() {
-  local after_dd=false expect=false w k c remote=""
-  # 略した形を、略さない名前の頭と比べる
-  local mirror=--mirror dry=--dry-run with_value=" --repo --push-option --receive-pack --exec --recurse-submodules"
+  local after_dd=false next=false w k remote=""
   gc_push_force=false gc_push_dry=false gc_push_refs=()
   for w in "$@"; do
-    if $expect; then
-      expect=false
+    if $next; then
+      next=false
       continue
     fi
     if ! $after_dd; then
-      case "$w" in
-        --) after_dd=true; continue ;;
-        --force) gc_push_force=true; continue ;;
-        --*=*) continue ;;
-        --*)
-          # 略した形も読む（"$w" は文字として比べる）。--mirror はすべての ref をリモートに合わせて上書き・削除する
-          case "$mirror" in "$w"*) gc_push_force=true; continue ;; esac
-          case "$dry" in "$w"*) gc_push_dry=true; continue ;; esac
-          case "$with_value" in *" $w"*) expect=true ;; esac
-          continue
-          ;;
-        -?*)
-          # -o は値を取るので、その後ろは値
-          k=1
-          while [ "$k" -lt "${#w}" ]; do
-            c="${w:k:1}"
-            case "$c" in
-              f) gc_push_force=true ;;
-              n) gc_push_dry=true ;;
-              o)
-                [ "$((k + 1))" -lt "${#w}" ] || expect=true
-                break
-                ;;
-            esac
-            k=$((k + 1))
-          done
-          continue
-          ;;
-      esac
+      if [ "$w" = -- ]; then
+        after_dd=true
+        continue
+      fi
+      if gc_opt "$w" o "--repo= --push-option= --receive-pack= --exec= --recurse-submodules= --force --mirror --dry-run"; then
+        [ -z "$gc_onext" ] || next=true
+        for k in ${gc_on[@]+"${gc_on[@]}"}; do
+          case "$k" in
+            # --mirror はすべての ref をリモートに合わせて上書き・削除する
+            -f | --force | --mirror) gc_push_force=true ;;
+            -n | --dry-run) gc_push_dry=true ;;
+          esac
+        done
+        continue
+      fi
     fi
     if [ -z "$remote" ]; then
       remote="$w"
@@ -273,73 +347,29 @@ gc_push_args() {
   done
 }
 
-# --- コマンドごとの解析 -------------------------------------------------------------
-
-# 前に付くコマンド（timeout・nice・env など）のオプションを読む。最初のオプションでない語か -- で止まる（-- も数える）。
-# 短いオプションはまとめて書け（-iu FOO）、値をくっつけても書ける（-uFOO）。長いオプションは --name=value とも書け、
-# getopt と同じく略して書ける（--sig KILL）。
-# 使い方: gc_skip_opts <値を取る短いオプションの文字> <値を取る長いオプション（空白区切り）> <引数>...
-#   gc_nopt  オプションの語の数
-#   gc_optn  オプションの名前（-C・--chdir。略した長いオプションは、略さない名前）の配列
-#   gc_optv  オプションの値（値を取らなければ空）の配列
-gc_nopt=0 gc_optn=() gc_optv=()
-gc_skip_opts() {
-  local shorts="$1" longs="$2" w k c l n=0 name=""
-  shift 2
-  gc_optn=() gc_optv=()
+# git commit の引数を読んで、dry-run（--dry-run。略した形も）なら gc_commit_dry を true にする。pr-link.sh が使う。
+# 値を取るオプション（-m・-F・--author など）の値は飛ばす（git commit -m --dry-run の --dry-run はメッセージ）
+# 使い方: gc_commit_args <引数>...
+gc_commit_dry=false
+# shellcheck disable=SC2034 # gc_commit_dry は呼び出し側（フック）が読む
+gc_commit_args() {
+  local next=false w k
+  gc_commit_dry=false
   for w in "$@"; do
-    if [ -n "$name" ]; then
-      gc_optn+=("$name") gc_optv+=("$w")
-      name="" n=$((n + 1))
+    if $next; then
+      next=false
       continue
     fi
-    case "$w" in
-      --) n=$((n + 1)); break ;;
-      --*)
-        c=""
-        # 長いオプションの名前は空白も * なども含まないので、分けて並べる
-        # shellcheck disable=SC2086
-        for l in $longs; do
-          case "$l" in "${w%%=*}"*) c="$l"; break ;; esac
-        done
-        if [ -z "$c" ]; then
-          gc_optn+=("${w%%=*}") gc_optv+=("")
-        else
-          case "$w" in
-            *=*) gc_optn+=("$c") gc_optv+=("${w#*=}") ;;
-            *) name="$c" ;;
-          esac
-        fi
-        ;;
-      -?*)
-        # 値を取る文字の後ろが残っていれば、それが値（-uFOO）
-        k=1
-        while [ "$k" -lt "${#w}" ]; do
-          c="${w:k:1}"
-          case "$shorts" in
-            *"$c"*)
-              if [ "$((k + 1))" -lt "${#w}" ]; then
-                gc_optn+=("-$c") gc_optv+=("${w:k+1}")
-              else
-                name="-$c"
-              fi
-              break
-              ;;
-          esac
-          gc_optn+=("-$c") gc_optv+=("")
-          k=$((k + 1))
-        done
-        ;;
-      *) break ;;
-    esac
-    n=$((n + 1))
+    [ "$w" != -- ] || return 0
+    gc_opt "$w" mFcCt "--message= --file= --reuse-message= --reedit-message= --fixup= --squash= --author= --date= --template= --cleanup= --trailer= --pathspec-from-file= --dry-run" || continue
+    [ -z "$gc_onext" ] || next=true
+    for k in ${gc_on[@]+"${gc_on[@]}"}; do
+      [ "$k" != --dry-run ] || gc_commit_dry=true
+    done
   done
-  # 値の無いまま終わった
-  if [ -n "$name" ]; then
-    gc_optn+=("$name") gc_optv+=("")
-  fi
-  gc_nopt=$n
 }
+
+# --- コマンドごとの解析 -------------------------------------------------------------
 
 # cd で移る。after のときの外側の相対パスの扱いは、先頭のコメント。gc_scan の中から呼ぶ。
 # 使い方: gc_cd <行き先（空なら $HOME、- なら前の場所）>
@@ -575,7 +605,7 @@ gc_command() {
         # timeout [オプション] <時間> <コマンド>
         ext=true
         shift
-        gc_skip_opts ks "--kill-after --signal" "$@"
+        gc_skip_opts ks "--kill-after= --signal=" "$@"
         shift "$gc_nopt"
         [ $# -eq 0 ] || shift
         ;;
@@ -583,13 +613,13 @@ gc_command() {
         # nice -n 5・nice -5・nice --adjustment=5
         ext=true
         shift
-        gc_skip_opts n --adjustment "$@"
+        gc_skip_opts n --adjustment= "$@"
         shift "$gc_nopt"
         ;;
       env)
         ext=true
         shift
-        gc_skip_opts uCSa "--unset --chdir --split-string --argv0" "$@"
+        gc_skip_opts uCSa "--unset= --chdir= --split-string= --argv0= --ignore-environment" "$@"
         shift "$gc_nopt"
         # env の後ろの - は -i と同じ
         [ "${1:-}" != - ] || shift
