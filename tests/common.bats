@@ -94,3 +94,11 @@ run_common() {
   assert_failure 1
   assert_output "HTTP 401: Bad credentials"
 }
+
+@test "dw_uri_path は、ブランチ名を / で区切った部分ごとに符号化する（git の参照の API のパスに入れるため）" {
+  run_common dw_uri_path 'feature/login#2'
+  assert_success
+  assert_output 'feature/login%232'
+  run_common dw_uri_path 'feat/17-x'
+  assert_output 'feat/17-x'
+}

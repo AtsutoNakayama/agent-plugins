@@ -154,8 +154,9 @@ fi
 
 # やめた作業のリモートのブランチ（無ければ空）と、それを head とする開いている PR
 remote="" prs='[]'
-# REST のパスに入れるブランチ名は、/ で区切った部分ごとに符号化する（# や ? があると、そこでパスが切れて別のブランチを指すため）
-branch_path="$(jq -rn --arg b "$branch" '$b | split("/") | map(@uri) | join("/")')"
+# REST のパスに入れるブランチ名は、/ で区切った部分ごとに符号化する（dw_uri_path。# や ? でパスが切れて別のブランチを指さないように）
+branch_path=""
+[ -z "$branch" ] || branch_path="$(dw_uri_path "$branch")"
 if [ -n "$branch" ]; then
   if err="$(gh api "repos/$repo_nwo/git/ref/heads/$branch_path" 2>&1 >/dev/null)"; then
     remote="$branch"
