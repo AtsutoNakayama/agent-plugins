@@ -45,7 +45,7 @@ issue: 219
 
 ### 確認
 
-`tests/guard-git.bats` で、配置ごと（普通のリポジトリ・`.git` の中・`--git-dir`・`GIT_DIR`・`GIT_WORK_TREE`・`--separate-git-dir`・サブモジュールとそのワークツリー・bare のミラー・ホームのリポジトリ）に、導入したかの判定と base_branch・ブランチ名の規約を確かめる。`tests/common.bats` で、`dw_main_root`・`dw_repo_main_root` を確かめる。
+`tests/guard-git.bats` で、配置ごと（普通のリポジトリ・`.git` の中・`--git-dir`・`GIT_DIR`・`GIT_WORK_TREE`・`--separate-git-dir`・サブモジュールとそのワークツリー・bare のミラー）に、導入したかの判定と base_branch・ブランチ名の規約を確かめる。`tests/common.bats` で、`dw_main_root`・`dw_repo_main_root` を確かめる。
 
 ## 各案の長所と短所
 

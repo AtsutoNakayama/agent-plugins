@@ -443,15 +443,6 @@ silent() {
   git clone -q --mirror "$REPO" "$TMP/mirror2.git"
   denied "強制 push" "cd $TMP/mirror2.git && git push --mirror ../elsewhere.git"
 }
-
-@test "ホームのリポジトリ（dotfiles）は、ユーザーの層の設定があっても、導入していないとみなす" {
-  export WORKFLOW_USER_DIR="$TMP/home/.claude/dev-workflow"
-  git init -q -b main "$TMP/home"
-  mkdir -p "$WORKFLOW_USER_DIR" "$TMP/home/proj"
-  echo '{}' >"$WORKFLOW_USER_DIR/config.json"
-  silent "cd $TMP/home && git commit -m x" "cd $TMP/home/proj && git push --force"
-}
-
 @test "対象のリポジトリが見つからないときは、守りを外さないよう調べる" {
   mkdir "$TMP/plain"
   denied "強制 push" "cd $TMP/plain && git push --force" "cd $TMP/plain && GIT_DIR=$TMP/nowhere git push --force"

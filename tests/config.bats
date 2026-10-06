@@ -192,15 +192,3 @@ load test_helper
   run_script config.sh '[.language, .guides.commit] | tojson'
   assert_output "[\"en\",[\"$WORKFLOW_USER_DIR/commit.md\"]]"
 }
-
-@test "ホームのリポジトリでは、ユーザーの層の設定とガイドを、チームの設定としても読まない" {
-  export WORKFLOW_USER_DIR="$TMP/home/.claude/dev-workflow"
-  git init -q -b main "$TMP/home"
-  mkdir -p "$WORKFLOW_USER_DIR" "$TMP/home/proj"
-  echo '{"language": "en"}' >"$WORKFLOW_USER_DIR/config.json"
-  echo user >"$WORKFLOW_USER_DIR/commit.md"
-  cd "$TMP/home/proj"
-  run_script config.sh '[.language, .guides, (.sources | length)] | tojson'
-  assert_success
-  assert_output '["ja",{},1]'
-}

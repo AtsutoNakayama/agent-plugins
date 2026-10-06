@@ -29,7 +29,6 @@ issue: 219
 選んだ案：「プラグインの側で、導入したリポジトリかを判定する」。理由は、インストールの範囲に関わらず同じ結果になり、ユーザーの層も残せるため。
 
 * 導入したリポジトリは、チームの設定 `.claude/dev-workflow/config.json` があるリポジトリとする（`lib/common.sh` の `dw_is_set_up`）。初期設定（repo-setup）が作るファイルで、中身は空でもよい。ワークツリーに無くても、メインのワークツリーにあれば導入したとみなす（初期設定をまだコミットしていないときや、初期設定より前に作ったブランチのワークツリーで、守りが外れないようにするため）。
-* ホームをリポジトリにしているとき（dotfiles を `~/.git` で管理するときなど）は、`~/.claude/dev-workflow/config.json` がユーザーの層の設定と同じファイルになるので、チームの設定とはみなさない（ユーザーの層の設定があるだけで、ホームの下がすべて導入したことにならないようにするため）。
 * 導入していないリポジトリ（リポジトリの外を含む）では、フックは何もせず、ユーザーの層を読まない。導入したリポジトリでは、今までどおりユーザーの層も効く。
 * `review.model` も、ほかの設定と同じく層を合わせた値を使うように戻す。#131 で避けたかったのはほかのリポジトリへの影響で、ユーザーの層が導入したリポジトリにだけ効くようになったため。`setup-models.sh` が書くのは、今までどおりリポジトリの層だけにする。
 * guard-git がどのリポジトリを判定の対象にするかは、[ADR 000219（guard-git の対象のリポジトリ）](000219-resolve-guard-git-target-repo.md) で決めた。
@@ -43,7 +42,7 @@ issue: 219
 
 ### 確認
 
-`tests/guard-git.bats`・`tests/task-flow.bats`・`tests/pr-link.bats` で、導入していないリポジトリではフックが何もしないことを確かめる。`tests/config.bats`・`tests/review-perspectives.bats`・`tests/review-perspective-add.bats` で、導入していないリポジトリとホームのリポジトリではユーザーの層を読まないことを確かめる。`tests/common.bats` で、導入したかの判定（メインのワークツリー・サブモジュール・ホームのリポジトリ）を確かめる。`tests/doctor.bats` で、導入していないリポジトリで警告することを確かめる。
+`tests/guard-git.bats`・`tests/task-flow.bats`・`tests/pr-link.bats` で、導入していないリポジトリではフックが何もしないことを確かめる。`tests/config.bats`・`tests/review-perspectives.bats`・`tests/review-perspective-add.bats` で、導入していないリポジトリではユーザーの層を読まないことを確かめる。`tests/common.bats` で、導入したかの判定（メインのワークツリー・サブモジュール）を確かめる。`tests/doctor.bats` で、導入していないリポジトリで警告することを確かめる。
 
 ## 各案の長所と短所
 

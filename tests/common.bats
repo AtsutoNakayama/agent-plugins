@@ -77,18 +77,3 @@ make_submodule() {
   run_fn dw_is_set_up "$TMP/super"
   assert_failure
 }
-
-@test "dw_team_dir・dw_is_set_up は、ホームのリポジトリにあるユーザーの層の設定を、チームの設定とみなさない" {
-  export WORKFLOW_USER_DIR="$TMP/home/.claude/dev-workflow"
-  git init -q -b main "$TMP/home"
-  mkdir -p "$WORKFLOW_USER_DIR"
-  echo '{}' >"$WORKFLOW_USER_DIR/config.json"
-  run_fn dw_team_dir "$TMP/home"
-  assert_success
-  assert_output ""
-  run_fn dw_is_set_up "$TMP/home"
-  assert_failure
-  # ほかのリポジトリは、今までどおり <ルート>/.claude/dev-workflow
-  run_fn dw_team_dir "$REPO"
-  assert_output "$REPO/.claude/dev-workflow"
-}

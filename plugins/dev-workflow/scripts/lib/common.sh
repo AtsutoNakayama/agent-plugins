@@ -88,27 +88,6 @@ dw_main_root() {
   dw_repo_main_root "$common"
 }
 
-# <リポジトリのルート> のチームの設定の置き場所（<ルート>/.claude/dev-workflow）を出力する。
-# ホームをリポジトリにしているとき（dotfiles を ~/.git で管理するときなど）は、そこがユーザーの層の置き場所（dw_user_dir）と
-# 同じになるので、チームの設定の置き場所とはみなさず、何も出さない（ユーザーの層の設定で、導入したことにならないようにする）
-# 使い方: dw_team_dir <リポジトリのルート（空なら何も出さない）>
-dw_team_dir() {
-  local d="$1/.claude/dev-workflow"
-  [ -n "$1" ] || return 0
-  if [ -d "$d" ] && [ "$(dw_abs_dir / "$d" || true)" = "$(dw_abs_dir / "$(dw_user_dir)" || true)" ]; then
-    return 0
-  fi
-  printf '%s\n' "$d"
-}
-
-# <リポジトリのルート> にチームの設定（dw_team_dir の config.json）があれば成功する
-# 使い方: dw_has_team_config <リポジトリのルート>
-dw_has_team_config() {
-  local d
-  d="$(dw_team_dir "$1")"
-  [ -n "$d" ] && [ -f "$d/config.json" ]
-}
-
 # このプラグインを導入したリポジトリ（チームの設定 .claude/dev-workflow/config.json があるリポジトリ）なら成功する。
 # プラグインが効く範囲を、Claude Code で有効にした範囲（ユーザー単位なら全リポジトリ）ではなく、導入したリポジトリに限るため、
 # 導入していないリポジトリでは、フックは何もせず、ユーザーの層（~/.claude/dev-workflow/）も読まない（設計書 §1）。
@@ -118,9 +97,9 @@ dw_has_team_config() {
 dw_is_set_up() {
   local main
   [ -n "${1:-}" ] || return 1
-  dw_has_team_config "$1" && return 0
+  [ -f "$1/.claude/dev-workflow/config.json" ] && return 0
   main="$(dw_main_root "$1" || true)"
-  [ -n "$main" ] && dw_has_team_config "$main"
+  [ -n "$main" ] && [ -f "$main/.claude/dev-workflow/config.json" ]
 }
 
 # ユーザーごとの設定の置き場所。
@@ -403,14 +382,11 @@ dw_review_model_of() {
 # どれかの層のファイルが JSON のオブジェクトとして読めなければ、書く層でなくても止まる。
 # 使い方: dw_review_model_layers <リポジトリのルート>
 dw_review_model_layers() {
-  local pairs pair name f v user_dir team_dir
+  local pairs pair name f v user_dir
   pairs=()
   user_dir="$(dw_user_dir_for "$1")"
   [ -z "$user_dir" ] || pairs+=("user:$user_dir/config.json")
-  # チームの設定は config.sh と同じく dw_team_dir から読む（ホームのリポジトリでは読まない）
-  team_dir="$(dw_team_dir "$1")"
-  [ -z "$team_dir" ] || pairs+=("team:$team_dir/config.json")
-  pairs+=("local:$(dw_local_config_file "$1")")
+  pairs+=("team:$1/.claude/dev-workflow/config.json" "local:$(dw_local_config_file "$1")")
   for pair in "${pairs[@]}"; do
     name="${pair%%:*}" f="${pair#*:}"
     [ -f "$f" ] || continue

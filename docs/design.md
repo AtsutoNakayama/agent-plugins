@@ -29,7 +29,7 @@ agent-plugins/
 ### 効く範囲（導入したリポジトリ）
 
 - プラグインは、**導入したリポジトリの中でだけ効く**。インストールの範囲（ユーザー単位・プロジェクト単位）に関わらず、プラグインの側で判定する（[ADR 000219](adr/000219-limit-scope-to-set-up-repos.md)）。
-- **導入したリポジトリ**は、チームの設定 `.claude/dev-workflow/config.json` があるリポジトリ（`lib/common.sh` の `dw_is_set_up`）。初期設定（repo-setup）が作るファイルで、中身は空（`{}`）でもよい。ワークツリーに無くても、メインのワークツリー（`dw_main_root`）にあれば導入したとみなす。`.claude/dev-workflow/` のディレクトリや `config.local.json` だけでは、導入したとみなさない。ホームをリポジトリにしているとき、`~/.claude/dev-workflow/` はユーザーの層の置き場所なので、チームの設定の置き場所とはみなさない（`dw_team_dir`）。
+- **導入したリポジトリ**は、チームの設定 `.claude/dev-workflow/config.json` があるリポジトリ（`lib/common.sh` の `dw_is_set_up`）。初期設定（repo-setup）が作るファイルで、中身は空（`{}`）でもよい。ワークツリーに無くても、メインのワークツリー（`dw_main_root`）にあれば導入したとみなす。`.claude/dev-workflow/` のディレクトリや `config.local.json` だけでは、導入したとみなさない。
 - 導入していないリポジトリ（リポジトリの外を含む）では、次のものが効かない。
   - フック（§9）：`guard-git.sh`・`task-flow.sh`・`pr-link.sh` は何もしない。`guard-git.sh` は、操作の対象のリポジトリで判断する。対象は、コマンドと同じオプション・環境変数（`--git-dir`・`GIT_DIR` など）で `git rev-parse --git-common-dir` を実行して求め、ルートの候補を、その場所で git が同じリポジトリを見つけるかで確かめる。ルートが分からなければ（bare リポジトリなど）、HEAD にコミットされたチームの設定で判断し、git がリポジトリを見つけられなければ、既定の設定で調べる。設定（`base_branch`・`branch.pattern`）も同じ対象から読む（[ADR 000219](adr/000219-resolve-guard-git-target-repo.md)）。
   - ユーザーの層（`~/.claude/dev-workflow/`）：設定（`config.json`）・文章のガイド（`*.md`）・レビューの観点（`review/*.md`）・タスクの進め方の追記（`task-flow.md`）を読まない。スキルはプラグインの既定とリポジトリの層だけで動く。

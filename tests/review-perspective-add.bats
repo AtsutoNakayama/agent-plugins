@@ -285,14 +285,3 @@ add() {
   refute_output --partial "warn:"
   [ -f "$WORKFLOW_USER_DIR/review/mine.md" ]
 }
-
-@test "ホームのリポジトリでは、repo の層はユーザーの層と同じ場所なので置けない" {
-  export WORKFLOW_USER_DIR="$TMP/home/.claude/dev-workflow"
-  git init -q -b main "$TMP/home"
-  mkdir -p "$WORKFLOW_USER_DIR"
-  cd "$TMP/home"
-  add "指示" --name mine --layer repo --title "リポジトリの観点"
-  assert_failure 2
-  assert_output --partial "ユーザーの層と同じ場所なので、repo の層には置けません"
-  [ ! -e "$WORKFLOW_USER_DIR/review/mine.md" ]
-}
