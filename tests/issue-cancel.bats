@@ -484,3 +484,12 @@ writes() { grep -oE '^(issue-comment|issue-close|pr-comment|pr-close|api-delete)
   assert_failure 2
   assert_output --partial "開いている子の Issue（#30, #31）があります"
 }
+
+@test "ブランチ名の # や空白などは符号化して REST のパスに入れる（# から後が落ちて、別のブランチを消さないため）" {
+  setup_cancel
+  touch "$FIX/remote-ref"
+  run_script issue-cancel.sh --issue 17 --reason "やらないことにしました" --branch 'feature/login#2'
+  assert_success
+  assert_equal "$(grep '^api-get ' "$CALLS")" "api-get repos/me/demo/git/ref/heads/feature/login%232"
+  assert_equal "$(grep '^api-delete ' "$CALLS")" "api-delete repos/me/demo/git/refs/heads/feature/login%232"
+}

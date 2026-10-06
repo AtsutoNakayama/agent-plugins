@@ -154,8 +154,10 @@ fi
 
 # やめた作業のリモートのブランチ（無ければ空）と、それを head とする開いている PR
 remote="" prs='[]'
+# REST のパスに入れるブランチ名は、/ で区切った部分ごとに符号化する（# や ? があると、そこでパスが切れて別のブランチを指すため）
+branch_path="$(jq -rn --arg b "$branch" '$b | split("/") | map(@uri) | join("/")')"
 if [ -n "$branch" ]; then
-  if err="$(gh api "repos/$repo_nwo/git/ref/heads/$branch" 2>&1 >/dev/null)"; then
+  if err="$(gh api "repos/$repo_nwo/git/ref/heads/$branch_path" 2>&1 >/dev/null)"; then
     remote="$branch"
   else
     case "$err" in
@@ -226,7 +228,7 @@ for pr_number in $(jq -r '.[].number' <<<"$prs"); do
 done
 if [ -n "$remote" ]; then
   note "リモートのブランチ ${branch} を削除する"
-  $dry_run || gh api -X DELETE "repos/$repo_nwo/git/refs/heads/$branch" >/dev/null 2>&1 \
+  $dry_run || gh api -X DELETE "repos/$repo_nwo/git/refs/heads/$branch_path" >/dev/null 2>&1 \
     || dw_die "Issue #${issue} は閉じましたが、リモートのブランチ ${branch} を削除できませんでした（もう一度実行すると続きから進みます）"
 fi
 
