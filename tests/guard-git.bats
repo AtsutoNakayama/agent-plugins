@@ -238,14 +238,27 @@ silent() {
   denied "main の上ではコミットしません" "cd $TMP/wt; case x in a|x) cd $REPO && git commit -m x;; esac" \
     "cd $TMP/wt; case x in a|x) cd $REPO;; esac; git commit -m x" "case x in a) :;; cd) :;; esac; git commit -m x" \
     "cd $TMP/wt; case x in (a|x) cd $REPO;; esac; git commit -m x"
+  # 1行の空の case は、すぐに閉じる（その後のコマンドを、パターンと読まない）
+  denied "main の上ではコミットしません" "case x in esac; git commit -m x" "$(printf 'case x in esac\ngit commit -m x')"
   # time case も case として入れ子を数える（( ) の中のパターンの ) で、括弧を閉じない）
   denied "main の上ではコミットしません" "( time case x in x) cd $TMP/wt;; esac ); git commit -m x"
   allowed "time case x in x) cd $TMP/wt;; esac; git commit -m x"
 }
 
-@test "function f { } の { } も、複合コマンドとして入れ子を数える" {
+@test "function f { } の { } も、複合コマンドとして入れ子を数える。time -p の後の { } も数える" {
   git worktree add -q -b feat/21-x "$TMP/wt"
-  denied "main の上ではコミットしません" "{ function f { :; }; cd $TMP/wt; } | cat; git commit -m x"
+  denied "main の上ではコミットしません" "{ function f { :; }; cd $TMP/wt; } | cat; git commit -m x" \
+    "time -p { cd $TMP/wt; } | cat; git commit -m x"
+}
+
+@test "関数の定義の本体は、定義した時には動かないので、その中の cd は外に効かない" {
+  git worktree add -q -b feat/21-x "$TMP/wt"
+  denied "main の上ではコミットしません" "f() { cd $TMP/wt; }; git commit -m x" "function f { cd $TMP/wt; }; git commit -m x" \
+    "function f() { cd $TMP/wt; }; git commit -m x" "f () { cd $TMP/wt; }; git commit -m x" "cd() { :; }; git commit -m x" \
+    "$(printf 'function f\n{ cd %s; }\ngit commit -m x' "$TMP/wt")"
+  # 本体の中の git は、今までどおり調べる。x=() は空の配列の代入で、関数の定義ではない
+  denied "強制 push" "f() { git push -f; }"
+  allowed "x=(); { cd $TMP/wt; }; git commit -m x"
 }
 
 @test "語の無いコマンド（(( ))）の後でも、パイプラインと並びの区切りを正しく読む" {

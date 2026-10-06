@@ -920,6 +920,26 @@ gc_arith_end() {
   return 1
 }
 
+# ( の前の語が関数の名前で、( の後ろが ) なら（f()・function f()）、関数の定義として、名前（と function）を除いた語の予約語で
+# 段を上げ下げし、( ) を読み飛ばして、続く { を本体として扱う（fn_pending）。関数の定義でなければ 1 を返す。gc_scan の ( で呼ぶ
+gc_func_def() {
+  local t k
+  gc_flush_word
+  [ "$nwords" -gt 0 ] || return 1
+  t="${rest#?}"
+  t="${t#"${t%%[! "$tab"]*}"}"
+  [ "${t:0:1}" = ')' ] || return 1
+  k=$((nwords - 1))
+  # x=() は、空の配列の代入
+  case "${words[k]}" in *=*) return 1 ;; esac
+  [ "$k" -eq 0 ] || [ "${words[k - 1]}" != function ] || k=$((k - 1))
+  local run_cmd=false
+  [ "$k" -eq 0 ] || gc_track_words "${words[@]:0:k}"
+  words=() nwords=0
+  fn_pending=true
+  i=$((i + ${#rest} - ${#t} + 1))
+}
+
 # 読んだ語を1つのコマンドとして終え、先頭の予約語で入れ子の段を上げ下げしてから調べる（gc_command）。
 # case のパターンを読んでいる間の語（a|b) の a・b）は、コマンドではないので調べない。語が無ければ何もしない
 gc_end_command() {
@@ -936,10 +956,11 @@ gc_end_command() {
 # --- 入れ子の段、パイプラインと & ---------------------------------------------------------
 # 入れ子の段（lvl。0 が一番外）は、( )・複合コマンド（{ }・if〜fi・while/until/for/select〜done）・case〜esac で
 # 1つ深くなる。段ごとに、次のものを持つ（添え字が段）。
-#   lv_kind        top・paren（( )）・group（複合コマンド）・case
+#   lv_kind        top・paren（( )）・group（複合コマンド）・case・func（関数の定義の本体）
 #   lv_pat         case の段で、パターンを読んでいるか（case … in の後と ;;・;&・;;& の後から、) まで）。
 #                  パターンの中の |・(・) は、パイプやサブシェルではない
-#   lv_sd・lv_sp   ( の時点の場所とスタック（( ) の中で移った・積んだ分は外に効かないので、) で戻す）
+#   lv_sd・lv_sp・lv_sa  ( や関数の本体の始まりの場所・スタック・anchored（( ) の中や、定義した時には動かない関数の
+#                  本体で移った・積んだ分は外に効かないので、閉じた時に戻す。定義した関数を後で呼んだときの本体は追わない）
 #   lv_e*・lv_l*   今のコマンドの始まりと、並び（&&・|| でつないだもの）の始まりの、場所・スタック・anchored
 #   lv_pipe        パイプラインの2つ目以降のコマンドか
 # dn は、開いている ( ) の数（after の決まりで、( ) の中かを見る）。
@@ -971,9 +992,9 @@ gc_level_push() {
   lvl=$((lvl + 1))
   lv_kind[lvl]="$1" lv_pipe[lvl]=false lv_pat[lvl]=false
   case "$1" in
-    paren)
-      lv_sd[lvl]="$gc_dir" lv_sp[lvl]="$pstack"
-      dn=$((dn + 1))
+    paren | func)
+      lv_sd[lvl]="$gc_dir" lv_sp[lvl]="$pstack" lv_sa[lvl]="$anchored"
+      [ "$1" != paren ] || dn=$((dn + 1))
       ;;
     case) lv_pat[lvl]=true ;;
   esac
@@ -983,41 +1004,66 @@ gc_level_push() {
 gc_level_pop() {
   [ "$lvl" -gt 0 ] || return 0
   gc_end_pipe
-  if [ "${lv_kind[lvl]}" = paren ]; then
-    gc_dir="${lv_sd[lvl]}" pstack="${lv_sp[lvl]}"
-    dn=$((dn - 1))
-  fi
+  case "${lv_kind[lvl]}" in
+    paren)
+      gc_dir="${lv_sd[lvl]}" pstack="${lv_sp[lvl]}"
+      dn=$((dn - 1))
+      ;;
+    func) gc_restore "${lv_sd[lvl]}" "${lv_sp[lvl]}" "${lv_sa[lvl]}" ;;
+  esac
   lvl=$((lvl - 1))
 }
 # コマンドの先頭の予約語から、複合コマンドと case の始まり（段を深くする）と終わり（浅くする）を読む。
 # case のパターンを読んでいる間は、esac のほかは語をコマンドとして調べない（run_cmd を false にする。gc_end_command が読む）
 gc_track_words() {
-  local w fname=false
+  # 関数の定義の後の最初の語が { のときだけ、本体として扱う
+  local w fn="$fn_pending"
+  fn_pending=false
   if gc_in_pattern; then
     run_cmd=false
     [ "$1" != 'esac' ] || gc_level_pop
     return 0
   fi
-  for w in "$@"; do
-    if $fname; then
-      # function <名前> の名前
-      fname=false
-      continue
-    fi
+  while [ $# -gt 0 ]; do
+    w="$1"
+    shift
     case "$w" in
-      # 予約語は、bash 3.2 が case のパターンとして読めるよう、引用符で囲む
-      '{' | 'if' | 'while' | 'until' | 'for' | 'select') gc_level_push group ;;
-      # case の後ろは、調べる語・in・パターン
+      # 予約語は、bash 3.2 が case のパターンとして読めるよう、引用符で囲む。関数の定義（function f・f()）の後の { は、本体
+      '{')
+        if $fn; then
+          gc_level_push func
+        else
+          gc_level_push group
+        fi
+        fn=false
+        ;;
+      'if' | 'while' | 'until' | 'for' | 'select') gc_level_push group ;;
+      # case の後ろは、調べる語・in・パターン。1行の空の case（case x in esac）は、すぐに閉じる
       'case')
         gc_level_push case
+        [ "${2:-}" != in ] || [ "${3:-}" != 'esac' ] || gc_level_pop
         return 0
         ;;
-      '}' | 'fi' | 'done') [ "${lv_kind[lvl]}" != group ] || gc_level_pop ;;
+      '}' | 'fi' | 'done')
+        case "${lv_kind[lvl]}" in
+          group | func) gc_level_pop ;;
+        esac
+        ;;
       'esac') [ "${lv_kind[lvl]}" != case ] || gc_level_pop ;;
-      'function') fname=true ;;
-      'then' | 'elif' | 'else' | 'do' | '!' | 'time') ;;
+      # function <名前> の名前を飛ばす
+      'function')
+        [ $# -eq 0 ] || shift
+        fn=true
+        # function f の後で語が終われば（function f の次の行に {）、次のコマンドの { を本体とする
+        [ $# -gt 0 ] || fn_pending=true
+        continue
+        ;;
+      # time -p の -p も飛ばす
+      'time') [ "${1:-}" != -p ] || shift ;;
+      'then' | 'elif' | 'else' | 'do' | '!') ;;
       *) return 0 ;;
     esac
+    fn=false
   done
 }
 
@@ -1267,7 +1313,7 @@ gc_scan() {
   local pstack="" dl=() entry="" idx=0
   local arith_i=0
   # 入れ子の段と、段ごとの情報（gc_restore の前のコメント）。dn は開いている ( ) の数。&&・||・| の後ろか（joined）
-  local lvl=0 dn=0 lv_kind=(top) lv_pat=(false) lv_pipe=(false) lv_sd=() lv_sp=() joined=false
+  local lvl=0 dn=0 lv_kind=(top) lv_pat=(false) lv_pipe=(false) lv_sd=() lv_sp=() lv_sa=() joined=false fn_pending=false
   local lv_ed=() lv_ep=() lv_ea=() lv_ld=() lv_lp=() lv_la=()
   gc_mark_list
 
@@ -1350,8 +1396,10 @@ gc_scan() {
         fi
         ;;
       '(')
-        gc_end_command
-        if gc_in_pattern; then
+        if ! gc_in_pattern && gc_func_def; then
+          # 関数の定義（f() …・function f() …）。名前はコマンドではない。続く { } が本体
+          :
+        elif gc_end_command && gc_in_pattern; then
           # case のパターンの前に付ける ( （(a) …）は、サブシェルではない
           i=$((i + 1))
         elif [ "${rest:1:1}" = '(' ] && gc_arith_end; then
@@ -1359,6 +1407,7 @@ gc_scan() {
           i=$arith_i
           joined=false
         else
+          fn_pending=false
           gc_level_push paren
           i=$((i + 1))
         fi
