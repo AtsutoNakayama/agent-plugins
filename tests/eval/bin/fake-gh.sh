@@ -15,10 +15,18 @@
 # 応答のファイルは .fake-gh/ からの相対パス。終了コードが 0 でなければ、応答を標準エラーに出して、その終了コードで終わる。
 # -q / --jq があれば、応答に jq -r で当てる。合うパターンが無ければ、記録してから失敗する（足りない応答に気付けるように）。
 #
-# 書き込みかどうかは、gh の引数を解釈して決めず、表で決める。表で read と宣言した行に当たった呼び出しだけを読むだけにし、
-# それ以外（write の行に当たったもの、どの行にも当たらないもの）はすべて書き込みとして記録する。
-# gh の引数の書き方は多く（GraphQL のクエリの渡し方、-f・-F の書き方など）、解釈して判定すると、知らない形をすり抜けさせるため。
-# Claude が読むだけの呼び出しをして、表に無ければ、書き込みとして記録される。読むだけなら、ケースの表に read で足す。
+# 書き込みかどうかは、表と、引数の書き込みのしるしで決める。どちらでも、誤るときは書き込み（安全な側）に倒す。
+#   - 表で read と宣言した行に当たり、かつ書き込みのしるしが無い呼び出しだけを読むだけにする。それ以外（write の行に
+#     当たったもの、どの行にも当たらないもの、しるしがあるもの）はすべて書き込みとして記録する
+#   - 書き込みのしるしは、gh api の引数をそのまま調べるだけで、解釈しない（gh の書き方は多く、解釈すると知らない形をすり抜けさせるため）
+#       REST     -X / --method が GET・HEAD 以外か、-f…・-F…・--field…・--raw-field…・--input… で始まる引数がある（gh は POST で送る）
+#       GraphQL  クエリのどこかに mutation という語がある（文字列やコメントの中でも）か、クエリを読めない
+#     read の行のパターンは末尾が * のことが多いので、しるしが無いと、同じ文字列で始まる書き込み（gh api user -X PATCH など）を
+#     読むだけと取り違える。しるしがあれば、read の行に当たっても書き込みにする
+# Claude が読むだけの呼び出しをして、表に無ければ、書き込みとして記録される。読むだけなら、ケースの表に read で足す
+# （よく使うものは scaffold.bash の fake_gh_defaults が既定で足す）。
+# しるしのある api の呼び出しが表に無ければ、{} で成功したように答える（書き込みの形は多く、すべてを表に書けないため。
+# エラーで止まると、Claude が書き込んだと思って進んだかが、返答から読み取りにくくなる）。
 set -euo pipefail
 
 dir="$PWD"
@@ -41,6 +49,8 @@ takes_value() {
 # -q / --jq の式、--input のファイル、-f・-F の値（GraphQL のクエリと変数）、位置の引数、標準入力を読むか
 q="" stdin_input=false input_file="" stdin_used=false stdin_read=false fields=() pos=() prev=""
 for a in "$@"; do
+  # gh は、値の - と @-（-F body=@- など）で標準入力を読む
+  case "$a" in - | *=- | *=@-) stdin_used=true ;; esac
   if [ -n "$prev" ]; then
     case "$prev" in
       -q | --jq) q="$a" ;;
@@ -48,7 +58,6 @@ for a in "$@"; do
       -F | --field) fields+=("F:$a") ;;
       --input) if [ "$a" = - ]; then stdin_input=true; else input_file="$a"; fi ;;
     esac
-    [ "$a" != - ] || stdin_used=true
     prev=""
     continue
   fi
@@ -60,8 +69,7 @@ for a in "$@"; do
     --field=*) fields+=("F:${a#--field=}") ;;
     --input=-) stdin_input=true ;;
     --input=*) input_file="${a#--input=}" ;;
-    *=-) stdin_used=true ;;
-    -) stdin_used=true ;;
+    -) ;;
     -*) takes_value "$a" && prev="$a" ;;
     *) pos+=("$a") ;;
   esac
@@ -106,10 +114,31 @@ elif [ "$p1" = view ] && { [ "$p0" = issue ] || [ "$p0" = pr ]; }; then
       *) if ! $seen && [ "$a" = "$p2" ]; then seen=true; else rest+=("$a"); fi ;;
     esac
   done
-  key="${p0} view ${num}${rest[0]+ ${rest[*]}}"
+  key="${p0} view${num:+ ${num}}${rest[0]+ ${rest[*]}}"
 fi
 # 送られた本文は使わないが、書き手が詰まらないよう、標準入力を読み捨てる（--input - や --body-file - など）
 if { $stdin_input || $stdin_used; } && ! $stdin_read; then cat >/dev/null; fi
+
+# 書き込みのしるし（上の説明）
+marked=false
+if [ "$p0" = api ]; then
+  if [ "$p1" = graphql ]; then
+    if [ -z "$query" ] || printf '%s\n' "$query" | grep -q 'mutation'; then marked=true; fi
+  else
+    prev=""
+    for a in "$@"; do
+      method=""
+      case "$prev" in -X | --method) method="$a" ;; esac
+      case "$a" in
+        -X?*) method="${a#-X}" ;;
+        --method=*) method="${a#--method=}" ;;
+        -f* | -F* | --field* | --raw-field* | --input*) marked=true ;;
+      esac
+      case "$(printf '%s' "$method" | tr '[:lower:]' '[:upper:]')" in "" | GET | HEAD) ;; *) marked=true ;; esac
+      prev="$a"
+    done
+  fi
+fi
 
 # --- 3. 表を引いて、記録して答える -----------------------------------------------------
 kind=write file="" code=1
@@ -121,9 +150,14 @@ while IFS="$(printf '\t')" read -r pat f c k; do
   esac
 done <"$base/routes"
 
+if $marked; then kind="write"; fi
 echo "$line" >>"$base/calls"
 [ "$kind" = read ] || echo "$line" >>"$base/writes"
 
+if [ -z "$file" ] && $marked; then
+  echo '{}'
+  exit 0
+fi
 if [ -z "$file" ]; then
   echo "fake gh: 応答が用意されていない呼び出しです: gh ${key}" >&2
   exit 1

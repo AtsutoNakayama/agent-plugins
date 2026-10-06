@@ -168,6 +168,62 @@ nwrites() { wc -l <.fake-gh/writes | tr -d ' '; }
   assert_success
 }
 
+@test "書き込みのしるしがあれば、read の行に当たっても書き込みとする（REST）" {
+  # しるしだけを確かめるため、どの api の呼び出しにも当たる read の行にする
+  fake_gh_read 'api *' '{"login": "me"}'
+  run_fake_gh api user
+  assert_equal "$(nwrites)" 0
+  run_fake_gh api user -X PATCH -f bio=x
+  run_fake_gh api user/repos -f name=x
+  run_fake_gh api --method=post user/repos
+  run_fake_gh api user -XDELETE
+  run_fake_gh api user --input body.json
+  assert_equal "$(nwrites)" 5
+  # GET と HEAD は読むだけ
+  run_fake_gh api -X GET user
+  run_fake_gh api --method head user
+  assert_equal "$(nwrites)" 5
+}
+
+@test "書き込みのしるしがあれば、read の行に当たっても書き込みとする（GraphQL の mutation・読めないクエリ）" {
+  fake_gh_read 'api graphql TodoItems' '{"data": {}}'
+  run_fake_gh api graphql -f query='query TodoItems { x }'
+  assert_equal "$(nwrites)" 0
+  run_fake_gh api graphql -f query='mutation TodoItems { x }'
+  run_fake_gh api graphql -f query='mutation { addComment(input: {body: "query TodoItems"}) { x } }'
+  run_fake_gh api graphql -f query='# query TodoItems
+mutation { x }'
+  run_fake_gh api graphql --input missing.json
+  assert_equal "$(nwrites)" 4
+}
+
+@test "書き込みのしるしのある api の呼び出しは、表に無くても {} で成功したように答える" {
+  run_fake_gh api repos/me/demo/issues -f title=x
+  assert_success
+  assert_output '{}'
+  run_fake_gh api repos/me/demo/issues/1 -X PATCH -f state=closed
+  assert_success
+  assert_equal "$(nwrites)" 2
+  # しるしの無い api の呼び出しは、表に無ければ失敗する（書き込みとしても記録する）
+  run_fake_gh api repos/me/demo/unknown
+  assert_failure
+  assert_equal "$(nwrites)" 3
+}
+
+@test "-F body=@- のように @- で標準入力を読む呼び出しも、標準入力を読み捨てる" {
+  # shellcheck disable=SC2016 # 子の bash に展開させるため、シングルクォートで渡す
+  run "${TEST_BASH:-bash}" -c 'set -o pipefail; head -c 1000000 /dev/zero | tr "\0" a | "$0" api repos/me/demo/issues/1/comments -F body=@-' "$FAKE_GH"
+  assert_success
+  assert_output '{}'
+}
+
+@test "番号の無い gh pr view の鍵は、空白を1つにする" {
+  fake_gh_read 'pr view --json*' '{"number": 2}'
+  run_fake_gh pr view --json number
+  assert_success
+  assert_output '{"number": 2}'
+}
+
 @test "下のディレクトリ（ワークツリーなど）から呼んでも、上の .fake-gh を使う" {
   fake_gh_read 'issue list*' '[]'
   mkdir -p .claude/worktrees/feat/1-x
