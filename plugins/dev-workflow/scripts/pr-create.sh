@@ -264,8 +264,9 @@ if ! $dry_run && [ "$(jq -n --argjson c "$to_check" --argjson a "$to_add" '$c + 
   to_add="$now_add"
   # 指定した行の行頭のチェックボックスだけを [x] にし、項目の文の中の [ ] や、ほかの行（改行の \r を含む）はそのまま残す。
   # 足す項目は、最初の項目がある節（次の見出しの手前まで。コードブロックの中の見出しの形の行は見出しとみなさない）の
-  # 最後の空でない行の後に、最初の項目と同じ字下げで置く
-  jq -j --argjson scan "$now_scan" --argjson c "$to_check" --argjson a "$now_add" '
+  # 最後の空でない行の後に、最初の項目と同じ字下げで置く。改行は本文に合わせる（DW_JQ_LINES。CRLF の本文の改行の無い最後の行の
+  # 後に足しても、LF を混ぜない）
+  jq -j --argjson scan "$now_scan" --argjson c "$to_check" --argjson a "$now_add" "$DW_JQ_LINES"'
     $scan.items as $t | $scan.headings as $headings
     | ($t | map(select(.text as $s | $c | index($s))) | map(.line)) as $lines
     | .body // "" | split("\n")
@@ -275,25 +276,23 @@ if ! $dry_run && [ "$(jq -n --argjson c "$to_check" --argjson a "$to_add" '$c + 
         else .value end)
     | if ($a | length) == 0 then .
       elif ($t | length) == 0 then
-        # 項目が無ければ本文の最後に置く（最後の改行は残す）
-        (if length > 1 and .[-1] == "" then [.[:-1], [""]] else [., []] end) as [$head, $tail]
-        | (if ($head | length) > 0 and ($head[-1] | endswith("\r")) then "\r" else "" end) as $cr
-        | (if $head == [""] then [] else $head end) + ($a | map("- [ ] " + . + $cr)) + $tail
+        # 項目が無ければ本文の最後に置く（最後の改行は残す。本文が空なら項目だけにする）
+        if . == [""] then $a | map("- [ ] " + .)
+        else insert_after(if length > 1 and .[-1] == "" then length - 2 else length - 1 end; $a | map("- [ ] " + .)) end
       else
         . as $l
         | ($t[0].line) as $f
         | ([$headings[] | select(. > $f)] | first // ($l | length)) as $end
         | ([range($f; $end) | select($l[.] | sub("\r$"; "") | test("\\S"))] | last) as $last
         | ($l[$f] | capture("^(?<i>\\s*)").i) as $indent
-        | (if $l[$last] | endswith("\r") then "\r" else "" end) as $cr
         # 直前の行がリストの項目なら、そのまま続ける。それ以外（項目の続きの行・HTML の塊・区切り線など）なら空行を挟む。
         # 字下げした行は、項目の続きか HTML の塊かを行の形では見分けられないので、塊に入って表示されなくなるより、
         # 間の空いたリストになるほうを選ぶ。区切り線（* * * など）は項目とみなさない
         | ($l[$last] | sub("\r$"; "")) as $prev
         | (if ($prev | test("^ {0,3}([-*_])[ \\t]*(?:\\1[ \\t]*){2,}$") | not)
               and ($prev | test("^\\s*(?:[-*+]|[0-9]+[.)])(?:\\s|$)"))
-           then [] else [$cr] end) as $gap
-        | $l[:$last + 1] + $gap + ($a | map($indent + "- [ ] " + . + $cr)) + $l[$last + 1:]
+           then [] else [""] end) as $gap
+        | $l | insert_after($last; $gap + ($a | map($indent + "- [ ] " + .)))
       end
     | join("\n")' <<<"$now_json" \
     | gh issue edit "$issue" --body-file - >/dev/null \

@@ -629,3 +629,16 @@ fake_issue_tasks() {
   assert_success
   assert_equal "$(jq -r .body <<<"$json" | tail -n 3)" "$(printf 'BREAKING CHANGE: 設定を直す\n\nCloses #17')"
 }
+
+@test "--add-task は、CRLF の本文の改行の無い最後の行の後に足しても、改行を CRLF にそろえる（本文の最後には改行を足さない）" {
+  # 改行を足す位置の行だけで決めていたので、改行の無い最後の行の後に LF で足し、改行が混ざっていた（issue-depend.sh と同じ原因）
+  setup_branch
+  set_issue_body "$(printf '## やること\r\n- [ ] a')"
+  run_pr --issue 17 --body-file "$TMP/body.md" --add-task b
+  assert_success
+  assert_equal "$(od -c "$TMP/issue-edit-body" | tr -s ' ' | tr -d '\n')" "$(printf '## やること\r\n- [ ] a\r\n- [ ] b' | od -c | tr -s ' ' | tr -d '\n')"
+  set_issue_body "$(printf '## 背景\r\n説明')"
+  run_pr --issue 17 --body-file "$TMP/body.md" --add-task x
+  assert_success
+  assert_equal "$(od -c "$TMP/issue-edit-body" | tr -s ' ' | tr -d '\n')" "$(printf '## 背景\r\n説明\r\n- [ ] x' | od -c | tr -s ' ' | tr -d '\n')"
+}
