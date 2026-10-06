@@ -66,24 +66,55 @@ dw_read_issue() {
   printf '%s\n' "$json"
 }
 
-# Issue の作業のブランチを名前で探し、「名前<TAB>手元にあるか<TAB>origin にあるか」（true か false）を1行ずつ出力する。
-# 名前に「/<番号>-」を含むか「<番号>-」で始まるものを、branch.pattern に合わない名前（wip/17-try・feat/17-Fix_Login など）や、
-# 先頭に 0 が付いた古い名前（feat/017-x）も含めて広めに探す。見落とすと、作業があるのに Issue を閉じたり取りやめたりするため。
+# Issue の作業のブランチを名前で探し、「名前<TAB>手元にあるか<TAB>origin にあるか<TAB>確かか」（どれも true か false）を
+# 1行ずつ出力する。2つの段階に分ける（片付けで消してよいブランチと、作業があるかもしれないブランチは別のものなので）。
+#   - 確か（true）：branch.pattern に合い（type は labels.types のどれか）、番号（先頭の 0 はそろえる）が一致するもの。
+#     片付けや取りやめの対象にするのは、これだけ
+#   - 候補（false）：名前に「/<番号>-」を含むか「<番号>-」で始まるが、branch.pattern に合わないもの（wip/17-try・
+#     feat/17-Fix_Login のほか、backup/2024-01-15 のような関係の無いものもありうる）。見落とさないために見せるだけで、
+#     使う側が自動で消したり、Issue の作業と決めつけたりしない
 # PR からは探さない（Closes #17, #18 の PR やリリース用の PR のように、別の Issue のブランチまで拾うため）。
 # origin を読めなければ止まる（「origin に無い」と区別できないまま出すと、使う側が片付けを誤るため）。
-# 使い方: dw_issue_branches <メインのワークツリー> <Issue の番号（dw_issue_number でそろえたもの）>
+# 使い方: dw_issue_branches <メインのワークツリー> <Issue の番号（dw_issue_number でそろえたもの）> <設定の JSON>
 dw_issue_branches() {
-  local re="(^|/)0*${2}-" names refs
+  local re="(^|/)0*${2}-" names refs found b l r n
   # refname:short はタグと同じ名前のブランチを heads/<名前> と出すので、lstrip=2 で refs/heads/ だけを外す
   names="$(git -C "$1" for-each-ref --format='%(refname:lstrip=2)' refs/heads/ | awk -v k=L 'NF { print k "\t" $0 }')"
   refs="$(git -C "$1" ls-remote --heads origin 2>/dev/null)" \
     || dw_die "origin のブランチを読めませんでした（通信や認証を確かめてください）"
   # 名前の比べ方がロケールで変わらないよう C ロケールで絞り込んで並べる（重複を消すときに、別の名前を同じとみなさないため）。
   # 名前の一覧は引数ではなく標準入力で渡す（ブランチが多いと、引数の長さの上限を超えるため）
-  printf '%s\n%s\n' "$names" "$(sed -n 's|^[0-9a-f]*[[:space:]]*refs/heads/||p' <<<"$refs" | awk -v k=R 'NF { print k "\t" $0 }')" \
+  found="$(printf '%s\n%s\n' "$names" "$(sed -n 's|^[0-9a-f]*[[:space:]]*refs/heads/||p' <<<"$refs" | awk -v k=R 'NF { print k "\t" $0 }')" \
     | LC_ALL=C awk -F '\t' -v re="$re" '$2 ~ re { seen[$2] = 1; if ($1 == "L") l[$2] = 1; else r[$2] = 1 }
         END { for (b in seen) print b "\t" ((b in l) ? "true" : "false") "\t" ((b in r) ? "true" : "false") }' \
-    | LC_ALL=C sort
+    | LC_ALL=C sort)"
+  # 確かかは、名前で絞り込んだもの（ふつう数本）だけで調べる
+  while IFS="$(printf '\t')" read -r b l r; do
+    [ -n "$b" ] || continue
+    n="$(dw_parse_branch "$3" "$b" | cut -d'|' -f2)"
+    n="${n#"${n%%[!0]*}"}"
+    if [ -n "$n" ] && [ "$n" = "$2" ]; then
+      printf '%s\t%s\t%s\ttrue\n' "$b" "$l" "$r"
+    else
+      printf '%s\t%s\t%s\tfalse\n' "$b" "$l" "$r"
+    fi
+  done <<<"$found"
+}
+
+# ブランチの、マージ済みの PR の番号（今のリポジトリのもの。無ければ空）。
+# 使い方: dw_merged_pr_of <ブランチ>
+dw_merged_pr_of() {
+  # --head はブランチ名だけで探すので、フォークの同じ名前のブランチからの PR を除く
+  gh pr list --head "$1" --state merged --json number,headRefName,isCrossRepository \
+    | jq -r --arg b "$1" 'map(select(.headRefName == $b and (.isCrossRepository | not))) | .[0].number // empty'
+}
+
+# ブランチを使っているワークツリーの場所。ディレクトリが無い（手で消して記録だけが残った）ものは、無いものとして空を返す。
+# 使い方: dw_live_worktree_of <メインのワークツリー> <ブランチ>
+dw_live_worktree_of() {
+  local p
+  p="$(dw_worktree_of "$1" "$2")"
+  if [ -n "$p" ] && [ -d "$p" ]; then printf '%s\n' "$p"; fi
 }
 
 # ブランチを使っているワークツリーの場所（無ければ空）。

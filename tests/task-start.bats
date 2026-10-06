@@ -391,11 +391,54 @@ run_start() {
   setup_fake_gh
   setup_origin
   git worktree add -q -b feat/17-x "$TMP/wt"
-  git push -q origin main:refs/heads/wip/17-try
   for mode in --dry-run ""; do
     run_start --issue 17 --no-worktree ${mode:+"$mode"}
     assert_failure 2
-    assert_output --partial "Issue #17 には既にブランチ feat/17-x（ワークツリー $TMP/wt）、wip/17-try があります"
+    assert_output --partial "Issue #17 には既にブランチ feat/17-x（ワークツリー $TMP/wt） があります"
+  done
+  assert_equal "$(called edit)" 0
+  assert_equal "$(called SetField)" 0
+}
+
+@test "--no-worktree は、名前が似ているだけのブランチ（branch.pattern に合わない）では止まらず、警告して着手する" {
+  setup_fake_gh
+  setup_origin
+  git push -q origin main:refs/heads/wip/17-try
+  run_start --issue 17 --no-worktree
+  assert_success
+  assert_output --partial "名前に #17 の番号を含むブランチ（wip/17-try）があります"
+  assert_equal "$(called edit)" 1
+}
+
+@test "--no-worktree は、マージ済みの PR があるブランチ（作業が main に入っている）では止まらない" {
+  setup_fake_gh
+  setup_origin
+  git push -q origin main:refs/heads/feat/17-x
+  echo '[{"number": 9, "headRefName": "feat/17-x", "isCrossRepository": false}]' >"$FIX/pr-list.json"
+  run_start --issue 17 --no-worktree
+  assert_success
+  assert_equal "$(jq -c '[.worktree, .assigned]' <<<"$json")" '[null,true]'
+}
+
+@test "--no-worktree で止まるとき、手で消したワークツリーの場所は伝えない" {
+  setup_fake_gh
+  setup_origin
+  git worktree add -q -b feat/17-x "$TMP/wt"
+  rm -rf "$TMP/wt"
+  run_start --issue 17 --no-worktree
+  assert_failure 2
+  assert_output --partial "Issue #17 には既にブランチ feat/17-x があります"
+  refute_output --partial "ワークツリー $TMP/wt"
+}
+
+@test "--no-worktree でも、origin を読めなければ、割り当ても列の移動もせずに止まる（dry-run も同じ）" {
+  setup_fake_gh
+  setup_origin
+  git remote set-url origin "$TMP/no-such.git"
+  for mode in --dry-run ""; do
+    run_start --issue 17 --no-worktree ${mode:+"$mode"}
+    assert_failure 1
+    assert_output --partial "origin のブランチを読めませんでした（通信や認証を確かめてください）"
   done
   assert_equal "$(called edit)" 0
   assert_equal "$(called SetField)" 0

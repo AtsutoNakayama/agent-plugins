@@ -5,20 +5,23 @@
 # 使い方: issue-branches.sh --issue N
 #   --issue N   Issue の番号（#N でもよい）
 #
-# 探すもの:
-#   - ブランチ：名前だけで探す（dw_issue_branches）。手元と origin のブランチのうち、名前に「/<番号>-」を含むか
-#     「<番号>-」で始まるもの。branch.pattern に合わない名前や、先頭に 0 が付いた古い名前も含めて広めに探す。
-#     PR からは探さない（Closes #17, #18 の PR やリリース用の PR のように、別の Issue のブランチまで拾うため）。
-#     origin を読めなければ止まる
-#   - 開いている PR：Issue を閉じる PR（Closes #N など。gh issue view の closedByPullRequestsReferences）のうち、開いているもの。
-#     フォークや別のリポジトリの PR も含む。ブランチを探すのには使わず、Issue を閉じてよいかの判断にだけ使う
+# ブランチは2つの段階に分けて出す（片付けで消してよいブランチと、作業があるかもしれないブランチは別のものなので）:
+#   - branches（確かなブランチ）：branch.pattern に合い（type は labels.types のどれか）、番号が一致するもの
+#     （dw_issue_branches）。片付けや取りやめの対象にするのは、これだけ。マージ済みの PR があれば merged_pr に番号を出す
+#   - candidates（候補）：名前に「/<番号>-」を含むか「<番号>-」で始まるが branch.pattern に合わないもの（from: name）と、
+#     Issue を閉じる PR（開いている・マージ済み。今のリポジトリのもの）のブランチ（from: pr）。関係の無いブランチ
+#     （backup/2024-01-15 や、Closes #17, #18 の PR の別の Issue のブランチ）もありうるので、見せて聞くだけにし、自動では触らない
+#   origin を読めなければ止まる
+# open_prs は、Issue を閉じる PR（closedByPullRequestsReferences）のうち開いているもの（フォークや別のリポジトリの PR も含む）。
+# Issue を閉じてよいかの判断に使う
 #
-# 止まるとき: PR の番号・無い番号（終了コード 2）、gh が古い（2）、origin や Issue を読めない（1）
+# 止まるとき: PR の番号・無い番号（終了コード 2）、gh が古い（2）、origin・Issue・PR を読めない（1）
 #
 # 出力:
-#   issue     {number, title, state, url, open_sub_issues（開いている子の数）}
-#   branches  名前で見つかったブランチ。[{name, local, remote, worktree（無ければ null）}]
-#   open_prs  Issue を閉じる、開いている PR。[{number, url, branch}]
+#   issue       {number, title, state, url, open_sub_issues（開いている子の数）}
+#   branches    [{name, local, remote, worktree（無ければ null）, merged_pr（無ければ null）}]
+#   candidates  [{name, local, remote, worktree, from（name か pr）, pr（from が pr のときの PR の番号。ほかは null）}]
+#   open_prs    [{number, url, branch}]
 set -euo pipefail
 
 # shellcheck source=lib/common.sh
@@ -45,38 +48,61 @@ issue="$(dw_issue_number --issue "$issue")"
 
 repo_root="$(dw_repo_root)" || dw_die "リポジトリの中で実行してください" 64
 main_root="$(dw_main_root "$repo_root")" || dw_die "メインのワークツリーが分かりません"
+config="$("$BASH" "$DW_SCRIPTS_DIR/config.sh")"
 # closedByPullRequestsReferences は gh 2.73.0 から読める（プラグインが求める版はそれより新しい）
 dw_require_gh_version "$DW_GH_MIN_VERSION" "Issue を閉じる PR を読む（gh issue view --json closedByPullRequestsReferences）"
 
 # PR の番号なら止まる（dw_read_issue。PR を Issue として閉じないため）
 issue_json="$(dw_read_issue "$issue" number,title,state,subIssuesSummary,closedByPullRequestsReferences)"
-found="$(dw_issue_branches "$main_root" "$issue")"
+found="$(dw_issue_branches "$main_root" "$issue" "$config")"
 
-# ワークツリーの場所は、見つかった手元のブランチ（ふつう1〜2本）だけで引く。ディレクトリを手で消した記録は、無いものとする
-worktrees='{}'
-while IFS="$(printf '\t')" read -r b is_local _; do
-  [ "$is_local" = true ] || continue
-  p="$(dw_worktree_of "$main_root" "$b")"
-  if [ -n "$p" ] && [ -d "$p" ]; then
-    worktrees="$(jq -c --arg b "$b" --arg p "$p" '. + {($b): $p}' <<<"$worktrees")"
+# 名前で見つかったブランチ（ふつう数本）ごとに、ワークツリーの場所と、確かなブランチならマージ済みの PR を足す
+branches='[]' candidates='[]'
+while IFS="$(printf '\t')" read -r b is_local is_remote confirmed; do
+  [ -n "$b" ] || continue
+  wt=""
+  [ "$is_local" = true ] && wt="$(dw_live_worktree_of "$main_root" "$b")"
+  if [ "$confirmed" = true ]; then
+    merged="$(dw_merged_pr_of "$b")" || dw_die "${b} の PR を読めませんでした"
+    branches="$(jq -c --arg b "$b" --argjson l "$is_local" --argjson r "$is_remote" --arg w "$wt" --arg m "$merged" \
+      '. + [{name: $b, local: $l, remote: $r, worktree: (if $w == "" then null else $w end),
+             merged_pr: (if $m == "" then null else ($m | tonumber) end)}]' <<<"$branches")"
+  else
+    candidates="$(jq -c --arg b "$b" --argjson l "$is_local" --argjson r "$is_remote" --arg w "$wt" \
+      '. + [{name: $b, local: $l, remote: $r, worktree: (if $w == "" then null else $w end), from: "name", pr: null}]' <<<"$candidates")"
   fi
 done <<<"$found"
-branches="$(printf '%s\n' "$found" | jq -R -s -c --argjson wt "$worktrees" '
-  split("\n") | map(select(. != "") | split("\t")
-    | {name: .[0], local: (.[1] == "true"), remote: (.[2] == "true"), worktree: ($wt[.[0]] // null)})')"
 
-# Issue を閉じる PR のうち、開いているもの（closedByPullRequestsReferences は状態を返さないので、PR ごとに読む）
+# Issue を閉じる PR（closedByPullRequestsReferences は状態を返さないので、PR ごとに読む）。
+# 開いているものは open_prs に、今のリポジトリの PR のブランチは、まだ出していなければ候補に足す
+nwo="$(gh repo view --json nameWithOwner -q .nameWithOwner)" || dw_die "リポジトリの名前を読めませんでした"
 open_prs='[]'
-while IFS= read -r url; do
+while IFS="$(printf '\t')" read -r url pr_repo; do
   [ -n "$url" ] || continue
-  pr="$(gh pr view "$url" --json number,url,state,headRefName)" || dw_die "PR ${url} を読めませんでした"
+  pr="$(gh pr view "$url" --json number,url,state,headRefName,isCrossRepository)" || dw_die "PR ${url} を読めませんでした"
   open_prs="$(jq -c --argjson p "$pr" \
     'if $p.state == "OPEN" then . + [{number: $p.number, url: $p.url, branch: $p.headRefName}] else . end' <<<"$open_prs")"
-done < <(jq -r '.closedByPullRequestsReferences // [] | .[].url' <<<"$issue_json")
+  head="$(jq -r 'select((.state == "OPEN" or .state == "MERGED") and (.isCrossRepository | not)) | .headRefName' <<<"$pr")"
+  [ -n "$head" ] && [ "$pr_repo" = "$nwo" ] || continue
+  if jq -e --arg h "$head" 'any(.[]; .name == $h)' <<<"$branches" >/dev/null \
+    || jq -e --arg h "$head" 'any(.[]; .name == $h)' <<<"$candidates" >/dev/null; then
+    continue
+  fi
+  is_local=false
+  git -C "$main_root" show-ref --verify --quiet "refs/heads/$head" && is_local=true
+  is_remote=false
+  dw_remote_has_branch "$main_root" "$head" && is_remote=true
+  wt=""
+  [ "$is_local" = true ] && wt="$(dw_live_worktree_of "$main_root" "$head")"
+  candidates="$(jq -c --arg b "$head" --argjson l "$is_local" --argjson r "$is_remote" --arg w "$wt" --argjson n "$(jq .number <<<"$pr")" \
+    '. + [{name: $b, local: $l, remote: $r, worktree: (if $w == "" then null else $w end), from: "pr", pr: $n}]' <<<"$candidates")"
+done < <(jq -r '.closedByPullRequestsReferences // [] | .[]
+  | [.url, (if .repository then "\(.repository.owner.login)/\(.repository.name)" else "" end)] | @tsv' <<<"$issue_json")
 
-jq -n --argjson i "$issue_json" --argjson b "$branches" --argjson o "$open_prs" '{
+jq -n --argjson i "$issue_json" --argjson b "$branches" --argjson c "$candidates" --argjson o "$open_prs" '{
   issue: {number: $i.number, title: $i.title, state: $i.state, url: $i.url,
           open_sub_issues: (($i.subIssuesSummary.total // 0) - ($i.subIssuesSummary.completed // 0))},
   branches: $b,
+  candidates: $c,
   open_prs: $o
 }'

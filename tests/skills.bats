@@ -196,14 +196,18 @@ frontmatter() { awk 'NR == 1 && $0 == "---" { on = 1; next } on && $0 == "---" {
   grep -q 'task-start.sh --issue <番号> --no-worktree' "$f" || fail "作らないときの実行のしかたがありません"
 }
 
+# shellcheck disable=SC2016 # バッククォートはスキルの本文の文字で、展開させない
 @test "ワークツリーの無いタスクを、task-finish は Issue を閉じて終え、task-cancel は Issue を閉じるだけにする" {
   grep -q '### 4. ワークツリーの無いタスクを終える' "$SKILLS/task-finish/SKILL.md"
   grep -q 'gh issue close <番号> --reason completed' "$SKILLS/task-finish/SKILL.md"
-  # ブランチは名前だけで探す（PR から探すと別の Issue のブランチまで拾う）。見つからなくても決めつけず、閉じるかを選んでもらう
+  # 片付けるのは確かなブランチ（branch.pattern に合い番号が一致する）だけで、候補（名前が似ている・PR のブランチ）は見せるだけ。
+  # 見つからなくても決めつけず、閉じるかを選んでもらう
   for name in task-finish task-cancel; do
     grep -q 'issue-branches.sh --issue <番号>' "$SKILLS/$name/SKILL.md" || fail "${name} が issue-branches.sh でブランチを探していません"
-    grep -q 'PR からはブランチを探さない' "$SKILLS/$name/SKILL.md" || fail "${name} に、PR からブランチを探さないことが書かれていません"
+    grep -q '`candidates`（候補）' "$SKILLS/$name/SKILL.md" || fail "${name} に、候補を分けて扱うことが書かれていません"
   done
+  grep -q '取りやめで片付ける対象は、`branches`' "$SKILLS/task-cancel/SKILL.md"
+  grep -q '`merged_pr` があるブランチは' "$SKILLS/task-cancel/SKILL.md"
   # shellcheck disable=SC2016 # バッククォートはスキルの本文の文字で、展開させない
   grep -q '`open_prs` がある：Issue を閉じる PR が開いている' "$SKILLS/task-finish/SKILL.md"
   grep -q '「別の名前のブランチで作業した」' "$SKILLS/task-finish/SKILL.md"

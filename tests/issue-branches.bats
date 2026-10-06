@@ -16,16 +16,16 @@ setup() {
 }
 
 # Issue 17 を閉じる PR（closedByPullRequestsReferences）を決め、PR ごとの中身を作る
-# 使い方: link_prs [<番号>:<状態>:<ブランチ>[:<PR のリポジトリ>]]...
+# 使い方: link_prs [<番号>:<状態>:<ブランチ>[:<PR のリポジトリ>[:<フォークか>]]]...
 link_prs() {
-  local refs='[]' spec n state branch repo
+  local refs='[]' spec n state branch repo fork
   for spec in "$@"; do
-    IFS=: read -r n state branch repo <<<"$spec"
+    IFS=: read -r n state branch repo fork <<<"$spec"
     repo="${repo:-me/demo}"
     refs="$(jq -c --argjson n "$n" --arg r "$repo" \
       '. + [{number: $n, url: "https://github.com/\($r)/pull/\($n)", repository: {name: ($r | split("/")[1]), owner: {login: ($r | split("/")[0])}}}]' <<<"$refs")"
-    jq -n --argjson n "$n" --arg s "$state" --arg b "$branch" --arg r "$repo" \
-      '{number: $n, url: "https://github.com/\($r)/pull/\($n)", state: $s, headRefName: $b}' >"$FIX/pr-$n.json"
+    jq -n --argjson n "$n" --arg s "$state" --arg b "$branch" --arg r "$repo" --argjson f "${fork:-false}" \
+      '{number: $n, url: "https://github.com/\($r)/pull/\($n)", state: $s, headRefName: $b, isCrossRepository: $f}' >"$FIX/pr-$n.json"
   done
   jq --argjson refs "$refs" '. + {closedByPullRequestsReferences: $refs}' "$FIX/issue-17.json" >"$FIX/i" && mv "$FIX/i" "$FIX/issue-17.json"
 }
@@ -36,10 +36,10 @@ run_branches() {
   json="$(json_of "$output")"
 }
 
-# 使い方: names → 見つかったブランチの [名前, 手元にあるか, origin にあるか] の一覧
-names() { jq -c '[.branches[] | [.name, .local, .remote]]' <<<"$json"; }
+# 使い方: names <branches か candidates> → [名前, 手元にあるか, origin にあるか] の一覧
+names() { jq -c --arg k "${1:-branches}" '[.[$k][] | [.name, .local, .remote]]' <<<"$json"; }
 
-@test "名前で、手元と origin のこの Issue のブランチを見つける（ほかの Issue のブランチは入れない）" {
+@test "branch.pattern に合い番号が一致する手元と origin のブランチを、確かなブランチとして出す（ほかの Issue のブランチは入れない）" {
   git branch feat/17-x
   git branch fix/170-y
   git branch fix/1-7-segment
@@ -47,14 +47,39 @@ names() { jq -c '[.branches[] | [.name, .local, .remote]]' <<<"$json"; }
   run_branches --issue 17
   assert_success
   assert_equal "$(names)" '[["docs/17-z",false,true],["feat/17-x",true,false]]'
-  assert_equal "$(jq -c .open_prs <<<"$json")" '[]'
+  assert_equal "$(jq -c '[.candidates, .open_prs]' <<<"$json")" '[[],[]]'
 }
 
-@test "branch.pattern に合わない名前や、先頭に 0 が付いた古い名前も見つける（見落として Issue を閉じないため）" {
+@test "branch.pattern に合わない名前は候補に出し、確かなブランチにはしない（先頭に 0 が付いた古い名前は確か）" {
   for b in wip/17-try feat/17-Fix_Login feat/017-old 17-bare; do git branch "$b"; done
   run_branches --issue 17
   assert_success
-  assert_equal "$(jq -c '[.branches[].name]' <<<"$json")" '["17-bare","feat/017-old","feat/17-Fix_Login","wip/17-try"]'
+  assert_equal "$(jq -c '[.branches[].name]' <<<"$json")" '["feat/017-old"]'
+  assert_equal "$(jq -c '[.candidates[] | [.name, .from]]' <<<"$json")" \
+    '[["17-bare","name"],["feat/17-Fix_Login","name"],["wip/17-try","name"]]'
+}
+
+@test "名前が似ているだけの関係の無いブランチ（日付・版の番号）は、確かなブランチにしない（消さないため）" {
+  fake_issue 2024 '["feat"]'
+  fake_issue 1 '["feat"]'
+  git branch backup/2024-01-15
+  git branch release/1-0-x
+  run_branches --issue 2024
+  assert_success
+  assert_equal "$(jq -c '[[.branches[].name], [.candidates[].name]]' <<<"$json")" '[[],["backup/2024-01-15"]]'
+  run_branches --issue 1
+  assert_success
+  assert_equal "$(jq -c '[[.branches[].name], [.candidates[].name]]' <<<"$json")" '[[],["release/1-0-x"]]'
+}
+
+@test "確かなブランチに、マージ済みの PR の番号を付ける（フォークの同じ名前の PR は除く）" {
+  git branch feat/17-x
+  git branch feat/17-y
+  echo '[{"number": 9, "headRefName": "feat/17-x", "isCrossRepository": false},
+         {"number": 3, "headRefName": "feat/17-y", "isCrossRepository": true}]' >"$FIX/pr-list.json"
+  run_branches --issue 17
+  assert_success
+  assert_equal "$(jq -c '[.branches[] | [.name, .merged_pr]]' <<<"$json")" '[["feat/17-x",9],["feat/17-y",null]]'
 }
 
 @test "タグと同じ名前のブランチも、手元のブランチとして見つける" {
@@ -105,22 +130,23 @@ names() { jq -c '[.branches[] | [.name, .local, .remote]]' <<<"$json"; }
   assert_equal "$(jq -c '.branches[0].worktree' <<<"$json")" null
 }
 
-@test "Issue を閉じる PR のうち開いているものだけを open_prs に出し（フォークや別のリポジトリも含む）、PR のブランチは探さない" {
+@test "Issue を閉じる PR のブランチは候補にだけ出し（開いている・マージ済み、今のリポジトリのもの）、開いているものは open_prs にも出す" {
   git branch fix-foo
-  link_prs 5:OPEN:fix-foo 6:MERGED:old-work 7:OPEN:patch-1:other/lib 8:CLOSED:gave-up
+  link_prs 5:OPEN:fix-foo 6:MERGED:old-work 7:OPEN:patch-1:other/lib 8:CLOSED:gave-up 9:OPEN:patch-2:me/demo:true
   run_branches --issue 17
   assert_success
-  assert_equal "$(jq -c '[.open_prs[] | [.number, .branch]]' <<<"$json")" '[[5,"fix-foo"],[7,"patch-1"]]'
   assert_equal "$(jq -c .branches <<<"$json")" '[]'
+  assert_equal "$(jq -c '[.candidates[] | [.name, .local, .from, .pr]]' <<<"$json")" '[["fix-foo",true,"pr",5],["old-work",false,"pr",6]]'
+  assert_equal "$(jq -c '[.open_prs[] | [.number, .branch]]' <<<"$json")" '[[5,"fix-foo"],[7,"patch-1"],[9,"patch-2"]]'
 }
 
-@test "Closes #17, #18 の PR のブランチ（別の Issue の作業）を、#17 のブランチとして拾わない" {
+@test "Closes #17, #18 の PR のブランチ（別の Issue の作業）を、#17 の確かなブランチにしない" {
   git worktree add -q -b feat/18-x "$TMP/wt18"
   link_prs 5:OPEN:feat/18-x
   run_branches --issue 17
   assert_success
   assert_equal "$(jq -c .branches <<<"$json")" '[]'
-  assert_equal "$(jq -c '[.open_prs[].number]' <<<"$json")" '[5]'
+  assert_equal "$(jq -c '[.candidates[] | [.name, .from]]' <<<"$json")" '[["feat/18-x","pr"]]'
 }
 
 @test "Issue の番号・タイトル・状態と、開いている子の数を出す" {
@@ -137,6 +163,13 @@ names() { jq -c '[.branches[] | [.name, .local, .remote]]' <<<"$json"; }
   run_branches --issue 17
   assert_failure 1
   assert_output "error: origin のブランチを読めませんでした（通信や認証を確かめてください）"
+}
+
+@test "Issue を閉じる PR を読めなければ、開いている PR が無いと決めつけずに止まる" {
+  link_prs 5:OPEN:fix-foo
+  FAKE_FAIL=pr-view run_branches --issue 17
+  assert_failure 1
+  assert_output --partial "PR https://github.com/me/demo/pull/5 を読めませんでした"
 }
 
 @test "gh が古ければ（Issue を閉じる PR を読めない）、更新を促して止まる" {
