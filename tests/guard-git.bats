@@ -248,16 +248,17 @@ silent() {
 @test "function f { } の { } も、複合コマンドとして入れ子を数える。time -p の後の { } も数える" {
   git worktree add -q -b feat/21-x "$TMP/wt"
   denied "main の上ではコミットしません" "{ function f { :; }; cd $TMP/wt; } | cat; git commit -m x" \
-    "time -p { cd $TMP/wt; } | cat; git commit -m x"
+    "time -p { cd $TMP/wt; } | cat; git commit -m x" "time -- { cd $TMP/wt; } | cat; git commit -m x" \
+    "time -p -- { cd $TMP/wt; } | cat; git commit -m x"
 }
 
-@test "関数の定義の本体は、定義した時には動かないので、その中の cd は外に効かない" {
+@test "関数の定義の名前はコマンドとして調べず、本体はその場で動いた複合コマンドとして読む" {
   git worktree add -q -b feat/21-x "$TMP/wt"
-  denied "main の上ではコミットしません" "f() { cd $TMP/wt; }; git commit -m x" "function f { cd $TMP/wt; }; git commit -m x" \
-    "function f() { cd $TMP/wt; }; git commit -m x" "f () { cd $TMP/wt; }; git commit -m x" "cd() { :; }; git commit -m x" \
-    "$(printf 'function f\n{ cd %s; }\ngit commit -m x' "$TMP/wt")"
-  # 本体の中の git は、今までどおり調べる。x=() は空の配列の代入で、関数の定義ではない
-  denied "強制 push" "f() { git push -f; }"
+  # cd() { … } の cd は移動ではない。定義した関数を呼べば、本体の cd が動く
+  denied "main の上ではコミットしません" "cd() { :; }; git commit -m x" "cd $TMP/wt; f() { cd $REPO; }; f; git commit -m x"
+  allowed "f() { cd $TMP/wt; }; f; git commit -m x"
+  # 本体の中の git も調べる（function f { … } の1行の書き方も）。x=() は空の配列の代入で、関数の定義ではない
+  denied "強制 push" "f() { git push -f; }" "function f { git push -f; }"
   allowed "x=(); { cd $TMP/wt; }; git commit -m x"
 }
 
