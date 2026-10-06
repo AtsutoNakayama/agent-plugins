@@ -255,7 +255,7 @@ step() { awk -v n="$2" -v end="${3:-^###? }" 'on && $0 ~ end { exit } $0 ~ ("^##
 }
 
 # shellcheck disable=SC2016 # バッククォートはスキルの本文の文字で、展開させない
-@test "perspective-reviewer は findings と notes の1つの形で返し、review はどの部分も捨てずに読んで、伝言を手順4・5・7で伝える（設計書 §7）" {
+@test "perspective-reviewer は findings と notes の1つの形で返し、review はどの部分も捨てずに読んで、伝言を手順4・5・7・8で伝える（設計書 §7）" {
   grep -q '{"findings": ' "$AGENT" || fail "agent の定義に、findings と notes の形がありません"
   grep -q '"suggestion"' "$AGENT" || fail "agent の定義に、指摘の項目（file・line・summary・detail・suggestion）がありません"
   grep -q '`notes`' "$AGENT" || fail "agent の定義に、notes の説明がありません"
@@ -270,9 +270,11 @@ step() { awk -v n="$2" -v end="${3:-^###? }" 'on && $0 ~ end { exit } $0 ~ ("^##
   step3="$(step "$f" 3)"
   grep -q '囲まれていたり、前置き' <<<"$step3" \
     || fail "手順3に、囲みや前置きがあっても返事の JSON を読むことが書かれていません"
-  grep -q '`findings` の各項目を、手順4の一覧' <<<"$step3" \
+  grep -q '包まれていない配列' <<<"$step3" \
+    || fail "手順3に、findings に包まれていない配列だけの返事も読むことが書かれていません"
+  grep -q '配列の各項目を、手順4の一覧' <<<"$step3" \
     || fail "手順3に、findings を一覧の指摘にすることが書かれていません"
-  grep -q '`notes` と、オブジェクトの外にある文.*伝言' <<<"$step3" \
+  grep -q '`notes` と、オブジェクトや配列の外にある文.*伝言' <<<"$step3" \
     || fail "手順3に、notes とオブジェクトの外の文を伝言にすることが書かれていません"
   grep -q '読めない返事は、指摘にはせず' <<<"$step3" \
     || fail "手順3に、オブジェクトを読めない返事の扱いが書かれていません"
@@ -289,7 +291,11 @@ step() { awk -v n="$2" -v end="${3:-^###? }" 'on && $0 ~ end { exit } $0 ~ ("^##
   step7="$(step "$f" 7)"
   grep -q '観点からの伝言' <<<"$step7" \
     || fail "手順7に、観点からの伝言を改めて伝えることが書かれていません"
+  grep -q 'これまでの周の伝言をまとめて' <<<"$step3" \
+    || fail "手順3に、手順7・8でこれまでの周の伝言をまとめて伝えることが書かれていません"
   step8="$(step "$f" 8)"
+  grep -q '^1\. \*\*今の周が上限に達していて.*観点からの伝言' <<<"$step8" \
+    || fail "手順8の上限の周の質問に、観点からの伝言が入っていません"
   grep -q '^- 新しい指摘が無ければ.*手順4' <<<"$step8" \
     || fail "手順8の、新しい指摘が無いときに、手順4のとおり伝えることが書かれていません"
 }
