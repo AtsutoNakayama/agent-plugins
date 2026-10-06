@@ -104,3 +104,14 @@ scaffold() {
   done
   [ "$n" -gt 0 ]
 }
+
+@test "fix のケースの準備の後、task-start はどの短い説明でもルートを使い回す（別のワークツリーを作らない）" {
+  run "${TEST_BASH:-bash}" "$EVALS/fix-same-cause-elsewhere/fixture.sh"
+  assert_success
+  # Project が未設定という警告（標準エラー）は見ない
+  run "${TEST_BASH:-bash}" -c "\"\$0\" \"$SCRIPTS/task-start.sh\" --issue 1 --slug 'quote the name variable' 2>/dev/null" "${TEST_BASH:-bash}"
+  assert_success
+  assert_equal "$(jq -r .worktree <<<"$output")" "$WS"
+  assert_equal "$(jq -r .created.branch <<<"$output")" false
+  assert_equal "$(git worktree list | wc -l | tr -d ' ')" 1
+}
