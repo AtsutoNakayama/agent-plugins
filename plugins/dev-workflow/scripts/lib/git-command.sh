@@ -603,7 +603,13 @@ gc_dirs() {
   for w in "$@"; do
     case "$w" in
       -c) clear=true ;;
-      -l | -p | -v | [+-][0-9]*) ;;
+      -l | -p | -v) ;;
+      # +N・-N の N は数字だけ（+1x は失敗する）
+      [+-]*)
+        case "${w#[+-]}" in
+          '' | *[!0-9]*) return 0 ;;
+        esac
+        ;;
       *) return 0 ;;
     esac
   done
@@ -800,14 +806,14 @@ gc_command() {
   esac
   case "$1" in
     cd)
-      # cd のオプション（-L・-P・-e・-@）を飛ばす（- は前の場所、-- の後ろは - で始まっても行き先）。
-      # ほかのオプションがあれば、cd は失敗して移らない
+      # cd のオプション（-L・-P）を飛ばす（- は前の場所、-- の後ろは - で始まっても行き先）。ほかのオプションがあれば、
+      # cd は失敗して移らない（-e・-@ は bash 4.3 から。bash 3.2 と zsh では失敗する）
       shift
       gc_skip_opts "" "" "$@"
       shift "$gc_nopt"
       for k in ${gc_optn[@]+"${gc_optn[@]}"}; do
         case "$k" in
-          -L | -P | -e | -@) ;;
+          -L | -P) ;;
           *) return 0 ;;
         esac
       done
