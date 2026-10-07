@@ -139,6 +139,16 @@ silent() {
   # チームの設定に値があれば、使えなくてもユーザーの層の値には進まない（develop ではなく main を守る）
   echo '{"base_branch": "develop"}' >"$WORKFLOW_USER_DIR/config.json"
   denied "main の上ではコミットしません" "cd $TMP && git --git-dir=$TMP/sep.git commit -m x"
+  # false も値として扱う（「値が無い」とみなさない）
+  echo '{"base_branch": false}' >"$TMP/sep/.claude/dev-workflow/config.json"
+  git -C "$TMP/sep" commit -q -am false
+  denied "main の上ではコミットしません" "cd $TMP && git --git-dir=$TMP/sep.git commit -m x"
+}
+
+@test "チームの設定の base_branch が使えなければ、個人の層が上書きしていても、その値ではなく main を守る" {
+  echo '{"base_branch": "-foo"}' >.claude/dev-workflow/config.json
+  echo '{"base_branch": "develop"}' >.claude/dev-workflow/config.local.json
+  denied "main の上ではコミットしません" "git commit -m x"
 }
 
 @test "main への push を止める" {
