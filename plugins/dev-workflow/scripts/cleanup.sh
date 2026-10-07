@@ -157,7 +157,7 @@ if [ -n "$path" ]; then
     # コミットは、SHA で取ってきた push 済みのものでも手元では見分けられないので、安全のために止まる
     # shellcheck disable=SC2016 # 各サブモジュールの中で展開させる
     unpushed="$(git -C "$path" submodule --quiet foreach --recursive '
-      if [ -n "$(git log -1 --format=%h HEAD --branches --not --remotes --tags)" ] \
+      if [ -n "$(git log -1 --no-show-signature --format=%h HEAD --branches --not --remotes --tags)" ] \
         || git rev-parse -q --verify refs/stash >/dev/null; then
         echo "$displaypath"
       fi')" || dw_die "$path のサブモジュールを確かめられませんでした"

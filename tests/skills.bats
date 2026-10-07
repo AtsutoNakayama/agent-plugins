@@ -386,11 +386,17 @@ has() {
   fi
 }
 
+# shellcheck disable=SC2016 # バッククォートは文書の文字で、展開させない
 @test "スキルと観点がコミットの一覧を出す git log には、署名の表示を止める --no-show-signature を付ける" {
   # log.showSignature を有効にした利用者では、gpg の行が一覧に混ざる（#242 のレビュー）
   root="$BATS_TEST_DIRNAME/../plugins/dev-workflow"
-  if grep -rn --include='*.md' -E 'git log --oneline' "$root" | grep -v -e '--no-show-signature'; then
-    fail "コミットの一覧を出す git log に --no-show-signature がありません"
+  # 文書では、バッククォートで書いた引数付きの git log（引数の無い `git log` は、コマンドの名前として挙げたもの）
+  if grep -rnoh --include='*.md' -E '`git log [^`]*`' "$root" | grep -v -e '--no-show-signature'; then
+    fail "スキルや観点の git log に --no-show-signature がありません"
+  fi
+  # スクリプトでは、コメントを除いた git log の呼び出し
+  if grep -rn --include='*.sh' -E '\bgit( -C [^ ]+)? log\b' "$root" | grep -v -E '^[^:]+:[0-9]+: *#' | grep -v -e '--no-show-signature'; then
+    fail "スクリプトの git log に --no-show-signature がありません"
   fi
 }
 
