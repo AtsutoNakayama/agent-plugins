@@ -3,10 +3,13 @@
 # 何も変更しない（fetch だけ行う）。取り込む作業は今のブランチに対して行うので、調べるのも今のブランチだけにする。
 #
 # 使い方: branch-status.sh [--merged-from <sha>] [--pulled-from <sha>]
-#   --merged-from <sha>   origin/<base> を取り込む前（branch-update の手順2の merge の前）の HEAD。
-#                         付けると、push_commits の main・pull・own に、push で入るコミットを分けて出す
+#   --merged-from <sha>   origin/<base> を取り込む前（branch-update の手順2の merge の前）の HEAD。今のブランチの祖先
+#                         （HEAD を含む）であること
 #   --pulled-from <sha>   origin/<ブランチ> を取り込む前（branch-update の取り込む前の確認の pull の前）の HEAD。
-#                         --merged-from と一緒に使い、pull で作った取り込みのコミットを自分のコミットと分ける
+#                         --merged-from の祖先（無ければ今のブランチの祖先）であること。--merged-from が無いとき
+#                         （pull の後、merge の前に止めた）は、merge の前を HEAD とみなす
+#   どちらかを付けると、push_commits の main・pull・own に、push で入るコミットを分けて出す。値が空か、コミットで
+#   ないか、上の祖先の順になっていなければ、終了コード 64 で止まる
 #
 # 出力（JSON）:
 #   branch, base          今のブランチと、取り込み先（base_branch）
@@ -46,7 +49,8 @@
 #                           main     --merged-from より後のコミット（取り込んだ main のコミットと、その後に直したコミット）
 #                           pull     pull が作った取り込みのコミット（--pulled-from と --merged-from の間。fast-forward なら空）
 #                           own      取り込む前から手元にあった、push していない自分のコミット
-#                         main・pull・own は、--merged-from が無ければ null（--pulled-from が無ければ pull は空）
+#                         main・pull・own は、--merged-from も --pulled-from も無ければ null（--pulled-from が無ければ pull は空、
+#                         --merged-from が無ければ main は空）
 #   plan                  branch-update が次にすること（action・reason・queue・fallback）。上の値から branch-plan.sh が決める。
 #                         項目の意味と判断の表は、branch-plan.sh --help を参照
 set -euo pipefail
@@ -63,13 +67,12 @@ while [ $# -gt 0 ]; do
   case "$1" in
     -h | --help) usage; exit 0 ;;
     --merged-from | --pulled-from)
-      [ $# -ge 2 ] && [ -n "$2" ] || dw_die "$1 に値がありません" 64
+      [ $# -ge 2 ] && [ -n "$2" ] || dw_die "$1 に値（コミットの sha）がありません" 64
       if [ "$1" = --merged-from ]; then merged_from="$2"; else pulled_from="$2"; fi
       shift 2 ;;
     *) dw_die "不明な引数です: $1" 64 ;;
   esac
 done
-[ -z "$pulled_from" ] || [ -n "$merged_from" ] || dw_die "--pulled-from は --merged-from と一緒に指定してください" 64
 
 repo_root="$(dw_repo_root)" || dw_die "リポジトリの中で実行してください" 64
 config="$("$BASH" "$DW_SCRIPTS_DIR/config.sh")"
@@ -129,7 +132,8 @@ if [ "$unpushed" != null ]; then
   to="refs/remotes/origin/$branch" first_push=false
 fi
 head_ref="refs/heads/$branch"
-m="" p=""
+# 控えた sha の確かめ。--pulled-from だけのとき（pull の後、merge の前に止めた）は、merge の前を HEAD とみなす
+m="$head_ref" p=""
 if [ -n "$merged_from" ]; then
   m="$(commit_sha --merged-from "$merged_from")"
   git -C "$repo_root" merge-base --is-ancestor "$m" "$head_ref" \
@@ -138,27 +142,29 @@ fi
 if [ -n "$pulled_from" ]; then
   p="$(commit_sha --pulled-from "$pulled_from")"
   git -C "$repo_root" merge-base --is-ancestor "$p" "$m" \
-    || dw_die "--pulled-from の ${pulled_from} は、--merged-from の ${merged_from} の祖先ではありません（順番が逆か、別のコミットです）" 64
+    || dw_die "--pulled-from の ${pulled_from} は、--merged-from（無ければ ${branch}）の祖先ではありません（順番が逆か、別のコミットです）" 64
 fi
-# 履歴は1回だけたどり、組は、控えた sha から親をたどって届くかで分ける（基準にあるコミットは一覧に無いので、たどらない）。
-# 一覧は長くなりうる（main のコミットを数千件取り込むなど）ので、jq には引数ではなく標準入力で渡す。
+grouped=false
+[ -z "$merged_from$pulled_from" ] || grouped=true
+# 使い方: shas <コミット> → そのコミットから届き、基準に無いコミットの完全な sha を1行に1つ
+shas() { git -C "$repo_root" rev-list "$1" "^$to" --; }
+# 一覧（push で入るコミット）と、控えた sha から届くコミット（どちらも基準に無いものだけ）を、git でたどって求め、
+# jq で組に分ける。一覧は長くなりうる（main のコミットを数千件取り込むなど）ので、jq には引数ではなく標準入力で渡す。
 # 署名を表示する設定（log.showSignature）でも、gpg の行が混ざらないようにする。区切りは件名に現れない \x1f
-push_commits="$(git -C "$repo_root" log --no-show-signature --format='%H%x1f%h%x1f%P%x1f%s' "$head_ref" "^$to" -- \
-  | jq -R -s -c --arg to "${to#refs/remotes/}" --argjson first_push "$first_push" --arg m "$m" --arg p "$p" '
-    split("\n") | map(select(length > 0) | split("\u001f")
-      | {full: .[0], sha: .[1], parents: (.[2] | split(" ") | map(select(. != ""))), subject: (.[3:] | join("\u001f"))}) as $c
-    | ($c | map({key: .full, value: .parents}) | from_entries) as $g
-    | def reach($s): if $s == "" then {} else
-        {seen: {}, stack: [$s]}
-        | until(.stack == []; .stack[-1] as $x | .stack |= .[:-1]
-            | if $g[$x] == null or .seen[$x] then . else .seen[$x] = true | .stack += $g[$x] end)
-        | .seen end;
-      def pick(f): map(select(f) | {sha, subject});
-      reach($m) as $rm | reach($p) as $rp
-      | {to: $to, first_push: $first_push, all: ($c | pick(true)),
-         main: (if $m == "" then null else $c | pick($rm[.full] | not) end),
-         pull: (if $m == "" then null elif $p == "" then [] else $c | pick($rm[.full] and ($rp[.full] | not)) end),
-         own: (if $m == "" then null elif $p == "" then $c | pick($rm[.full]) else $c | pick($rp[.full]) end)}')"
+push_commits="$({
+  git -C "$repo_root" log --no-show-signature --format='%H%x1f%h%x1f%s' "$head_ref" "^$to" -- \
+    | jq -R -s -c 'split("\n") | map(select(. != "") | split("\u001f") | {full: .[0], sha: .[1], subject: (.[2:] | join("\u001f"))})'
+  if $grouped; then shas "$m" | jq -R -s -c 'split("\n") | map(select(. != ""))'; else echo '[]'; fi
+  if [ -n "$p" ]; then shas "$p" | jq -R -s -c 'split("\n") | map(select(. != ""))'; else echo '[]'; fi
+} | jq -s -c --arg to "${to#refs/remotes/}" --argjson first_push "$first_push" --argjson grouped "$grouped" --arg p "$p" '
+  .[0] as $c
+  | (.[1] | map({key: ., value: true}) | from_entries) as $rm
+  | (.[2] | map({key: ., value: true}) | from_entries) as $rp
+  | def pick(f): map(select(f) | {sha, subject});
+    {to: $to, first_push: $first_push, all: ($c | pick(true)),
+     main: (if $grouped then $c | pick($rm[.full] | not) else null end),
+     pull: (if ($grouped | not) then null elif $p == "" then [] else $c | pick($rm[.full] and ($rp[.full] | not)) end),
+     own: (if ($grouped | not) then null elif $p == "" then $c | pick($rm[.full]) else $c | pick($rp[.full]) end)}')"
 
 # --head はブランチ名だけで探すので、fork の同じ名前のブランチからの PR を除く
 pr=null

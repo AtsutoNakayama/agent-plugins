@@ -437,11 +437,8 @@ subjects() { jq -r --arg k "$1" '.push_commits[$k] | if . == null then "null" el
   assert_equal "$(subjects main)" "main 1,Merge remote-tracking branch 'origin/main' into feat/17-x"
 }
 
-@test "--pulled-from だけ、またはコミットでない sha を渡すと止まる" {
+@test "コミットでない sha や空の値を渡すと止まる" {
   setup_branch
-  run_script branch-status.sh --pulled-from HEAD
-  assert_failure 64
-  assert_output --partial "--merged-from と一緒に"
   run_script branch-status.sh --merged-from 0000000000000000000000000000000000000000
   assert_failure 64
   assert_output --partial "コミットではありません"
@@ -449,7 +446,29 @@ subjects() { jq -r --arg k "$1" '.push_commits[$k] | if . == null then "null" el
   assert_failure 64
   run_script branch-status.sh --merged-from ""
   assert_failure 64
-  assert_output --partial "--merged-from に値がありません"
+  assert_output --partial "--merged-from に値（コミットの sha）がありません"
+}
+
+@test "pull の後、merge の前に止めたとき（--pulled-from だけ）は、merge の前を HEAD とみなして分ける" {
+  setup_branch
+  git push -q origin feat/17-x
+  push_from_elsewhere
+  echo a >a.txt
+  git add a.txt
+  git commit -q -m "feat: a"
+  pulled_from="$(git rev-parse HEAD)"
+  git pull -q --no-rebase --no-edit origin feat/17-x
+  run_status --pulled-from "$pulled_from"
+  assert_success
+  assert_equal "$(subjects main)" ""
+  assert_equal "$(subjects pull)" "Merge branch 'feat/17-x' of $TMP/origin into feat/17-x"
+  assert_equal "$(subjects own)" "feat: a"
+  # pull をやめた（取り込む前に戻した）ときも止まらない
+  git reset -q --hard "$pulled_from"
+  run_status --pulled-from "$pulled_from"
+  assert_success
+  assert_equal "$(subjects pull)" ""
+  assert_equal "$(subjects own)" "feat: a"
 }
 
 @test "控えた sha の順番が違う（pull の前が merge の前の祖先でない・merge の前がブランチの祖先でない）と止まる" {
