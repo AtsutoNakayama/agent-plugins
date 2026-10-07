@@ -155,16 +155,16 @@ shas() { git -C "$repo_root" rev-list "$1" "^$to" -- | jq -R -s -c 'split("\n") 
 # 区切りは件名に現れない \x1f
 commits="$(git -C "$repo_root" log --no-show-signature --format='%H%x1f%h%x1f%s' "$head_ref" "^$to" -- \
   | jq -R -s -c 'split("\n") | map(select(. != "") | split("\u001f") | {full: .[0], sha: .[1], subject: (.[2:] | join("\u001f"))})')" \
-  || dw_die "push で入るコミットを調べられませんでした（git log・git rev-list が失敗しました）"
+  || dw_die "push で入るコミットを調べられませんでした（git が失敗しました）"
 reach_m='[]' reach_p='[]'
 if [ -n "$merged_from" ]; then
-  reach_m="$(shas "$m")" || dw_die "push で入るコミットを調べられませんでした（git log・git rev-list が失敗しました）"
+  reach_m="$(shas "$m")" || dw_die "push で入るコミットを調べられませんでした（git が失敗しました）"
 elif $grouped; then
   # --pulled-from だけのときは、merge の前を HEAD とみなすので、一覧のどれもが届く（同じ範囲をたどり直さない）
   reach_m="$(jq -c 'map(.full)' <<<"$commits")"
 fi
 if [ -n "$p" ]; then
-  reach_p="$(shas "$p")" || dw_die "push で入るコミットを調べられませんでした（git log・git rev-list が失敗しました）"
+  reach_p="$(shas "$p")" || dw_die "push で入るコミットを調べられませんでした（git が失敗しました）"
 fi
 push_commits="$(printf '%s\n' "$commits" "$reach_m" "$reach_p" \
   | jq -s -c --arg to "${to#refs/remotes/}" --argjson first_push "$first_push" --argjson grouped "$grouped" --arg p "$p" '
