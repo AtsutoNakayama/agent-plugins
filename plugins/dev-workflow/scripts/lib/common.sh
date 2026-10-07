@@ -465,34 +465,54 @@ dw_fetch_repo_file() {
 
 # 設定の base_branch が、git のブランチ名として使える値なら 0 を返す（設計書 §10）。
 # ダッシュで始まる値（-foo）は、git fetch origin <base_branch> などでオプションとして扱われ、失敗すべきところで先へ
-# 進んでしまうので、使う側ごとに -- を付けるのではなく、設定を読む時点で拒否する。git check-ref-format --branch は
+# 進んでしまうので、使う側ごとに -- を付けるのではなく、読む時点で拒否する。git check-ref-format --branch は
 # @{-1} などを今のリポジトリで展開してしまうので、refs/heads/ を付けて書式だけを検査し、ダッシュは別に拒否する。
+# HEAD と @ は書式には合うが、git が今の位置として扱う（git fetch origin HEAD は相手の既定のブランチを取る）ので拒否する。
 # 使い方: dw_valid_base_branch <base_branch>
 dw_valid_base_branch() {
   case "$1" in
-    -*) return 1 ;;
+    -* | HEAD | @) return 1 ;;
   esac
   git check-ref-format "refs/heads/$1" 2>/dev/null
 }
 
-# 設定の base_branch が使えない値なら、終了コード 2 で終了する（dw_valid_base_branch）。
-# 使い方: dw_check_base_branch <base_branch>
-dw_check_base_branch() {
-  dw_valid_base_branch "$1" || dw_die "設定の base_branch が git のブランチ名として使えません: ${1}" 2
+# 設定（JSON のオブジェクト）の base_branch を出力する。文字列でない値や、git のブランチ名として使えない値
+# （dw_valid_base_branch）なら、終了コード 2 で終了する。base_branch を使うスクリプトは、設定から直接読まずに、
+# これで読む（設計書 §10）。config.sh は検査しないので、base_branch を使わない項目は、値が不正でも読める。
+# 使い方: dw_base_branch <設定の JSON>
+dw_base_branch() {
+  local b
+  b="$(jq -r '.base_branch | if type == "string" then . else error end' <<<"$1" 2>/dev/null)" \
+    || dw_die "設定の base_branch が文字列ではありません" 2
+  dw_valid_base_branch "$b" || dw_die "設定の base_branch が git のブランチ名として使えません: ${b}" 2
+  printf '%s\n' "$b"
+}
+
+# チームの設定の base_branch を、dw_team_config と同じ決め方（無ければプラグインの既定）で読み、dw_base_branch と
+# 同じく検査して出力する。JSON として読めなければ 1 を返し、使えない値なら終了コード 2 で終了する。
+# 使い方: dw_team_base_branch <チームの設定のファイル（空なら無い）>
+dw_team_base_branch() {
+  local v
+  v="$(dw_team_config_json "$1" base_branch)" || return 1
+  dw_base_branch "{\"base_branch\": $v}"
 }
 
 # チームの設定の項目（トップレベルのキー）を出力する。ルールセットのようにリポジトリ全体で共有するものに使い、
 # 個人の層（config.local.json・~/.claude/dev-workflow）は使わず、チームの設定とプラグインの既定だけで決める。
 # チームの設定のファイルが無いか、キーが無い（null）ならプラグインの既定を使う（// と違い、false は値として保つ）。
-# JSON として読めなければ 1 を返す。
+# JSON として読めなければ 1 を返す。dw_team_config_json は、同じ値を JSON のまま（文字列も引用符つきで）出力する。
 # 使い方: dw_team_config <チームの設定のファイル（空なら無い）> <キー>
-dw_team_config() {
+dw_team_config() { dw_team_config_as -r "$@"; }
+dw_team_config_json() { dw_team_config_as -c "$@"; }
+
+# 使い方: dw_team_config_as <jq の出力の形（-r か -c）> <チームの設定のファイル（空なら無い）> <キー>
+dw_team_config_as() {
   local d
-  d="$(jq -c --arg k "$2" '.[$k]' "$DW_PLUGIN_ROOT/defaults/workflow.json")"
-  if [ -n "$1" ] && [ -f "$1" ]; then
-    jq -r --arg k "$2" --argjson d "$d" 'if .[$k] == null then $d else .[$k] end' "$1" 2>/dev/null
+  d="$(jq -c --arg k "$3" '.[$k]' "$DW_PLUGIN_ROOT/defaults/workflow.json")"
+  if [ -n "$2" ] && [ -f "$2" ]; then
+    jq "$1" --arg k "$3" --argjson d "$d" 'if .[$k] == null then $d else .[$k] end' "$2" 2>/dev/null
   else
-    jq -rn --argjson d "$d" '$d'
+    jq "$1" -n --argjson d "$d" '$d'
   fi
 }
 

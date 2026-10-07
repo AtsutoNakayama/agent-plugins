@@ -68,6 +68,13 @@ if config="$("$BASH" "$DW_SCRIPTS_DIR/config.sh" 2>&1)"; then
   else
     check project false warn "Project が未設定です（.claude/dev-workflow/config.json の project）"
   fi
+  # config.sh は base_branch を検査しないので、使う側（dw_base_branch）と同じ検査をここで行う。使えない値だと、
+  # base_branch を使うスクリプト（task-start・pr-create など）が止まる
+  if base_check="$(dw_base_branch "$config" 2>&1)"; then
+    check base-branch true error "$base_check"
+  else
+    check base-branch false error "${base_check#error: }"
+  fi
 else
   check config false error "$config"
 fi
@@ -141,9 +148,8 @@ fi
 # チームの設定で決める（個人の設定は使わない）。GitHub に問い合わせられないときは飛ばす
 base_branch=""
 if [ -n "$repo_root" ]; then
-  base_branch="$(dw_team_config "$repo_root/.claude/dev-workflow/config.json" base_branch || true)"
-  # 使えない値なら、設定の確認（config）が知らせるので、ここでは問い合わせずに飛ばす
-  dw_valid_base_branch "$base_branch" || base_branch=""
+  # 使えない値なら、設定の確認（base-branch）で知らせ、ここでは問い合わせずに飛ばす
+  base_branch="$(dw_team_base_branch "$repo_root/.claude/dev-workflow/config.json" 2>/dev/null || true)"
 fi
 # 必須のチェックの有無は、名前の一覧（required。ルールセットと古いブランチ保護を合わせる）だけで決め、strict かは、
 # 名前のあるルールセットのルール（check_rules）だけで見る。ルールがあっても名前が1つも無ければ、何も求めていない

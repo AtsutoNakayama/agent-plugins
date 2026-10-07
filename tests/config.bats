@@ -193,41 +193,9 @@ load test_helper
   assert_output "[\"en\",[\"$WORKFLOW_USER_DIR/commit.md\"]]"
 }
 
-@test "base_branch がダッシュで始まれば、どの項目を読むときも止まる（git のオプションとして扱わせない）" {
-  echo '{"base_branch": "-v"}' >.claude/dev-workflow/config.json
+@test "base_branch が不正でも、ほかの項目は読める（base_branch は使う側の dw_base_branch で検査する）" {
+  echo '{"base_branch": "-foo"}' >.claude/dev-workflow/config.json
   run_script config.sh .status.start
-  assert_failure 2
-  assert_output "error: 設定の base_branch が git のブランチ名として使えません: -v"
-
-  # 個人の層で上書きした値も検査する
-  echo '{"base_branch": "main"}' >.claude/dev-workflow/config.json
-  echo '{"base_branch": "-foo"}' >.claude/dev-workflow/config.local.json
-  run_script config.sh .base_branch
-  assert_failure 2
-  assert_output --partial "使えません: -foo"
-}
-
-@test "base_branch が git のブランチ名の書式に合わなければ止まる" {
-  for b in "" "a..b" "a b" "x@{-1}" "refs/" "a.lock"; do
-    jq -n --arg b "$b" '{base_branch: $b}' >.claude/dev-workflow/config.json
-    run_script config.sh .base_branch
-    assert_failure 2
-    assert_output --partial "設定の base_branch が git のブランチ名として使えません"
-  done
-}
-
-@test "base_branch が文字列でなければ止まる" {
-  for v in null 1 '["main"]'; do
-    echo "{\"base_branch\": $v}" >.claude/dev-workflow/config.json
-    run_script config.sh .status.start
-    assert_failure 2
-    assert_output "error: 設定の base_branch が文字列ではありません"
-  done
-}
-
-@test "/ を含む base_branch は使える" {
-  echo '{"base_branch": "release/v1"}' >.claude/dev-workflow/config.json
-  run_script config.sh .base_branch
   assert_success
-  assert_output "release/v1"
+  assert_output "In Progress"
 }

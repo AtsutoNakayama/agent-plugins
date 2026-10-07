@@ -82,7 +82,7 @@ else
 fi
 
 if [ -n "$branch" ]; then
-  base="$("$BASH" "$DW_SCRIPTS_DIR/config.sh" | jq -r '.base_branch // "main"')"
+  base="$(dw_base_branch "$("$BASH" "$DW_SCRIPTS_DIR/config.sh")")"
   [ "$branch" != "$base" ] || dw_die "${base} は削除できません。--branch で作業用のブランチを指定してください" 64
 fi
 

@@ -73,7 +73,7 @@ fi
 # --- ブランチと変更の確認 -------------------------------------------------------
 branch="$(git symbolic-ref --short -q HEAD || true)"
 [ -n "$branch" ] || dw_die "ブランチの上にいません（detached HEAD）" 2
-base="$(jq -r '.base_branch' <<<"$config")"
+base="$(dw_base_branch "$config")"
 [ "$branch" != "$base" ] || dw_die "${base} の上ではコミットしません。作業用のブランチを作ってください（task-start）" 2
 git diff --cached --quiet && dw_die "ステージした変更がありません（git add してください）" 2
 

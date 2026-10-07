@@ -199,3 +199,56 @@ run_common() {
   assert_line --index 0 "$REPO/.git"
   assert_line --index 2 "$REPO"
 }
+
+@test "dw_base_branch は、git のブランチ名として使える base_branch を出力する" {
+  run_common dw_base_branch '{"base_branch": "release/v1"}'
+  assert_success
+  assert_output "release/v1"
+}
+
+@test "dw_base_branch は、ダッシュで始まる base_branch を拒否する（git のオプションとして扱わせない）" {
+  for b in -v -foo --all; do
+    run_common dw_base_branch "$(jq -nc --arg b "$b" '{base_branch: $b}')"
+    assert_failure 2
+    assert_output "error: 設定の base_branch が git のブランチ名として使えません: ${b}"
+  done
+}
+
+@test "dw_base_branch は、書式に合わない値と、git が今の位置として扱う HEAD・@ を拒否する" {
+  for b in "" "a..b" "a b" "x@{-1}" "@{-1}" "a.lock" HEAD @; do
+    run_common dw_base_branch "$(jq -nc --arg b "$b" '{base_branch: $b}')"
+    assert_failure 2
+    assert_output --partial "設定の base_branch が git のブランチ名として使えません"
+  done
+}
+
+@test "dw_base_branch は、文字列でない base_branch を拒否する" {
+  for v in null 1 true '["main"]'; do
+    run_common dw_base_branch "{\"base_branch\": $v}"
+    assert_failure 2
+    assert_output "error: 設定の base_branch が文字列ではありません"
+  done
+}
+
+@test "dw_team_base_branch は、チームの設定の base_branch を検査し、無ければプラグインの既定を使う" {
+  run_common dw_team_base_branch ""
+  assert_success
+  assert_output main
+  echo '{"base_branch": null}' >"$TMP/team.json"
+  run_common dw_team_base_branch "$TMP/team.json"
+  assert_output main
+  echo '{"base_branch": "develop"}' >"$TMP/team.json"
+  run_common dw_team_base_branch "$TMP/team.json"
+  assert_output develop
+
+  for v in 1 true '"-foo"'; do
+    echo "{\"base_branch\": $v}" >"$TMP/team.json"
+    run_common dw_team_base_branch "$TMP/team.json"
+    assert_failure 2
+  done
+  # JSON として読めなければ 1 を返す（理由は呼ぶ側が出す）
+  echo '{broken' >"$TMP/team.json"
+  run_common dw_team_base_branch "$TMP/team.json"
+  assert_failure 1
+  assert_output ""
+}

@@ -253,6 +253,14 @@ assert_no_calls() {
   assert_output --partial "設定の base_branch が git のブランチ名として使えません: -v"
 }
 
+@test "設定の base_branch が文字列でなければ、dry-run でも止まる（\"1\" という名前のブランチを守ろうとしない）" {
+  setup_fake_gh
+  echo '{"base_branch": 1}' >.claude/dev-workflow/config.json
+  run_setup --dry-run
+  assert_failure 2
+  assert_output --partial "設定の base_branch が文字列ではありません"
+}
+
 @test "個人の設定（config.local.json・ユーザーの設定）の base_branch は使わない" {
   # ユーザーの層も読む、導入したリポジトリで確かめる
   mark_set_up

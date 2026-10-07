@@ -88,7 +88,7 @@ fi
 
 repo_root="$(dw_repo_root)" || dw_die "リポジトリの中で実行してください" 64
 config="$("$BASH" "$DW_SCRIPTS_DIR/config.sh")"
-base="$(jq -r '.base_branch' <<<"$config")"
+base="$(dw_base_branch "$config")"
 
 actions='[]'
 note() { actions="$(jq -c --arg a "$1" '. + [$a]' <<<"$actions")"; }

@@ -54,7 +54,7 @@ done
 
 repo_root="$(dw_repo_root)" || dw_die "リポジトリの中で実行してください" 64
 config="$("$BASH" "$DW_SCRIPTS_DIR/config.sh")"
-base="$(jq -r '.base_branch' <<<"$config")"
+base="$(dw_base_branch "$config")"
 
 branch="$(git -C "$repo_root" symbolic-ref --short -q HEAD || true)"
 [ -n "$branch" ] || dw_die "ブランチの上にいません。取り込む作業用のブランチに切り替えてください" 64
