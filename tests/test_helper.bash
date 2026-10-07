@@ -73,6 +73,7 @@ make_commits() {
 
 # 引数が環境変数 FAIL_GIT の形（case のパターン。前後に空白を足した引数の並びと照らす）に当たる呼び出しだけを
 # 失敗させる偽の git を $TMP/failgit に作る。PATH の先頭に足して使う（FAIL_GIT が空なら、どれも本物の git に渡す）
+# パターンは変数で渡るので、引用符は文字として扱われる。空白も含めて、引用符を使わずに書く
 # 使い方: make_failing_git → PATH="$TMP/failgit:$PATH" FAIL_GIT='* rev-list [!-]*' run_script ...
 make_failing_git() {
   local real

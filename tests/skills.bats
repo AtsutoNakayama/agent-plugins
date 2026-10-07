@@ -336,10 +336,11 @@ has() {
   # 出口ごとに添えること
   has "手順6の「push しなかったとき」の出口" "$nopush" '取り込む前の確認で止めた' '`ask_base`' '`recheck`' '取り込み（pull・merge）が衝突以外で失敗した' '手順3で直せなかった' '「push しない」' 'push が拒否された' '「抜けたとき」'
   # 手元に何があるかは一覧で示し、出口ごとの箇条では言い切らない（どこまで進めてから止めたかで変わる）
-  # （言い回しに縛られないよう、「手元・取り込みは〜していない」「取り込みのコミットが〜ある・残る」
-  #   「コミットが手元にある・残る」「手元には何も残っていない」の形で探す）
+  # （言い回しに縛られないよう、「手元・取り込みは〜していない」「取り込み・自分・pull・main のコミットが〜ある・残る」
+  #   「コミットが手元にある・残る」「手元には何も残っていない」の形で探す。push が拒否されたときの
+  #   「手元に無いコミットがある」は origin の状態なので、コミットの前に「無い」が来る形は探さない）
   if grep -e '^- ' <<<"$nopush" \
-    | grep -E '(手元|取り込み)[^。、]*(は[^。、]*していない|変えていない)|取り込みのコミットが[^。、]*(ある|残)|コミットが手元に(ある|残)|手元には?何も(残|無|な)'; then
+    | grep -E '(手元|取り込み)[^。、]*(は[^。、]*していない|変えていない)|(取り込み|自分|pull|main) ?の?コミットが[^。、]*(ある|残)|コミットが手元に(ある|残)|手元には?何も(残|無|な)'; then
     fail "出口ごとの箇条で、手元に何があるかを言い切っています（push_commits の一覧で示す）"
   fi
   # キューへの入れ直しの案内は、push したときだけ
@@ -366,7 +367,7 @@ has() {
   # pull の前の sha は、pull の直前（未コミットの変更をコミットした後）に控える
   # pull の箇条は、控えるかを「控える sha」の規則に任せ、自分では控えると書かない（push として進めるときは控えない）
   has "手順1の pull" "$(grep -F 'git pull --no-rebase' <<<"$(step "$f" 1)")" '「控える sha」に従う'
-  if grep -F 'git pull --no-rebase' <<<"$(step "$f" 1)" | grep -E 'sha を控える[。（]'; then
+  if grep -F 'git pull --no-rebase' <<<"$(step "$f" 1)" | sed 's/控えるかは//g; s/「控える sha」//g' | grep -F '控え'; then
     fail "pull の箇条が、規則とは別に sha を控えると書いています（push として進めるときも控えてしまう）"
   fi
   # 控える sha は1か所の規則にまとめ、手順4・6はそれに従う（手順ごとに書くと、控え直しや片方だけ渡すことが起きる）
@@ -390,12 +391,14 @@ has() {
 @test "スキルと観点がコミットの一覧を出す git log には、署名の表示を止める --no-show-signature を付ける" {
   # log.showSignature を有効にした利用者では、gpg の行が一覧に混ざる（#242 のレビュー）
   root="$BATS_TEST_DIRNAME/../plugins/dev-workflow"
-  # 文書では、バッククォートで書いた引数付きの git log（引数の無い `git log` は、コマンドの名前として挙げたもの）
-  if grep -rnoh --include='*.md' -E '`git log [^`]*`' "$root" | grep -v -e '--no-show-signature'; then
+  # 文書では、引数が続く git log（バッククォートの中でも、コードブロックの中でも。引数の無い `git log` は、
+  # コマンドの名前として挙げたもの）。引数は1行に書き、続きの行に分けない
+  if grep -rn --include='*.md' -E 'git( -[cC] [^ ]+| --[a-z-]+)* log [-<a-zA-Z]' "$root" | grep -v -e '--no-show-signature'; then
     fail "スキルや観点の git log に --no-show-signature がありません"
   fi
-  # スクリプトでは、コメントを除いた git log の呼び出し
-  if grep -rn --include='*.sh' -E '\bgit( -C [^ ]+)? log\b' "$root" | grep -v -E '^[^:]+:[0-9]+: *#' | grep -v -e '--no-show-signature'; then
+  # スクリプトでは、コメントを除いた git log の呼び出し（git と log の間のオプションも許す。.bash も含める）
+  if grep -rn --include='*.sh' --include='*.bash' -E '\bgit( -[cC] [^ ]+| --[a-z-]+)* log\b' "$root" \
+    | grep -v -E '^[^:]+:[0-9]+: *#' | grep -v -e '--no-show-signature'; then
     fail "スクリプトの git log に --no-show-signature がありません"
   fi
 }
