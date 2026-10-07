@@ -376,6 +376,13 @@ required_check() { jq -c '.checks[] | select(.name == "required-checks") | [.ok,
   assert_equal "$(jq -c '.checks[] | select(.name == "base-branch") | [.ok, .detail]' <<<"$output")" \
     '[false,"チームの設定: 設定の base_branch が git のブランチ名として使えません: -v"]'
   [ ! -e "$TMP/rules-path" ]
+
+  # 個人の設定が壊れて config が失敗しても、チームの設定の値の誤りは知らせる
+  echo '{broken' >.claude/dev-workflow/config.local.json
+  run_script doctor.sh
+  assert_failure 1
+  assert_equal "$(jq -c '[.checks[] | select(.name == "config" or .name == "base-branch") | [.name, .ok]]' <<<"$output")" \
+    '[["config",false],["base-branch",false]]'
 }
 
 @test "マージキューの確認は、個人の設定の base_branch ではなく、チームの設定のブランチを見る" {

@@ -88,6 +88,8 @@ if config="$("$BASH" "$DW_SCRIPTS_DIR/config.sh" 2>&1)"; then
   fi
 else
   check config false error "$config"
+  # 合わせた設定は読めなくても、チームの設定の値の誤りは知らせる（直した後に、もう1つ誤りが出てこないように）
+  [ -z "$team_base_err" ] || check base-branch false error "チームの設定: ${team_base_err}"
 fi
 
 # 古い置き場所（.claude/dev-workflow/ にまとめる前）のファイルは使われないので、移すよう促す
