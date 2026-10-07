@@ -143,6 +143,16 @@ silent() {
   echo '{"base_branch": false}' >"$TMP/sep/.claude/dev-workflow/config.json"
   git -C "$TMP/sep" commit -q -am false
   denied "main の上ではコミットしません" "cd $TMP && git --git-dir=$TMP/sep.git commit -m x"
+  # 壊れていても、ユーザーの層の値には進まない（ルートが分かるときと同じく main を守る）
+  for c in '{broken' '[]' ''; do
+    printf '%s' "$c" >"$TMP/sep/.claude/dev-workflow/config.json"
+    git -C "$TMP/sep" commit -q -am "broken: $c"
+    denied "main の上ではコミットしません" "cd $TMP && git --git-dir=$TMP/sep.git commit -m x"
+  done
+  # 値が無いときだけ、ユーザーの層の値を守る
+  echo '{}' >"$TMP/sep/.claude/dev-workflow/config.json"
+  git -C "$TMP/sep" commit -q -am none
+  silent "cd $TMP && git --git-dir=$TMP/sep.git commit -m x"
 }
 
 @test "チームの設定の base_branch が使えなければ、個人の層が上書きしていても、その値ではなく main を守る" {
