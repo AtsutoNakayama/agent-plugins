@@ -79,6 +79,33 @@ add() {
   assert_output --partial "使えません: -foo"
 }
 
+# プラグインを一時ディレクトリに写し、config.sh を偽物（本文 <本文>）に置き換えて、repo の層に観点を作る
+# 使い方: add_with_fake_config <偽の config.sh の本文>
+add_with_fake_config() {
+  cp -R "$SCRIPTS/.." "$TMP/plugin"
+  printf '%s\n' "$1" >"$TMP/plugin/scripts/config.sh"
+  run "${TEST_BASH:-bash}" "$TMP/plugin/scripts/review-perspective-add.sh" --name fake --layer repo --title "観点" <<<"指示"
+}
+
+@test "config.sh が理由を出さずに失敗しても、警告の理由を空のまま示さない" {
+  add_with_fake_config 'exit 1'
+  assert_success
+  assert_output --partial "warn: 作業用のブランチの上かは分かりません（config.sh で確かめてください）"
+  refute_output --partial "（。"
+}
+
+@test "config.sh は1回だけ読み、その失敗の理由を警告に添える" {
+  # 1回目は理由を出して失敗し、2回目からは成功する（呼んだ回数は calls に数える）
+  # shellcheck disable=SC2016 # 単引用符の中の $ は、偽の config.sh の中で展開させる
+  add_with_fake_config "calls='$TMP/config-calls'"'
+echo x >>"$calls"
+if [ "$(wc -l <"$calls")" -eq 1 ]; then echo "error: 理由X" >&2; exit 1; fi
+echo "{\"base_branch\": \"main\"}"'
+  assert_success
+  assert_output --partial "warn: 作業用のブランチの上かは分かりません（理由X。config.sh で確かめてください）"
+  assert_equal "$(wc -l <"$TMP/config-calls" | tr -d ' ')" 1
+}
+
 @test "repo の層に detached HEAD で作ると、branch が null で work_branch が false になる" {
   git -C "$REPO" switch -q --detach
   add "指示" --name detached --layer repo --title "観点"

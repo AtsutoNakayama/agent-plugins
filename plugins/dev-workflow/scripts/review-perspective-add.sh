@@ -148,6 +148,7 @@ case "$layer" in
     # config.sh か dw_base_branch が出した理由を添えて警告する）
     # 標準エラーは、成功したときの JSON に混ぜないよう、一時ファイルに受けて理由（最後の1行）にする
     errf="$(mktemp)"
+    trap 'rm -f "$errf"' EXIT
     if config="$("$BASH" "$DW_SCRIPTS_DIR/config.sh" 2>"$errf")"; then
       base="$( (dw_base_branch "$config") 2>"$errf")" || base=""
     else
