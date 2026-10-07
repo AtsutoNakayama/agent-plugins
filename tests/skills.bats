@@ -320,6 +320,36 @@ step() { awk -v n="$2" -v end="$3" 'on && ($0 ~ /^###? / || (end != "" && $0 ~ e
   has "手順4（push の前の確認）" "$(step "$f" 4)" '直し方を変えたなら' '`push` として進めた' '方針や前の取り込みの直し方から変えたところ'
 }
 
+# shellcheck disable=SC2016 # バッククォートはスキルの本文の文字で、展開させない
+@test "branch-update は、push しなかったどの出口でも、push・CI・キューへの入れ直しの案内をせず、止めた理由と手元に残ったものを伝える" {
+  # push しなかった出口でも、手順6が push・CI・キューへの入れ直しの案内を伝えていた（#242）
+  f="$SKILLS/branch-update/SKILL.md"
+  has() {
+    local name="$1" text="$2"; shift 2
+    [ -n "$text" ] || fail "${name}がありません"
+    for term in "$@"; do
+      grep -qF -e "$term" <<<"$text" || fail "${name}に「${term}」がありません"
+    done
+  }
+  s6="$(step "$f" 6)"
+  nopush="$(awk '/^\*\*push しなかったとき\*\*/ { on = 1 } /^\*\*push したとき\*\*/ { exit } on' <<<"$s6")"
+  pushed="$(awk '/^\*\*push したとき\*\*/ { on = 1 } on' <<<"$s6")"
+  has "手順6の「push しなかったとき」" "$(head -n 1 <<<"$nopush")" 'どこで止めたときも' 'push・CI・キュー' '伝えない' '止めた理由' 'push していないコミット'
+  # 出口ごとに添えること
+  has "手順6の「push しなかったとき」の出口" "$nopush" '取り込む前の確認で止めた' '`ask_base`' '`recheck`' '手順3で直せなかった' '「push しない」' 'push が拒否された' '「抜けたとき」'
+  # キューへの入れ直しの案内は、push したときだけ
+  has "手順6の「push したとき」" "$pushed" 'もう一度キューに入れてください'
+  if grep -F 'キューに入れてください' <<<"$nopush"; then
+    fail "push しなかったときに、キューへの入れ直しを案内しています"
+  fi
+  # push せずに止める出口は、どれも手順6の「push しなかったとき」に従う
+  has "手順1（取り込む前の確認・ask_base・recheck で止めたとき）" "$(step "$f" 1)" '「push しなかったとき」'
+  has "手順3" "$(step "$f" 3)" '「push しなかったとき」'
+  has "手順5" "$(step "$f" 5)" '「push しなかったとき」'
+  conf="$(awk '$0 == "## 衝突の直し方の確認" { on = 1; next } on && /^## / { exit } on' "$f")"
+  has "「抜けたとき」" "$(grep -e '^\*\*抜けたとき\*\*' <<<"$conf")" '「push しなかったとき」'
+}
+
 @test "pr-create と task-finish は pr-respond に依存しない（使わなくてもマージから後片付けまで進める）" {
   for name in pr-create task-finish; do
     if grep -n 'pr-respond' "$SKILLS/$name/SKILL.md"; then
