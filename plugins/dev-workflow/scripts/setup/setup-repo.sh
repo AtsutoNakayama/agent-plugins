@@ -100,7 +100,7 @@ if [ -n "$repo" ]; then
 fi
 
 # --- 守るブランチ（設定の base_branch） ------------------------------------------
-# チームの設定（.claude/dev-workflow/config.json）とプラグインの既定だけで決める（dw_team_config）
+# チームの設定（.claude/dev-workflow/config.json）とプラグインの既定だけで決める（dw_team_base_branch）
 tmp="$(mktemp -d)"
 trap 'rm -rf "$tmp"' EXIT
 team=""

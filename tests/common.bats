@@ -251,7 +251,20 @@ run_common() {
     printf '%s' "$c" >"$TMP/team.json"
     run_common dw_team_base_branch "$TMP/team.json" "チームの設定"
     assert_failure 2
-    assert_output "error: チームの設定 を JSON として読めません"
+    assert_output "error: チームの設定 を JSON のオブジェクトとして読めません"
+  done
+}
+
+@test "dw_team_config も、チームの設定を JSON のオブジェクトとして読めなければ（空のファイルも）1 を返す" {
+  echo '{"require_status_checks": false}' >"$TMP/team.json"
+  run_common dw_team_config "$TMP/team.json" require_status_checks
+  assert_success
+  assert_output false
+  for c in '{broken' '' '[]'; do
+    printf '%s' "$c" >"$TMP/team.json"
+    run_common dw_team_config "$TMP/team.json" require_status_checks
+    assert_failure 1
+    assert_output ""
   done
 }
 

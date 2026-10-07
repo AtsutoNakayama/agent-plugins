@@ -393,8 +393,13 @@ dw_require_gh_version() {
 
 # 設定ファイルが JSON のオブジェクト1つだけでできているか確かめる。違えば終了する。
 dw_check_json() {
-  jq -se 'length == 1 and (.[0] | type) == "object"' "$1" >/dev/null 2>&1 \
-    || dw_die "JSON のオブジェクトとして読めません: $1" 2
+  dw_is_json_object "$1" || dw_die "JSON のオブジェクトとして読めません: $1" 2
+}
+
+# ファイルが、JSON のオブジェクト1つなら 0 を返す（空のファイルや、複数の値は当たらない）。
+# 使い方: dw_is_json_object <ファイル>
+dw_is_json_object() {
+  jq -se 'length == 1 and (.[0] | type) == "object"' "$1" >/dev/null 2>&1
 }
 
 # 設定（入力）の branch.pattern を、type と Issue の番号を取り出す正規表現にする jq の定義（dw_parse_branch・dw_issue_branches）
@@ -488,36 +493,44 @@ dw_base_branch() {
   printf '%s\n' "$b"
 }
 
-# チームの設定の base_branch を、dw_team_config と同じ決め方（無いか null ならプラグインの既定）で読み、dw_base_branch と
-# 同じく検査して出力する。チームの設定を JSON のオブジェクトとして読めない（空のファイルを含む）か、使えない値なら、
-# 終了コード 2 で終了する。
+# チームの設定のファイルを、JSON のオブジェクト（1行）にして出力する。ファイルが無ければ何も出さない。
+# JSON のオブジェクトとして読めなければ（空のファイルを含む。dw_is_json_object）1 を返す。
+# 使い方: dw_team_config_text <チームの設定のファイル（空なら無い）>
+dw_team_config_text() {
+  if [ -z "$1" ] || [ ! -f "$1" ]; then
+    return 0
+  fi
+  dw_is_json_object "$1" || return 1
+  jq -c . "$1"
+}
+
+# チームの設定（dw_team_config_text の出力。空なら無い）から項目を1つ選び、{"<キー>": <値>} の形で出力する。
+# 設定が無いか、項目が無い（null）ならプラグインの既定を使う（// と違い、false は値として保つ）。
+# 使い方: dw_team_pick <チームの設定の JSON（空なら無い）> <キー>
+dw_team_pick() {
+  local d
+  d="$(jq -c --arg k "$2" '.[$k]' "$DW_PLUGIN_ROOT/defaults/workflow.json")"
+  jq -c --arg k "$2" --argjson d "$d" '{($k): (if .[$k] == null then $d else .[$k] end)}' <<<"${1:-"{}"}"
+}
+
+# チームの設定の base_branch を、dw_team_config と同じ決め方（dw_team_pick）で読み、dw_base_branch と同じく検査して
+# 出力する。チームの設定を JSON のオブジェクトとして読めない（空のファイルを含む）か、使えない値なら、終了コード 2 で
+# 終了する。
 # 使い方: dw_team_base_branch <チームの設定のファイル（空なら無い）> [エラーで示すファイルの名前（既定はパス）]
 dw_team_base_branch() {
-  local d c
-  d="$(jq -c '.base_branch' "$DW_PLUGIN_ROOT/defaults/workflow.json")"
-  if [ -n "$1" ] && [ -f "$1" ]; then
-    c="$(jq -sc --argjson d "$d" 'if length == 1 and (.[0] | type) == "object"
-      then {base_branch: (.[0].base_branch | if . == null then $d else . end)} else error end' "$1" 2>/dev/null)" \
-      || dw_die "${2:-$1} を JSON として読めません" 2
-  else
-    c="$(jq -nc --argjson d "$d" '{base_branch: $d}')"
-  fi
-  dw_base_branch "$c"
+  local c
+  c="$(dw_team_config_text "$1")" || dw_die "${2:-$1} を JSON のオブジェクトとして読めません" 2
+  dw_base_branch "$(dw_team_pick "$c" base_branch)"
 }
 
 # チームの設定の項目（トップレベルのキー）を出力する。ルールセットのようにリポジトリ全体で共有するものに使い、
-# 個人の層（config.local.json・~/.claude/dev-workflow）は使わず、チームの設定とプラグインの既定だけで決める。
-# チームの設定のファイルが無いか、キーが無い（null）ならプラグインの既定を使う（// と違い、false は値として保つ）。
-# JSON として読めなければ 1 を返す。
+# 個人の層（config.local.json・~/.claude/dev-workflow）は使わず、チームの設定とプラグインの既定だけで決める
+# （dw_team_pick）。JSON のオブジェクトとして読めなければ（空のファイルを含む）1 を返す。
 # 使い方: dw_team_config <チームの設定のファイル（空なら無い）> <キー>
 dw_team_config() {
-  local d
-  d="$(jq -c --arg k "$2" '.[$k]' "$DW_PLUGIN_ROOT/defaults/workflow.json")"
-  if [ -n "$1" ] && [ -f "$1" ]; then
-    jq -r --arg k "$2" --argjson d "$d" 'if .[$k] == null then $d else .[$k] end' "$1" 2>/dev/null
-  else
-    jq -rn --argjson d "$d" '$d'
-  fi
+  local c
+  c="$(dw_team_config_text "$1")" || return 1
+  dw_team_pick "$c" "$2" | jq -r --arg k "$2" '.[$k]'
 }
 
 # 必須のチェックを求めるルール（rules/branches の required_status_checks のうち、名前が1つ以上あるもの）を選ぶ jq の定義。

@@ -258,7 +258,7 @@ assert_no_calls() {
   : >.claude/dev-workflow/config.json
   run_setup --dry-run
   assert_failure 2
-  assert_output --partial "me/demo の .claude/dev-workflow/config.json を JSON として読めません"
+  assert_output --partial "me/demo の .claude/dev-workflow/config.json を JSON のオブジェクトとして読めません"
 }
 
 @test "設定の base_branch が文字列でなければ、dry-run でも止まる（\"1\" という名前のブランチを守ろうとしない）" {
