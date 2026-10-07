@@ -63,7 +63,8 @@ add() {
   assert_success
   [ -f "$REPO/.claude/dev-workflow/review/broken-config.md" ] || fail "ファイルがありません"
   assert_equal "$(jq -c '[.branch, .work_branch]' <<<"$(printf '%s\n' "$output" | sed -n '/^{/,$p')")" '["main",null]'
-  assert_output --partial "warn: "
+  # config.sh が出した理由を添える（理由が空の「（。config.sh …）」にしない）
+  assert_output --partial "warn: 作業用のブランチの上かは分かりません（JSON のオブジェクトとして読めません: "
 }
 
 @test "base_branch が使えない値でも repo の層に観点を作り、work_branch は null にして警告する（その値と比べない）" {

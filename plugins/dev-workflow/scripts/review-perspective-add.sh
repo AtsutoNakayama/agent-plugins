@@ -146,16 +146,17 @@ case "$layer" in
     # 観点の追加はきっかけになったタスクの PR に含めるので、作業用のブランチの上かを知らせる（設計書 §7）
     # 設定を読めなくても、base_branch が使えない値でも観点は作る（作業用のブランチの上かは分からないものとして null にし、
     # config.sh か dw_base_branch が出した理由を添えて警告する）
-    why=""
-    if config="$("$BASH" "$DW_SCRIPTS_DIR/config.sh" 2>/dev/null)"; then
-      base="$( (dw_base_branch "$config") 2>&1)" || { why="$base"; base=""; }
+    # 標準エラーは、成功したときの JSON に混ぜないよう、一時ファイルに受けて理由（最後の1行）にする
+    errf="$(mktemp)"
+    if config="$("$BASH" "$DW_SCRIPTS_DIR/config.sh" 2>"$errf")"; then
+      base="$( (dw_base_branch "$config") 2>"$errf")" || base=""
     else
       base=""
-      # 理由（1行のメッセージ）を得るために、失敗したときだけもう一度読む
-      why="$("$BASH" "$DW_SCRIPTS_DIR/config.sh" 2>&1 >/dev/null | tail -n 1 || true)"
     fi
-    [ -z "$why" ] && [ -n "$base" ] \
-      || dw_warn "作業用のブランチの上かは分かりません（${why#error: }。config.sh で確かめてください）"
+    why="$(tail -n 1 "$errf")"
+    rm -f "$errf"
+    [ -n "$base" ] \
+      || dw_warn "作業用のブランチの上かは分かりません（${why:+${why#error: }。}config.sh で確かめてください）"
     branch="$(git -C "$repo_root" symbolic-ref --short -q HEAD || true)"
     ;;
   *) dw_die "--layer は user か repo にしてください" 64 ;;
