@@ -14,6 +14,18 @@ frontmatter() { awk 'NR == 1 && $0 == "---" { on = 1; next } on && $0 == "---" {
 # （次の「## 」か「### 」の見出しの前まで。「#### 」の見出しでは終わらない。終わりの見出しを渡すと、その見出しでも終わる）
 step() { awk -v n="$2" -v end="$3" 'on && ($0 ~ /^###? / || (end != "" && $0 ~ end)) { exit } $0 ~ ("^### " n "[.]") { on = 1; next } on' "$1"; }
 
+# 使い方: section <SKILL.md> <見出し> → 「## 」の見出し（行全体が一致）の節の本文（次の「## 」の見出しの前まで）
+section() { awk -v h="$2" '$0 == h { on = 1; next } on && /^## / { exit } on' "$1"; }
+
+# 使い方: has <名前> <本文> <語>... → 本文にどの語もあること（固定の文字列として探す）
+has() {
+  local name="$1" text="$2"; shift 2
+  [ -n "$text" ] || fail "${name}がありません"
+  for term in "$@"; do
+    grep -qF -e "$term" <<<"$text" || fail "${name}に「${term}」がありません"
+  done
+}
+
 @test "どのスキルにも name（ディレクトリ名と同じ）と description がある" {
   for f in "$SKILLS"/*/SKILL.md; do
     name="$(basename "$(dirname "$f")")"
@@ -263,16 +275,8 @@ step() { awk -v n="$2" -v end="$3" 'on && ($0 ~ /^###? / || (end != "" && $0 ~ e
   # 両立できると判断した衝突を確かめずに直し、push の前の確認の時点で直したコミットが既にできていた（#237）
   # 文の言い回しに縛られないよう、箇条（見出しの語や選択肢の名前）で場所を決め、その中の要の語だけを確かめる
   f="$SKILLS/branch-update/SKILL.md"
-  # 使い方: has <名前> <本文> <語>... → 本文にどの語もあること（固定の文字列として探す）
-  has() {
-    local name="$1" text="$2"; shift 2
-    [ -n "$text" ] || fail "${name}がありません"
-    for term in "$@"; do
-      grep -qF -e "$term" <<<"$text" || fail "${name}に「${term}」がありません"
-    done
-  }
   # 確認の手順は1つの節にまとめ、衝突を直す場面はどれもそこに従う（場面ごとに規則を書くと、抜ける場面が出る）
-  conf="$(awk '$0 == "## 衝突の直し方の確認" { on = 1; next } on && /^## / { exit } on' "$f")"
+  conf="$(section "$f" "## 衝突の直し方の確認")"
   has "「## 衝突の直し方の確認」の節" "$conf" '両立できると判断した衝突も含めて' '直す前'
   has "手順1の pull" "$(grep -F 'git pull --no-rebase' <<<"$(step "$f" 1)")" '「衝突の直し方の確認」'
   has "手順2" "$(step "$f" 2)" '「衝突の直し方の確認」'
@@ -324,13 +328,6 @@ step() { awk -v n="$2" -v end="$3" 'on && ($0 ~ /^###? / || (end != "" && $0 ~ e
 @test "branch-update は、push しなかったどの出口でも、push・CI・キューへの入れ直しの案内をせず、止めた理由と手元に残ったものを伝える" {
   # push しなかった出口でも、手順6が push・CI・キューへの入れ直しの案内を伝えていた（#242）
   f="$SKILLS/branch-update/SKILL.md"
-  has() {
-    local name="$1" text="$2"; shift 2
-    [ -n "$text" ] || fail "${name}がありません"
-    for term in "$@"; do
-      grep -qF -e "$term" <<<"$text" || fail "${name}に「${term}」がありません"
-    done
-  }
   s6="$(step "$f" 6)"
   nopush="$(awk '/^\*\*push しなかったとき\*\*/ { on = 1 } /^\*\*push したとき\*\*/ { exit } on' <<<"$s6")"
   pushed="$(awk '/^\*\*push したとき\*\*/ { on = 1 } on' <<<"$s6")"
@@ -346,7 +343,7 @@ step() { awk -v n="$2" -v end="$3" 'on && ($0 ~ /^###? / || (end != "" && $0 ~ e
   has "手順1（取り込む前の確認・ask_base・recheck で止めたとき）" "$(step "$f" 1)" '「push しなかったとき」'
   has "手順3" "$(step "$f" 3)" '「push しなかったとき」'
   has "手順5" "$(step "$f" 5)" '「push しなかったとき」'
-  conf="$(awk '$0 == "## 衝突の直し方の確認" { on = 1; next } on && /^## / { exit } on' "$f")"
+  conf="$(section "$f" "## 衝突の直し方の確認")"
   has "「抜けたとき」" "$(grep -e '^\*\*抜けたとき\*\*' <<<"$conf")" '「push しなかったとき」'
 }
 
@@ -354,13 +351,6 @@ step() { awk -v n="$2" -v end="$3" 'on && ($0 ~ /^###? / || (end != "" && $0 ~ e
 @test "branch-update は、push の前の確認で、pull で作った取り込みのコミットを自分のコミットに数えず、origin に既にあるコミットも数えない" {
   # 控える sha が手順2の merge の前なので、pull で作った取り込みのコミットが自分のコミットに数えられていた（#242）
   f="$SKILLS/branch-update/SKILL.md"
-  has() {
-    local name="$1" text="$2"; shift 2
-    [ -n "$text" ] || fail "${name}がありません"
-    for term in "$@"; do
-      grep -qF -e "$term" <<<"$text" || fail "${name}に「${term}」がありません"
-    done
-  }
   # pull の前の sha を控え、push で入るコミットを main の取り込み・pull の取り込み・自分のコミットに分ける
   has "手順1の pull" "$(grep -F 'git pull --no-rebase' <<<"$(step "$f" 1)")" 'pull の前の sha'
   s4="$(step "$f" 4)"
