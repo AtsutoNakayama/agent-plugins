@@ -551,3 +551,11 @@ subjects() { jq -r --arg k "$1" '.push_commits[$k] | if . == null then "null" el
   PATH="$TMP/failgit:$PATH" FAIL_GIT="" run_script branch-status.sh --merged-from "$merged_from"
   assert_success
 }
+
+@test "未コミットの変更を調べる git status が失敗したら、変更が無いとみなさずに止まる" {
+  setup_branch
+  make_failing_git
+  PATH="$TMP/failgit:$PATH" FAIL_GIT='* status --porcelain *' run_script branch-status.sh
+  assert_failure 1
+  assert_output --partial "未コミットの変更を調べられませんでした"
+}

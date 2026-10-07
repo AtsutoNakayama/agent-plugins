@@ -107,8 +107,11 @@ merge_conflicts() {
 conflicts=false
 [ "$behind" -eq 0 ] || conflicts="$(merge_conflicts "refs/heads/$branch" "$ref")"
 
+# 条件の中のコマンド置換では、git が失敗しても止まらず、変更が無いとみなしてしまうので、先に変数に取って確かめる
 dirty=false
-[ -z "$(git -C "$repo_root" status --porcelain --untracked-files=no)" ] || dirty=true
+changes="$(git -C "$repo_root" status --porcelain --untracked-files=no)" \
+  || dw_die "未コミットの変更を調べられませんでした（git が失敗しました）"
+[ -z "$changes" ] || dirty=true
 
 # 手元のブランチと origin のブランチのずれ。origin にブランチが無ければ null。origin を読めなければ止まる（dw_remote_has_branch）
 unpushed=null unpulled=null pushed_behind=null pushed_conflicts=null

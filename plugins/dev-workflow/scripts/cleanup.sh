@@ -157,11 +157,12 @@ if [ -n "$path" ]; then
   else
     # サブモジュールの git のデータはワークツリーと一緒に消えるので、リモートに無いコミット（HEAD とローカルのブランチ）や
     # stash が残っていれば止まる。リモートのブランチかタグ（タグは手元のものとリモートのものを区別できない）から届かない
-    # コミットは、SHA で取ってきた push 済みのものでも手元では見分けられないので、安全のために止まる
+    # コミットは、SHA で取ってきた push 済みのものでも手元では見分けられないので、安全のために止まる。
+    # git log が失敗したら、push していないコミットが無いとはみなさず、foreach を失敗させる
     # shellcheck disable=SC2016 # 各サブモジュールの中で展開させる
     unpushed="$(git -C "$path" submodule --quiet foreach --recursive '
-      if [ -n "$(git log -1 --no-show-signature --format=%h HEAD --branches --not --remotes --tags)" ] \
-        || git rev-parse -q --verify refs/stash >/dev/null; then
+      local_only="$(git log -1 --no-show-signature --format=%h HEAD --branches --not --remotes --tags)" || exit 1
+      if [ -n "$local_only" ] || git rev-parse -q --verify refs/stash >/dev/null; then
         echo "$displaypath"
       fi')" || dw_die "$path のサブモジュールを確かめられませんでした"
     if $abandon; then

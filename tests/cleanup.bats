@@ -603,3 +603,22 @@ run_cleanup() {
   [ -d "$WT" ]
   git show-ref --verify --quiet refs/heads/feat/17-x
 }
+
+@test "サブモジュールの push していないコミットを調べる git が失敗したら、無いとみなさず、削除せずに止まる" {
+  add_submodule
+  setup_branch
+  git -C "$WT" submodule update -q --init
+  # サブモジュールの手元だけのブランチの先のコミットのオブジェクトを消して、git log を本当に失敗させる
+  # （foreach の中では git が自分の場所を PATH の先頭に足すので、偽の git では差し替えられない）
+  git -C "$WT/lib/sub" commit -q --allow-empty -m "local only"
+  git -C "$WT/lib/sub" branch -q local-only
+  sha="$(git -C "$WT/lib/sub" rev-parse HEAD)"
+  git -C "$WT/lib/sub" checkout -q --detach HEAD~1
+  rm -f "$(git -C "$WT/lib/sub" rev-parse --git-path objects)/${sha:0:2}/${sha:2}"
+  run git -C "$WT/lib/sub" log -1 --format=%h HEAD --branches --not --remotes --tags
+  assert_failure
+  run_cleanup --branch feat/17-x --abandon
+  assert_failure
+  assert_output --partial "のサブモジュールを確かめられませんでした"
+  [ -d "$WT" ]
+}
