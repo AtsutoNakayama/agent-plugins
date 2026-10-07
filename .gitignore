@@ -1,2 +1,3 @@
 .claude/worktrees/
 .claude/dev-workflow/config.local.json
+plugins/dev-workflow/evals/results/
