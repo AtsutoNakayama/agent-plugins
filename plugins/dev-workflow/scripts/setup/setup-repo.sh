@@ -113,11 +113,7 @@ elif dw_fetch_repo_file "$repo_nwo" .claude/dev-workflow/config.json "$tmp/workf
   # 別のリポジトリでは、そのリポジトリの既定のブランチにある設定を読む
   team="$tmp/workflow.json"
 fi
-# 終了コード 1 は JSON として読めないとき。使えない値なら、dw_team_base_branch が理由を出して 2 で止まる
-branch="$(dw_team_base_branch "$team")" || {
-  [ $? -eq 1 ] || exit 2
-  dw_die "${repo_nwo} の .claude/dev-workflow/config.json を JSON として読めません" 2
-}
+branch="$(dw_team_base_branch "$team" "${repo_nwo} の .claude/dev-workflow/config.json")"
 
 actions='[]'
 # 行った（または dry-run で行う予定の）操作を記録する

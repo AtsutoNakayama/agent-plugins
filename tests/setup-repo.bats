@@ -253,6 +253,14 @@ assert_no_calls() {
   assert_output --partial "設定の base_branch が git のブランチ名として使えません: -v"
 }
 
+@test "チームの設定が空のファイルなら、JSON として読めないことを示して止まる" {
+  setup_fake_gh
+  : >.claude/dev-workflow/config.json
+  run_setup --dry-run
+  assert_failure 2
+  assert_output --partial "me/demo の .claude/dev-workflow/config.json を JSON として読めません"
+}
+
 @test "設定の base_branch が文字列でなければ、dry-run でも止まる（\"1\" という名前のブランチを守ろうとしない）" {
   setup_fake_gh
   echo '{"base_branch": 1}' >.claude/dev-workflow/config.json

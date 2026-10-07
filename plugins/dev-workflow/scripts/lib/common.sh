@@ -488,31 +488,35 @@ dw_base_branch() {
   printf '%s\n' "$b"
 }
 
-# チームの設定の base_branch を、dw_team_config と同じ決め方（無ければプラグインの既定）で読み、dw_base_branch と
-# 同じく検査して出力する。JSON として読めなければ 1 を返し、使えない値なら終了コード 2 で終了する。
-# 使い方: dw_team_base_branch <チームの設定のファイル（空なら無い）>
+# チームの設定の base_branch を、dw_team_config と同じ決め方（無いか null ならプラグインの既定）で読み、dw_base_branch と
+# 同じく検査して出力する。チームの設定を JSON のオブジェクトとして読めない（空のファイルを含む）か、使えない値なら、
+# 終了コード 2 で終了する。
+# 使い方: dw_team_base_branch <チームの設定のファイル（空なら無い）> [エラーで示すファイルの名前（既定はパス）]
 dw_team_base_branch() {
-  local v
-  v="$(dw_team_config_json "$1" base_branch)" || return 1
-  dw_base_branch "{\"base_branch\": $v}"
+  local d c
+  d="$(jq -c '.base_branch' "$DW_PLUGIN_ROOT/defaults/workflow.json")"
+  if [ -n "$1" ] && [ -f "$1" ]; then
+    c="$(jq -sc --argjson d "$d" 'if length == 1 and (.[0] | type) == "object"
+      then {base_branch: (.[0].base_branch | if . == null then $d else . end)} else error end' "$1" 2>/dev/null)" \
+      || dw_die "${2:-$1} を JSON として読めません" 2
+  else
+    c="$(jq -nc --argjson d "$d" '{base_branch: $d}')"
+  fi
+  dw_base_branch "$c"
 }
 
 # チームの設定の項目（トップレベルのキー）を出力する。ルールセットのようにリポジトリ全体で共有するものに使い、
 # 個人の層（config.local.json・~/.claude/dev-workflow）は使わず、チームの設定とプラグインの既定だけで決める。
 # チームの設定のファイルが無いか、キーが無い（null）ならプラグインの既定を使う（// と違い、false は値として保つ）。
-# JSON として読めなければ 1 を返す。dw_team_config_json は、同じ値を JSON のまま（文字列も引用符つきで）出力する。
+# JSON として読めなければ 1 を返す。
 # 使い方: dw_team_config <チームの設定のファイル（空なら無い）> <キー>
-dw_team_config() { dw_team_config_as -r "$@"; }
-dw_team_config_json() { dw_team_config_as -c "$@"; }
-
-# 使い方: dw_team_config_as <jq の出力の形（-r か -c）> <チームの設定のファイル（空なら無い）> <キー>
-dw_team_config_as() {
+dw_team_config() {
   local d
-  d="$(jq -c --arg k "$3" '.[$k]' "$DW_PLUGIN_ROOT/defaults/workflow.json")"
-  if [ -n "$2" ] && [ -f "$2" ]; then
-    jq "$1" --arg k "$3" --argjson d "$d" 'if .[$k] == null then $d else .[$k] end' "$2" 2>/dev/null
+  d="$(jq -c --arg k "$2" '.[$k]' "$DW_PLUGIN_ROOT/defaults/workflow.json")"
+  if [ -n "$1" ] && [ -f "$1" ]; then
+    jq -r --arg k "$2" --argjson d "$d" 'if .[$k] == null then $d else .[$k] end' "$1" 2>/dev/null
   else
-    jq "$1" -n --argjson d "$d" '$d'
+    jq -rn --argjson d "$d" '$d'
   fi
 }
 

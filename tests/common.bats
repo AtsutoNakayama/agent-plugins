@@ -215,7 +215,7 @@ run_common() {
 }
 
 @test "dw_base_branch は、書式に合わない値と、git が今の位置として扱う HEAD・@ を拒否する" {
-  for b in "" "a..b" "a b" "x@{-1}" "@{-1}" "a.lock" HEAD @; do
+  for b in "" "a..b" "a b" "x@{-1}" "@{-1}" "refs/" "a.lock" HEAD @; do
     run_common dw_base_branch "$(jq -nc --arg b "$b" '{base_branch: $b}')"
     assert_failure 2
     assert_output --partial "設定の base_branch が git のブランチ名として使えません"
@@ -246,9 +246,11 @@ run_common() {
     run_common dw_team_base_branch "$TMP/team.json"
     assert_failure 2
   done
-  # JSON として読めなければ 1 を返す（理由は呼ぶ側が出す）
-  echo '{broken' >"$TMP/team.json"
-  run_common dw_team_base_branch "$TMP/team.json"
-  assert_failure 1
-  assert_output ""
+  # JSON のオブジェクトとして読めなければ（空のファイルも）、渡した名前で示して止まる
+  for c in '{broken' '' '[]'; do
+    printf '%s' "$c" >"$TMP/team.json"
+    run_common dw_team_base_branch "$TMP/team.json" "チームの設定"
+    assert_failure 2
+    assert_output "error: チームの設定 を JSON として読めません"
+  done
 }
