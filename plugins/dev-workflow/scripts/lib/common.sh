@@ -478,10 +478,11 @@ dw_fetch_repo_file() {
 # 進んでしまうので、使う側ごとに -- を付けるのではなく、読む時点で拒否する。git check-ref-format --branch は
 # @{-1} などを今のリポジトリで展開してしまうので、refs/heads/ を付けて書式だけを検査し、ダッシュは別に拒否する。
 # HEAD と @ は書式には合うが、git が今の位置として扱う（git fetch origin HEAD は相手の既定のブランチを取る）ので拒否する。
+# + で始まる値も書式には合うが、git fetch が refspec の強制更新の印と読む（+develop は develop を取る）ので拒否する。
 # 使い方: dw_valid_base_branch <base_branch>
 dw_valid_base_branch() {
   case "$1" in
-    -* | HEAD | @) return 1 ;;
+    -* | +* | HEAD | @) return 1 ;;
   esac
   git check-ref-format "refs/heads/$1" 2>/dev/null
 }

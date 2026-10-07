@@ -222,6 +222,12 @@ run_common() {
   done
 }
 
+@test "dw_base_branch は、git fetch が refspec の強制更新の印と読む + で始まる値を拒否する" {
+  run_common dw_base_branch '{"base_branch": "+develop"}'
+  assert_failure 2
+  assert_output "error: 設定の base_branch が git のブランチ名として使えません: +develop"
+}
+
 @test "dw_base_branch は、文字列でない base_branch を拒否する" {
   for v in null 1 true '["main"]'; do
     run_common dw_base_branch "{\"base_branch\": $v}"
