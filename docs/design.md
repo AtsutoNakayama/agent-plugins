@@ -356,12 +356,13 @@ Todo が増えたとき、どれから着手するか、同時に進めてよい
     - 単一選択の項目の選択肢を足す（`setup-project.sh` の Status 列）。gh にも REST にも、既存の項目を変える操作が無い。
     - PR のマージキューの状態（`branch-status.sh`）。`gh pr list`・`gh pr view` の `--json` にも REST にも、キューが有効か（`isMergeQueueEnabled`）とキューでの状態・順番（`mergeQueueEntry`）、キューから外れたイベント（タイムラインの `RemovedFromMergeQueueEvent`）が無い。PR は URL で引く（`resource(url:)`）。
     - PR のスレッドが resolved かを読む（`pr-feedback.sh`）。`gh pr view` にもスレッドの項目が無く、REST の行ごとのコメントには resolved の状態が無い。
+- **設定の `base_branch` は、読む時点で検査する**（`common.sh` の `dw_check_base_branch`）。`base_branch` は `git fetch origin <base_branch>` などで git のコマンドの引数に渡るので、ダッシュで始まる値（`-foo`）はオプションとして扱われ、失敗すべきところで先へ進んでしまう。使う側ごとに `--` を付けるのではなく、`config.sh` が、どの項目を読むときも、文字列でない値・ダッシュで始まる値・git のブランチ名の書式（`git check-ref-format`）に合わない値なら止まる。今後 `base_branch` を使うスクリプトも、`config.sh` を通せば守られる。`config.sh` を通さずにチームの設定を読む `setup-repo.sh` と `doctor.sh` も、同じ検査を使う（`doctor.sh` は、設定の確認（config）で知らせ、マージキューの確認を飛ばす）。
 - **gh は新しいものを前提にする**。古い gh のための回り道は書かず、要る機能が無い gh では止まって更新を促す（`common.sh` の `DW_GH_MIN_VERSION`。`doctor.sh` も更新を促す）。
 
 | プラグイン側（`plugins/dev-workflow/scripts/`） | 役割 |
 |---|---|
 | `doctor.sh` | 認証とスコープ、gh・`jq`・bash のバージョン、設定ファイルを確認する（導入していないリポジトリ（`.claude/dev-workflow/config.json` が無い）なら、フックとユーザーの層が効かないことを警告して repo-setup を案内し、gh が古ければ更新を促し、古い置き場所の設定・ガイド・観点・ラベルの定義があれば移すよう促し、個人の設定が git に無視されていなければ .gitignore に足すよう促し、既にコミットしてあれば git rm --cached で追跡を外すよう促し、ラベルの定義にあってリポジトリに無いラベルがあれば repo-setup を案内し、base_branch にマージキューと strict のどちらが効いているかを示し、必須のチェックが無ければ警告し（チームの設定の `require_status_checks` が false なら警告しない）、キューを使っていれば必須のチェックのワークフローが merge_group で動くかを示す） |
-| `config.sh` | 5つの層を合わせた設定を出力する |
+| `config.sh` | 5つの層を合わせた設定を出力する。`base_branch` が使えない値なら止まる |
 | `issue-create.sh` | 起票、ラベルの付与、Project への追加、列と Story Point の設定、依存関係（blocked by）の登録、親の Issue への紐付け（サブ Issue） |
 | `issue-depend.sh` | 既にある Issue に、依存する Issue を足す（GitHub の依存関係（blocked by）と本文の「依存」。既にある依存は足さない。Issue が閉じていれば止まり、閉じた依存先は飛ばす）。`task-start` で今は着手しないことにしたときに使う |
 | `status-set.sh` | 列を移す |
