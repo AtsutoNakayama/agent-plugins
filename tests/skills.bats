@@ -331,13 +331,13 @@ has() {
   s6="$(step "$f" 6)"
   nopush="$(awk '/^\*\*push しなかったとき\*\*/ { on = 1 } /^\*\*push したとき\*\*/ { exit } on' <<<"$s6")"
   pushed="$(awk '/^\*\*push したとき\*\*/ { on = 1 } on' <<<"$s6")"
-  has "手順6の「push しなかったとき」" "$(head -n 1 <<<"$nopush")" 'どこで止めたときも' 'push・CI・キュー' '伝えない' '止めた理由' 'push していないコミット'
+  has "手順6の「push しなかったとき」" "$(head -n 1 <<<"$nopush")" 'どこで止めたときも' 'push・CI・キュー' '伝えない' '止めた理由' 'push していないコミット' \
+    '`branch-status.sh` を実行し直して' '`push_commits` をそのまま見せる' '範囲を自分で組み立てない' '箇条で言い切らない'
   # 出口ごとに添えること
-  has "手順6の「push しなかったとき」の出口" "$nopush" '取り込む前の確認で止めた' '`ask_base`' '`recheck`' '手順2の merge が衝突以外で失敗した' '手順3で直せなかった' '「push しない」' 'push が拒否された' '「抜けたとき」'
-  # 未コミットの変更をコミットしてから止めたときは、何も変えていないとは伝えない
-  has "手順6の、取り込む前の確認で止めたとき" "$(grep -e '^- 取り込む前の確認で止めた' <<<"$nopush")" 'コミットしてから止めたなら'
-  if grep -F '何も変えていない' <<<"$nopush"; then
-    fail "取り込む前の確認で止めたときに、手元を何も変えていないと伝えています（未コミットの変更をコミットしていることがある）"
+  has "手順6の「push しなかったとき」の出口" "$nopush" '取り込む前の確認で止めた' '`ask_base`' '`recheck`' '取り込み（pull・merge）が衝突以外で失敗した' '手順3で直せなかった' '「push しない」' 'push が拒否された' '「抜けたとき」'
+  # 手元に何があるかは一覧で示し、出口ごとの箇条では言い切らない（どこまで進めてから止めたかで変わる）
+  if grep -e '^- ' <<<"$nopush" | grep -E '何も変えていない|取り込みはしていない|取り込みのコミットが手元にある'; then
+    fail "出口ごとの箇条で、手元に何があるかを言い切っています（push_commits の一覧で示す）"
   fi
   # キューへの入れ直しの案内は、push したときだけ
   has "手順6の「push したとき」" "$pushed" 'もう一度キューに入れてください'
@@ -346,7 +346,9 @@ has() {
   fi
   # push せずに止める出口は、どれも手順6の「push しなかったとき」に従う
   has "手順1（取り込む前の確認・ask_base・recheck で止めたとき）" "$(step "$f" 1)" '「push しなかったとき」'
-  has "手順2（衝突以外で失敗したとき）" "$(step "$f" 2)" '衝突以外で失敗したら' '「push しなかったとき」'
+  # 衝突以外で失敗したときの扱いは、pull と merge のどちらも、手順1の終わりの1か所の規則に従う
+  has "手順1（取り込みが衝突以外で失敗したとき）" "$(grep -F '衝突以外で失敗したら' <<<"$(step "$f" 1)")" '`git pull --no-rebase`' '`git merge`' '「push しなかったとき」'
+  has "手順2（衝突以外で失敗したとき）" "$(step "$f" 2)" '手順1の終わりのとおり'
   has "手順3" "$(step "$f" 3)" '「push しなかったとき」'
   has "手順5" "$(step "$f" 5)" '「push しなかったとき」'
   conf="$(section "$f" "## 衝突の直し方の確認")"
@@ -362,8 +364,9 @@ has() {
   has "手順1の pull" "$(grep -F 'git pull --no-rebase' <<<"$(step "$f" 1)")" 'pull を実行する直前に' 'コミットした後で' 'pull の前の sha' '`push` として進めるときは'
   s4="$(step "$f" 4)"
   has "手順4" "$s4" '--merged-from <手順2で控えた sha>' '--pulled-from <pull の前の sha>' '`push_commits.all`' '`push_commits.first_push`' '`main`' '`pull`' '`own`' '数え直さない'
-  if grep -E 'git log --oneline [^`]*\.\.' <<<"$s4"; then
-    fail "手順4で、push で入るコミットの範囲を、SKILL.md の文章で組み立てています（branch-status.sh の push_commits を使う）"
+  # 範囲は SKILL.md のどこでも組み立てない（手順6の手元に残ったものも push_commits で示す）
+  if grep -nE 'git log --oneline [^`]*\.\.' "$f"; then
+    fail "コミットの範囲を、SKILL.md の文章で組み立てています（branch-status.sh の push_commits を使う）"
   fi
 }
 
