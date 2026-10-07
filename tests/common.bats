@@ -228,6 +228,14 @@ run_common() {
   assert_output "error: 設定の base_branch が git のブランチ名として使えません: +develop"
 }
 
+@test "dw_base_branch は、末尾に改行のある値を拒否する（改行を消してから検査しない）" {
+  for b in $'develop\n' $'develop\n\n'; do
+    run_common dw_base_branch "$(jq -nc --arg b "$b" '{base_branch: $b}')"
+    assert_failure 2
+    assert_output --partial "設定の base_branch が git のブランチ名として使えません"
+  done
+}
+
 @test "dw_base_branch は、文字列でない base_branch を拒否する" {
   for v in null 1 true '["main"]'; do
     run_common dw_base_branch "{\"base_branch\": $v}"

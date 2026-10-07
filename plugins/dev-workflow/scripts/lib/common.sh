@@ -493,8 +493,10 @@ dw_valid_base_branch() {
 # 使い方: dw_base_branch <設定の JSON>
 dw_base_branch() {
   local b
-  b="$(jq -r '.base_branch | if type == "string" then . else error end' <<<"$1" 2>/dev/null)" \
+  # コマンド置換は末尾の改行を消し、"develop\n" が develop として検査を通るので、末尾に印（.）を付けて受けて外す
+  b="$(jq -r '.base_branch | if type == "string" then . + "." else error end' <<<"$1" 2>/dev/null)" \
     || dw_die "設定の base_branch が文字列ではありません" 2
+  b="${b%.}"
   dw_valid_base_branch "$b" || dw_die "設定の base_branch が git のブランチ名として使えません: ${b}" 2
   printf '%s\n' "$b"
 }

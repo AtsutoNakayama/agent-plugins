@@ -122,6 +122,21 @@ silent() {
   denied "develop へは push しません" "git push"
 }
 
+@test "末尾に改行のある base_branch は、改行を消して使わず、使えない値として扱う" {
+  echo '{"base_branch": "develop"}' >.claude/dev-workflow/config.json
+  printf '%s\n' '{"base_branch": "release\n"}' >.claude/dev-workflow/config.local.json
+  git checkout -q -b develop
+  denied "develop の上ではコミットしません" "git commit -m x"
+  # ユーザーの層の値も同じ（ルートが分からず、チームの設定が値を決めていないとき）
+  git init -q -b main --separate-git-dir "$TMP/sep.git" "$TMP/sep"
+  mkdir -p "$TMP/sep/.claude/dev-workflow"
+  echo '{}' >"$TMP/sep/.claude/dev-workflow/config.json"
+  git -C "$TMP/sep" add .claude/dev-workflow/config.json
+  git -C "$TMP/sep" commit -q -m setup
+  printf '%s\n' '{"base_branch": "release\n"}' >"$WORKFLOW_USER_DIR/config.json"
+  denied "main の上ではコミットしません" "cd $TMP && git --git-dir=$TMP/sep.git commit -m x"
+}
+
 @test "チームの設定の base_branch も使えない値なら、止まらずに main を守る" {
   echo '{"base_branch": "-foo"}' >.claude/dev-workflow/config.json
   denied "main の上ではコミットしません" "git commit -m x"

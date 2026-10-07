@@ -74,7 +74,9 @@ load_base_branch() {
   [ "$base_of_key" != "$key" ] || return 0
   if [ -n "$gc_root" ]; then
     if team="$( (dw_team_base_branch "$gc_root/.claude/dev-workflow/config.json") 2>/dev/null)"; then
-      base="$( (cd "$gc_root" && WORKFLOW_REPO_ROOT="$gc_root" "$BASH" "$DW_SCRIPTS_DIR/config.sh" '.base_branch | strings') 2>/dev/null || true)"
+      # 末尾の改行を消さないよう、印（.）を付けて受けて外す（dw_base_branch と同じ）
+      base="$( (cd "$gc_root" && WORKFLOW_REPO_ROOT="$gc_root" "$BASH" "$DW_SCRIPTS_DIR/config.sh" '.base_branch | strings | . + "."') 2>/dev/null || true)"
+      base="${base%.}"
       dw_valid_base_branch "$base" || base="$team"
     fi
   elif [ -n "$gc_repo" ] && team="$(gc_git show "HEAD:.claude/dev-workflow/config.json")"; then
@@ -98,7 +100,8 @@ load_base_branch() {
 # （DW_JQ_ONE_OBJECT）、読めなければ空にする。ユーザーの層の場所は、フックの中で変わらないので、初めて要るときに1回だけ求める
 read_user_base_branch() {
   [ -n "$user_config" ] || user_config="$(dw_user_dir)/config.json"
-  base="$(jq -sr "$DW_JQ_ONE_OBJECT | .base_branch | strings" "$user_config" 2>/dev/null || true)"
+  base="$(jq -sr "$DW_JQ_ONE_OBJECT | .base_branch | strings | . + \".\"" "$user_config" 2>/dev/null || true)"
+  base="${base%.}"
 }
 
 # git push の引数を調べる（引数の読み方は gc_push_args）。使い方: check_push <引数>...
