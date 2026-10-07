@@ -381,6 +381,14 @@ has() {
   fi
 }
 
+@test "スキルと観点がコミットの一覧を出す git log には、署名の表示を止める --no-show-signature を付ける" {
+  # log.showSignature を有効にした利用者では、gpg の行が一覧に混ざる（#242 のレビュー）
+  root="$BATS_TEST_DIRNAME/../plugins/dev-workflow"
+  if grep -rn --include='*.md' -E 'git log --oneline' "$root" | grep -v -e '--no-show-signature'; then
+    fail "コミットの一覧を出す git log に --no-show-signature がありません"
+  fi
+}
+
 @test "pr-create と task-finish は pr-respond に依存しない（使わなくてもマージから後片付けまで進める）" {
   for name in pr-create task-finish; do
     if grep -n 'pr-respond' "$SKILLS/$name/SKILL.md"; then
