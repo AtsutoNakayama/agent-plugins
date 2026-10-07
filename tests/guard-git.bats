@@ -149,6 +149,38 @@ silent() {
     "git push --mirror"
 }
 
+@test "git push の値を取るオプションの値（次の語）を、リモートや refspec と読まない" {
+  # main の上で refspec を書かない push。値（check）をリモートと読むと、origin を refspec と読んで通してしまう
+  denied "main へは push しません" "git push --recurse-submodules check origin" "git push --recurse-submodules check"
+  git checkout -q -b feat/21-x
+  denied "main へは push しません" \
+    "git push --recurse-submodules check origin main" \
+    "git push --recurse-submodules=check origin main" \
+    "git push --repo origin origin main" \
+    "git push --receive-pack git-receive-pack origin main" \
+    "git push --exec git-receive-pack origin main" \
+    "git push --push-option x origin main"
+  allowed "git push --recurse-submodules check origin feat/21-x"
+}
+
+@test "git push の長いオプションを略して書いても、git と同じに読む" {
+  git checkout -q -b feat/21-x
+  # --mirr・--m は --mirror、--recu は --recurse-submodules（値を取る）
+  denied "強制 push" "git push --mirr" "git push --m origin"
+  denied "main へは push しません" "git push --recu check origin main" "git push --rep origin origin main" \
+    "git push --e git-receive-pack origin main"
+  git checkout -q main
+  denied "main へは push しません" "git push --recu check origin"
+  git checkout -q feat/21-x
+  # --force-w は --force-with-lease
+  allowed "git push --force-w" "git push --force-with origin feat/21-x"
+}
+
+@test "git の値を取るグローバルオプション（--attr-source・--shallow-file）の値を、サブコマンドと読まない" {
+  git checkout -q -b feat/21-x
+  denied "強制 push" "git --attr-source HEAD push -f" "git --shallow-file x push -f"
+}
+
 @test "引用符・ヒアドキュメント・コメントの中の文字は、コマンドとみなさない" {
   git checkout -q -b feat/21-x
   allowed \
@@ -170,6 +202,71 @@ silent() {
   git worktree add -q -b feat/21-x "$TMP/wt"
   denied "main の上ではコミットしません" "(cd $TMP/wt && git status); git commit -m x" "(cd $TMP/wt) && git commit -m x"
   allowed "(cd $TMP/wt && git commit -m x)" "cd $TMP/wt && (git status) && git commit -m x"
+}
+
+@test "パイプラインの各コマンドと、& でバックグラウンドで動かす並びの cd・pushd・popd は、外に効かない" {
+  git worktree add -q -b feat/21-x "$TMP/wt"
+  denied "main の上ではコミットしません" "cd ../wt | true; git commit -m x" "cd $TMP/wt & git commit -m x" \
+    "pushd $TMP/wt | cat; git commit -m x" "true | cd $TMP/wt; git commit -m x" "cd $TMP/wt && true & git commit -m x" \
+    "cd $TMP/wt |& cat; git commit -m x" "pushd $TMP/wt && popd | cat && popd; git commit -m x"
+  allowed "cd $TMP/wt && git commit -m x | cat" "cd $TMP/wt; true & git commit -m x" "pushd $TMP/wt && popd | cat && git commit -m x" \
+    "cd $TMP/wt && true | true; git commit -m x" "true | true; cd $TMP/wt && git commit -m x"
+  # || はパイプではない（a || b | c の | は b と c のパイプライン）
+  allowed "cd $TMP/wt || true; git commit -m x" "cd $TMP/wt || true | cat; git commit -m x"
+  denied "main の上ではコミットしません" "cd $TMP/wt | true || true; git commit -m x"
+  # 語のあるコマンドで終わった並びの後の改行では、新しい並びを始める（& で戻す先は、その並びの始まり）
+  allowed "$(printf 'cd %s && true\ntrue & git commit -m x' "$TMP/wt")"
+  # & を含むリダイレクト（&>）、&& の後の改行、case の ;& は、バックグラウンドやパイプではない
+  allowed "cd $TMP/wt &> /dev/null && git commit -m x" "$(printf 'cd %s &&\ngit commit -m x' "$TMP/wt")" \
+    "case x in x) cd $TMP/wt ;& y) : ;; esac; git commit -m x"
+}
+
+@test "パイプラインや & の中の複合コマンド（{ }・ループ・if）は、全体を1つのコマンドとして扱う" {
+  git worktree add -q -b feat/21-x "$TMP/wt"
+  denied "main の上ではコミットしません" "{ cd $TMP/wt; } & git commit -m x" "{ cd $TMP/wt; } | cat; git commit -m x" \
+    "while true; do cd $TMP/wt; break; done | cat; git commit -m x" "if true; then cd $TMP/wt; fi | cat; git commit -m x"
+  # { } の中の ; でコマンドごとに戻すと、{ } の中の cd の後の commit を、cd の前の場所で判断してしまう
+  denied "main の上ではコミットしません" "cd $TMP/wt; true | { cd $REPO; git commit -m x; }" \
+    "cd $TMP/wt; true | { cd $REPO; git commit -m x; } && :"
+  allowed "true | { cd $TMP/wt; git commit -m x; }" "true | (cd $TMP/wt; git commit -m x)" \
+    "{ cd $TMP/wt; } && git commit -m x" "if true; then cd $TMP/wt; fi; git commit -m x"
+}
+
+@test "case のパターンの | ( ) はパイプやサブシェルではなく、パターンの語はコマンドとして調べない" {
+  git worktree add -q -b feat/21-x "$TMP/wt"
+  export HOME="$TMP/wt"
+  denied "main の上ではコミットしません" "cd $TMP/wt; case x in a|x) cd $REPO && git commit -m x;; esac" \
+    "cd $TMP/wt; case x in a|x) cd $REPO;; esac; git commit -m x" "case x in a) :;; cd) :;; esac; git commit -m x" \
+    "cd $TMP/wt; case x in (a|x) cd $REPO;; esac; git commit -m x"
+  # 1行の空の case は、すぐに閉じる（その後のコマンドを、パターンと読まない）
+  denied "main の上ではコミットしません" "case x in esac; git commit -m x" "$(printf 'case x in esac\ngit commit -m x')"
+  # time case も case として入れ子を数える（( ) の中のパターンの ) で、括弧を閉じない）
+  denied "main の上ではコミットしません" "( time case x in x) cd $TMP/wt;; esac ); git commit -m x"
+  allowed "time case x in x) cd $TMP/wt;; esac; git commit -m x"
+}
+
+@test "function f { } の { } も、複合コマンドとして入れ子を数える。time -p の後の { } も数える" {
+  git worktree add -q -b feat/21-x "$TMP/wt"
+  denied "main の上ではコミットしません" "{ function f { :; }; cd $TMP/wt; } | cat; git commit -m x" \
+    "time -p { cd $TMP/wt; } | cat; git commit -m x" "time -- { cd $TMP/wt; } | cat; git commit -m x" \
+    "time -p -- { cd $TMP/wt; } | cat; git commit -m x"
+}
+
+@test "関数の定義の名前はコマンドとして調べず、本体はその場で動いた複合コマンドとして読む" {
+  git worktree add -q -b feat/21-x "$TMP/wt"
+  # cd() { … } の cd は移動ではない。定義した関数を呼べば、本体の cd が動く
+  denied "main の上ではコミットしません" "cd() { :; }; git commit -m x" "cd $TMP/wt; f() { cd $REPO; }; f; git commit -m x"
+  allowed "f() { cd $TMP/wt; }; f; git commit -m x"
+  # 本体の中の git も調べる（function f { … } の1行の書き方も）。x=() は空の配列の代入で、関数の定義ではない
+  denied "強制 push" "f() { git push -f; }" "function f { git push -f; }"
+  allowed "x=(); { cd $TMP/wt; }; git commit -m x"
+}
+
+@test "語の無いコマンド（(( ))）の後でも、パイプラインと並びの区切りを正しく読む" {
+  git worktree add -q -b feat/21-x "$TMP/wt"
+  # (( )) で終わるパイプラインの後の cd を戻さない。&& (( )) の後の改行では、新しい並びを始める
+  denied "main の上ではコミットしません" "cd $TMP/wt; true | ((1)); cd $REPO && git commit -m x" \
+    "$(printf 'cd %s; cd %s && ((1))\ntrue & git commit -m x' "$TMP/wt" "$REPO")"
 }
 
 @test "case のパターンの ) は括弧を閉じない" {
@@ -245,6 +342,13 @@ silent() {
   assert_output --partial "branch.pattern（{type}/{issue_number}-{slug}）の形になっていません"
   assert_output --partial "task-start"
   warned Feat/1-x "git switch -c Feat/1-x"
+}
+
+@test "ブランチを作るオプションを略して書いても、git と同じに読んで警告する" {
+  warned foo "git switch --cre foo" "git switch --force-c foo" "git switch --orph=foo" "git checkout --orph foo" \
+    "git branch --forc foo main" "git branch --tr foo origin/main"
+  # switch の --force（--discard-changes）は値を取らないので、次の語を作るブランチと読まない
+  silent "git switch --force foo"
 }
 
 @test "1つのコマンドで複数のブランチを作れば、まとめて警告する" {
@@ -542,13 +646,165 @@ silent() {
   denied "強制 push" "cd $TMP/plain && git push --force" "cd $TMP/plain && GIT_DIR=$TMP/nowhere git push --force"
 }
 
-@test "popd は場所を移さない（積んだ場所が無い popd の後でも、main への commit を止める）" {
+@test "積んだ場所が無い popd は場所を移さない（その後でも、main への commit を止める）" {
   denied "main の上ではコミットしません" "popd; git commit -m x" "popd && git commit -m x"
   denied "強制 push" "popd; git push -f"
+}
+
+@test "pushd で積んだ場所を追い、popd で戻った先で判断する" {
+  git worktree add -q -b feat/21-x "$TMP/wt"
+  denied "main の上ではコミットしません" \
+    "pushd ../wt && git push && popd && git commit -m x" \
+    "pushd $TMP/wt; popd; git commit -m x" \
+    "pushd $TMP/wt && pushd $TMP && popd && popd && git commit -m x" \
+    "cd $TMP/wt && pushd $REPO && popd -n && git commit -m x"
+  allowed "pushd ../wt && pushd $REPO && popd && git commit -m x" \
+    "cd $TMP/wt && pushd $REPO && popd && git commit -m x" \
+    "cd $TMP/wt && pushd $REPO && popd +0 && git commit -m x" \
+    "pushd $TMP/wt && dirs -c && popd; git commit -m x" "pushd $TMP/wt && dirs -l -c +0 && popd; git commit -m x"
+  # dirs は、まとめ書き（-cl）・ほかのオプション・-- の後ろの語があると失敗して、スタックを変えない
+  denied "main の上ではコミットしません" "pushd $TMP/wt && dirs -- -c; popd; git commit -m x" \
+    "pushd $TMP/wt && dirs -x -c; popd; git commit -m x" "pushd $TMP/wt && dirs -cl; popd; git commit -m x" \
+    "pushd $TMP/wt && dirs +1x -c; popd; git commit -m x"
+  # 番号の頭には、符号を1つ付けられる（dirs・pushd・popd で同じ）
+  allowed "pushd $TMP/wt && dirs +-0 -c && popd; git commit -m x" "pushd $TMP/wt && pushd +-0 && git commit -m x"
+  denied "main の上ではコミットしません" "pushd $TMP/wt && popd -+1; git commit -m x" "pushd $TMP/wt && pushd ++1 && git commit -m x"
+}
+
+@test "( ) の中で積んだ・戻した場所は、括弧の外に効かない" {
+  git worktree add -q -b feat/21-x "$TMP/wt"
+  denied "main の上ではコミットしません" \
+    "pushd $TMP/wt && (popd && git commit -m x)" \
+    "(pushd $TMP/wt); popd; git commit -m x" \
+    "pushd $TMP/wt && (popd; pushd $TMP/wt) && popd && git commit -m x"
+  allowed "pushd $TMP/wt && (popd) && git commit -m x" "cd $TMP/wt && (pushd $REPO) && popd; git commit -m x"
+}
+
+@test "引数の無い pushd・pushd -n・pushd +N/-N・popd +N/-N を、シェルと同じに扱う" {
+  git worktree add -q -b feat/21-x "$TMP/wt"
+  # 引数の無い pushd は、積んだ場所が無ければ失敗し、あれば上の2つを入れ替える（$HOME へは移らない）
+  denied "main の上ではコミットしません" "pushd; git commit -m x" "pushd $TMP/wt && pushd && git commit -m x" \
+    "pushd -n $TMP/wt && git commit -m x" "pushd -n ../wt && popd -n && popd; git commit -m x"
+  allowed "pushd -n $TMP/wt && pushd && git commit -m x" "pushd -n ../wt && popd && git commit -m x"
+  # pushd -n で積んだ相対パスは、移るときの場所から解決する（シェルと同じ）
+  allowed "pushd -n wt && cd .. && popd && git commit -m x"
+  # +N は左から、-N は右から数えた場所を先頭に回して移る（dirs -v の順。0 は今の場所）
+  denied "main の上ではコミットしません" "pushd $TMP/wt && pushd +1 && git commit -m x" \
+    "pushd $TMP/wt && pushd -0 && git commit -m x" "pushd $TMP/wt && pushd $TMP && pushd -0 && git commit -m x"
+  allowed "pushd $TMP/wt && pushd $TMP && pushd +1 && git commit -m x" "pushd $TMP/wt && pushd +1 && pushd -0 && git commit -m x"
+  # 範囲の外の番号は失敗し、移らない
+  denied "main の上ではコミットしません" "pushd +1; git commit -m x" "pushd $TMP/wt && pushd +2; pushd +1; git commit -m x"
+  # popd +N は、その場所を取り除くだけで、+0（今の場所）でなければ移らない
+  allowed "pushd $TMP/wt && popd +1 && git commit -m x" "pushd $TMP/wt && pushd $TMP && popd -0 && popd && git commit -m x"
+  denied "main の上ではコミットしません" "pushd $TMP/wt && popd -1 && git commit -m x"
+  # 引数の無い pushd -n は何もしない
+  denied "main の上ではコミットしません" "pushd $TMP/wt && pushd -n && popd && git commit -m x"
+  # pushd -n +N は、今の場所を残したまま、積んだ場所だけを回す
+  denied "main の上ではコミットしません" "pushd -n $TMP/wt && pushd -n $TMP && pushd -n +1 && git commit -m x"
+  allowed "pushd -n $TMP/wt && pushd -n $TMP && pushd -n +1 && popd && git commit -m x"
 }
 
 @test "前に付くだけのコマンド（command・exec・time・nohup・env）を飛ばして、git を調べる" {
   git checkout -q -b feat/21-x
   denied "強制 push" "command git push -f" "exec git push -f" "time git push -f" "nohup git push -f" "env git push -f" \
     "env FOO=1 git push -f" "FOO=1 nohup git push -f"
+}
+
+@test "前に付くコマンドのオプション（timeout・nice・time -p・env・command・exec）を飛ばして、git を調べる" {
+  git checkout -q -b feat/21-x
+  denied "強制 push" \
+    "timeout 60 git push -f" "timeout -s KILL 60 git push -f" "timeout --signal=KILL -k5 --foreground 60 git push -f" \
+    "timeout --sig KILL 60 git push -f" "timeout -- 60 git push -f" \
+    "nice git push -f" "nice -n 5 git push -f" "nice -n5 git push -f" "nice -5 git push -f" "nice --adjustment=5 git push -f" \
+    "time -p git push -f" \
+    "env -u FOO git push -f" "env -i git push -f" "env - git push -f" "env -iu FOO git push -f" "env --unset=FOO git push -f" \
+    "env --unset FOO git push -f" "env -0 -v git push -f" "env -S 'git push -f'" "env -S '-u FOO' git push -f" \
+    "command -p git push -f" "exec -a x git push -f" "exec -cl git push -f" \
+    "timeout 60 nice -n 5 env -u FOO FOO=1 git push -f" "nohup -- git push -f" "command -- git push -f"
+  # command -v・-V は、コマンドを実行しない
+  allowed "command -v git push -f" "command -pV git push -f"
+}
+
+@test "env -S の値は、env と同じく引用符とエスケープを解いて分ける" {
+  git checkout -q -b feat/21-x
+  denied "main へは push しません" "env -S \"git push origin 'main'\"" "env -S 'git push origin \"main\"'" \
+    "env -S 'git push origin ma\\in'" "env -S 'git push \"origin\" \"feat/21-x:main\"'"
+  # '…' の中では \\ と \' だけを解く（GNU env と同じ）。'a\'' と main は別の語
+  local c
+  c="$(cat <<'EOF'
+env -S "git push origin 'a\\'' main"
+EOF
+)"
+  denied "main へは push しません" "$c"
+  # '…' の中の \\ は \（env が受け取る値は git push origin 'a\\' main。'a\\' と main は別の語）
+  c="$(cat <<'EOF'
+env -S "git push origin 'a\\\\' main"
+EOF
+)"
+  denied "main へは push しません" "$c"
+  # "…" の外の \_ は区切り、中では空白
+  denied "強制 push" "env -S 'git\\_push\\_-f'"
+  allowed "env -S 'git push origin \"x\\_main\"'"
+}
+
+@test "env -i・env -・env -u で消した GIT_DIR などは、対象を求めるときに使わない" {
+  git init -q -b main "$TMP/other"
+  # 導入していないリポジトリ（other）を指した GIT_DIR を消すので、今のディレクトリ（main の上）で判断する
+  denied "main の上ではコミットしません" "GIT_DIR=$TMP/other/.git env -i git commit -m x" \
+    "GIT_DIR=$TMP/other/.git env - git commit -m x" "GIT_DIR=$TMP/other/.git env -u GIT_DIR git commit -m x" \
+    "GIT_DIR=$TMP/other/.git env --unset=GIT_DIR git commit -m x" "GIT_DIR=$TMP/other/.git env --ignore-env git commit -m x"
+  # 消した後の代入と、ほかの変数を消すときは、GIT_DIR が効く
+  silent "env -i GIT_DIR=$TMP/other/.git git commit -m x" "GIT_DIR=$TMP/other/.git env -u FOO git commit -m x"
+}
+
+@test "env -C の値をくっつけて書いたとき（-C~/x・--chdir=~/x）は、シェルと同じく ~ を展開しない" {
+  export HOME="$TMP/home"
+  # 文字どおりの ~/repo（$TMP/sub/~ → $TMP）は main の上のリポジトリ、展開した ~/repo は作業用のブランチのワークツリー
+  mkdir -p "$TMP/sub"
+  ln -s "$TMP" "$TMP/sub/~"
+  git worktree add -q -b feat/21-x "$TMP/home/repo"
+  denied "main の上ではコミットしません" "cd $TMP/sub && env -C~/repo git commit -m x" "cd $TMP/sub && env --chdir=~/repo git commit -m x"
+  allowed "cd $TMP/sub && env -C ~/repo git commit -m x" "cd $TMP/sub && env --chdir ~/repo git commit -m x"
+}
+
+@test "env -C <dir> で移った先で、そのコマンドの git を判断する" {
+  git worktree add -q -b feat/21-x "$TMP/wt"
+  allowed "env -C $TMP/wt git commit -m x" "env -C ../wt git commit -m x" "env --chdir=$TMP/wt git commit -m x" \
+    "env --chd ../wt nice git commit -m x" "env -iC../wt git commit -m x" "env -C $TMP env -C wt git commit -m x"
+  # env -C は、そのコマンドだけに効く
+  denied "main の上ではコミットしません" "env -C $TMP/wt true; git commit -m x" "cd $TMP/wt && env -C $REPO git commit -m x"
+}
+
+@test "外部のコマンドとして実行する cd・pushd・popd は、場所を移さない" {
+  git worktree add -q -b feat/21-x "$TMP/wt"
+  denied "main の上ではコミットしません" "env cd $TMP/wt; git commit -m x" "nohup pushd $TMP/wt; git commit -m x" \
+    "timeout 5 cd $TMP/wt; git commit -m x"
+  # builtin・command・time は、シェルの組み込みの cd を実行する
+  allowed "command cd $TMP/wt && git commit -m x" "time cd $TMP/wt && git commit -m x" "builtin cd $TMP/wt && git commit -m x"
+  # builtin・cd・nohup に不正なオプションがあると、シェルは失敗して、移らない・実行しない
+  denied "main の上ではコミットしません" "builtin -x cd $TMP/wt; git commit -m x" "cd -x $TMP/wt; git commit -m x"
+  allowed "cd -P $TMP/wt && git commit -m x" "cd -L -P $TMP/wt && git commit -m x" "nohup --help git commit -m x"
+  # cd -e は bash 4.3 から（bash 4.3 以降に合わせて、移るものとして扱う）。-@ は拡張属性に対応したシステムだけなので、失敗として扱う
+  allowed "cd -e $TMP/wt && git commit -m x"
+  denied "main の上ではコミットしません" "cd -@ $TMP/wt; git commit -m x"
+  denied "main の上ではコミットしません" "cd $TMP/wt && builtin cd $REPO && git commit -m x" \
+    "cd $TMP/wt && builtin -- cd $REPO && git commit -m x"
+}
+
+@test "cd \"\" は移らない（引数の無い cd だけが \$HOME へ移る）" {
+  # $HOME を作業用のブランチのワークツリーにして、$HOME へ移ったと読めば通してしまうようにする
+  git worktree add -q -b feat/21-x "$TMP/wt"
+  export HOME="$TMP/wt"
+  denied "main の上ではコミットしません" "cd \"\"; git commit -m x" "cd ''; git commit -m x"
+  # pushd "" は失敗し、pushd -n "" で積んだ場所へ戻っても移らない
+  denied "main の上ではコミットしません" "pushd \"\"; git commit -m x" "pushd -n \"\" && popd && git commit -m x"
+  allowed "cd; git commit -m x" "cd && git commit -m x"
+}
+
+@test "cd -- の後ろは、- で始まっても行き先として読む" {
+  # $HOME は作業用のブランチのワークツリー、-r は main の上のリポジトリ（REPO）
+  git worktree add -q -b feat/21-x "$TMP/wt"
+  export HOME="$TMP/wt"
+  ln -s "$REPO" "$TMP/-r"
+  denied "main の上ではコミットしません" "cd $TMP && cd -- -r && git commit -m x" "cd $TMP && cd -L -- -r && git commit -m x"
 }

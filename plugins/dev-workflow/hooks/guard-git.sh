@@ -11,10 +11,10 @@
 # 標準入力でフックの入力（JSON）を受け取る。止めるときは理由を標準エラーに1行で出し、終了コード 2 で終わる
 # （Claude Code はコマンドを実行せず、理由を Claude に伝える）。警告するときは、フックの出力の JSON を
 # 標準出力に出し、終了コード 0 で終わる。
-# 操作の対象のリポジトリ（cd・git -C で移った先、--git-dir・GIT_DIR などで指したリポジトリ）が、導入していないリポジトリ
-# なら何もしない（gc_target・target_set_up）。git がリポジトリを見つけられないときは、守りを外さないよう調べる（設計書 §1）。
-# コマンドの文字列の解析は、pr-link.sh と共有する（scripts/lib/git-command.sh）。sh -c・timeout などを前に付けたコマンドや
-# git の別名（alias）を通すと見逃す。popd は戻る先を追わないので、pushd した先で判断する。
+# 操作の対象のリポジトリ（cd・pushd・popd・git -C・env -C で移った先、--git-dir・GIT_DIR などで指したリポジトリ）が、導入して
+# いないリポジトリなら何もしない（gc_target・target_set_up）。git がリポジトリを見つけられないときは、守りを外さないよう調べる（設計書 §1）。
+# コマンドの文字列の解析は、pr-link.sh と共有する（scripts/lib/git-command.sh）。timeout・env などの前に付くコマンドは飛ばすが、
+# sh -c・xargs などを通したコマンドや git の別名（alias）を通すと見逃す。
 # 最後の守りは GitHub のルールセット（setup-repo.sh）。
 # 関数は gc_scan のコールバック（check_git）から呼ぶので、直接の呼び出しが無い（SC2329）
 # shellcheck disable=SC2329

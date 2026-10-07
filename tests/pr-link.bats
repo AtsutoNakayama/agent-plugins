@@ -127,6 +127,10 @@ shows_wt() {
   git switch -q main
   shows "git worktree add ../wt feat/23-x" "Issue #23: https://github.com/me/demo/issues/23"
   shows "git worktree add --reason 作業 ../wt feat/23-x" "Issue #23: https://github.com/me/demo/issues/23"
+  shows "git worktree add --rea 作業 ../wt feat/23-x" "Issue #23: https://github.com/me/demo/issues/23"
+  shows "git worktree add -f -- ../wt feat/23-x" "Issue #23: https://github.com/me/demo/issues/23"
+  # -b が値の無いまま終わっても、作るブランチの名前（空）を拾ったことにしない
+  shows "git worktree add ../wt feat/23-x -b" "Issue #23: https://github.com/me/demo/issues/23"
   shows "git worktree add -f ../wt \"feat/23-x\"" "Issue #23: https://github.com/me/demo/issues/23"
   # パスだけのときは、ブランチの名前を拾えないので、今のブランチの Issue も出さない
   git switch -q feat/17-demo
@@ -423,13 +427,39 @@ EOF"
   CLAUDE_PROJECT_DIR="$REPO" shows_wt "cd ../wt && git push" "$TMP/wt"
 }
 
-@test "popd の後は、移った先が分からないので何も出さない（( ) の中の pushd はたどる）" {
+@test "popd は、pushd で積んだ場所へ戻る（積んだ場所が無ければ移らない）" {
   make_wt
-  silent "pushd $TMP/wt && popd && git push" "pushd $TMP/wt; popd; git commit -m x" "popd; git push"
-  # ( ) の中の popd の後も、戻る先を追わないので、不明とする（pushd した先のリンクを出さない）
-  silent "(pushd ../wt && popd && git push)" "(cd ../wt && pushd $TMP && popd && git commit -m x)"
-  [ "$(called issue-view)" -eq 0 ]
+  local c
+  # 外側の場所をまだたどっていないときに積んだ場所へ戻ると、cwd（実行した後の場所）に戻り、その後の相対パスへの cd もたどらない
+  for c in "pushd $TMP/wt && popd && git push" "pushd $TMP/wt; popd; git commit -m x" "popd; git push" \
+    "(pushd ../wt && popd && git push)"; do
+    shows "$c" "Issue #17: https://github.com/me/demo/issues/17"
+    [[ "$output" != *"issues/23"* ]] || fail "pushd した先の Issue を出した: $c / $output"
+  done
+  shows_wt "(cd ../wt && pushd $TMP && popd && git commit -m x)"
+  shows_wt "cd $TMP/wt && pushd $REPO && popd && git commit -m x"
+  shows_wt "pushd $TMP && popd && cd .. && git commit -m x" "$TMP/wt"
   shows_wt "(pushd ../wt && git push)"
+}
+
+@test "パイプラインの中の cd で移った先は、外に効かない" {
+  make_wt
+  local c
+  # パイプラインと & の中で、絶対パスへ移ってたどり始めても、外側はたどっていない状態（cwd）に戻り、
+  # その後の外側の相対パスへの cd もたどらない
+  for c in "cd $TMP/wt | true; git push" "cd $TMP/wt & git push" "cd $TMP/wt | true; cd .. && git push"; do
+    shows "$c" "Issue #17: https://github.com/me/demo/issues/17"
+    [[ "$output" != *"issues/23"* ]] || fail "パイプラインや & の中で移った先の Issue を出した: $c / $output"
+  done
+}
+
+@test "外側の場所をたどる前に積んだ場所へ、( ) の中で戻ったときは、移った先が分からないので何も出さない" {
+  make_wt
+  # 外側は wt に残るので cwd は wt だが、( ) の中の popd は、実行する前の場所（分からない）へ戻る
+  run_hook "pushd $TMP/wt && (popd && git push)" "" "$TMP/wt"
+  assert_success
+  assert_output ""
+  [ "$(called issue-view)" -eq 0 ]
 }
 
 @test "短いオプションをまとめた git push -nu も dry-run とみなし、何も出さない" {
@@ -492,6 +522,27 @@ EOF"
   shows "command git commit -m x" "Issue #17: https://github.com/me/demo/issues/17"
   shows "nohup git push" "PR を作る:"
   shows "env FOO=1 git push" "PR を作る:"
+}
+
+@test "前に付くコマンドのオプション（timeout・nice・time -p・env）を飛ばして、git を拾い、env -C の先で判断する" {
+  shows "timeout 60 git push" "PR を作る:"
+  shows "nice -n 5 git commit -m x" "Issue #17: https://github.com/me/demo/issues/17"
+  shows "time -p git commit -m x" "Issue #17: https://github.com/me/demo/issues/17"
+  shows "env -u FOO git push" "PR を作る:"
+  make_wt
+  shows_wt "env -C ../wt git commit -m x"
+  shows_wt "env --chdir=$TMP/wt git push"
+}
+
+@test "git commit の略した --dry-run（--dry）も dry-run とみなし、-m などの値は --dry-run と読まない" {
+  silent "git commit --dry -m x" "git commit -a --dry-r"
+  shows "git commit -m --dry-run" "Issue #17: https://github.com/me/demo/issues/17"
+  shows "git commit -F - --author --dry-run" "Issue #17: https://github.com/me/demo/issues/17"
+}
+
+@test "git push の略した --dry-run（--dry など）も dry-run とみなし、--recurse-submodules の値をリモートと読まない" {
+  silent "git push --dry origin feat/17-demo" "git push --dr"
+  shows "git push --recurse-submodules check origin feat/17-demo" "PR を作る:"
 }
 
 @test "同じコマンドに dry-run の操作があっても、実際に行った操作のリンクは出す" {

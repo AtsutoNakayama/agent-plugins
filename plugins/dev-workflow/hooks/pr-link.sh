@@ -11,15 +11,15 @@
 #
 # 決まり（設計書 §9）:
 #   - 同じリンクも、連続で毎回出す（常に見えるようにするため）
-#   - git のコマンドは、操作の対象（cd・pushd・git -C で移った先、--git-dir・GIT_DIR で指したリポジトリ。gc_target）の
-#     リポジトリ・ブランチで判断する。popd・cd - の後と、プロジェクトのルートからの相対パスへの cd の後は、
+#   - git のコマンドは、操作の対象（cd・pushd・popd・git -C・env -C で移った先、--git-dir・GIT_DIR で指したリポジトリ。gc_target）の
+#     リポジトリ・ブランチで判断する。cd - の後と、プロジェクトのルートからの相対パスへの cd の後は、
 #     移った先が分からないので出さない（scripts/lib/git-command.sh の gc_scan の after）
 #   - Issue の番号が分からないブランチ（main など）では、ブランチから導くリンクは出さない（作った PR・Issue は出す）
 #   - gh が無い・失敗する・解析できないときは、何も出さずに通す。フックは作業を止めない（いつも終了コード 0）
 #   - 導入していないリポジトリ（dw_is_set_up）では、何も出さない（設計書 §1）
 #
 # 出力は、使用者に見せる systemMessage と、Claude に渡す additionalContext（返答でも触れてもらう）の JSON。
-# git のコマンドは、guard-git.sh と同じ解析（scripts/lib/git-command.sh）で拾う。sh -c や別名を通すと見逃す。
+# git のコマンドは、guard-git.sh と同じ解析（scripts/lib/git-command.sh）で拾う。sh -c・xargs や別名を通すと見逃す。
 # スクリプト（commit.sh など）と gh pr create・gh issue create は、コマンドの文字列を簡易に判定するだけなので、
 # 引用符の中の文字にも反応し、フックの入力の cwd のリポジトリで判断する。
 # 標準入力でフックの入力（JSON）を受け取る。
@@ -101,10 +101,9 @@ on_git() {
       ! $gc_push_dry || return 0
       ;;
     commit)
-      # git commit --dry-run は commit しない
-      for k in "$@"; do
-        [ "$k" != --dry-run ] || return 0
-      done
+      # git commit --dry-run（略した形も）は commit しない
+      gc_commit_args "$@"
+      ! $gc_commit_dry || return 0
       ;;
     switch | checkout | branch | worktree)
       gc_new_branches add_new_name "$sub" "$@"
