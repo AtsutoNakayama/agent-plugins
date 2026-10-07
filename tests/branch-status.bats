@@ -480,18 +480,7 @@ subjects() { jq -r --arg k "$1" '.push_commits[$k] | if . == null then "null" el
 
 @test "署名を表示する設定（log.showSignature）でも、署名の検証の行をコミットに数えない" {
   setup_branch
-  # 署名と検証をまねる偽の gpg。検証では、本物の gpg と同じく「gpg:」で始まる行を出す
-  cat >"$TMP/fake-gpg" <<'SH'
-#!/bin/sh
-case " $* " in
-  *" --verify "*) echo "gpg: Signature made (fake)" >&2; echo "[GNUPG:] GOODSIG 0 fake" >&"${3#--status-fd=}" 2>/dev/null; exit 0 ;;
-  *) cat >/dev/null; echo "[GNUPG:] SIG_CREATED " >&2
-     printf '%s\n' '-----BEGIN PGP SIGNATURE-----' '' 'ZmFrZQ==' '-----END PGP SIGNATURE-----' ;;
-esac
-SH
-  chmod +x "$TMP/fake-gpg"
-  git config gpg.program "$TMP/fake-gpg"
-  git config user.signingkey fake
+  use_fake_gpg
   echo signed >signed.txt
   git add signed.txt
   git commit -q -S -m "feat: signed"
@@ -503,16 +492,8 @@ SH
 
 @test "push で入るコミットが多くても（一覧が jq の引数の長さの上限を超えても）止まらない" {
   setup_branch
-  # 件名の長いコミットを 2000 件、fast-import で一度に作る（一覧は 128 KiB を超える）
-  title="$(printf 'x%.0s' $(seq 1 100))"
-  {
-    parent="$(git rev-parse HEAD)"
-    for i in $(seq 1 2000); do
-      msg="feat: $i $title"
-      printf 'commit refs/heads/feat/17-x\nmark :%d\ncommitter t <t@t> 0 +0000\ndata %d\n%s\nfrom %s\n\n' "$i" "${#msg}" "$msg" "$parent"
-      parent=":$i"
-    done
-  } | git fast-import --quiet --force
+  # 件名の長いコミットを 2000 件作る（一覧は 128 KiB を超える）
+  make_commits feat/17-x 2000
   git reset -q --hard feat/17-x
   run_status --merged-from "$(git rev-parse HEAD)"
   assert_success
