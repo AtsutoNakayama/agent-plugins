@@ -262,6 +262,17 @@ writes() { grep -oE '^(issue-comment|issue-close|pr-comment|pr-close|api-delete)
   assert_output 0
 }
 
+@test "--branch を付けたとき、設定を読めなければ、その理由で止まる（base_branch の誤りとして示さない）" {
+  setup_cancel
+  echo '{broken' >.claude/dev-workflow/config.local.json
+  run_script issue-cancel.sh --issue 17 --reason "やらないことにしました" --branch feat/17-x
+  assert_failure
+  assert_output --partial "JSON のオブジェクトとして読めません"
+  refute_output --partial "base_branch"
+  run grep -c . "$CALLS"
+  assert_output 0
+}
+
 @test "--branch を付けると、Issue → PR（コメントして閉じる）→ リモートのブランチの順に片付ける" {
   setup_cancel
   cancel_prs '[""]'
