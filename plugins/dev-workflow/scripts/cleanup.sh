@@ -96,9 +96,12 @@ if $abandon; then
     for ref in "refs/heads/$base" "refs/remotes/origin/$base"; do
       git -C "$main_root" show-ref --verify --quiet "$ref" && excludes="$excludes $ref"
     done
+    # 署名を表示する設定（log.showSignature）でも、gpg の行が混ざらないようにする。引数の中のコマンド置換では、
+    # git が失敗しても止まらず、失うコミットが無いと伝えたまま削除してしまうので、先に変数に取って確かめる
     # shellcheck disable=SC2086 # 除く ref を1つずつの引数に分ける（ref に空白は無い）
-    # 署名を表示する設定（log.showSignature）でも、gpg の行が混ざらないようにする
-    lose commits "$(git -C "$main_root" log --no-show-signature --format='%h %s' "refs/heads/$branch" --not $excludes)"
+    commits="$(git -C "$main_root" log --no-show-signature --format='%h %s' "refs/heads/$branch" --not $excludes)" \
+      || dw_die "${branch} の失うコミットを調べられませんでした"
+    lose commits "$commits"
   fi
 else
   # --head はブランチ名だけで探すので、フォークの同じ名前のブランチからの PR を除く（ほかの --head の呼び出しと同じ）

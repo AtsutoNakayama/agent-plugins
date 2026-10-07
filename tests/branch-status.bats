@@ -539,24 +539,15 @@ subjects() { jq -r --arg k "$1" '.push_commits[$k] | if . == null then "null" el
   merged_from="$(git rev-parse HEAD)"
   git fetch -q origin main
   git merge -q --no-edit origin/main
-  # 一覧と届くコミットを調べる git（log と、--count の無い rev-list）だけを失敗させる偽の git
-  real_git="$(command -v git)"
-  mkdir -p "$TMP/failgit"
-  cat >"$TMP/failgit/git" <<SH
-#!/bin/sh
-case " \$* " in
-  *" rev-list --count "*) ;;
-  *" rev-list "*) [ "\$FAIL" = rev-list ] && exit 1 ;;
-  *" log --no-show-signature "*) [ "\$FAIL" = log ] && exit 1 ;;
-esac
-exec "$real_git" "\$@"
-SH
-  chmod +x "$TMP/failgit/git"
-  PATH="$TMP/failgit:$PATH" FAIL=rev-list run_script branch-status.sh --merged-from "$merged_from"
-  assert_failure
-  PATH="$TMP/failgit:$PATH" FAIL=log run_script branch-status.sh
-  assert_failure
+  # 一覧と届くコミットを調べる git（log と、--count の無い rev-list）だけを失敗させる
+  make_failing_git
+  PATH="$TMP/failgit:$PATH" FAIL_GIT='* rev-list [!-]*' run_script branch-status.sh --merged-from "$merged_from"
+  assert_failure 1
+  assert_output --partial "push で入るコミットを調べられませんでした"
+  PATH="$TMP/failgit:$PATH" FAIL_GIT='* log --no-show-signature *' run_script branch-status.sh
+  assert_failure 1
+  assert_output --partial "push で入るコミットを調べられませんでした"
   # 失敗させなければ通る（偽の git がほかの呼び出しを邪魔していない）
-  PATH="$TMP/failgit:$PATH" FAIL=none run_script branch-status.sh --merged-from "$merged_from"
+  PATH="$TMP/failgit:$PATH" FAIL_GIT="" run_script branch-status.sh --merged-from "$merged_from"
   assert_success
 }

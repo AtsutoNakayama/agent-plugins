@@ -71,6 +71,25 @@ make_commits() {
   done | git -C "$repo" fast-import --quiet --force
 }
 
+# 引数が環境変数 FAIL_GIT の形（case のパターン。前後に空白を足した引数の並びと照らす）に当たる呼び出しだけを
+# 失敗させる偽の git を $TMP/failgit に作る。PATH の先頭に足して使う（FAIL_GIT が空なら、どれも本物の git に渡す）
+# 使い方: make_failing_git → PATH="$TMP/failgit:$PATH" FAIL_GIT='* rev-list [!-]*' run_script ...
+make_failing_git() {
+  local real
+  real="$(command -v git)"
+  mkdir -p "$TMP/failgit"
+  cat >"$TMP/failgit/git" <<SH
+#!/bin/sh
+if [ -n "\$FAIL_GIT" ]; then
+  case " \$* " in
+    \$FAIL_GIT) echo "fatal: failed (fake)" >&2; exit 128 ;;
+  esac
+fi
+exec "$real" "\$@"
+SH
+  chmod +x "$TMP/failgit/git"
+}
+
 setup() {
   test_helper_setup
 }

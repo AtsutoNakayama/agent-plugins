@@ -149,20 +149,23 @@ grouped=false
 # 使い方: shas <コミット> → そのコミットから届き、基準に無いコミットの完全な sha の配列（JSON）
 shas() { git -C "$repo_root" rev-list "$1" "^$to" -- | jq -R -s -c 'split("\n") | map(select(. != ""))'; }
 # 一覧（push で入るコミット）と、控えた sha から届くコミット（どちらも基準に無いものだけ）を、git でたどって求め、
-# jq で組に分ける。それぞれを変数に取るので、git が失敗すればそこで止まる（まとめて1つのパイプにすると、途中の
-# 失敗が見えず、空の一覧で組を誤る）。一覧は長くなりうる（main のコミットを数千件取り込むなど）ので、jq には
+# jq で組に分ける。それぞれを変数に取り、git が失敗すれば1行のメッセージで止まる（まとめて1つのパイプにすると、
+# 途中の失敗が見えず、空の一覧で組を誤る）。一覧は長くなりうる（main のコミットを数千件取り込むなど）ので、jq には
 # 引数ではなく標準入力で渡す。署名を表示する設定（log.showSignature）でも、gpg の行が混ざらないようにする。
 # 区切りは件名に現れない \x1f
 commits="$(git -C "$repo_root" log --no-show-signature --format='%H%x1f%h%x1f%s' "$head_ref" "^$to" -- \
-  | jq -R -s -c 'split("\n") | map(select(. != "") | split("\u001f") | {full: .[0], sha: .[1], subject: (.[2:] | join("\u001f"))})')"
+  | jq -R -s -c 'split("\n") | map(select(. != "") | split("\u001f") | {full: .[0], sha: .[1], subject: (.[2:] | join("\u001f"))})')" \
+  || dw_die "push で入るコミットを調べられませんでした（git log・git rev-list が失敗しました）"
 reach_m='[]' reach_p='[]'
 if [ -n "$merged_from" ]; then
-  reach_m="$(shas "$m")"
+  reach_m="$(shas "$m")" || dw_die "push で入るコミットを調べられませんでした（git log・git rev-list が失敗しました）"
 elif $grouped; then
   # --pulled-from だけのときは、merge の前を HEAD とみなすので、一覧のどれもが届く（同じ範囲をたどり直さない）
   reach_m="$(jq -c 'map(.full)' <<<"$commits")"
 fi
-[ -z "$p" ] || reach_p="$(shas "$p")"
+if [ -n "$p" ]; then
+  reach_p="$(shas "$p")" || dw_die "push で入るコミットを調べられませんでした（git log・git rev-list が失敗しました）"
+fi
 push_commits="$(printf '%s\n' "$commits" "$reach_m" "$reach_p" \
   | jq -s -c --arg to "${to#refs/remotes/}" --argjson first_push "$first_push" --argjson grouped "$grouped" --arg p "$p" '
   .[0] as $c

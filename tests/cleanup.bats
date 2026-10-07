@@ -593,3 +593,13 @@ run_cleanup() {
   assert_success
   assert_equal "$(jq '.lost.commits | length' <<<"$json")" "2001"
 }
+
+@test "--abandon で、失うコミットを調べる git が失敗したら、失うものが無いと伝えたまま削除せずに止まる" {
+  setup_branch
+  make_failing_git
+  PATH="$TMP/failgit:$PATH" FAIL_GIT='* log --no-show-signature *' run_cleanup --branch feat/17-x --abandon
+  assert_failure
+  assert_output --partial "feat/17-x の失うコミットを調べられませんでした"
+  [ -d "$WT" ]
+  git show-ref --verify --quiet refs/heads/feat/17-x
+}
