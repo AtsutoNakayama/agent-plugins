@@ -114,6 +114,23 @@ silent() {
   denied "develop へは push しません" "git push"
 }
 
+@test "個人の層の base_branch が使えない値なら、チームの設定の base_branch を守る（main に変えない）" {
+  echo '{"base_branch": "develop"}' >.claude/dev-workflow/config.json
+  echo '{"base_branch": "-foo"}' >.claude/dev-workflow/config.local.json
+  git checkout -q -b develop
+  denied "develop の上ではコミットしません" "git commit -m x"
+  denied "develop へは push しません" "git push"
+}
+
+@test "HEAD にコミットしたチームの設定の base_branch が使えない値なら、main を守る" {
+  git init -q -b main --separate-git-dir "$TMP/sep.git" "$TMP/sep"
+  mark_set_up "$TMP/sep"
+  echo '{"base_branch": "-foo"}' >"$TMP/sep/.claude/dev-workflow/config.json"
+  git -C "$TMP/sep" add .claude/dev-workflow/config.json
+  git -C "$TMP/sep" commit -q -m setup
+  denied "main の上ではコミットしません" "cd $TMP && git --git-dir=$TMP/sep.git commit -m x"
+}
+
 @test "main への push を止める" {
   denied "main へは push しません" \
     "git push" \

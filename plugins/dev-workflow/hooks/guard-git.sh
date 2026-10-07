@@ -62,14 +62,19 @@ target_set_up() {
 # 対象のリポジトリの base_branch を出力する。読めなければ main。gc_target・target_set_up の後（導入したリポジトリのとき）に呼ぶ。
 # ルートが分かれば、そのリポジトリの設定（config.sh。導入したリポジトリなのでユーザーの層も合わせる）から読む。
 # ルートが分からなければ、HEAD にコミットされたチームの設定、ユーザーの層の順に読む（導入したものとして調べているので、
-# ユーザーの層も効かせる）。今のディレクトリのリポジトリの設定は、対象と違うことがあるので、代わりに読まない
+# ユーザーの層も効かせる）。今のディレクトリのリポジトリの設定は、対象と違うことがあるので、代わりに読まない。
+# どの値も、git のブランチ名として使えなければ（dw_valid_base_branch）使わない。合わせた設定の値が使えなければ、
+# 個人の層の誤りで守るブランチが main に変わらないよう、チームの設定の値を使う
 base_branch() {
   local base=""
   if [ -n "$gc_root" ]; then
-    base="$( (cd "$gc_root" && WORKFLOW_REPO_ROOT="$gc_root" "$BASH" "$DW_SCRIPTS_DIR/config.sh" '.base_branch // empty') 2>/dev/null || true)"
+    base="$( (cd "$gc_root" && WORKFLOW_REPO_ROOT="$gc_root" "$BASH" "$DW_SCRIPTS_DIR/config.sh" '.base_branch | strings') 2>/dev/null || true)"
+    dw_valid_base_branch "$base" \
+      || base="$(dw_team_base_branch "$gc_root/.claude/dev-workflow/config.json" 2>/dev/null || true)"
   else
-    [ -z "$gc_repo" ] || base="$(gc_git show "HEAD:.claude/dev-workflow/config.json" | jq -r '.base_branch // empty | strings' 2>/dev/null || true)"
-    [ -n "$base" ] || base="$(jq -r '.base_branch // empty | strings' "$(dw_user_dir)/config.json" 2>/dev/null || true)"
+    [ -z "$gc_repo" ] || base="$(gc_git show "HEAD:.claude/dev-workflow/config.json" | jq -r '.base_branch | strings' 2>/dev/null || true)"
+    dw_valid_base_branch "$base" || base="$(jq -r '.base_branch | strings' "$(dw_user_dir)/config.json" 2>/dev/null || true)"
+    dw_valid_base_branch "$base" || base=""
   fi
   printf '%s\n' "${base:-main}"
 }
