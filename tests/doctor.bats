@@ -367,6 +367,15 @@ required_check() { jq -c '.checks[] | select(.name == "required-checks") | [.ok,
   assert_equal "$(jq -c '.checks[] | select(.name == "base-branch") | [.ok, .detail]' <<<"$output")" \
     '[false,"設定の base_branch が文字列ではありません"]'
   [ ! -e "$TMP/rules-path" ]
+
+  # 個人の層が使える値で上書きしていても、チームの設定の値が使えなければ知らせる（setup-repo.sh はその値で止まる）
+  echo '{"base_branch": "-v"}' >.claude/dev-workflow/config.json
+  echo '{"base_branch": "main"}' >.claude/dev-workflow/config.local.json
+  run_script doctor.sh
+  assert_failure 1
+  assert_equal "$(jq -c '.checks[] | select(.name == "base-branch") | [.ok, .detail]' <<<"$output")" \
+    '[false,"チームの設定: 設定の base_branch が git のブランチ名として使えません: -v"]'
+  [ ! -e "$TMP/rules-path" ]
 }
 
 @test "マージキューの確認は、個人の設定の base_branch ではなく、チームの設定のブランチを見る" {

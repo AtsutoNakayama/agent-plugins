@@ -69,11 +69,15 @@ if config="$("$BASH" "$DW_SCRIPTS_DIR/config.sh" 2>&1)"; then
     check project false warn "Project が未設定です（.claude/dev-workflow/config.json の project）"
   fi
   # config.sh は base_branch を検査しないので、使う側（dw_base_branch）と同じ検査をここで行う。使えない値だと、
-  # base_branch を使うスクリプト（task-start・pr-create など）が止まる
-  if base_check="$(dw_base_branch "$config" 2>&1)"; then
-    check base-branch true error "$base_check"
-  else
+  # base_branch を使うスクリプト（task-start・pr-create など）が止まる。個人の層が上書きしていても、チームの設定の値は
+  # setup-repo.sh とマージキューの確認（下）が使うので、別に確かめる
+  if ! base_check="$(dw_base_branch "$config" 2>&1)"; then
     check base-branch false error "${base_check#error: }"
+  elif root="$(dw_repo_root || true)" && [ -n "$root" ] \
+    && ! team_check="$(dw_team_base_branch "$root/.claude/dev-workflow/config.json" .claude/dev-workflow/config.json 2>&1)"; then
+    check base-branch false error "チームの設定: ${team_check#error: }"
+  else
+    check base-branch true error "$base_check"
   fi
 else
   check config false error "$config"
@@ -149,7 +153,7 @@ fi
 base_branch=""
 if [ -n "$repo_root" ]; then
   # 使えない値なら、設定の確認（base-branch）で知らせ、ここでは問い合わせずに飛ばす
-  base_branch="$(dw_team_base_branch "$repo_root/.claude/dev-workflow/config.json" 2>/dev/null || true)"
+  base_branch="$( (dw_team_base_branch "$repo_root/.claude/dev-workflow/config.json") 2>/dev/null || true)"
 fi
 # 必須のチェックの有無は、名前の一覧（required。ルールセットと古いブランチ保護を合わせる）だけで決め、strict かは、
 # 名前のあるルールセットのルール（check_rules）だけで見る。ルールがあっても名前が1つも無ければ、何も求めていない
