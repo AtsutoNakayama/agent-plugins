@@ -270,8 +270,8 @@ run_common() {
 
 @test "base_branch は、dw_base_branch・dw_team_base_branch を通さずに設定から読まない" {
   # guard-git.sh は止まらずに使えない値を外すので、自分で dw_valid_base_branch で検査する（tests/guard-git.bats）
-  # --exclude は busybox の grep に無いので、見つけた行から外す
+  # --exclude は busybox の grep に無いので、見つけた行から外す。コメントの行は読んでいないので外す
   found="$(grep -rnE '\.base_branch|dw_team_config .*base_branch' "$SCRIPTS" "$SCRIPTS/../hooks" \
-    | grep -v -e '/lib/common\.sh:' -e '/guard-git\.sh:' || true)"
+    | grep -v -e '/lib/common\.sh:' -e '/guard-git\.sh:' | grep -vE '^[^:]+:[0-9]+:[[:space:]]*#' || true)"
   assert_equal "$found" ""
 }
