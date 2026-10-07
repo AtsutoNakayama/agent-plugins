@@ -4,7 +4,8 @@
     "number": 1
   },
   "status": {
-    "pr_opened": "In Review"
+    "pr_opened": "In Review",
+    "hold": "On Hold"
   },
   "pr_respond": {
     "handlers": {
