@@ -75,7 +75,7 @@ AskUserQuestion の複数選択（`multiSelect: true`）で、直す指摘と答
 
 次をまとめて見せ、AskUserQuestion で承認を得る。選択肢の説明には、選ぶと実際に何が起きるか（「ブランチを push し、3件のスレッドと1件のコメントに返信する」など）を書き、スクリプト名やフラグといった内部の手順は書かない（設計書 §8）。見せた内容は質問の中にも入れ、各選択肢の preview に、push するコミットと返信の本文の全文を入れる。会話の中のあいまいな返事を承認とみなさない。
 
-- push するコミット（`git log --oneline origin/<pr.head>..HEAD`）
+- push するコミット（`git log --oneline --no-show-signature origin/<pr.head>..HEAD`）
 - 返信の本文（返信先ごと）
   - 直した指摘：直した内容と、直したコミットの短い sha
   - 答えた質問：答え

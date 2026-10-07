@@ -152,10 +152,14 @@ place ISSUE_TEMPLATE/task.md .github/ISSUE_TEMPLATE/task.md "$(dw_find_nocase . 
 files="$created"
 # .claude/dev-workflow/config.json を git が管理していないか、コミットしていない変更がある。
 # git に無視されていると git status に出ないので、管理しているかは ls-files で確かめる
+# 条件の中のコマンド置換では、git が失敗しても止まらず、変更が無いとみなしてしまうので、先に変数に取って確かめる
 config_uncommitted() {
+  local changes
   [ -f .claude/dev-workflow/config.json ] || return 1
-  ! git ls-files --error-unmatch -- .claude/dev-workflow/config.json >/dev/null 2>&1 \
-    || [ -n "$(git status --porcelain -- .claude/dev-workflow/config.json)" ]
+  git ls-files --error-unmatch -- .claude/dev-workflow/config.json >/dev/null 2>&1 || return 0
+  changes="$(git status --porcelain -- .claude/dev-workflow/config.json)" \
+    || dw_die ".claude/dev-workflow/config.json の変更を調べられませんでした（git が失敗しました）"
+  [ -n "$changes" ]
 }
 if $dry_run; then
   # 書き込む予定の project と今のファイルが違えば、変わる予定とみなす。

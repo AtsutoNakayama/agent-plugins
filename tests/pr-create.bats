@@ -654,3 +654,14 @@ fake_issue_tasks() {
   assert_success
   assert_equal "$(od -c "$TMP/issue-edit-body" | tr -s ' ' | tr -d '\n')" "$(printf '## 背景\r\n説明\r\n- [ ] x' | od -c | tr -s ' ' | tr -d '\n')"
 }
+
+@test "未コミットの変更を調べる git status が失敗したら、変更が無いとみなさず、push せずに止まる" {
+  setup_branch
+  fake_issue 17 '["feat"]'
+  make_failing_git
+  PATH="$TMP/failgit:$PATH" FAIL_GIT='* status --porcelain *' run_pr --issue 17 --body-file "$TMP/body.md"
+  assert_failure 1
+  assert_output --partial "未コミットの変更を調べられませんでした"
+  run git rev-parse -q --verify refs/remotes/origin/feat/17-x
+  assert_failure
+}

@@ -585,3 +585,53 @@ run_cleanup() {
   [ -d "$WT" ]
   git show-ref --verify --quiet refs/heads/feat/17-x
 }
+
+@test "--abandon で、署名を表示する設定（log.showSignature）でも、署名の検証の行を失うコミットに数えない" {
+  setup_branch
+  use_fake_gpg "$WT"
+  echo signed >"$WT/signed.txt"
+  git -C "$WT" add signed.txt
+  git -C "$WT" commit -q -S -m "feat: signed"
+  git config log.showSignature true
+  run_cleanup --branch feat/17-x --abandon --dry-run
+  assert_success
+  assert_equal "$(jq -r '.lost.commits | map(sub("^[0-9a-f]+ "; "")) | join(",")' <<<"$json")" "feat: signed,feat: work"
+}
+
+@test "--abandon で、失うコミットが多くても（一覧が jq の引数の長さの上限を超えても）止まらない" {
+  setup_branch
+  # 件名の長いコミットを 2000 件作る（一覧は 128 KiB を超える）
+  make_commits feat/17-x 2000
+  run_cleanup --branch feat/17-x --abandon --dry-run
+  assert_success
+  assert_equal "$(jq '.lost.commits | length' <<<"$json")" "2001"
+}
+
+@test "--abandon で、失うコミットを調べる git が失敗したら、失うものが無いと伝えたまま削除せずに止まる" {
+  setup_branch
+  make_failing_git
+  PATH="$TMP/failgit:$PATH" FAIL_GIT='* log --no-show-signature *' run_cleanup --branch feat/17-x --abandon
+  assert_failure
+  assert_output --partial "feat/17-x の失うコミットを調べられませんでした"
+  [ -d "$WT" ]
+  git show-ref --verify --quiet refs/heads/feat/17-x
+}
+
+@test "サブモジュールの push していないコミットを調べる git が失敗したら、無いとみなさず、削除せずに止まる" {
+  add_submodule
+  setup_branch
+  git -C "$WT" submodule update -q --init
+  # サブモジュールの手元だけのブランチの先のコミットのオブジェクトを消して、git log を本当に失敗させる
+  # （foreach の中では git が自分の場所を PATH の先頭に足すので、偽の git では差し替えられない）
+  git -C "$WT/lib/sub" commit -q --allow-empty -m "local only"
+  git -C "$WT/lib/sub" branch -q local-only
+  sha="$(git -C "$WT/lib/sub" rev-parse HEAD)"
+  git -C "$WT/lib/sub" checkout -q --detach HEAD~1
+  rm -f "$(git -C "$WT/lib/sub" rev-parse --git-path objects)/${sha:0:2}/${sha:2}"
+  run git -C "$WT/lib/sub" log -1 --format=%h HEAD --branches --not --remotes --tags
+  assert_failure
+  run_cleanup --branch feat/17-x --abandon
+  assert_failure
+  assert_output --partial "のサブモジュールを確かめられませんでした"
+  [ -d "$WT" ]
+}

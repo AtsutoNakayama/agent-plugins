@@ -77,8 +77,12 @@ note() { actions="$(jq -c --arg a "$1" '. + [$a]' <<<"$actions")"; }
 worktree_of() { dw_worktree_of "$main_root" "$1"; }
 
 # 失うものの一覧（--abandon）。使い方: lose <種類> <1行に1つの一覧>
+# 一覧は長くなりうる（数千件のコミットなど）ので、jq には引数ではなく標準入力で渡す
 lost='{"commits": [], "uncommitted": [], "ignored": [], "submodules": []}'
-lose() { lost="$(jq -c --arg k "$1" --arg v "$2" '.[$k] += ($v | split("\n") | map(select(. != "")))' <<<"$lost")"; }
+lose() {
+  lost="$({ printf '%s\n' "$lost"; printf '%s' "$2" | jq -R -s .; } \
+    | jq -s -c --arg k "$1" '.[1] as $v | .[0] | .[$k] += ($v | split("\n") | map(select(. != "")))')"
+}
 
 has_branch=false
 git -C "$main_root" show-ref --verify --quiet "refs/heads/$branch" && has_branch=true
@@ -92,8 +96,12 @@ if $abandon; then
     for ref in "refs/heads/$base" "refs/remotes/origin/$base"; do
       git -C "$main_root" show-ref --verify --quiet "$ref" && excludes="$excludes $ref"
     done
+    # 署名を表示する設定（log.showSignature）でも、gpg の行が混ざらないようにする。引数の中のコマンド置換では、
+    # git が失敗しても止まらず、失うコミットが無いと伝えたまま削除してしまうので、先に変数に取って確かめる
     # shellcheck disable=SC2086 # 除く ref を1つずつの引数に分ける（ref に空白は無い）
-    lose commits "$(git -C "$main_root" log --format='%h %s' "refs/heads/$branch" --not $excludes)"
+    commits="$(git -C "$main_root" log --no-show-signature --format='%h %s' "refs/heads/$branch" --not $excludes)" \
+      || dw_die "${branch} の失うコミットを調べられませんでした"
+    lose commits "$commits"
   fi
 else
   # --head はブランチ名だけで探すので、フォークの同じ名前のブランチからの PR を除く（ほかの --head の呼び出しと同じ）
@@ -149,11 +157,12 @@ if [ -n "$path" ]; then
   else
     # サブモジュールの git のデータはワークツリーと一緒に消えるので、リモートに無いコミット（HEAD とローカルのブランチ）や
     # stash が残っていれば止まる。リモートのブランチかタグ（タグは手元のものとリモートのものを区別できない）から届かない
-    # コミットは、SHA で取ってきた push 済みのものでも手元では見分けられないので、安全のために止まる
+    # コミットは、SHA で取ってきた push 済みのものでも手元では見分けられないので、安全のために止まる。
+    # git log が失敗したら、push していないコミットが無いとはみなさず、foreach を失敗させる
     # shellcheck disable=SC2016 # 各サブモジュールの中で展開させる
     unpushed="$(git -C "$path" submodule --quiet foreach --recursive '
-      if [ -n "$(git log -1 --format=%h HEAD --branches --not --remotes --tags)" ] \
-        || git rev-parse -q --verify refs/stash >/dev/null; then
+      local_only="$(git log -1 --no-show-signature --format=%h HEAD --branches --not --remotes --tags)" || exit 1
+      if [ -n "$local_only" ] || git rev-parse -q --verify refs/stash >/dev/null; then
         echo "$displaypath"
       fi')" || dw_die "$path のサブモジュールを確かめられませんでした"
     if $abandon; then
@@ -237,10 +246,11 @@ if ! $abandon; then
   done < <(jq -r '.closingIssuesReferences // [] | .[] | "\(.number) \(if .repository then "\(.repository.owner.login)/\(.repository.name)" else "" end)"' <<<"$pr")
 fi
 
-jq -n --arg branch "$branch" --arg path "$path" --arg main "$main_root" --arg base "$base" \
+# lost は長くなりうるので、引数ではなく標準入力で渡す
+jq --arg branch "$branch" --arg path "$path" --arg main "$main_root" --arg base "$base" \
   --argjson pr "$pr" --argjson wr "$worktree_removed" --argjson sw "$switched" --argjson bd "$branch_deleted" \
   --arg from "$from" --arg to "$to" --argjson dry "$dry_run" --argjson actions "$actions" \
-  --argjson abandon "$abandon" --argjson lost "$lost" --argjson issues "$issues" '{
+  --argjson abandon "$abandon" --argjson issues "$issues" '. as $lost | {
     branch: $branch,
     dry_run: $dry,
     abandon: $abandon,
@@ -253,4 +263,4 @@ jq -n --arg branch "$branch" --arg path "$path" --arg main "$main_root" --arg ba
     issues: $issues,
     lost: (if $abandon then $lost else null end),
     actions: $actions
-  }'
+  }' <<<"$lost"

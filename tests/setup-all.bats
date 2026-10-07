@@ -79,6 +79,19 @@ args_of() { grep "^$1" "$CALLS" | tail -n 1 | sed "s/^$1 \{0,1\}//"; }
   assert_equal "$(jq -c .next_steps <<<"$json")" '[]'
 }
 
+@test "config.json の変更を調べる git status が失敗したら、変更が無いとみなさずに止まる" {
+  setup_fake_plugin
+  committed_config '{"project": {"owner": "me", "number": 3}}'
+  echo '{"actions": [], "project": {"owner": "me", "number": 3, "created": false}, "workflows": {"auto_add": true}}' >"$FIX/setup-project.json"
+  jq -n --arg f "$REPO/.claude/dev-workflow/config.json" '{review: {model: "opus"}, file: $f, changed: true, actions: ["x"]}' \
+    >"$FIX/setup-models.json"
+  make_failing_git
+  PATH="$TMP/failgit:$PATH" FAIL_GIT='* status --porcelain -- .claude/dev-workflow/config.json *' \
+    run_all --dry-run --review-model opus --models-scope team
+  assert_failure
+  assert_output --partial "config.json の変更を調べられませんでした"
+}
+
 @test "--required-check は何度でも指定でき、setup-repo.sh に渡す" {
   setup_fake_plugin
   run_all --required-check lint-result --required-check test-result

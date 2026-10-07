@@ -97,8 +97,10 @@ note() { actions="$(jq -c --arg a "$1" '. + [$a]' <<<"$actions")"; }
 branch="$(git -C "$repo_root" symbolic-ref --short -q HEAD || true)"
 [ -n "$branch" ] || dw_die "ブランチの上にいません（detached HEAD）" 2
 [ "$branch" != "$base" ] || dw_die "${base} からは PR を作りません。作業用のブランチで実行してください（task-start）" 2
-[ -z "$(git -C "$repo_root" status --porcelain --untracked-files=no)" ] \
-  || dw_die "未コミットの変更があります。コミットしてから実行してください（commit）" 2
+# 条件の中のコマンド置換では、git が失敗しても止まらず、変更が無いとみなしてしまうので、先に変数に取って確かめる
+changes="$(git -C "$repo_root" status --porcelain --untracked-files=no)" \
+  || dw_die "未コミットの変更を調べられませんでした（git が失敗しました）"
+[ -z "$changes" ] || dw_die "未コミットの変更があります。コミットしてから実行してください（commit）" 2
 
 # --- Issue ----------------------------------------------------------------------
 # PR の番号なら止まる（dw_read_issue）

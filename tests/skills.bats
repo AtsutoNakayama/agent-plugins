@@ -14,6 +14,18 @@ frontmatter() { awk 'NR == 1 && $0 == "---" { on = 1; next } on && $0 == "---" {
 # （次の「## 」か「### 」の見出しの前まで。「#### 」の見出しでは終わらない。終わりの見出しを渡すと、その見出しでも終わる）
 step() { awk -v n="$2" -v end="$3" 'on && ($0 ~ /^###? / || (end != "" && $0 ~ end)) { exit } $0 ~ ("^### " n "[.]") { on = 1; next } on' "$1"; }
 
+# 使い方: section <SKILL.md> <見出し> → 「## 」の見出し（行全体が一致）の節の本文（次の「## 」の見出しの前まで）
+section() { awk -v h="$2" '$0 == h { on = 1; next } on && /^## / { exit } on' "$1"; }
+
+# 使い方: has <名前> <本文> <語>... → 本文にどの語もあること（固定の文字列として探す）
+has() {
+  local name="$1" text="$2" term; shift 2
+  [ -n "$text" ] || fail "${name}がありません"
+  for term in "$@"; do
+    grep -qF -e "$term" <<<"$text" || fail "${name}に「${term}」がありません"
+  done
+}
+
 @test "どのスキルにも name（ディレクトリ名と同じ）と description がある" {
   for f in "$SKILLS"/*/SKILL.md; do
     name="$(basename "$(dirname "$f")")"
@@ -263,16 +275,8 @@ step() { awk -v n="$2" -v end="$3" 'on && ($0 ~ /^###? / || (end != "" && $0 ~ e
   # 両立できると判断した衝突を確かめずに直し、push の前の確認の時点で直したコミットが既にできていた（#237）
   # 文の言い回しに縛られないよう、箇条（見出しの語や選択肢の名前）で場所を決め、その中の要の語だけを確かめる
   f="$SKILLS/branch-update/SKILL.md"
-  # 使い方: has <名前> <本文> <語>... → 本文にどの語もあること（固定の文字列として探す）
-  has() {
-    local name="$1" text="$2"; shift 2
-    [ -n "$text" ] || fail "${name}がありません"
-    for term in "$@"; do
-      grep -qF -e "$term" <<<"$text" || fail "${name}に「${term}」がありません"
-    done
-  }
   # 確認の手順は1つの節にまとめ、衝突を直す場面はどれもそこに従う（場面ごとに規則を書くと、抜ける場面が出る）
-  conf="$(awk '$0 == "## 衝突の直し方の確認" { on = 1; next } on && /^## / { exit } on' "$f")"
+  conf="$(section "$f" "## 衝突の直し方の確認")"
   has "「## 衝突の直し方の確認」の節" "$conf" '両立できると判断した衝突も含めて' '直す前'
   has "手順1の pull" "$(grep -F 'git pull --no-rebase' <<<"$(step "$f" 1)")" '「衝突の直し方の確認」'
   has "手順2" "$(step "$f" 2)" '「衝突の直し方の確認」'
@@ -318,6 +322,85 @@ step() { awk -v n="$2" -v end="$3" 'on && ($0 ~ /^###? / || (end != "" && $0 ~ e
   fi
   has "手順6" "$(step "$f" 6)" '「抜けたとき」'
   has "手順4（push の前の確認）" "$(step "$f" 4)" '直し方を変えたなら' '`push` として進めた' '方針や前の取り込みの直し方から変えたところ'
+}
+
+# shellcheck disable=SC2016 # バッククォートはスキルの本文の文字で、展開させない
+@test "branch-update は、push しなかったどの出口でも、push・CI・キューへの入れ直しの案内をせず、止めた理由と手元に残ったものを伝える" {
+  # push しなかった出口でも、手順6が push・CI・キューへの入れ直しの案内を伝えていた（#242）
+  f="$SKILLS/branch-update/SKILL.md"
+  s6="$(step "$f" 6)"
+  nopush="$(awk '/^\*\*push しなかったとき\*\*/ { on = 1 } /^\*\*push したとき\*\*/ { exit } on' <<<"$s6")"
+  pushed="$(awk '/^\*\*push したとき\*\*/ { on = 1 } on' <<<"$s6")"
+  has "手順6の「push しなかったとき」" "$(head -n 1 <<<"$nopush")" 'どこで止めたときも' 'push・CI・キュー' '伝えない' '止めた理由' 'push していないコミット' \
+    '`branch-status.sh` を実行し直して' '`push_commits` をそのまま見せる' '範囲を自分で組み立てない' '箇条で言い切らない'
+  # 出口ごとに添えること
+  has "手順6の「push しなかったとき」の出口" "$nopush" '取り込む前の確認で止めた' '`ask_base`' '`recheck`' '取り込み（pull・merge）が衝突以外で失敗した' '手順3で直せなかった' '「push しない」' 'push が拒否された' '「抜けたとき」'
+  # 手元に何があるかは一覧で示し、出口ごとの箇条では言い切らない（どこまで進めてから止めたかで変わる）
+  # （言い回しに縛られないよう、「手元・取り込みは〜していない」「取り込み・自分・pull・main のコミットが〜ある・残る」
+  #   「コミットが手元にある・残る」「手元には何も残っていない」の形で探す。push が拒否されたときの
+  #   「手元に無いコミットがある」は origin の状態なので、コミットの前に「無い」が来る形は探さない）
+  if grep -e '^- ' <<<"$nopush" \
+    | grep -E '(手元|取り込み)[^。、]*(は[^。、]*していない|変えていない)|(取り込み|自分|pull|main) ?の?コミットが[^。、]*(ある|残)|コミットが手元に(ある|残)|手元には?何も(残|無|な)'; then
+    fail "出口ごとの箇条で、手元に何があるかを言い切っています（push_commits の一覧で示す）"
+  fi
+  # キューへの入れ直しの案内は、push したときだけ
+  has "手順6の「push したとき」" "$pushed" 'もう一度キューに入れてください'
+  if grep -F 'キューに入れてください' <<<"$nopush"; then
+    fail "push しなかったときに、キューへの入れ直しを案内しています"
+  fi
+  # push せずに止める出口は、どれも手順6の「push しなかったとき」に従う
+  has "手順1（取り込む前の確認・ask_base・recheck で止めたとき）" "$(step "$f" 1)" '「push しなかったとき」'
+  # 衝突以外で失敗したときの扱いは、pull と merge のどちらも、手順1の終わりの1か所の規則に従う
+  has "手順1（取り込みが衝突以外で失敗したとき）" "$(grep -F '衝突以外で失敗したら' <<<"$(step "$f" 1)")" '`git pull --no-rebase`' '`git merge`' '「push しなかったとき」'
+  has "手順2（衝突以外で失敗したとき）" "$(step "$f" 2)" '手順1の終わりのとおり'
+  has "手順3" "$(step "$f" 3)" '「push しなかったとき」'
+  has "手順5" "$(step "$f" 5)" '「push しなかったとき」'
+  conf="$(section "$f" "## 衝突の直し方の確認")"
+  has "「抜けたとき」" "$(grep -e '^\*\*抜けたとき\*\*' <<<"$conf")" '「push しなかったとき」'
+}
+
+# shellcheck disable=SC2016 # バッククォートはスキルの本文の文字で、展開させない
+@test "branch-update は、push の前の確認で、push で入るコミットの分け方を、branch-status.sh の push_commits に任せる" {
+  # 控える sha が手順2の merge の前なので、pull で作った取り込みのコミットが自分のコミットに数えられていた。
+  # 範囲を SKILL.md の文章で組み立てると、初回の push などで数え違える（#242）。分け方は branch-status.bats で確かめる
+  f="$SKILLS/branch-update/SKILL.md"
+  # pull の前の sha は、pull の直前（未コミットの変更をコミットした後）に控える
+  # pull の箇条は、控えるかを「控える sha」の規則に任せ、自分では控えると書かない（push として進めるときは控えない）
+  has "手順1の pull" "$(grep -F 'git pull --no-rebase' <<<"$(step "$f" 1)")" '「控える sha」に従う'
+  if grep -F 'git pull --no-rebase' <<<"$(step "$f" 1)" | sed 's/控えるかは//g; s/「控える sha」//g' | grep -F '控え'; then
+    fail "pull の箇条が、規則とは別に sha を控えると書いています（push として進めるときも控えてしまう）"
+  fi
+  # 控える sha は1か所の規則にまとめ、手順4・6はそれに従う（手順ごとに書くと、控え直しや片方だけ渡すことが起きる）
+  # 見出しの行から、箇条の終わり（2つ目の空行）まで
+  sha_rule="$(awk '/^控える sha/ { on = 1 } on && /^$/ && n++ > 0 { exit } on' <<<"$(step "$f" 1)")"
+  has "手順1の「控える sha」" "$sha_rule" '`merge` として進めるときだけ' '`push` として進めるときは' '手順2より前' '1回だけ' 'pull を実行する直前に' 'コミットした後で' \
+    '手順2の後に pull するとき' '控えない' 'そのまま渡す' '`--merged-from`' '`--pulled-from`' '控えていないものは付けない'
+  has "手順2" "$(step "$f" 2)" '「控える sha」'
+  has "手順6" "$(step "$f" 6)" '「控える sha」'
+  s4="$(step "$f" 4)"
+  has "手順4" "$s4" '「控える sha」' '--merged-from <merge の前の sha>' '--pulled-from <pull の前の sha>' '`push_commits.all`' '`push_commits.first_push`' '`main`' '`pull`' '`own`' '数え直さない'
+  # 取り直した unpulled が 1 以上なら、push の確認をせずに、pull するかの確認に戻る
+  has "手順4（unpulled）" "$(grep -F '`unpulled` が 1 以上なら' <<<"$s4")" 'push の確認はせずに' 'この pull の前の sha は控えない' '`push_commits` の `main` に入る'
+  # 範囲は SKILL.md のどこでも組み立てない（手順6の手元に残ったものも push_commits で示す）
+  if grep -nE 'git log --oneline [^`]*\.\.' "$f"; then
+    fail "コミットの範囲を、SKILL.md の文章で組み立てています（branch-status.sh の push_commits を使う）"
+  fi
+}
+
+# shellcheck disable=SC2016 # バッククォートは文書の文字で、展開させない
+@test "スキルと観点がコミットの一覧を出す git log には、署名の表示を止める --no-show-signature を付ける" {
+  # log.showSignature を有効にした利用者では、gpg の行が一覧に混ざる（#242 のレビュー）
+  root="$BATS_TEST_DIRNAME/../plugins/dev-workflow"
+  # 文書では、引数が続く git log（バッククォートの中でも、コードブロックの中でも。引数の無い `git log` は、
+  # コマンドの名前として挙げたもの）。引数は1行に書き、続きの行に分けない
+  if grep -rn --include='*.md' -E 'git( -[cC] [^ ]+| --[a-z-]+)* log [-<a-zA-Z]' "$root" | grep -v -e '--no-show-signature'; then
+    fail "スキルや観点の git log に --no-show-signature がありません"
+  fi
+  # スクリプトでは、コメントを除いた git log の呼び出し（git と log の間のオプションも許す。.bash も含める）
+  if grep -rn --include='*.sh' --include='*.bash' -E '\bgit( -[cC] [^ ]+| --[a-z-]+)* log\b' "$root" \
+    | grep -v -E '^[^:]+:[0-9]+: *#' | grep -v -e '--no-show-signature'; then
+    fail "スクリプトの git log に --no-show-signature がありません"
+  fi
 }
 
 @test "pr-create と task-finish は pr-respond に依存しない（使わなくてもマージから後片付けまで進める）" {
@@ -455,7 +538,7 @@ step() { awk -v n="$2" -v end="$3" 'on && ($0 ~ /^###? / || (end != "" && $0 ~ e
   f="$SKILLS/task-create/SKILL.md"
   frontmatter "$f" | grep -qF 'Issue の分け方・親子の構成を提案するときに使う' || fail "description に分け方の提案が書かれていません"
   # 相談のときの違いは1つの節にまとめ、手順の中に書き分けない（書き分けると、手順の間の継ぎ目が抜けるため）
-  consult="$(awk '$0 == "## 起票を頼まれていない相談で呼ばれたとき" { on = 1; next } on && /^## / { exit } on' "$f")"
+  consult="$(section "$f" "## 起票を頼まれていない相談で呼ばれたとき")"
   [ -n "$consult" ] || fail "相談で呼ばれたときの節がありません"
   grep -qF '手順1〜3は起票を頼まれたときと同じに進める' <<<"$consult" || fail "相談の節に、手順は起票と同じに進めることが書かれていません"
   grep -qF 'ラベルと説明を「起票する」ではなく「下書きする」と書く' <<<"$consult" || fail "相談の節に、選択肢の書き方がありません"
