@@ -60,15 +60,14 @@ target_set_up() {
 }
 
 # 対象のリポジトリの base_branch を求め、base_of に入れる。読めなければ main。gc_target・target_set_up の後（導入した
-# リポジトリのとき）に呼ぶ。1つのコマンドの中で同じリポジトリを何度も調べるので、対象（gc_root・gc_repo）ごとに覚えておく
-# （ユーザーの層の場所は、フックの中で変わらないので、最初に1回だけ求める）。
+# リポジトリのとき）に呼ぶ。1つのコマンドの中で同じリポジトリを何度も調べるので、対象（gc_root・gc_repo）ごとに覚えておく。
 # ルートが分かれば、そのリポジトリの設定（config.sh。導入したリポジトリなのでユーザーの層も合わせる）から読む。
 # ルートが分からなければ、HEAD にコミットされたチームの設定、ユーザーの層の順に読む（導入したものとして調べているので、
 # ユーザーの層も効かせる）。今のディレクトリのリポジトリの設定は、対象と違うことがあるので、代わりに読まない。
 # どの値も、git のブランチ名として使えなければ（dw_valid_base_branch）使わない。チームの設定に値があって使えなければ、
 # 個人の層の値（上書きやユーザーの層）は使わずに main を守る（チームが決めた値の代わりに、個人の値を守らない。
 # setup-repo.sh もその値で止まり、ルールセットを作らない）。合わせた設定の値が使えなければ、チームの設定の値を使う
-base_of="" base_of_key="" user_config="$(dw_user_dir)/config.json"
+base_of="" base_of_key="" user_config=""
 load_base_branch() {
   local base="" team key
   key="${gc_root}|${gc_repo}"
@@ -83,16 +82,23 @@ load_base_branch() {
     # 値が無いときだけユーザーの層を読む。値があれば（false などの文字列でない値も）、使えなくても main を守る
     if team="$(jq -sc "$DW_JQ_ONE_OBJECT | {base_branch}" <<<"$team" 2>/dev/null)"; then
       if [ "$team" = '{"base_branch":null}' ]; then
-        base="$(jq -r '.base_branch | strings' "$user_config" 2>/dev/null || true)"
+        read_user_base_branch
       else
         base="$( (dw_base_branch "$team") 2>/dev/null || true)"
       fi
     fi
   else
-    base="$(jq -r '.base_branch | strings' "$user_config" 2>/dev/null || true)"
+    read_user_base_branch
   fi
   dw_valid_base_branch "$base" || base=""
   base_of="${base:-main}" base_of_key="$key"
+}
+
+# ユーザーの層の base_branch を、呼んだ側の base に入れる。ほかの設定と同じく、JSON のオブジェクト1つとして読み
+# （DW_JQ_ONE_OBJECT）、読めなければ空にする。ユーザーの層の場所は、フックの中で変わらないので、初めて要るときに1回だけ求める
+read_user_base_branch() {
+  [ -n "$user_config" ] || user_config="$(dw_user_dir)/config.json"
+  base="$(jq -sr "$DW_JQ_ONE_OBJECT | .base_branch | strings" "$user_config" 2>/dev/null || true)"
 }
 
 # git push の引数を調べる（引数の読み方は gc_push_args）。使い方: check_push <引数>...

@@ -153,6 +153,9 @@ silent() {
   echo '{}' >"$TMP/sep/.claude/dev-workflow/config.json"
   git -C "$TMP/sep" commit -q -am none
   silent "cd $TMP && git --git-dir=$TMP/sep.git commit -m x"
+  # ユーザーの層も、JSON のオブジェクト1つとして読めなければ使わない（複数の値が並んでいても読まない）
+  echo '{"base_branch": "develop"}{}' >"$WORKFLOW_USER_DIR/config.json"
+  denied "main の上ではコミットしません" "cd $TMP && git --git-dir=$TMP/sep.git commit -m x"
 }
 
 @test "チームの設定の base_branch が使えなければ、個人の層が上書きしていても、その値ではなく main を守る" {
