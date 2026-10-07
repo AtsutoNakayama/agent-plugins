@@ -360,12 +360,18 @@ has() {
   # 控える sha が手順2の merge の前なので、pull で作った取り込みのコミットが自分のコミットに数えられていた。
   # 範囲を SKILL.md の文章で組み立てると、初回の push などで数え違える（#242）。分け方は branch-status.bats で確かめる
   f="$SKILLS/branch-update/SKILL.md"
-  # pull の前の sha は、pull の直前（未コミットの変更をコミットした後）に、merge として進めるときだけ控える
-  has "手順1の pull" "$(grep -F 'git pull --no-rebase' <<<"$(step "$f" 1)")" 'pull を実行する直前に' 'コミットした後で' 'pull の前の sha' '`push` として進めるときは'
+  # pull の前の sha は、pull の直前（未コミットの変更をコミットした後）に控える
+  has "手順1の pull" "$(grep -F 'git pull --no-rebase' <<<"$(step "$f" 1)")" 'pull を実行する直前に' 'コミットした後で' '「控える sha」'
+  # 控える sha は1か所の規則にまとめ、手順4・6はそれに従う（手順ごとに書くと、控え直しや片方だけ渡すことが起きる）
+  sha_rule="$(awk '/^控える sha/ { on = 1 } on && /^$/ && n++ > 1 { exit } on' <<<"$(step "$f" 1)")"
+  has "手順1の「控える sha」" "$sha_rule" '`merge` として進めるときだけ' '`push` として進めるときは' '手順2より前' '1回だけ' \
+    '手順2の後に pull するとき' '控えない' 'そのまま渡す' '`--merged-from`' '`--pulled-from`' '控えていないものは付けない'
+  has "手順2" "$(step "$f" 2)" '「控える sha」'
+  has "手順6" "$(step "$f" 6)" '「控える sha」'
   s4="$(step "$f" 4)"
-  has "手順4" "$s4" '--merged-from <手順2で控えた sha>' '--pulled-from <pull の前の sha>' '`push_commits.all`' '`push_commits.first_push`' '`main`' '`pull`' '`own`' '数え直さない'
+  has "手順4" "$s4" '「控える sha」' '--merged-from <merge の前の sha>' '--pulled-from <pull の前の sha>' '`push_commits.all`' '`push_commits.first_push`' '`main`' '`pull`' '`own`' '数え直さない'
   # 取り直した unpulled が 1 以上なら、push の確認をせずに、pull するかの確認に戻る
-  has "手順4（unpulled）" "$(grep -F '`unpulled` が 1 以上なら' <<<"$s4")" 'push の確認はせずに' '`push_commits` の `main` に入る'
+  has "手順4（unpulled）" "$(grep -F '`unpulled` が 1 以上なら' <<<"$s4")" 'push の確認はせずに' 'この pull の前の sha は控えない' '`push_commits` の `main` に入る'
   # 範囲は SKILL.md のどこでも組み立てない（手順6の手元に残ったものも push_commits で示す）
   if grep -nE 'git log --oneline [^`]*\.\.' "$f"; then
     fail "コミットの範囲を、SKILL.md の文章で組み立てています（branch-status.sh の push_commits を使う）"
