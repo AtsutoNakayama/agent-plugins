@@ -447,4 +447,75 @@ subjects() { jq -r --arg k "$1" '.push_commits[$k] | if . == null then "null" el
   assert_output --partial "コミットではありません"
   run_script branch-status.sh --merged-from
   assert_failure 64
+  run_script branch-status.sh --merged-from ""
+  assert_failure 64
+  assert_output --partial "--merged-from に値がありません"
+}
+
+@test "控えた sha の順番が違う（pull の前が merge の前の祖先でない・merge の前がブランチの祖先でない）と止まる" {
+  setup_branch
+  git push -q origin feat/17-x
+  push_from_elsewhere
+  advance_main 1
+  pulled_from="$(git rev-parse HEAD)"
+  git pull -q --no-rebase --no-edit origin feat/17-x
+  merged_from="$(git rev-parse HEAD)"
+  git fetch -q origin main
+  git merge -q --no-edit origin/main
+  # 入れ替えて渡した
+  run_script branch-status.sh --merged-from "$pulled_from" --pulled-from "$merged_from"
+  assert_failure 64
+  assert_output --partial "祖先ではありません"
+  # ブランチに無いコミットを merge の前として渡した
+  git switch -q -c side "$pulled_from^"
+  echo s >s.txt
+  git add s.txt
+  git commit -q -m side
+  side="$(git rev-parse HEAD)"
+  git switch -q feat/17-x
+  run_script branch-status.sh --merged-from "$side"
+  assert_failure 64
+  assert_output --partial "feat/17-x の祖先ではありません"
+}
+
+@test "署名を表示する設定（log.showSignature）でも、署名の検証の行をコミットに数えない" {
+  setup_branch
+  # 署名と検証をまねる偽の gpg。検証では、本物の gpg と同じく「gpg:」で始まる行を出す
+  cat >"$TMP/fake-gpg" <<'SH'
+#!/bin/sh
+case " $* " in
+  *" --verify "*) echo "gpg: Signature made (fake)" >&2; echo "[GNUPG:] GOODSIG 0 fake" >&"${3#--status-fd=}" 2>/dev/null; exit 0 ;;
+  *) cat >/dev/null; echo "[GNUPG:] SIG_CREATED " >&2
+     printf '%s\n' '-----BEGIN PGP SIGNATURE-----' '' 'ZmFrZQ==' '-----END PGP SIGNATURE-----' ;;
+esac
+SH
+  chmod +x "$TMP/fake-gpg"
+  git config gpg.program "$TMP/fake-gpg"
+  git config user.signingkey fake
+  echo signed >signed.txt
+  git add signed.txt
+  git commit -q -S -m "feat: signed"
+  git config log.showSignature true
+  run_status
+  assert_success
+  assert_equal "$(subjects all)" "feat: work,feat: signed"
+}
+
+@test "push で入るコミットが多くても（一覧が jq の引数の長さの上限を超えても）止まらない" {
+  setup_branch
+  # 件名の長いコミットを 2000 件、fast-import で一度に作る（一覧は 128 KiB を超える）
+  title="$(printf 'x%.0s' $(seq 1 100))"
+  {
+    parent="$(git rev-parse HEAD)"
+    for i in $(seq 1 2000); do
+      msg="feat: $i $title"
+      printf 'commit refs/heads/feat/17-x\nmark :%d\ncommitter t <t@t> 0 +0000\ndata %d\n%s\nfrom %s\n\n' "$i" "${#msg}" "$msg" "$parent"
+      parent=":$i"
+    done
+  } | git fast-import --quiet --force
+  git reset -q --hard feat/17-x
+  run_status --merged-from "$(git rev-parse HEAD)"
+  assert_success
+  assert_equal "$(jq '.push_commits.all | length' <<<"$output")" "2001"
+  assert_equal "$(jq '.push_commits.own | length' <<<"$output")" "2001"
 }

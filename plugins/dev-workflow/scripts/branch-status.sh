@@ -63,7 +63,7 @@ while [ $# -gt 0 ]; do
   case "$1" in
     -h | --help) usage; exit 0 ;;
     --merged-from | --pulled-from)
-      [ $# -ge 2 ] || dw_die "$1 に sha を指定してください" 64
+      [ $# -ge 2 ] && [ -n "$2" ] || dw_die "$1 に値がありません" 64
       if [ "$1" = --merged-from ]; then merged_from="$2"; else pulled_from="$2"; fi
       shift 2 ;;
     *) dw_die "不明な引数です: $1" 64 ;;
@@ -120,11 +120,6 @@ fi
 
 # push で入るコミットを、取り込みの前に控えた sha で分ける。どの組も基準（origin/<ブランチ>、初回は origin/<base>）に
 # 無いコミットだけを数えるので、pull で取り込んだ origin のコミットや、origin/<base> に既にある main のコミットは入らない
-# 使い方: commit_list <rev-list の引数>... → {sha, subject} の配列（JSON）
-commit_list() {
-  git -C "$repo_root" log --format='%h %s' "$@" -- \
-    | jq -R -s -c 'split("\n") | map(select(length > 0) | {sha: .[:index(" ")], subject: .[index(" ") + 1:]})'
-}
 # 使い方: commit_sha <名前> <sha> → コミットの完全な sha。コミットでなければ止まる
 commit_sha() {
   git -C "$repo_root" rev-parse -q --verify "$2^{commit}" 2>/dev/null || dw_die "$1 の ${2} はコミットではありません" 64
@@ -134,23 +129,36 @@ if [ "$unpushed" != null ]; then
   to="refs/remotes/origin/$branch" first_push=false
 fi
 head_ref="refs/heads/$branch"
-all="$(commit_list "$head_ref" "^$to")"
-main=null pull=null own=null
+m="" p=""
 if [ -n "$merged_from" ]; then
   m="$(commit_sha --merged-from "$merged_from")"
-  main="$(commit_list "$head_ref" "^$to" "^$m")"
-  if [ -n "$pulled_from" ]; then
-    p="$(commit_sha --pulled-from "$pulled_from")"
-    pull="$(commit_list "$m" "^$to" "^$p")"
-    own="$(commit_list "$p" "^$to")"
-  else
-    pull='[]'
-    own="$(commit_list "$m" "^$to")"
-  fi
+  git -C "$repo_root" merge-base --is-ancestor "$m" "$head_ref" \
+    || dw_die "--merged-from の ${merged_from} は、${branch} の祖先ではありません" 64
 fi
-push_commits="$(jq -n -c --arg to "${to#refs/remotes/}" --argjson first_push "$first_push" --argjson all "$all" \
-  --argjson main "$main" --argjson pull "$pull" --argjson own "$own" \
-  '{to: $to, first_push: $first_push, all: $all, main: $main, pull: $pull, own: $own}')"
+if [ -n "$pulled_from" ]; then
+  p="$(commit_sha --pulled-from "$pulled_from")"
+  git -C "$repo_root" merge-base --is-ancestor "$p" "$m" \
+    || dw_die "--pulled-from の ${pulled_from} は、--merged-from の ${merged_from} の祖先ではありません（順番が逆か、別のコミットです）" 64
+fi
+# 履歴は1回だけたどり、組は、控えた sha から親をたどって届くかで分ける（基準にあるコミットは一覧に無いので、たどらない）。
+# 一覧は長くなりうる（main のコミットを数千件取り込むなど）ので、jq には引数ではなく標準入力で渡す。
+# 署名を表示する設定（log.showSignature）でも、gpg の行が混ざらないようにする。区切りは件名に現れない \x1f
+push_commits="$(git -C "$repo_root" log --no-show-signature --format='%H%x1f%h%x1f%P%x1f%s' "$head_ref" "^$to" -- \
+  | jq -R -s -c --arg to "${to#refs/remotes/}" --argjson first_push "$first_push" --arg m "$m" --arg p "$p" '
+    split("\n") | map(select(length > 0) | split("\u001f")
+      | {full: .[0], sha: .[1], parents: (.[2] | split(" ") | map(select(. != ""))), subject: (.[3:] | join("\u001f"))}) as $c
+    | ($c | map({key: .full, value: .parents}) | from_entries) as $g
+    | def reach($s): if $s == "" then {} else
+        {seen: {}, stack: [$s]}
+        | until(.stack == []; .stack[-1] as $x | .stack |= .[:-1]
+            | if $g[$x] == null or .seen[$x] then . else .seen[$x] = true | .stack += $g[$x] end)
+        | .seen end;
+      def pick(f): map(select(f) | {sha, subject});
+      reach($m) as $rm | reach($p) as $rp
+      | {to: $to, first_push: $first_push, all: ($c | pick(true)),
+         main: (if $m == "" then null else $c | pick($rm[.full] | not) end),
+         pull: (if $m == "" then null elif $p == "" then [] else $c | pick($rm[.full] and ($rp[.full] | not)) end),
+         own: (if $m == "" then null elif $p == "" then $c | pick($rm[.full]) else $c | pick($rp[.full]) end)}')"
 
 # --head はブランチ名だけで探すので、fork の同じ名前のブランチからの PR を除く
 pr=null
@@ -197,4 +205,5 @@ status="$(jq -n --arg branch "$branch" --arg base "$base" --argjson behind "$beh
 
 # 次にすることの判断は、テストで組み合わせを確かめられるよう、入力の値だけで決める branch-plan.sh に任せる
 plan="$("$BASH" "$DW_SCRIPTS_DIR/branch-plan.sh" <<<"$status")"
-jq --argjson plan "$plan" --argjson push_commits "$push_commits" '. + {push_commits: $push_commits, plan: $plan}' <<<"$status"
+# push_commits は長くなりうるので、引数ではなく標準入力で渡す
+printf '%s\n' "$status" "$push_commits" "$plan" | jq -s '.[0] + {push_commits: .[1], plan: .[2]}'
