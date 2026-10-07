@@ -59,24 +59,30 @@ target_set_up() {
   gc_git cat-file -e "HEAD:.claude/dev-workflow/config.json"
 }
 
-# 対象のリポジトリの base_branch を出力する。読めなければ main。gc_target・target_set_up の後（導入したリポジトリのとき）に呼ぶ。
+# 対象のリポジトリの base_branch を求め、base_of に入れる。読めなければ main。gc_target・target_set_up の後（導入した
+# リポジトリのとき）に呼ぶ。1つのコマンドの中で同じリポジトリを何度も調べるので、対象（gc_root・gc_repo）ごとに覚えておく。
 # ルートが分かれば、そのリポジトリの設定（config.sh。導入したリポジトリなのでユーザーの層も合わせる）から読む。
 # ルートが分からなければ、HEAD にコミットされたチームの設定、ユーザーの層の順に読む（導入したものとして調べているので、
 # ユーザーの層も効かせる）。今のディレクトリのリポジトリの設定は、対象と違うことがあるので、代わりに読まない。
 # どの値も、git のブランチ名として使えなければ（dw_valid_base_branch）使わない。合わせた設定の値が使えなければ、
-# 個人の層の誤りで守るブランチが main に変わらないよう、チームの設定の値を使う
-base_branch() {
-  local base=""
+# 個人の層の誤りで守るブランチが main に変わらないよう、チームの設定の値を使う。チームの設定に値があって使えなければ、
+# ユーザーの層には進まずに main を守る（チームが決めた値の代わりに、個人の値を守らない）
+base_of="" base_of_key=""
+load_base_branch() {
+  local base="" team
+  [ "$base_of_key" != "${gc_root}|${gc_repo}" ] || return 0
   if [ -n "$gc_root" ]; then
     base="$( (cd "$gc_root" && WORKFLOW_REPO_ROOT="$gc_root" "$BASH" "$DW_SCRIPTS_DIR/config.sh" '.base_branch | strings') 2>/dev/null || true)"
     dw_valid_base_branch "$base" \
-      || base="$(dw_team_base_branch "$gc_root/.claude/dev-workflow/config.json" 2>/dev/null || true)"
+      || base="$( (dw_team_base_branch "$gc_root/.claude/dev-workflow/config.json") 2>/dev/null || true)"
+  elif [ -n "$gc_repo" ] && team="$(gc_git show "HEAD:.claude/dev-workflow/config.json")" \
+    && [ "$(jq -r '.base_branch // null | type' <<<"$team" 2>/dev/null)" != null ]; then
+    base="$(jq -r '.base_branch | strings' <<<"$team" 2>/dev/null || true)"
   else
-    [ -z "$gc_repo" ] || base="$(gc_git show "HEAD:.claude/dev-workflow/config.json" | jq -r '.base_branch | strings' 2>/dev/null || true)"
-    dw_valid_base_branch "$base" || base="$(jq -r '.base_branch | strings' "$(dw_user_dir)/config.json" 2>/dev/null || true)"
-    dw_valid_base_branch "$base" || base=""
+    base="$(jq -r '.base_branch | strings' "$(dw_user_dir)/config.json" 2>/dev/null || true)"
   fi
-  printf '%s\n' "${base:-main}"
+  dw_valid_base_branch "$base" || base=""
+  base_of="${base:-main}" base_of_key="${gc_root}|${gc_repo}"
 }
 
 # git push の引数を調べる（引数の読み方は gc_push_args）。使い方: check_push <引数>...
@@ -86,7 +92,8 @@ check_push() {
   ! $gc_push_force || deny "強制 push（--force / -f / +<refspec> / --mirror）はしません。必要なら --force-with-lease を使ってください"
 
   current="$(gc_branch)"
-  base="$(base_branch)"
+  load_base_branch
+  base="$base_of"
   if [ "${#gc_push_refs[@]}" -eq 0 ]; then
     [ "$current" != "$base" ] \
       || deny "${base} へは push しません。作業用のブランチ（task-start）で PR を作ってください"
@@ -119,7 +126,8 @@ check_branch_name() {
   esac
   # 対象のルートが分からなければ、どの規約で確かめるか分からないので確かめない（警告だけなので、止める側に倒さない）
   [ -n "$gc_root" ] || return 0
-  [ "$name" != "$(base_branch)" ] || return 0
+  load_base_branch
+  [ "$name" != "$base_of" ] || return 0
   gc_git show-ref --verify --quiet "refs/heads/$name" && return 0
   [ -z "$(gc_git for-each-ref --format=x "refs/remotes/*/$name" || true)" ] || return 0
   # 規約に合わないときだけ終了コード 1（設定を読めないなどは 2）
@@ -145,7 +153,8 @@ check_git() {
 
   case "$sub" in
     commit)
-      base="$(base_branch)"
+      load_base_branch
+      base="$base_of"
       [ "$(gc_branch)" != "$base" ] \
         || deny "${base} の上ではコミットしません。作業用のブランチを作ってください（task-start）"
       ;;
