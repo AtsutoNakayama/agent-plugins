@@ -49,6 +49,15 @@ conflict_main() {
   git -C "$TMP/other" push -q origin main
 }
 
+# origin の feat/17-x に、別の場所からコミットを1つ push する（手元に無い origin のコミット）
+push_from_elsewhere() {
+  git clone -q -b feat/17-x "$TMP/origin.git" "$TMP/other2"
+  echo b >"$TMP/other2/b.txt"
+  git -C "$TMP/other2" add b.txt
+  git -C "$TMP/other2" commit -q -m "feat: b"
+  git -C "$TMP/other2" push -q origin feat/17-x
+}
+
 run_status() {
   run_script branch-status.sh "$@"
   printf '%s\n' "$output"
@@ -120,11 +129,7 @@ run_status() {
   git commit -q -m "feat: a"
   run_status
   assert_equal "$(jq -c '[.unpushed, .unpulled]' <<<"$output")" "[1,0]"
-  git clone -q -b feat/17-x "$TMP/origin.git" "$TMP/other2"
-  echo b >"$TMP/other2/b.txt"
-  git -C "$TMP/other2" add b.txt
-  git -C "$TMP/other2" commit -q -m "feat: b"
-  git -C "$TMP/other2" push -q origin feat/17-x
+  push_from_elsewhere
   run_status
   assert_equal "$(jq -c '[.unpushed, .unpulled]' <<<"$output")" "[1,1]"
 }
@@ -361,4 +366,196 @@ queue_removed_fixture() {
   assert_success
   # キューを使い、main と衝突しないので取り込まず、並んでいることを案内する（最新の main を求められたら、遅れているので取り込む）
   assert_equal "$(jq -c .plan <<<"$output")" '{"action":"none","reason":"no_conflict","queue":"queued","fallback":"merge"}'
+}
+
+# 使い方: subjects <組の名前> → push_commits の組の件名を、古い順に「,」でつないで出す
+subjects() { jq -r --arg k "$1" '.push_commits[$k] | if . == null then "null" else reverse | map(.subject) | join(",") end' <<<"$output"; }
+
+@test "push で入るコミットを、push_commits.all に出す（取り込みの前の sha が無ければ、組には分けない）" {
+  setup_branch
+  run_status
+  assert_success
+  assert_equal "$(jq -c '.push_commits | [.to, .first_push]' <<<"$output")" '["origin/main",true]'
+  assert_equal "$(subjects all)" "feat: work"
+  assert_equal "$(jq -c '.push_commits | [.main, .pull, .own]' <<<"$output")" "[null,null,null]"
+  [[ "$(jq -r '.push_commits.all[0].sha' <<<"$output")" =~ ^[0-9a-f]{7,}$ ]] || fail "sha が短い形の sha ではありません"
+}
+
+@test "初回の push では、origin/main に既にある main のコミットを、main の取り込みに数えない（#242）" {
+  setup_branch
+  advance_main 2
+  merged_from="$(git rev-parse HEAD)"
+  git fetch -q origin main
+  git merge -q --no-edit origin/main
+  run_status --merged-from "$merged_from"
+  assert_success
+  assert_equal "$(jq -r '.push_commits.first_push' <<<"$output")" "true"
+  assert_equal "$(subjects main)" "Merge remote-tracking branch 'origin/main' into feat/17-x"
+  assert_equal "$(subjects pull)" ""
+  assert_equal "$(subjects own)" "feat: work"
+  assert_equal "$(jq '.push_commits.all | length' <<<"$output")" "2"
+}
+
+@test "pull で作った取り込みのコミットを自分のコミットに数えず、pull で取り込んだ origin のコミットも数えない（#242）" {
+  setup_branch
+  git push -q origin feat/17-x
+  push_from_elsewhere
+  advance_main 1
+  echo a >a.txt
+  git add a.txt
+  git commit -q -m "feat: a"
+  pulled_from="$(git rev-parse HEAD)"
+  git pull -q --no-rebase --no-edit origin feat/17-x
+  merged_from="$(git rev-parse HEAD)"
+  git fetch -q origin main
+  git merge -q --no-edit origin/main
+  run_status --merged-from "$merged_from" --pulled-from "$pulled_from"
+  assert_success
+  assert_equal "$(jq -c '.push_commits | [.to, .first_push]' <<<"$output")" '["origin/feat/17-x",false]'
+  assert_equal "$(subjects main)" "main 1,Merge remote-tracking branch 'origin/main' into feat/17-x"
+  assert_equal "$(subjects pull)" "Merge branch 'feat/17-x' of $TMP/origin into feat/17-x"
+  assert_equal "$(subjects own)" "feat: a"
+  # 3つの組を合わせると、push で入るコミットの全部になる（origin に既にある feat: b・feat: work は入らない）
+  assert_equal "$(jq '.push_commits | (.main + .pull + .own | map(.sha) | sort) == (.all | map(.sha) | sort)' <<<"$output")" "true"
+  assert_equal "$(jq '.push_commits.all | length' <<<"$output")" "4"
+}
+
+@test "pull が fast-forward で済んだら、pull の取り込みは空" {
+  setup_branch
+  git push -q origin feat/17-x
+  push_from_elsewhere
+  advance_main 1
+  pulled_from="$(git rev-parse HEAD)"
+  git pull -q --no-rebase --no-edit origin feat/17-x
+  merged_from="$(git rev-parse HEAD)"
+  git fetch -q origin main
+  git merge -q --no-edit origin/main
+  run_status --merged-from "$merged_from" --pulled-from "$pulled_from"
+  assert_success
+  assert_equal "$(subjects pull)" ""
+  assert_equal "$(subjects own)" ""
+  assert_equal "$(subjects main)" "main 1,Merge remote-tracking branch 'origin/main' into feat/17-x"
+}
+
+@test "コミットでない sha や空の値を渡すと止まる" {
+  setup_branch
+  run_script branch-status.sh --merged-from 0000000000000000000000000000000000000000
+  assert_failure 64
+  assert_output --partial "コミットではありません"
+  run_script branch-status.sh --merged-from
+  assert_failure 64
+  run_script branch-status.sh --merged-from ""
+  assert_failure 64
+  assert_output --partial "--merged-from に値（コミットの sha）がありません"
+}
+
+@test "pull の後、merge の前に止めたとき（--pulled-from だけ）は、merge の前を HEAD とみなして分ける" {
+  setup_branch
+  git push -q origin feat/17-x
+  push_from_elsewhere
+  echo a >a.txt
+  git add a.txt
+  git commit -q -m "feat: a"
+  pulled_from="$(git rev-parse HEAD)"
+  git pull -q --no-rebase --no-edit origin feat/17-x
+  run_status --pulled-from "$pulled_from"
+  assert_success
+  assert_equal "$(subjects main)" ""
+  assert_equal "$(subjects pull)" "Merge branch 'feat/17-x' of $TMP/origin into feat/17-x"
+  assert_equal "$(subjects own)" "feat: a"
+  # pull をやめた（取り込む前に戻した）ときも止まらない
+  git reset -q --hard "$pulled_from"
+  run_status --pulled-from "$pulled_from"
+  assert_success
+  assert_equal "$(subjects pull)" ""
+  assert_equal "$(subjects own)" "feat: a"
+}
+
+@test "控えた sha の順番が違う（pull の前が merge の前の祖先でない・merge の前がブランチの祖先でない）と止まる" {
+  setup_branch
+  git push -q origin feat/17-x
+  push_from_elsewhere
+  advance_main 1
+  pulled_from="$(git rev-parse HEAD)"
+  git pull -q --no-rebase --no-edit origin feat/17-x
+  merged_from="$(git rev-parse HEAD)"
+  git fetch -q origin main
+  git merge -q --no-edit origin/main
+  # 入れ替えて渡した
+  run_script branch-status.sh --merged-from "$pulled_from" --pulled-from "$merged_from"
+  assert_failure 64
+  assert_output --partial "祖先ではありません"
+  # ブランチに無いコミットを merge の前として渡した
+  git switch -q -c side "$pulled_from^"
+  echo s >s.txt
+  git add s.txt
+  git commit -q -m side
+  side="$(git rev-parse HEAD)"
+  git switch -q feat/17-x
+  run_script branch-status.sh --merged-from "$side"
+  assert_failure 64
+  assert_output --partial "feat/17-x の祖先ではありません"
+}
+
+@test "署名を表示する設定（log.showSignature）でも、署名の検証の行をコミットに数えない" {
+  setup_branch
+  use_fake_gpg
+  echo signed >signed.txt
+  git add signed.txt
+  git commit -q -S -m "feat: signed"
+  git config log.showSignature true
+  run_status
+  assert_success
+  assert_equal "$(subjects all)" "feat: work,feat: signed"
+}
+
+@test "push で入るコミットが多くても（一覧が jq の引数の長さの上限を超えても）止まらない" {
+  setup_branch
+  # 件名の長いコミットを 2000 件作る（一覧は 128 KiB を超える）
+  make_commits feat/17-x 2000
+  git reset -q --hard feat/17-x
+  run_status --merged-from "$(git rev-parse HEAD)"
+  assert_success
+  assert_equal "$(jq '.push_commits.all | length' <<<"$output")" "2001"
+  assert_equal "$(jq '.push_commits.own | length' <<<"$output")" "2001"
+}
+
+@test "--pulled-from だけで、ブランチの祖先でない sha を渡すと止まる" {
+  setup_branch
+  git switch -q -c side main
+  echo s >s.txt
+  git add s.txt
+  git commit -q -m side
+  side="$(git rev-parse HEAD)"
+  git switch -q feat/17-x
+  run_script branch-status.sh --pulled-from "$side"
+  assert_failure 64
+  assert_output --partial "--merged-from（無ければ feat/17-x）の祖先ではありません"
+}
+
+@test "push で入るコミットを調べる git が失敗したら、空の一覧で組を誤らずに止まる" {
+  setup_branch
+  advance_main 1
+  merged_from="$(git rev-parse HEAD)"
+  git fetch -q origin main
+  git merge -q --no-edit origin/main
+  # 一覧と届くコミットを調べる git（log と、--count の無い rev-list）だけを失敗させる
+  make_failing_git
+  PATH="$TMP/failgit:$PATH" FAIL_GIT='* rev-list [!-]*' run_script branch-status.sh --merged-from "$merged_from"
+  assert_failure 1
+  assert_output --partial "push で入るコミットを調べられませんでした"
+  PATH="$TMP/failgit:$PATH" FAIL_GIT='* log --no-show-signature *' run_script branch-status.sh
+  assert_failure 1
+  assert_output --partial "push で入るコミットを調べられませんでした"
+  # 失敗させなければ通る（偽の git がほかの呼び出しを邪魔していない）
+  PATH="$TMP/failgit:$PATH" FAIL_GIT="" run_script branch-status.sh --merged-from "$merged_from"
+  assert_success
+}
+
+@test "未コミットの変更を調べる git status が失敗したら、変更が無いとみなさずに止まる" {
+  setup_branch
+  make_failing_git
+  PATH="$TMP/failgit:$PATH" FAIL_GIT='* status --porcelain *' run_script branch-status.sh
+  assert_failure 1
+  assert_output --partial "未コミットの変更を調べられませんでした"
 }
