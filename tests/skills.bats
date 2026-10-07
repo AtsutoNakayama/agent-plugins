@@ -19,7 +19,7 @@ section() { awk -v h="$2" '$0 == h { on = 1; next } on && /^## / { exit } on' "$
 
 # 使い方: has <名前> <本文> <語>... → 本文にどの語もあること（固定の文字列として探す）
 has() {
-  local name="$1" text="$2"; shift 2
+  local name="$1" text="$2" term; shift 2
   [ -n "$text" ] || fail "${name}がありません"
   for term in "$@"; do
     grep -qF -e "$term" <<<"$text" || fail "${name}に「${term}」がありません"
@@ -502,7 +502,7 @@ has() {
   f="$SKILLS/task-create/SKILL.md"
   frontmatter "$f" | grep -qF 'Issue の分け方・親子の構成を提案するときに使う' || fail "description に分け方の提案が書かれていません"
   # 相談のときの違いは1つの節にまとめ、手順の中に書き分けない（書き分けると、手順の間の継ぎ目が抜けるため）
-  consult="$(awk '$0 == "## 起票を頼まれていない相談で呼ばれたとき" { on = 1; next } on && /^## / { exit } on' "$f")"
+  consult="$(section "$f" "## 起票を頼まれていない相談で呼ばれたとき")"
   [ -n "$consult" ] || fail "相談で呼ばれたときの節がありません"
   grep -qF '手順1〜3は起票を頼まれたときと同じに進める' <<<"$consult" || fail "相談の節に、手順は起票と同じに進めることが書かれていません"
   grep -qF 'ラベルと説明を「起票する」ではなく「下書きする」と書く' <<<"$consult" || fail "相談の節に、選択肢の書き方がありません"
