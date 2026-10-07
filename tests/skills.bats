@@ -348,16 +348,17 @@ has() {
 }
 
 # shellcheck disable=SC2016 # バッククォートはスキルの本文の文字で、展開させない
-@test "branch-update は、push の前の確認で、pull で作った取り込みのコミットを自分のコミットに数えず、origin に既にあるコミットも数えない" {
-  # 控える sha が手順2の merge の前なので、pull で作った取り込みのコミットが自分のコミットに数えられていた（#242）
+@test "branch-update は、push の前の確認で、push で入るコミットの分け方を、branch-status.sh の push_commits に任せる" {
+  # 控える sha が手順2の merge の前なので、pull で作った取り込みのコミットが自分のコミットに数えられていた。
+  # 範囲を SKILL.md の文章で組み立てると、初回の push などで数え違える（#242）。分け方は branch-status.bats で確かめる
   f="$SKILLS/branch-update/SKILL.md"
-  # pull の前の sha を控え、push で入るコミットを main の取り込み・pull の取り込み・自分のコミットに分ける
-  has "手順1の pull" "$(grep -F 'git pull --no-rebase' <<<"$(step "$f" 1)")" 'pull の前の sha'
+  # pull の前の sha は、pull の直前（未コミットの変更をコミットした後）に、merge として進めるときだけ控える
+  has "手順1の pull" "$(grep -F 'git pull --no-rebase' <<<"$(step "$f" 1)")" 'pull を実行する直前に' 'コミットした後で' 'pull の前の sha' '`push` として進めるときは'
   s4="$(step "$f" 4)"
-  has "手順4" "$s4" 'origin のブランチに既にあるコミットは' '数えない'
-  has "手順4の main の取り込み" "$(grep -e '^ *- main の取り込み：' <<<"$s4")" '<手順2で控えた sha>..HEAD'
-  has "手順4の pull の取り込み" "$(grep -e '^ *- pull の取り込み：' <<<"$s4")" 'origin/<ブランチ>..<手順2で控えた sha> ^<pull の前の sha>'
-  has "手順4の自分のコミット" "$(grep -e '^ *- 自分のコミット：' <<<"$s4")" 'origin/<ブランチ>..<pull の前の sha>'
+  has "手順4" "$s4" '--merged-from <手順2で控えた sha>' '--pulled-from <pull の前の sha>' '`push_commits.all`' '`push_commits.first_push`' '`main`' '`pull`' '`own`' '数え直さない'
+  if grep -E 'git log --oneline [^`]*\.\.' <<<"$s4"; then
+    fail "手順4で、push で入るコミットの範囲を、SKILL.md の文章で組み立てています（branch-status.sh の push_commits を使う）"
+  fi
 }
 
 @test "pr-create と task-finish は pr-respond に依存しない（使わなくてもマージから後片付けまで進める）" {

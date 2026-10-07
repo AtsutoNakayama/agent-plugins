@@ -2,7 +2,11 @@
 # 今のブランチ（作業用のブランチ）が、マージ先のブランチ（base_branch）より遅れているかを調べる。
 # 何も変更しない（fetch だけ行う）。取り込む作業は今のブランチに対して行うので、調べるのも今のブランチだけにする。
 #
-# 使い方: branch-status.sh
+# 使い方: branch-status.sh [--merged-from <sha>] [--pulled-from <sha>]
+#   --merged-from <sha>   origin/<base> を取り込む前（branch-update の手順2の merge の前）の HEAD。
+#                         付けると、push_commits の main・pull・own に、push で入るコミットを分けて出す
+#   --pulled-from <sha>   origin/<ブランチ> を取り込む前（branch-update の取り込む前の確認の pull の前）の HEAD。
+#                         --merged-from と一緒に使い、pull で作った取り込みのコミットを自分のコミットと分ける
 #
 # 出力（JSON）:
 #   branch, base          今のブランチと、取り込み先（base_branch）
@@ -34,6 +38,15 @@
 #                         すぐにキューから外れる。removed は、PR がキューから外れたままのときの、外れた理由と時刻（{reason, at}。
 #                         reason は GitHub の値で、衝突なら merge_conflict）。外れた後にキューへ入れ直していれば null。
 #                         外れた後に push したかは見ない（理由に対応済みかは分からない）。取得できなければ merge_queue は null になる
+#   push_commits          push で origin に入るコミット（どれも {sha, subject} の配列。新しい順）
+#                           to       数える基準。origin にブランチがあれば origin/<ブランチ>、無ければ（初回の push）origin/<base>。
+#                                    どの組も、この基準に無いコミットだけを数える（origin に既にあるコミットは数えない）
+#                           first_push  origin にブランチが無い（push でブランチが新しく作られる）か
+#                           all      push で入るコミットの全部
+#                           main     --merged-from より後のコミット（取り込んだ main のコミットと、その後に直したコミット）
+#                           pull     pull が作った取り込みのコミット（--pulled-from と --merged-from の間。fast-forward なら空）
+#                           own      取り込む前から手元にあった、push していない自分のコミット
+#                         main・pull・own は、--merged-from が無ければ null（--pulled-from が無ければ pull は空）
 #   plan                  branch-update が次にすること（action・reason・queue・fallback）。上の値から branch-plan.sh が決める。
 #                         項目の意味と判断の表は、branch-plan.sh --help を参照
 set -euo pipefail
@@ -45,12 +58,18 @@ dw_require jq git
 # macOS の BSD sed が日本語で失敗しないよう、バイト列として扱わせる
 usage() { LC_ALL=C sed -n '2,/^[^#]/{/^[^#]/d;s/^# \{0,1\}//;p;}' "$0"; }
 
+merged_from="" pulled_from=""
 while [ $# -gt 0 ]; do
   case "$1" in
     -h | --help) usage; exit 0 ;;
+    --merged-from | --pulled-from)
+      [ $# -ge 2 ] || dw_die "$1 に sha を指定してください" 64
+      if [ "$1" = --merged-from ]; then merged_from="$2"; else pulled_from="$2"; fi
+      shift 2 ;;
     *) dw_die "不明な引数です: $1" 64 ;;
   esac
 done
+[ -z "$pulled_from" ] || [ -n "$merged_from" ] || dw_die "--pulled-from は --merged-from と一緒に指定してください" 64
 
 repo_root="$(dw_repo_root)" || dw_die "リポジトリの中で実行してください" 64
 config="$("$BASH" "$DW_SCRIPTS_DIR/config.sh")"
@@ -99,6 +118,40 @@ if dw_remote_has_branch "$repo_root" "$branch"; then
   [ "$pushed_behind" -eq 0 ] || pushed_conflicts="$(merge_conflicts "refs/remotes/origin/$branch" "$ref")"
 fi
 
+# push で入るコミットを、取り込みの前に控えた sha で分ける。どの組も基準（origin/<ブランチ>、初回は origin/<base>）に
+# 無いコミットだけを数えるので、pull で取り込んだ origin のコミットや、origin/<base> に既にある main のコミットは入らない
+# 使い方: commit_list <rev-list の引数>... → {sha, subject} の配列（JSON）
+commit_list() {
+  git -C "$repo_root" log --format='%h %s' "$@" -- \
+    | jq -R -s -c 'split("\n") | map(select(length > 0) | {sha: .[:index(" ")], subject: .[index(" ") + 1:]})'
+}
+# 使い方: commit_sha <名前> <sha> → コミットの完全な sha。コミットでなければ止まる
+commit_sha() {
+  git -C "$repo_root" rev-parse -q --verify "$2^{commit}" 2>/dev/null || dw_die "$1 の ${2} はコミットではありません" 64
+}
+to="$ref" first_push=true
+if [ "$unpushed" != null ]; then
+  to="refs/remotes/origin/$branch" first_push=false
+fi
+head_ref="refs/heads/$branch"
+all="$(commit_list "$head_ref" "^$to")"
+main=null pull=null own=null
+if [ -n "$merged_from" ]; then
+  m="$(commit_sha --merged-from "$merged_from")"
+  main="$(commit_list "$head_ref" "^$to" "^$m")"
+  if [ -n "$pulled_from" ]; then
+    p="$(commit_sha --pulled-from "$pulled_from")"
+    pull="$(commit_list "$m" "^$to" "^$p")"
+    own="$(commit_list "$p" "^$to")"
+  else
+    pull='[]'
+    own="$(commit_list "$m" "^$to")"
+  fi
+fi
+push_commits="$(jq -n -c --arg to "${to#refs/remotes/}" --argjson first_push "$first_push" --argjson all "$all" \
+  --argjson main "$main" --argjson pull "$pull" --argjson own "$own" \
+  '{to: $to, first_push: $first_push, all: $all, main: $main, pull: $pull, own: $own}')"
+
 # --head はブランチ名だけで探すので、fork の同じ名前のブランチからの PR を除く
 pr=null
 if command -v gh >/dev/null 2>&1 \
@@ -144,4 +197,4 @@ status="$(jq -n --arg branch "$branch" --arg base "$base" --argjson behind "$beh
 
 # 次にすることの判断は、テストで組み合わせを確かめられるよう、入力の値だけで決める branch-plan.sh に任せる
 plan="$("$BASH" "$DW_SCRIPTS_DIR/branch-plan.sh" <<<"$status")"
-jq --argjson plan "$plan" '. + {plan: $plan}' <<<"$status"
+jq --argjson plan "$plan" --argjson push_commits "$push_commits" '. + {push_commits: $push_commits, plan: $plan}' <<<"$status"

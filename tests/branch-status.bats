@@ -362,3 +362,93 @@ queue_removed_fixture() {
   # キューを使い、main と衝突しないので取り込まず、並んでいることを案内する（最新の main を求められたら、遅れているので取り込む）
   assert_equal "$(jq -c .plan <<<"$output")" '{"action":"none","reason":"no_conflict","queue":"queued","fallback":"merge"}'
 }
+
+# origin の feat/17-x に、別の場所からコミットを1つ push する（手元に無い origin のコミット）
+push_from_elsewhere() {
+  git clone -q -b feat/17-x "$TMP/origin.git" "$TMP/other2"
+  echo b >"$TMP/other2/b.txt"
+  git -C "$TMP/other2" add b.txt
+  git -C "$TMP/other2" commit -q -m "feat: b"
+  git -C "$TMP/other2" push -q origin feat/17-x
+}
+
+# 使い方: subjects <組の名前> → push_commits の組の件名を、古い順に「,」でつないで出す
+subjects() { jq -r --arg k "$1" '.push_commits[$k] | if . == null then "null" else reverse | map(.subject) | join(",") end' <<<"$output"; }
+
+@test "push で入るコミットを、push_commits.all に出す（取り込みの前の sha が無ければ、組には分けない）" {
+  setup_branch
+  run_status
+  assert_success
+  assert_equal "$(jq -c '.push_commits | [.to, .first_push]' <<<"$output")" '["origin/main",true]'
+  assert_equal "$(subjects all)" "feat: work"
+  assert_equal "$(jq -c '.push_commits | [.main, .pull, .own]' <<<"$output")" "[null,null,null]"
+  [[ "$(jq -r '.push_commits.all[0].sha' <<<"$output")" =~ ^[0-9a-f]{7,}$ ]] || fail "sha が短い形の sha ではありません"
+}
+
+@test "初回の push では、origin/main に既にある main のコミットを、main の取り込みに数えない（#242）" {
+  setup_branch
+  advance_main 2
+  merged_from="$(git rev-parse HEAD)"
+  git fetch -q origin main
+  git merge -q --no-edit origin/main
+  run_status --merged-from "$merged_from"
+  assert_success
+  assert_equal "$(jq -r '.push_commits.first_push' <<<"$output")" "true"
+  assert_equal "$(subjects main)" "Merge remote-tracking branch 'origin/main' into feat/17-x"
+  assert_equal "$(subjects pull)" ""
+  assert_equal "$(subjects own)" "feat: work"
+  assert_equal "$(jq '.push_commits.all | length' <<<"$output")" "2"
+}
+
+@test "pull で作った取り込みのコミットを自分のコミットに数えず、pull で取り込んだ origin のコミットも数えない（#242）" {
+  setup_branch
+  git push -q origin feat/17-x
+  push_from_elsewhere
+  advance_main 1
+  echo a >a.txt
+  git add a.txt
+  git commit -q -m "feat: a"
+  pulled_from="$(git rev-parse HEAD)"
+  git pull -q --no-rebase --no-edit origin feat/17-x
+  merged_from="$(git rev-parse HEAD)"
+  git fetch -q origin main
+  git merge -q --no-edit origin/main
+  run_status --merged-from "$merged_from" --pulled-from "$pulled_from"
+  assert_success
+  assert_equal "$(jq -c '.push_commits | [.to, .first_push]' <<<"$output")" '["origin/feat/17-x",false]'
+  assert_equal "$(subjects main)" "main 1,Merge remote-tracking branch 'origin/main' into feat/17-x"
+  assert_equal "$(subjects pull)" "Merge branch 'feat/17-x' of $TMP/origin into feat/17-x"
+  assert_equal "$(subjects own)" "feat: a"
+  # 3つの組を合わせると、push で入るコミットの全部になる（origin に既にある feat: b・feat: work は入らない）
+  assert_equal "$(jq '.push_commits | (.main + .pull + .own | map(.sha) | sort) == (.all | map(.sha) | sort)' <<<"$output")" "true"
+  assert_equal "$(jq '.push_commits.all | length' <<<"$output")" "4"
+}
+
+@test "pull が fast-forward で済んだら、pull の取り込みは空" {
+  setup_branch
+  git push -q origin feat/17-x
+  push_from_elsewhere
+  advance_main 1
+  pulled_from="$(git rev-parse HEAD)"
+  git pull -q --no-rebase --no-edit origin feat/17-x
+  merged_from="$(git rev-parse HEAD)"
+  git fetch -q origin main
+  git merge -q --no-edit origin/main
+  run_status --merged-from "$merged_from" --pulled-from "$pulled_from"
+  assert_success
+  assert_equal "$(subjects pull)" ""
+  assert_equal "$(subjects own)" ""
+  assert_equal "$(subjects main)" "main 1,Merge remote-tracking branch 'origin/main' into feat/17-x"
+}
+
+@test "--pulled-from だけ、またはコミットでない sha を渡すと止まる" {
+  setup_branch
+  run_script branch-status.sh --pulled-from HEAD
+  assert_failure 64
+  assert_output --partial "--merged-from と一緒に"
+  run_script branch-status.sh --merged-from 0000000000000000000000000000000000000000
+  assert_failure 64
+  assert_output --partial "コミットではありません"
+  run_script branch-status.sh --merged-from
+  assert_failure 64
+}

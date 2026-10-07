@@ -11,7 +11,7 @@ main が進んだ PR は、最新の main を取り込んで CI が通り直る�
 
 スクリプト（JSON を出力する）:
 
-- `${CLAUDE_PLUGIN_ROOT}/scripts/branch-status.sh`：origin から `base_branch` を取得し、ブランチの遅れ（`behind`）・先行（`ahead`）、取り込むと衝突するか（`conflicts`。手元で確かめる）、追跡しているファイルの未コミットの変更（`dirty`。未追跡のファイルは除く）、origin のブランチとのずれ（`unpushed`・`unpulled`）、push 済みのブランチの遅れ（`pushed_behind`）と衝突（`pushed_conflicts`）、開いている PR のマージ状態（`pr.merge_state`）とマージキューの状態（`pr.merge_queue`）を調べ、次にすること（`plan`）を出す。何も変更しない（`--help` で使い方）
+- `${CLAUDE_PLUGIN_ROOT}/scripts/branch-status.sh`：origin から `base_branch` を取得し、ブランチの遅れ（`behind`）・先行（`ahead`）、取り込むと衝突するか（`conflicts`。手元で確かめる）、追跡しているファイルの未コミットの変更（`dirty`。未追跡のファイルは除く）、origin のブランチとのずれ（`unpushed`・`unpulled`）、push 済みのブランチの遅れ（`pushed_behind`）と衝突（`pushed_conflicts`）、開いている PR のマージ状態（`pr.merge_state`）とマージキューの状態（`pr.merge_queue`）、push で origin に入るコミット（`push_commits`。取り込む前に控えた sha を渡すと、main の取り込み・pull の取り込み・自分のコミットに分ける）を調べ、次にすること（`plan`）を出す。何も変更しない（`--help` で使い方）
 - `${CLAUDE_PLUGIN_ROOT}/scripts/branch-plan.sh`：`branch-status.sh` の出力から、次にすること（`plan` の `action`・`reason`・`queue`・`fallback`）を決める。`branch-status.sh` が中で使うので、直接は呼ばない。判断の表は `--help` にある
 
 ## 手順
@@ -48,7 +48,7 @@ main が進んだ PR は、最新の main を取り込んで CI が通り直る�
 取り込む前の確認（`merge`・`push` のとき）:
 
 - `dirty` が true なら（未追跡のファイルは数えない）、merge の前にコミットするか、ユーザーに片付けてもらう（取り込みの結果と混ざらないようにする）
-- `unpulled` が 1 以上なら、origin のブランチに手元に無いコミットがあり、push が拒否される。取り込む前に、そのコミットを取り込むか（`git pull --no-rebase`）ユーザーに確かめる。取り込むなら、先に `git rev-parse HEAD` で pull の前の sha を控える（手順4で、pull で作った取り込みのコミットを、自分のコミットと分けるため）。取り込んで衝突したら、下の「衝突の直し方の確認」に従って直す
+- `unpulled` が 1 以上なら、origin のブランチに手元に無いコミットがあり、push が拒否される。取り込む前に、そのコミットを取り込むか（`git pull --no-rebase`）ユーザーに確かめる。取り込むなら、`merge` として進めるときは、pull を実行する直前に（未コミットの変更をコミットした後で）`git rev-parse HEAD` で pull の前の sha を控える（手順4で、pull で作った取り込みのコミットを、自分のコミットと分けるため。`push` として進めるときは、手順4で分けないので控えない）。取り込んで衝突したら、下の「衝突の直し方の確認」に従って直す
 
 片付けない・取り込まないことになって止めたときや、`ask_base`・`recheck` で止めたときは、手順6の「push しなかったとき」のとおり伝える。
 
@@ -66,13 +66,10 @@ main が進んだ PR は、最新の main を取り込んで CI が通り直る�
 
 ### 4. push の前に確認を取る
 
-確認の直前に `branch-status.sh` をもう一度実行して、`unpushed` を取り直す（手順1の値は、手順3で修正をコミットすると古くなる）。AskUserQuestion で、「push する」「push しない」を選んでもらう。確認の内容は、質問の中（質問の文や選択肢の preview）に入れる（設計書 §8。別の端末から使うと、質問の直前の文章が見えないことがある）。
+確認の直前に `branch-status.sh` をもう一度実行して、push で入るコミット（`push_commits`）を取り直す（手順1の値は、手順2・3で取り込んだり、修正をコミットしたりすると古くなる）。`merge` として進めたときは `--merged-from <手順2で控えた sha>` を、さらに取り込む前の確認で pull したときは `--pulled-from <pull の前の sha>` も付ける。AskUserQuestion で、「push する」「push しない」を選んでもらう。確認の内容は、質問の中（質問の文や選択肢の preview）に入れる（設計書 §8。別の端末から使うと、質問の直前の文章が見えないことがある）。
 
-- push で実際に origin に入るコミット。origin にブランチがあれば（`unpushed` が数値）`git log --oneline origin/<ブランチ>..HEAD`、無ければ（`unpushed` が null。初回の push で、ブランチが新しく作られる）`git log --oneline origin/<base_branch>..HEAD`。件数と主な内容を見せ、初回の push のときはそう伝える
-- そのうち、次の3つを分けて示す（origin のブランチに既にあるコミットは、push で入らないので数えない。どれも上の範囲の中だけを数える）。手順1で `push` として進めたとき（手順2を飛ばしたので、控えた sha は無い）は分けずに、前に取り込んだ merge のコミットを含めて、push で入るコミットをまとめて示す
-  - main の取り込み：`git log --oneline <手順2で控えた sha>..HEAD`（取り込んだ main のコミットと、手順3で直したコミットがあれば、それも含まれる）
-  - pull の取り込み：取り込む前の確認で pull したとき、pull が作った取り込みのコミット（`git log --oneline origin/<ブランチ>..<手順2で控えた sha> ^<pull の前の sha>`）。pull で取り込んだ origin のコミットは origin に既にあるので、ここには入らない。fast-forward で済んだなら、何も入らない
-  - 自分のコミット：取り込む前から手元にあった、push していないコミット。pull したときは `git log --oneline origin/<ブランチ>..<pull の前の sha>`、していないときは `git log --oneline origin/<ブランチ>..<手順2で控えた sha>`（初回の push なら `origin/<ブランチ>` の代わりに `origin/<base_branch>`）
+- push で実際に origin に入るコミット（`push_commits.all`）。件数と主な内容を見せ、初回の push（`push_commits.first_push` が true。ブランチが新しく作られる）のときはそう伝える
+- そのうち、`push_commits` の `main`（取り込んだ main のコミットと、手順3で直したコミット）・`pull`（pull が作った取り込みのコミット）・`own`（取り込む前から手元にあった自分のコミット）を分けて示す。どれも、origin に既にあるコミットは数えていない。範囲を自分で組み立てて数え直さない。手順1で `push` として進めたとき（`main` などが null）は分けずに、前に取り込んだ merge のコミットを含めて、`all` をまとめて示す
 - 衝突を直したか、直し方を変えたなら（手順1で `push` として進めたときに、手順3で前の取り込みの直し方を変えたときも）、そのファイルと直し方。確認を取った方針や前の取り込みの直し方から変えたところ（手順3でテストの失敗を直したときなど）があれば、何をなぜ変えたかを分けて示す
 - テストとチェックの結果（実行したものと、通ったか）
 
