@@ -49,6 +49,15 @@ conflict_main() {
   git -C "$TMP/other" push -q origin main
 }
 
+# origin の feat/17-x に、別の場所からコミットを1つ push する（手元に無い origin のコミット）
+push_from_elsewhere() {
+  git clone -q -b feat/17-x "$TMP/origin.git" "$TMP/other2"
+  echo b >"$TMP/other2/b.txt"
+  git -C "$TMP/other2" add b.txt
+  git -C "$TMP/other2" commit -q -m "feat: b"
+  git -C "$TMP/other2" push -q origin feat/17-x
+}
+
 run_status() {
   run_script branch-status.sh "$@"
   printf '%s\n' "$output"
@@ -120,11 +129,7 @@ run_status() {
   git commit -q -m "feat: a"
   run_status
   assert_equal "$(jq -c '[.unpushed, .unpulled]' <<<"$output")" "[1,0]"
-  git clone -q -b feat/17-x "$TMP/origin.git" "$TMP/other2"
-  echo b >"$TMP/other2/b.txt"
-  git -C "$TMP/other2" add b.txt
-  git -C "$TMP/other2" commit -q -m "feat: b"
-  git -C "$TMP/other2" push -q origin feat/17-x
+  push_from_elsewhere
   run_status
   assert_equal "$(jq -c '[.unpushed, .unpulled]' <<<"$output")" "[1,1]"
 }
@@ -361,15 +366,6 @@ queue_removed_fixture() {
   assert_success
   # キューを使い、main と衝突しないので取り込まず、並んでいることを案内する（最新の main を求められたら、遅れているので取り込む）
   assert_equal "$(jq -c .plan <<<"$output")" '{"action":"none","reason":"no_conflict","queue":"queued","fallback":"merge"}'
-}
-
-# origin の feat/17-x に、別の場所からコミットを1つ push する（手元に無い origin のコミット）
-push_from_elsewhere() {
-  git clone -q -b feat/17-x "$TMP/origin.git" "$TMP/other2"
-  echo b >"$TMP/other2/b.txt"
-  git -C "$TMP/other2" add b.txt
-  git -C "$TMP/other2" commit -q -m "feat: b"
-  git -C "$TMP/other2" push -q origin feat/17-x
 }
 
 # 使い方: subjects <組の名前> → push_commits の組の件名を、古い順に「,」でつないで出す
