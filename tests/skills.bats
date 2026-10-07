@@ -350,6 +350,26 @@ step() { awk -v n="$2" -v end="$3" 'on && ($0 ~ /^###? / || (end != "" && $0 ~ e
   has "「抜けたとき」" "$(grep -e '^\*\*抜けたとき\*\*' <<<"$conf")" '「push しなかったとき」'
 }
 
+# shellcheck disable=SC2016 # バッククォートはスキルの本文の文字で、展開させない
+@test "branch-update は、push の前の確認で、pull で作った取り込みのコミットを自分のコミットに数えず、origin に既にあるコミットも数えない" {
+  # 控える sha が手順2の merge の前なので、pull で作った取り込みのコミットが自分のコミットに数えられていた（#242）
+  f="$SKILLS/branch-update/SKILL.md"
+  has() {
+    local name="$1" text="$2"; shift 2
+    [ -n "$text" ] || fail "${name}がありません"
+    for term in "$@"; do
+      grep -qF -e "$term" <<<"$text" || fail "${name}に「${term}」がありません"
+    done
+  }
+  # pull の前の sha を控え、push で入るコミットを main の取り込み・pull の取り込み・自分のコミットに分ける
+  has "手順1の pull" "$(grep -F 'git pull --no-rebase' <<<"$(step "$f" 1)")" 'pull の前の sha'
+  s4="$(step "$f" 4)"
+  has "手順4" "$s4" 'origin のブランチに既にあるコミットは' '数えない'
+  has "手順4の main の取り込み" "$(grep -e '^ *- main の取り込み：' <<<"$s4")" '<手順2で控えた sha>..HEAD'
+  has "手順4の pull の取り込み" "$(grep -e '^ *- pull の取り込み：' <<<"$s4")" 'origin/<ブランチ>..<手順2で控えた sha> ^<pull の前の sha>'
+  has "手順4の自分のコミット" "$(grep -e '^ *- 自分のコミット：' <<<"$s4")" 'origin/<ブランチ>..<pull の前の sha>'
+}
+
 @test "pr-create と task-finish は pr-respond に依存しない（使わなくてもマージから後片付けまで進める）" {
   for name in pr-create task-finish; do
     if grep -n 'pr-respond' "$SKILLS/$name/SKILL.md"; then
