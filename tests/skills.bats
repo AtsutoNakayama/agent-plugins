@@ -364,6 +364,8 @@ has() {
   has "手順1の pull" "$(grep -F 'git pull --no-rebase' <<<"$(step "$f" 1)")" 'pull を実行する直前に' 'コミットした後で' 'pull の前の sha' '`push` として進めるときは'
   s4="$(step "$f" 4)"
   has "手順4" "$s4" '--merged-from <手順2で控えた sha>' '--pulled-from <pull の前の sha>' '`push_commits.all`' '`push_commits.first_push`' '`main`' '`pull`' '`own`' '数え直さない'
+  # 取り直した unpulled が 1 以上なら、push の確認をせずに、pull するかの確認に戻る
+  has "手順4（unpulled）" "$(grep -F '`unpulled` が 1 以上なら' <<<"$s4")" 'push の確認はせずに' '`push_commits` の `main` に入る'
   # 範囲は SKILL.md のどこでも組み立てない（手順6の手元に残ったものも push_commits で示す）
   if grep -nE 'git log --oneline [^`]*\.\.' "$f"; then
     fail "コミットの範囲を、SKILL.md の文章で組み立てています（branch-status.sh の push_commits を使う）"
