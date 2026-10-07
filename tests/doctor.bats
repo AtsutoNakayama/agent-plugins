@@ -99,6 +99,8 @@ labels_check() { jq -c '.checks[] | select(.name == "labels") | [.ok, .level, .d
   run_script doctor.sh
   assert_failure 1
   assert_equal "$(jq -r '.checks[] | select(.name == "config") | .ok' <<<"$output")" false
+  # 同じ誤りを、base_branch の誤りとして二重に知らせない
+  assert_equal "$(jq -c '[.checks[] | select(.name == "base-branch")]' <<<"$output")" "[]"
 }
 
 @test "古い置き場所のファイルがあれば、止めずに移すよう促す" {

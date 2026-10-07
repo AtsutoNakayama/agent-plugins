@@ -88,8 +88,11 @@ if config="$("$BASH" "$DW_SCRIPTS_DIR/config.sh" 2>&1)"; then
   fi
 else
   check config false error "$config"
-  # 合わせた設定は読めなくても、チームの設定の値の誤りは知らせる（直した後に、もう1つ誤りが出てこないように）
-  [ -z "$team_base_err" ] || check base-branch false error "チームの設定: ${team_base_err}"
+  # 合わせた設定は読めなくても、チームの設定の値の誤りは知らせる（直した後に、もう1つ誤りが出てこないように）。
+  # チームの設定のファイルそのものが読めないときは、config の失敗と同じ誤りなので、二重に知らせない
+  if [ -n "$team_base_err" ] && dw_is_json_object "$repo_root/.claude/dev-workflow/config.json"; then
+    check base-branch false error "チームの設定: ${team_base_err}"
+  fi
 fi
 
 # 古い置き場所（.claude/dev-workflow/ にまとめる前）のファイルは使われないので、移すよう促す
