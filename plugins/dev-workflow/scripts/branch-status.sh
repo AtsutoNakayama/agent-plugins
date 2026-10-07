@@ -47,7 +47,7 @@
 #                           first_push  origin にブランチが無い（push でブランチが新しく作られる）か
 #                           all      push で入るコミットの全部
 #                           main     --merged-from より後のコミット（取り込んだ main のコミットと、その後に直したコミット）
-#                           pull     pull が作った取り込みのコミット（--pulled-from と --merged-from の間。fast-forward なら空）
+#                           pull     pull が作った取り込みのコミット（--pulled-from と --merged-from（無ければ HEAD）の間。fast-forward なら空）
 #                           own      取り込む前から手元にあった、push していない自分のコミット
 #                         main・pull・own は、--merged-from も --pulled-from も無ければ null（--pulled-from が無ければ pull は空、
 #                         --merged-from が無ければ main は空）
@@ -146,17 +146,25 @@ if [ -n "$pulled_from" ]; then
 fi
 grouped=false
 [ -z "$merged_from$pulled_from" ] || grouped=true
-# 使い方: shas <コミット> → そのコミットから届き、基準に無いコミットの完全な sha を1行に1つ
-shas() { git -C "$repo_root" rev-list "$1" "^$to" --; }
+# 使い方: shas <コミット> → そのコミットから届き、基準に無いコミットの完全な sha の配列（JSON）
+shas() { git -C "$repo_root" rev-list "$1" "^$to" -- | jq -R -s -c 'split("\n") | map(select(. != ""))'; }
 # 一覧（push で入るコミット）と、控えた sha から届くコミット（どちらも基準に無いものだけ）を、git でたどって求め、
-# jq で組に分ける。一覧は長くなりうる（main のコミットを数千件取り込むなど）ので、jq には引数ではなく標準入力で渡す。
-# 署名を表示する設定（log.showSignature）でも、gpg の行が混ざらないようにする。区切りは件名に現れない \x1f
-push_commits="$({
-  git -C "$repo_root" log --no-show-signature --format='%H%x1f%h%x1f%s' "$head_ref" "^$to" -- \
-    | jq -R -s -c 'split("\n") | map(select(. != "") | split("\u001f") | {full: .[0], sha: .[1], subject: (.[2:] | join("\u001f"))})'
-  if $grouped; then shas "$m" | jq -R -s -c 'split("\n") | map(select(. != ""))'; else echo '[]'; fi
-  if [ -n "$p" ]; then shas "$p" | jq -R -s -c 'split("\n") | map(select(. != ""))'; else echo '[]'; fi
-} | jq -s -c --arg to "${to#refs/remotes/}" --argjson first_push "$first_push" --argjson grouped "$grouped" --arg p "$p" '
+# jq で組に分ける。それぞれを変数に取るので、git が失敗すればそこで止まる（まとめて1つのパイプにすると、途中の
+# 失敗が見えず、空の一覧で組を誤る）。一覧は長くなりうる（main のコミットを数千件取り込むなど）ので、jq には
+# 引数ではなく標準入力で渡す。署名を表示する設定（log.showSignature）でも、gpg の行が混ざらないようにする。
+# 区切りは件名に現れない \x1f
+commits="$(git -C "$repo_root" log --no-show-signature --format='%H%x1f%h%x1f%s' "$head_ref" "^$to" -- \
+  | jq -R -s -c 'split("\n") | map(select(. != "") | split("\u001f") | {full: .[0], sha: .[1], subject: (.[2:] | join("\u001f"))})')"
+reach_m='[]' reach_p='[]'
+if [ -n "$merged_from" ]; then
+  reach_m="$(shas "$m")"
+elif $grouped; then
+  # --pulled-from だけのときは、merge の前を HEAD とみなすので、一覧のどれもが届く（同じ範囲をたどり直さない）
+  reach_m="$(jq -c 'map(.full)' <<<"$commits")"
+fi
+[ -z "$p" ] || reach_p="$(shas "$p")"
+push_commits="$(printf '%s\n' "$commits" "$reach_m" "$reach_p" \
+  | jq -s -c --arg to "${to#refs/remotes/}" --argjson first_push "$first_push" --argjson grouped "$grouped" --arg p "$p" '
   .[0] as $c
   | (.[1] | map({key: ., value: true}) | from_entries) as $rm
   | (.[2] | map({key: ., value: true}) | from_entries) as $rp

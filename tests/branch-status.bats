@@ -519,3 +519,44 @@ subjects() { jq -r --arg k "$1" '.push_commits[$k] | if . == null then "null" el
   assert_equal "$(jq '.push_commits.all | length' <<<"$output")" "2001"
   assert_equal "$(jq '.push_commits.own | length' <<<"$output")" "2001"
 }
+
+@test "--pulled-from だけで、ブランチの祖先でない sha を渡すと止まる" {
+  setup_branch
+  git switch -q -c side main
+  echo s >s.txt
+  git add s.txt
+  git commit -q -m side
+  side="$(git rev-parse HEAD)"
+  git switch -q feat/17-x
+  run_script branch-status.sh --pulled-from "$side"
+  assert_failure 64
+  assert_output --partial "--merged-from（無ければ feat/17-x）の祖先ではありません"
+}
+
+@test "push で入るコミットを調べる git が失敗したら、空の一覧で組を誤らずに止まる" {
+  setup_branch
+  advance_main 1
+  merged_from="$(git rev-parse HEAD)"
+  git fetch -q origin main
+  git merge -q --no-edit origin/main
+  # 一覧と届くコミットを調べる git（log と、--count の無い rev-list）だけを失敗させる偽の git
+  real_git="$(command -v git)"
+  mkdir -p "$TMP/failgit"
+  cat >"$TMP/failgit/git" <<SH
+#!/bin/sh
+case " \$* " in
+  *" rev-list --count "*) ;;
+  *" rev-list "*) [ "\$FAIL" = rev-list ] && exit 1 ;;
+  *" log --no-show-signature "*) [ "\$FAIL" = log ] && exit 1 ;;
+esac
+exec "$real_git" "\$@"
+SH
+  chmod +x "$TMP/failgit/git"
+  PATH="$TMP/failgit:$PATH" FAIL=rev-list run_script branch-status.sh --merged-from "$merged_from"
+  assert_failure
+  PATH="$TMP/failgit:$PATH" FAIL=log run_script branch-status.sh
+  assert_failure
+  # 失敗させなければ通る（偽の git がほかの呼び出しを邪魔していない）
+  PATH="$TMP/failgit:$PATH" FAIL=none run_script branch-status.sh --merged-from "$merged_from"
+  assert_success
+}
