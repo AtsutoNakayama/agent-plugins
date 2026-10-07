@@ -358,8 +358,8 @@ Todo が増えたとき、どれから着手するか、同時に進めてよい
     - PR のスレッドが resolved かを読む（`pr-feedback.sh`）。`gh pr view` にもスレッドの項目が無く、REST の行ごとのコメントには resolved の状態が無い。
 - **設定の `base_branch` は、使う側が読む時点で検査する**（`common.sh` の `dw_base_branch`）。`base_branch` は `git fetch origin <base_branch>` などで git のコマンドの引数に渡るので、ダッシュで始まる値（`-foo`）はオプションとして扱われ、失敗すべきところで先へ進んでしまう。使う側ごとに `--` を付けるのではなく、`base_branch` を使うスクリプトは、設定から直接読まずに `dw_base_branch` で読み、文字列でない値・ダッシュで始まる値・git が今の位置として扱う値（`HEAD`・`@`）・git のブランチ名の書式（`git check-ref-format`）に合わない値なら止まる。
   - `config.sh` では検査しない。検査すると、`base_branch` を使わない項目を読むスクリプト（起票・列の移動など）やフック（pr-link）まで止まるため。
-  - `config.sh` を通さずにチームの設定を読む `setup-repo.sh` と `doctor.sh` は、同じ検査をする `dw_team_base_branch` を使う。`doctor.sh` は、合わせた設定の値とチームの設定の値（個人の層が上書きしていても、`setup-repo.sh` とマージキューの確認が使う）のどちらかが使えなければ、設定の確認（`base-branch`）で知らせ、マージキューの確認を飛ばす。
-  - main を守るフック（`guard-git.sh`）は止まらずに、使えない値を使わない。合わせた設定の値が使えなければチームの設定の値を、それも使えなければ main を守る。チームの設定に値があって使えないときは、ユーザーの層の値には進まない。
+  - `config.sh` を通さずにチームの設定を読む `setup-repo.sh` と `doctor.sh` は、同じ検査をする `dw_team_base_branch` を使う。チームの設定の読み方（JSON のオブジェクトかの検査と、無い項目をプラグインの既定で補うこと）は、`dw_team_config` と共通（`dw_team_config_text`・`dw_team_pick`）。`doctor.sh` は、合わせた設定の値とチームの設定の値（個人の層が上書きしていても、`setup-repo.sh` とマージキューの確認が使う）のどちらかが使えなければ、設定の確認（`base-branch`）で知らせ、マージキューの確認を飛ばす。
+  - main を守るフック（`guard-git.sh`）は止まらずに、使えない値を使わない。合わせた設定の値が使えなければチームの設定の値を守る。チームの設定に値があって使えないときは、個人の層の値（上書きやユーザーの層）は使わずに main を守る（`setup-repo.sh` もその値で止まり、ルールセットを作らない）。
   - スクリプトが `dw_base_branch`・`dw_team_base_branch` を通さずに base_branch を読んでいないことを、bats のテスト（`tests/common.bats`）で確かめる（`guard-git.sh` は自分で検査するので除く）。
 - **gh は新しいものを前提にする**。古い gh のための回り道は書かず、要る機能が無い gh では止まって更新を促す（`common.sh` の `DW_GH_MIN_VERSION`。`doctor.sh` も更新を促す）。
 
