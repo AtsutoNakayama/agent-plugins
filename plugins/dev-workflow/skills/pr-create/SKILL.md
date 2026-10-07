@@ -31,7 +31,7 @@ push と PR の作成は GitHub に残るので、必ず手順5でユーザー�
 ### 2. 変更を確かめる
 
 - `git status` で未コミットの変更が無いか見る。あれば commit スキルでコミットしてから進める（PR に入れない変更なら、ユーザーに確かめる）
-- `git log --oneline origin/<base_branch>..HEAD` と `git diff origin/<base_branch>...HEAD` で、PR に入る変更を読む
+- `git log --oneline origin/<base_branch>..HEAD --` と `git diff origin/<base_branch>...HEAD --` で、PR に入る変更を読む（末尾の `--` は、引数をファイルの名前ではなくコミットの範囲として読ませるため）
 
 #### ADR を提案するかを決める
 
