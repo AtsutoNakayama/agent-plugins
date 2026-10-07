@@ -73,8 +73,9 @@ add() {
     add "指示" --name bad-base --layer repo --title "観点"
     assert_success
     assert_equal "$(jq -c '[.branch, .work_branch]' <<<"$(printf '%s\n' "$output" | sed -n '/^{/,$p')")" '["main",null]'
-    assert_output --partial "warn: "
+    assert_output --partial "warn: 作業用のブランチの上かは分かりません（設定の base_branch が"
   done
+  assert_output --partial "使えません: -foo"
 }
 
 @test "repo の層に detached HEAD で作ると、branch が null で work_branch が false になる" {
