@@ -142,6 +142,8 @@ fi
 base_branch=""
 if [ -n "$repo_root" ]; then
   base_branch="$(dw_team_config "$repo_root/.claude/dev-workflow/config.json" base_branch || true)"
+  # 使えない値なら、設定の確認（config）が知らせるので、ここでは問い合わせずに飛ばす
+  dw_valid_base_branch "$base_branch" || base_branch=""
 fi
 # 必須のチェックの有無は、名前の一覧（required。ルールセットと古いブランチ保護を合わせる）だけで決め、strict かは、
 # 名前のあるルールセットのルール（check_rules）だけで見る。ルールがあっても名前が1つも無ければ、何も求めていない

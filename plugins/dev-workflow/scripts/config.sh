@@ -91,7 +91,13 @@ done
 
 sources_json="$(printf '%s\n' ${sources[@]+"${sources[@]}"} | jq -R . | jq -sc 'map(select(. != ""))')"
 
-printf '%s\n' "${layers[@]}" \
+merged="$(printf '%s\n' "${layers[@]}" \
   | jq -s --argjson guides "$guides" --argjson sources "$sources_json" \
-      'reduce .[] as $l ({}; . * $l) + {guides: $guides, sources: $sources}' \
-  | jq -r "$filter"
+      'reduce .[] as $l ({}; . * $l) + {guides: $guides, sources: $sources}')"
+
+# base_branch は git のコマンドの引数に渡るので、どの項目を読むときも、使えない値なら止める
+base_branch="$(jq -r '.base_branch | if type == "string" then . else error end' <<<"$merged" 2>/dev/null)" \
+  || dw_die "設定の base_branch が文字列ではありません" 2
+dw_check_base_branch "$base_branch"
+
+jq -r "$filter" <<<"$merged"

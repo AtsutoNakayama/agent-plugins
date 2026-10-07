@@ -81,6 +81,19 @@ run_cleanup() {
   assert_equal "$(args pr-list)" "--head feat/17-x --state all --json number,url,state,mergedAt,headRefOid,baseRefName,closingIssuesReferences,isCrossRepository"
 }
 
+@test "base_branch がダッシュで始まれば、何も消さずに止まる（git fetch のオプションとして扱わせない）" {
+  setup_branch
+  squash_merge
+  fake_pr MERGED
+  jq '.base_branch = "-v"' .claude/dev-workflow/config.json >"$TMP/config.json"
+  mv "$TMP/config.json" .claude/dev-workflow/config.json
+  run_cleanup --branch feat/17-x
+  assert_failure 2
+  assert_output --partial "設定の base_branch が git のブランチ名として使えません: -v"
+  [ -e "$WT" ]
+  git show-ref --verify --quiet refs/heads/feat/17-x
+}
+
 @test "--branch を省略すると、今のブランチを片付ける（ワークツリーの中から実行できる）" {
   setup_branch
   squash_merge

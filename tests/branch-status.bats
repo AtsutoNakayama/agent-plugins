@@ -151,12 +151,12 @@ run_status() {
   assert_output --partial "不明な引数です: --branch"
 }
 
-@test "base_branch がダッシュで始まっていても、オプションとして扱わず取得に失敗して止まる" {
+@test "base_branch がダッシュで始まれば、オプションとして扱わず、設定を読む時点で止まる" {
   setup_branch
   echo '{"base_branch": "-foo", "project": {"owner": "me", "number": 4}}' >"$REPO/.claude/dev-workflow/config.json"
   run_status
-  assert_failure
-  assert_output --partial "origin/-foo を取得できませんでした"
+  assert_failure 2
+  assert_output --partial "設定の base_branch が git のブランチ名として使えません: -foo"
 }
 
 @test "ブランチの上にいなければ止まる" {

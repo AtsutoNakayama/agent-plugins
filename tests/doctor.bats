@@ -350,6 +350,17 @@ required_check() { jq -c '.checks[] | select(.name == "required-checks") | [.ok,
   assert_output --partial "release/v1 へのマージはマージキューを通します"
 }
 
+@test "base_branch がダッシュで始まれば、config が失敗し、マージキューは問い合わせない" {
+  fake_gh
+  export FAKE_SCOPES="project" FAKE_RULES="$QUEUE_RULES" FAKE_RULES_LOG="$TMP/rules-path"
+  echo '{"base_branch": "-v"}' >.claude/dev-workflow/config.json
+  run_script doctor.sh
+  assert_failure 1
+  assert_equal "$(jq -c '.checks[] | select(.name == "config") | [.ok, .detail]' <<<"$output")" \
+    '[false,"error: 設定の base_branch が git のブランチ名として使えません: -v"]'
+  [ ! -e "$TMP/rules-path" ]
+}
+
 @test "マージキューの確認は、個人の設定の base_branch ではなく、チームの設定のブランチを見る" {
   # ユーザーの層も読む、導入したリポジトリで確かめる
   mark_set_up

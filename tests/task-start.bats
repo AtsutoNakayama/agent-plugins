@@ -49,6 +49,18 @@ run_start() {
   assert_equal "$(args SetField | jq -r '."single-select-option-id"')" O2
 }
 
+@test "base_branch がダッシュで始まれば、取得せずに止まる（git fetch のオプションとして扱わせない）" {
+  setup_fake_gh
+  jq '.base_branch = "-v"' .claude/dev-workflow/config.json >"$TMP/config.json"
+  mv "$TMP/config.json" .claude/dev-workflow/config.json
+  setup_origin
+  run_start --issue 17 --slug "task start"
+  assert_failure 2
+  assert_output --partial "設定の base_branch が git のブランチ名として使えません: -v"
+  [ ! -e "$REPO/.claude/worktrees/feat/17-task-start" ]
+  assert_equal "$(args edit)" ""
+}
+
 @test "ワークツリーの置き場所が無視されていなければ、.git/info/exclude に足す" {
   setup_fake_gh
   setup_origin

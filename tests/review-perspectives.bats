@@ -429,6 +429,16 @@ auto_branch() {
   used main-drift || fail "$output"
 }
 
+@test "--auto は、base_branch がダッシュで始まれば、取得せずに止まる（git fetch のオプションとして扱わせない）" {
+  auto_branch feat/17-add-thing
+  fake_issue 17 '["feat"]'
+  jq '.base_branch = "-v"' .claude/dev-workflow/config.json >"$TMP/config.json"
+  mv "$TMP/config.json" .claude/dev-workflow/config.json
+  run_script review-perspectives.sh --auto
+  assert_failure 2
+  assert_output --partial "設定の base_branch が git のブランチ名として使えません: -v"
+}
+
 @test "--auto は、Issue の type ラベルが1つに決まらなければブランチ名の type を使う" {
   auto_branch fix/17-bug
   fake_issue 17 '["feat", "fix"]'

@@ -463,6 +463,24 @@ dw_fetch_repo_file() {
   esac
 }
 
+# 設定の base_branch が、git のブランチ名として使える値なら 0 を返す（設計書 §10）。
+# ダッシュで始まる値（-foo）は、git fetch origin <base_branch> などでオプションとして扱われ、失敗すべきところで先へ
+# 進んでしまうので、使う側ごとに -- を付けるのではなく、設定を読む時点で拒否する。git check-ref-format --branch は
+# @{-1} などを今のリポジトリで展開してしまうので、refs/heads/ を付けて書式だけを検査し、ダッシュは別に拒否する。
+# 使い方: dw_valid_base_branch <base_branch>
+dw_valid_base_branch() {
+  case "$1" in
+    -*) return 1 ;;
+  esac
+  git check-ref-format "refs/heads/$1" 2>/dev/null
+}
+
+# 設定の base_branch が使えない値なら、終了コード 2 で終了する（dw_valid_base_branch）。
+# 使い方: dw_check_base_branch <base_branch>
+dw_check_base_branch() {
+  dw_valid_base_branch "$1" || dw_die "設定の base_branch が git のブランチ名として使えません: ${1}" 2
+}
+
 # チームの設定の項目（トップレベルのキー）を出力する。ルールセットのようにリポジトリ全体で共有するものに使い、
 # 個人の層（config.local.json・~/.claude/dev-workflow）は使わず、チームの設定とプラグインの既定だけで決める。
 # チームの設定のファイルが無いか、キーが無い（null）ならプラグインの既定を使う（// と違い、false は値として保つ）。

@@ -116,6 +116,8 @@ fi
 branch="$(dw_team_config "$team" base_branch)" \
   || dw_die "${repo_nwo} の .claude/dev-workflow/config.json を JSON として読めません" 2
 [ -n "$branch" ] || dw_die "設定の base_branch が空です" 2
+# config.sh を通さずに読むので、ここでも検査する（ルールセットで、使えない名前のブランチを守ろうとしない）
+dw_check_base_branch "$branch"
 
 actions='[]'
 # 行った（または dry-run で行う予定の）操作を記録する

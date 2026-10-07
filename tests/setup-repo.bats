@@ -245,6 +245,14 @@ assert_no_calls() {
   assert_output --partial "守るブランチ develop は、リポジトリの既定のブランチ（main）と違います"
 }
 
+@test "設定の base_branch がダッシュで始まれば、dry-run でも止まる" {
+  setup_fake_gh
+  echo '{"base_branch": "-v"}' >.claude/dev-workflow/config.json
+  run_setup --dry-run
+  assert_failure 2
+  assert_output --partial "設定の base_branch が git のブランチ名として使えません: -v"
+}
+
 @test "個人の設定（config.local.json・ユーザーの設定）の base_branch は使わない" {
   # ユーザーの層も読む、導入したリポジトリで確かめる
   mark_set_up
