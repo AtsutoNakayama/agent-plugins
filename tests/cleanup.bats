@@ -572,3 +572,24 @@ run_cleanup() {
   [ -d "$WT" ]
   git show-ref --verify --quiet refs/heads/feat/17-x
 }
+
+@test "--abandon で、署名を表示する設定（log.showSignature）でも、署名の検証の行を失うコミットに数えない" {
+  setup_branch
+  use_fake_gpg "$WT"
+  echo signed >"$WT/signed.txt"
+  git -C "$WT" add signed.txt
+  git -C "$WT" commit -q -S -m "feat: signed"
+  git config log.showSignature true
+  run_cleanup --branch feat/17-x --abandon --dry-run
+  assert_success
+  assert_equal "$(jq -r '.lost.commits | map(sub("^[0-9a-f]+ "; "")) | join(",")' <<<"$json")" "feat: signed,feat: work"
+}
+
+@test "--abandon で、失うコミットが多くても（一覧が jq の引数の長さの上限を超えても）止まらない" {
+  setup_branch
+  # 件名の長いコミットを 2000 件作る（一覧は 128 KiB を超える）
+  make_commits feat/17-x 2000
+  run_cleanup --branch feat/17-x --abandon --dry-run
+  assert_success
+  assert_equal "$(jq '.lost.commits | length' <<<"$json")" "2001"
+}
