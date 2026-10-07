@@ -144,9 +144,9 @@ case "$layer" in
     [ -n "$repo_dir" ] || dw_die "git のリポジトリの中ではないので、repo の層には置けません" 2
     dir="$repo_dir"
     # 観点の追加はきっかけになったタスクの PR に含めるので、作業用のブランチの上かを知らせる（設計書 §7）
-    # 設定を読めなくても観点は作る（作業用のブランチの上かは分からないものとして null にする）
-    base="$("$BASH" "$DW_SCRIPTS_DIR/config.sh" .base_branch 2>/dev/null)" \
-      || { base=""; dw_warn "設定を読めないので、作業用のブランチの上かは分かりません（config.sh で確かめてください）"; }
+    # 設定を読めなくても、base_branch が使えない値でも観点は作る（作業用のブランチの上かは分からないものとして null にする）
+    { config="$("$BASH" "$DW_SCRIPTS_DIR/config.sh" 2>/dev/null)" && base="$(dw_base_branch "$config" 2>/dev/null)"; } \
+      || { base=""; dw_warn "設定を読めないか、設定の base_branch が使えない値なので、作業用のブランチの上かは分かりません（config.sh で確かめてください）"; }
     branch="$(git -C "$repo_root" symbolic-ref --short -q HEAD || true)"
     ;;
   *) dw_die "--layer は user か repo にしてください" 64 ;;

@@ -66,6 +66,17 @@ add() {
   assert_output --partial "warn: "
 }
 
+@test "base_branch が使えない値でも repo の層に観点を作り、work_branch は null にして警告する（その値と比べない）" {
+  for v in null 1 '"-foo"'; do
+    echo "{\"base_branch\": $v}" >"$REPO/.claude/dev-workflow/config.json"
+    rm -f "$REPO/.claude/dev-workflow/review/bad-base.md"
+    add "指示" --name bad-base --layer repo --title "観点"
+    assert_success
+    assert_equal "$(jq -c '[.branch, .work_branch]' <<<"$(printf '%s\n' "$output" | sed -n '/^{/,$p')")" '["main",null]'
+    assert_output --partial "warn: "
+  done
+}
+
 @test "repo の層に detached HEAD で作ると、branch が null で work_branch が false になる" {
   git -C "$REPO" switch -q --detach
   add "指示" --name detached --layer repo --title "観点"
