@@ -175,7 +175,7 @@ run_pr() {
   assert_output --partial --draft
 }
 
-@test "--draft を付ければ、pr.draft が false でも下書きにする（task-auto）" {
+@test "--draft を付ければ、pr.draft が false でも下書きにする" {
   setup_branch
   run_pr --issue 17 --body-file "$TMP/body.md" --draft --dry-run
   assert_success
@@ -186,6 +186,28 @@ run_pr() {
   assert_equal "$(jq .draft <<<"$json")" true
   run args pr-create
   assert_output --partial --draft
+}
+
+@test "--no-draft を付ければ、pr.draft が true でも下書きにしない（task-auto）" {
+  setup_branch
+  jq '. + {pr: {draft: true}}' .claude/dev-workflow/config.json >"$TMP/c.json" && mv "$TMP/c.json" .claude/dev-workflow/config.json
+  git commit -q -am "chore: draft"
+  run_pr --issue 17 --body-file "$TMP/body.md" --no-draft --dry-run
+  assert_success
+  assert_equal "$(jq .draft <<<"$json")" false
+  refute_output --partial "（下書き）"
+  run_pr --issue 17 --body-file "$TMP/body.md" --no-draft
+  assert_success
+  assert_equal "$(jq .draft <<<"$json")" false
+  run args pr-create
+  refute_output --partial --draft
+}
+
+@test "--draft と --no-draft は同時に指定できない" {
+  setup_branch
+  run_pr --issue 17 --body-file "$TMP/body.md" --draft --no-draft
+  assert_failure 64
+  assert_output --partial "--draft と --no-draft は同時に指定できません"
 }
 
 # status.pr_opened を Done にする
