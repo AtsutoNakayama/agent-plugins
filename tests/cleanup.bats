@@ -652,7 +652,8 @@ run_cleanup() {
   git switch -q --detach origin/main
   git merge -q --squash feat/17-x
   git commit -q -m "feat: 作業 17 (#5)"
-  git push -q origin "HEAD:refs/heads/gh-readonly-queue/main/pr-5-$(git rev-parse feat/17-x)"
+  queue_ref="refs/heads/gh-readonly-queue/main/pr-5-$(git rev-parse feat/17-x)"
+  git push -q origin "HEAD:$queue_ref"
   git push -q origin HEAD:main
   git switch -q main
   git push -q origin --delete feat/17-x
@@ -665,4 +666,9 @@ run_cleanup() {
   assert_failure
   assert_equal "$(git rev-parse main)" "$(git rev-parse origin/main)"
   assert_equal "$(git log -1 --format=%s main)" "feat: 作業 17 (#5)"
+  # キューの一時的なブランチは GitHub が片付けるもので、作業のブランチではないので、消さずに残し、出力にも出さない
+  run git ls-remote --exit-code origin "$queue_ref"
+  assert_success
+  run jq -r '.. | strings' <<<"$json"
+  refute_output --partial gh-readonly-queue
 }
