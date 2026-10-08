@@ -720,7 +720,7 @@ make_bare_layout() {
   cd "$TMP/outside"
   run_cleanup --branch feat/17-x
   assert_failure 64
-  assert_output --partial "リポジトリの中で実行してください"
+  assert_output --partial "リポジトリの外か、メインのワークツリーが分からない配置"
 }
 
 @test "サブモジュールのワークツリーでも、main-root.sh が求めたサブモジュールの作業ツリーから片付けられる（#233）" {

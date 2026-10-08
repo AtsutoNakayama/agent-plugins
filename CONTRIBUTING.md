@@ -140,7 +140,7 @@ docker run --rm -v "$PWD:/mnt" -w /mnt koalaman/shellcheck-alpine:v0.11.0 sh -c 
 macOS 以外でも、Docker の `bash:3.2` イメージで macOS 標準の bash 3.2 で動くことを確かめられます。リポジトリ・ワークツリーのどこで実行しても動きます。
 
 ```bash
-root=$(cd "$(git rev-parse --git-common-dir)/.." && pwd)   # 元のリポジトリ
+root=$(plugins/dev-workflow/scripts/main-root.sh | jq -r .main_root)   # 元のリポジトリ（サブモジュールや bare 配置でも求まる）
 top=$(git rev-parse --show-toplevel)                       # 今いるリポジトリまたはワークツリー
 docker run --rm -v "$root:$root" -v "$top:$top" -w "$top" bash:3.2 sh -c '
   apk add --no-cache jq git bats bash parallel >/dev/null &&

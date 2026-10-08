@@ -66,7 +66,7 @@ if repo_root="$(dw_repo_root)"; then
   main_root="$(dw_main_root "$repo_root")" || dw_die "メインのワークツリーが分かりません"
 else
   has_toplevel=false
-  main_root="$(dw_main_root "$PWD")" || dw_die "リポジトリの中で実行してください" 64
+  main_root="$(dw_main_root "$PWD")" || dw_die "リポジトリの外か、メインのワークツリーが分からない配置（--separate-git-dir のワークツリーなど）です" 64
   repo_root="$main_root"
 fi
 config="$("$BASH" "$DW_SCRIPTS_DIR/config.sh")"
