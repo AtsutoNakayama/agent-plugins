@@ -445,7 +445,7 @@ has() {
   # shellcheck disable=SC2016 # バッククォートはスキルの本文の文字で、展開させない
   has "手順7" "$s7" '止まらず、そのまま同じワークツリーで Issue の「やること」の作業（実装）に取りかかる' 'AskUserQuestion で聞いてから進める' 'ワークツリーを作らずに着手したとき（`worktree` が `null`）'
   # task-auto は手順7の続行をしない（実装は作業役に任せる）
-  grep -qF 'task-start 手順7の「結果を伝えた後に実装へ続ける」は、ここでは行わない' "$SKILLS/task-auto/SKILL.md" || fail "task-auto が手順7の続行を行わないと書かれていません"
+  grep -qF 'task-start 手順7の、結果を伝えた後に実装へ続ける動きは、ここでは行わない' "$SKILLS/task-auto/SKILL.md" || fail "task-auto が手順7の続行を行わないと書かれていません"
 }
 
 @test "task-start は、既にブランチがあって --no-worktree が止まったら、そのワークツリーで作業するよう案内する" {
