@@ -107,7 +107,10 @@ assert_check_matches_parse() {
   [ "$2" = "|" ] && valid=false
   run_script branch-name.sh --check "$1"
   assert_equal "$(jq -r .valid <<<"$output")" "$valid"
-  config="$("${TEST_BASH:-bash}" "$SCRIPTS/config.sh")"
+  # config.sh の失敗を見逃さないよう run で呼ぶ（--check の確認は済んでいるので、$output を上書きしてよい）
+  run "${TEST_BASH:-bash}" "$SCRIPTS/config.sh"
+  assert_success
+  config="$output"
   # shellcheck disable=SC2016 # $1〜$3 は bash -c の中で展開する
   parsed="$("${TEST_BASH:-bash}" -c '. "$1/common.sh"; dw_parse_branch "$2" "$3"' _ "$SCRIPTS/lib" "$config" "$1")"
   assert_equal "$parsed" "$2"
