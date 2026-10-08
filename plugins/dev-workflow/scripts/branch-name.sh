@@ -66,16 +66,10 @@ if [ -n "$check" ]; then
   if [ -z "$reason" ]; then
     # 設定を読めないときは、規約に合わない（1）と区別できるよう 2 で終わる
     config="$("$BASH" "$DW_SCRIPTS_DIR/config.sh")" || dw_die "設定を読めません" 2
-    # branch.pattern を正規表現にする。名前は上で [a-z0-9/-] だけと確かめたので、
-    # 形の中の . などの記号に当たることはなく、プレースホルダを置き換えるだけでよい
-    re="$(jq -r '
-      .labels.types as $t
-      | .branch.pattern
-      | gsub("\\{type\\}"; "(" + ($t | join("|")) + ")")
-      | gsub("\\{issue_number\\}"; "[0-9]+")
-      | gsub("\\{slug\\}"; "[a-z0-9]+(-[a-z0-9]+)*")
-      | "^" + . + "$"' <<<"$config")"
-    jq -e -n --arg b "$check" --arg r "$re" '$b | test($r)' >/dev/null \
+    # branch.pattern を正規表現にする（lib/common.sh の DW_JQ_BRANCH_RE。dw_parse_branch・dw_issue_branches と同じ）
+    # shellcheck disable=SC2016 # jq の変数（$b・$re）を bash に展開させない
+    jq -e -n --arg b "$check" --argjson c "$config" "$DW_JQ_BRANCH_RE"'
+      ($c | branch_re) as $re | $b | test($re)' >/dev/null \
       || reason="branch.pattern（$(jq -r '.branch.pattern' <<<"$config")）の形になっていません"
   fi
   jq -n --arg b "$check" --arg r "$reason" '{branch: $b, valid: ($r == ""), reason: (if $r == "" then null else $r end)}'

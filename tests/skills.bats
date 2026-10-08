@@ -608,7 +608,7 @@ has() {
   f="$SKILLS/task-auto/SKILL.md"
   grep -qF '**AskUserQuestion は使わない**' "$f" || fail "AskUserQuestion を使わないことが書かれていません"
   stop="$(section "$f" '## 止まる')"
-  has "止まる条件" "$stop" 'auto.max_fix_attempts' 'review.max_rounds' 'ADR にすべき判断' 'Issue があいまい' \
+  has "止まる条件" "$stop" 'auto.max_fix_attempts' 'ADR にすべき判断' 'Issue があいまい' \
     '「確認の代わりに決めること」に無い確認' 'auto-hold.sh --issue <番号> --run-id <実行の id> --reason-file <ファイル>' \
     '止まった理由' 'それまでの判断' '残したもの' '続けるには' 'ワークツリーとブランチは消さない'
   # 実行の id の出どころは、「止まる」の節の1（作業役にコミットさせる）と取り違えないよう、task-auto の手順1と書く
@@ -629,15 +629,26 @@ has() {
 }
 
 # shellcheck disable=SC2016 # バッククォートはスキルの本文の文字で、展開させない
-@test "task-auto は、作業役に任せ、範囲外の指摘を上限まで起票し、自動で決めたことを書いた draft の PR を出す（マージしない）" {
+@test "task-auto は、作業役に任せ、範囲外の指摘を上限まで起票し、自動で決めたことを書いた、draft でない PR を出す（マージしない）" {
   f="$SKILLS/task-auto/SKILL.md"
   has "task-auto の手順3" "$(step "$f" 3)" 'subagent_type' 'AskUserQuestion は使いません' '/dev-workflow:commit' \
     'GitHub に書き込む操作をしない' 'うのみにせず' 'max_fix_attempts' 'SendMessage'
   has "task-auto の手順4" "$(step "$f" 4)" '/dev-workflow:review' '範囲内の指摘はすべて反映する' 'この差分より前からある不具合' 'review の手順9：行わない'
   has "task-auto の手順5" "$(step "$f" 5)" '同じ内容の Issue があるかを探す' 'max_new_issues' 'Story Point・親・依存は付けない' 'issue-create.sh'
   s6="$(step "$f" 6)"
-  has "task-auto の手順6" "$s6" '--draft --dry-run' '必ず `--draft` を付ける' '「自動で決めたこと」の節' '`pending` なら止まる' '`--add-task` は付けない'
+  has "task-auto の手順6" "$s6" '--no-draft --dry-run' '必ず `--no-draft` を付ける' '「自動で決めたこと」の節' '`pending` なら止まる' '`--add-task` は付けない'
   grep -qF 'マージはしない（`allow_ai_merge` にかかわらず）' "$f" || fail "マージしないことが書かれていません"
+  # draft で出さない（PR の自動レビューの多くは draft をレビューしない。ADR 000280）。--draft の語そのものを手順6に書かない（--no-draft は許す）
+  ! grep -qF -e '--draft' <<<"${s6//--no-draft/}" || fail "手順6に --draft が書かれています"
+  grep -qF 'PR は draft にせず、レビューできる状態（オープン）で出す' "$f" || fail "draft にせず出すことが書かれていません"
+  # 上限の周の指摘は、反映してコミットしたら止まらずに PR へ進み、未レビューの反映を本文に書く
+  has "task-auto の手順4" "$(step "$f" 4)" 'もう1周せずに手順5・6へ進む。止まらない' '上限の周の反映（未レビュー）'
+  has "task-auto の手順6" "$s6" '上限の周の反映（未レビュー）'
+  stopcond="$(sed -n '/^次のどれかに当たったら/,/^止まるときは/p' "$f")"
+  has "止まる条件の節" "$stopcond" 'auto-check.sh'
+  ! grep -qF 'review.max_rounds' <<<"$stopcond" || fail "止まる条件に、上限の周の指摘が残っています"
+  grep -qF '| review 手順8 | 上限の周でも指摘が出たら、もう1周するか | もう1周しない。範囲内の指摘を反映してコミットし、テストとチェックが通れば、止まらずに PR の作成（手順6）へ進む' "$f" \
+    || fail "表の review 手順8が、PR の作成へ進むことになっていません"
 }
 
 @test "スキルが直接実行するスクリプト（scripts/ と scripts/setup/ の .sh）は、git で実行権限が付いている（lib/ は読み込むだけなので除く）" {
@@ -669,4 +680,29 @@ has() {
   local flow="$BATS_TEST_DIRNAME/../plugins/dev-workflow/defaults/task-flow.md"
   [ "$(grep -c "次のタスクに着手する前に \`/clear\` するよう勧めます" "$flow")" -ge 2 ] || fail "task-flow.md の後片付けと取りやめの両方にありません"
   grep -q "タスクの切れ目で \`/clear\` を勧める" "$BATS_TEST_DIRNAME/../docs/design.md" || fail "設計書にありません"
+}
+
+# shellcheck disable=SC2016 # バッククォートはスキルの本文の文字で、展開させない
+@test "pr-create は、PR を出した後の案内を merge_queue で切り替える（キューがあればキューに入れ、無ければ branch-update で取り込む。#178）" {
+  step7="$(step "$SKILLS/pr-create/SKILL.md" 7)"
+  has "pr-create の手順7" "$step7" '出力の `merge_queue`' '- `true`：' '- `false`：' '- `null`'
+  # マージ先は、設定の base_branch（base）ではなく、出力の pr_base（既にある PR は、マージ先を変えていることがある）
+  has "pr-create の手順7" "$step7" '出力の `pr_base`' 'PR のマージ先'
+  # 下書きの案内は、merge_queue の値の項目から切り離し、どの値でも添える
+  draft_line="$(grep -F -- '出力の `draft` が true' <<<"$step7")"
+  has "pr-create の手順7の下書きの案内" "$draft_line" '`merge_queue` の値にかかわらず' 'Ready for review' 'gh pr ready'
+  # 既にある PR を使ったときの draft は、その PR の今の状態（--draft の指定ではない）
+  has "pr-create の手順7の下書きの案内" "$draft_line" 'その PR の今の状態'
+  if grep -E -- '^- `(true|false|null)' <<<"$step7" | grep -q -e 'gh pr ready' -e '下書き'; then
+    fail "pr-create の手順7の下書きの案内が、merge_queue の値の項目の中にあります（どの値でも添える）"
+  fi
+  # キューがあるときは、キューに入れることと、取り込むのはコンフリクトしたときだけであることを案内する
+  has "pr-create の手順7のキューがあるときの案内" "$(grep -F -- '- `true`：' <<<"$step7")" \
+    'キューに入れる' 'Merge when ready' 'コンフリクトしたときだけ' 'branch-update' \
+    'ルールセットが求めるもの' 'リポジトリによって違う'
+  # キューが無いときは、マージ先が進んだら branch-update で取り込むことを案内する
+  has "pr-create の手順7のキューが無いときの案内" "$(grep -F -- '- `false`：' <<<"$step7")" 'branch-update'
+  if grep -F -- '- `false`：' <<<"$step7" | grep -q 'キュー'; then
+    fail "pr-create の手順7のキューが無いときの案内に、キューのことが書かれています"
+  fi
 }

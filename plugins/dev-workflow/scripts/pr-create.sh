@@ -3,7 +3,7 @@
 # 何度実行しても同じ結果になる（そのブランチの開いた PR が既にあれば、push と（--check・--add-task があれば）Issue のチェックと項目の追加だけを行い、
 # その PR のタイトル・本文・ラベル・Project の列は変えない）。
 #
-# 使い方: pr-create.sh --issue N --body-file PATH [--title TEXT] [--check TEXT]... [--add-task TEXT]... [--draft] [--dry-run]
+# 使い方: pr-create.sh --issue N --body-file PATH [--title TEXT] [--check TEXT]... [--add-task TEXT]... [--draft | --no-draft] [--dry-run]
 #   --issue N         紐付ける Issue の番号（#N でもよい）
 #   --body-file PATH  PR の本文のファイル。- なら標準入力
 #   --title TEXT      PR のタイトル。省略すると <Issue の type ラベル>: <Issue のタイトル>
@@ -14,8 +14,10 @@
 #   --add-task TEXT   Issue の本文の最初の項目がある節の最後に、チェックの無い項目「- [ ] TEXT」を足す（前後の空白は外す）。繰り返し指定できる。
 #                     文が TEXT の項目が既にあれば足さない（もう一度実行しても重ならない）。ADR の作成の提案を断ったことを、
 #                     取り消し線の項目（~~…~~）として残すのに使う
-#   --draft           設定の pr.draft にかかわらず、PR を下書きにする（task-auto が、自動で作った PR を必ず下書きで出すのに使う）。
-#                     既にある PR では、下書きかどうかを変えない（出力の draft は、その PR の今の状態）
+#   --draft           設定の pr.draft にかかわらず、PR を下書きにする（人が、この PR だけ下書きにしたいときに使う。task-auto は付けない）
+#   --no-draft        設定の pr.draft が true でも、PR を下書きにしない（task-auto が、自動で作った PR をレビューできる状態で出すのに使う）。
+#                     --draft と同時には指定できない
+#                     --draft・--no-draft とも、既にある PR では下書きかどうかを変えない（出力の draft は、その PR の今の状態）
 #   --dry-run         push も PR の作成も Issue のチェックと項目の追加もせず、行う予定の操作と PR のタイトル・本文、
 #                     Issue のチェックリストの項目（tasks）・チェックを付ける項目（checked）・足す項目（added）を出力する
 #
@@ -27,7 +29,7 @@
 #      本文に <pr.close_keyword> #N（既定: Closes #N）が無ければ末尾に足す。
 #      テンプレートの番号が空のままの行（Closes #）は消す
 #   3. origin に push する（-u で追跡させる）。未コミットの変更や、PR にするコミットが無ければ止まる
-#   4. base_branch に向けた PR を作り、Issue のラベルを引き継ぐ。pr.draft が true か --draft を付けたら下書きにする
+#   4. base_branch に向けた PR を作り、Issue のラベルを引き継ぐ。pr.draft が true か --draft を付けたら下書きにする（--no-draft なら、pr.draft にかかわらず下書きにしない）
 #   5. PR を新しく作ったときだけ、status.pr_opened が設定されていれば Issue をその列に移す（status-set.sh）。
 #      既にある PR では移さない（手で先の列に移した Issue を戻さないため）
 #   6. --check・--add-task があれば、Issue の本文を読み直し、指定した文の項目だけにチェックを付け、項目を足す
@@ -35,6 +37,11 @@
 #      HTML のコメントの中の行は、項目とみなさない。足す項目は、最初の項目がある節（次の見出しの手前まで）の最後の
 #      空でない行の後に、最初の項目と同じ字下げで置く（改行が \r\n なら \r\n で書く）。その行がリストの項目でなければ
 #      （項目の続きの行・HTML の塊・区切り線など）、空行を挟む。項目が無ければ本文の最後に置く
+#
+# 出力の pr_base は PR のマージ先。既にある PR を使うならその PR のマージ先（設定の base_branch と違うことがある）、
+# 新しく作るなら作る PR のマージ先（base_branch）。設定の base_branch は base に出す。
+# 出力の merge_queue は、pr_base へのマージがマージキューを通すか（true・false。ブランチに効いているルールを
+# 読めなければ null）。PR を出した後の案内（キューに入れるか、マージ先が進んだら取り込むか）を切り替えるのに使う
 set -euo pipefail
 
 # shellcheck source=lib/common.sh
@@ -51,7 +58,7 @@ need_value() {
   fi
 }
 
-issue="" body_file="" title="" dry_run=false draft_opt=false checks='[]' adds='[]'
+issue="" body_file="" title="" dry_run=false draft_opt=false no_draft_opt=false checks='[]' adds='[]'
 while [ $# -gt 0 ]; do
   case "$1" in
     --issue | --body-file | --title | --check | --add-task)
@@ -73,11 +80,13 @@ while [ $# -gt 0 ]; do
       shift 2
       ;;
     --draft) draft_opt=true; shift ;;
+    --no-draft) no_draft_opt=true; shift ;;
     --dry-run) dry_run=true; shift ;;
     -h | --help) usage; exit 0 ;;
     *) dw_die "不明な引数です: $1" 64 ;;
   esac
 done
+! { $draft_opt && $no_draft_opt; } || dw_die "--draft と --no-draft は同時に指定できません" 64
 [ -n "$issue" ] || dw_die "--issue は必須です" 64
 # スキルの引数の #12 も受ける（dw_issue_number）
 issue="$(dw_issue_number --issue "$issue")"
@@ -143,7 +152,7 @@ to_add="$(jq -c --argjson t "$tasks" "$missing_jq" <<<"$adds")"
 
 # --- 既にある PR ----------------------------------------------------------------
 # --head はブランチ名だけで探すので、fork の同じ名前のブランチからの PR を除く
-existing="$(gh pr list --head "$branch" --state open --json number,url,title,body,isCrossRepository,isDraft \
+existing="$(gh pr list --head "$branch" --state open --json number,url,title,body,isCrossRepository,isDraft,baseRefName \
   | jq -c 'map(select(.isCrossRepository | not))')" \
   || dw_die "${branch} の PR を取得できませんでした"
 pr_number="$(jq -r '.[0].number // empty' <<<"$existing")"
@@ -209,10 +218,15 @@ fi
 # --- 4. PR ----------------------------------------------------------------------
 draft="$(jq -r '.pr.draft // false' <<<"$config")"
 ! $draft_opt || draft=true
+! $no_draft_opt || draft=false
 created=false
+# PR のマージ先。新しく作る PR は base_branch に向ける。既にある PR はマージ先を変えていることがあるので、
+# その PR のマージ先にする（gh が返さないか空のときだけ base_branch とみなす。使うのは PR を出した後の案内だけ）
+pr_base="$base"
 if [ -n "$pr_number" ]; then
+  pr_base="$(jq -r --arg b "$base" '(.[0].baseRefName // "") | if . == "" then $b else . end' <<<"$existing")"
   note "既にある PR #${pr_number} を使う（作り直さず、タイトル・本文・ラベル・列・下書きかどうかは変えない）"
-  # 下書きかどうかは変えないので、出力にはその PR の今の状態を出す（--draft を付けても、下書きと取り違えないように）
+  # 下書きかどうかは変えないので、出力にはその PR の今の状態を出す（--draft・--no-draft を付けても、取り違えないように）
   draft="$(jq -r '.[0].isDraft // false' <<<"$existing")"
 else
   created=true
@@ -307,16 +321,24 @@ if ! $dry_run && [ "$(jq -n --argjson c "$to_check" --argjson a "$to_add" '$c + 
     || dw_die "PR #${pr_number} はできていますが、Issue #${issue} のチェックリストを変えられませんでした（もう一度実行すれば変えます）"
 fi
 
+# --- マージキュー ----------------------------------------------------------------
+# PR を出した後の案内を切り替えるため、PR のマージ先（pr_base）へのマージがキューを通すかを読む（doctor.sh と同じく、
+# 組織のルールセットも含めてブランチに効いているルールで見る）。読むだけなので dry-run でも読む。読めなければ null にし、止めない
+merge_queue="$(dw_merge_queue_enabled '{owner}/{repo}' "$pr_base")" || merge_queue=null
+
 # 本文は大きいことがあるので、引数ではなく標準入力で jq に渡す（引数1つの長さには上限がある）
-printf '%s' "$body" | jq -Rs --argjson i "$issue" --arg branch "$branch" --arg base "$base" --arg title "$title" \
+printf '%s' "$body" | jq -Rs --argjson i "$issue" --arg branch "$branch" --arg base "$base" --arg pr_base "$pr_base" --arg title "$title" \
   --argjson labels "$labels" --argjson breaking "$breaking" --argjson draft "$draft" --argjson created "$created" \
   --arg number "$pr_number" --arg url "$pr_url" --argjson status "$status" \
   --argjson tasks "$tasks" --argjson checked "$to_check" --argjson added "$to_add" \
-  --argjson dry "$dry_run" --argjson actions "$actions" '. as $body | {
+  --argjson dry "$dry_run" --argjson actions "$actions" --argjson merge_queue "$merge_queue" '. as $body | {
     issue: $i,
     dry_run: $dry,
     branch: $branch,
+    # 設定の base_branch
     base: $base,
+    # PR のマージ先（既にある PR ならそのマージ先、新しく作るなら base）
+    pr_base: $pr_base,
     # 既にある PR には反映しないので、作るときだけ出す
     title: (if $created then $title else null end),
     body: (if $created then $body else null end),
@@ -331,5 +353,7 @@ printf '%s' "$body" | jq -Rs --argjson i "$issue" --arg branch "$branch" --arg b
     checked: $checked,
     # この実行で足す項目の文（文が同じ項目が既にあるものは除く。実行したときは、読み直した本文に実際に足したもの）
     added: $added,
+    # PR のマージ先（pr_base）へのマージがマージキューを通すか（読めなければ null）
+    merge_queue: $merge_queue,
     actions: $actions
   }'

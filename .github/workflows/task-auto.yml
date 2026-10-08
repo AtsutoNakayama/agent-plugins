@@ -1,6 +1,6 @@
 name: task-auto
 
-# Issue にラベル auto を付けると、Claude が /dev-workflow:task-auto で、着手から draft の PR の作成まで自動で進める（このリポジトリ専用）。
+# Issue にラベル auto を付けると、Claude が /dev-workflow:task-auto で、着手から PR の作成まで自動で進める（このリポジトリ専用）。
 # 手元のセッションを開かずに任せるためのもの。実行のたびに、シークレット CLAUDE_CODE_OAUTH_TOKEN のプランの使用量を消費する。
 #
 # - 起動：Issue に auto が付いたとき（issues の labeled）。ポーリングはしない。auto 以外のラベルでは何もしない
