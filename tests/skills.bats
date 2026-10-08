@@ -611,6 +611,8 @@ has() {
   has "止まる条件" "$stop" 'auto.max_fix_attempts' 'review.max_rounds' 'ADR にすべき判断' 'Issue があいまい' \
     '「確認の代わりに決めること」に無い確認' 'auto-hold.sh --issue <番号> --run-id <実行の id> --reason-file <ファイル>' \
     '止まった理由' 'それまでの判断' '残したもの' '続けるには' 'ワークツリーとブランチは消さない'
+  # 実行の id の出どころは、「止まる」の節の1（作業役にコミットさせる）と取り違えないよう、task-auto の手順1と書く
+  has "止まる条件" "$stop" '実行の id は、task-auto の手順1「進めるかを決める」で決めたもの。この節の1ではない'
   # breaking ラベルなど、スクリプトが決める条件は auto-check.sh に任せる
   has "止まる条件" "$stop" '`auto-check.sh` の `action` が `hold`'
 }
