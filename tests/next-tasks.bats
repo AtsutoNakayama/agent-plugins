@@ -448,6 +448,18 @@ JSON
   assert_equal "$(out_of '.todo[0] | [.waiting, [.blocked_by[] | [.repo, .number]]]')" '[true,[["me/other",5]]]'
 }
 
+@test "リポジトリ名の大文字小文字が違っても、同じリポジトリの項目・依存先として扱う" {
+  setup_fake_gh
+  item 10 Todo $'## 依存\n- #5' "" "Me/Demo"
+  write_page
+  echo '[{"number": 5, "state": "open", "repository_url": "https://api.github.com/repos/ME/DEMO"}]' >"$FIX/blocked-10.json"
+  echo open >"$FIX/state-5"
+  run_script next-tasks.sh
+  assert_success
+  assert_equal "$(out_of '[.todo[].number]')" '[10]'
+  assert_equal "$(out_of '.todo[0] | [.waiting, [.blocked_by[] | .number]]')" '[true,[5]]'
+}
+
 @test "着手中の Issue に PR も領域も無ければ、Todo の各 Issue に、重なるか分からないと警告を付ける" {
   setup_fake_gh
   item 10 Todo $'## 変更するファイル・領域\n- docs/'

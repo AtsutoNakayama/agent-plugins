@@ -162,13 +162,14 @@ dw_issue_work() {
     pr="$(gh pr view "$url" --json number,url,state,headRefName,isCrossRepository)" || dw_die "PR ${url} を読めませんでした"
     # 別のリポジトリの PR かは、参照の repository で見る。参照に repository が無ければ（gh が返さないとき）、
     # 今のリポジトリの PR とみなし、フォークかだけで決める（無いことを別のリポジトリとみなすと、どの PR もフォーク扱いになる）
-    cross="$(jq -r --arg r "$pr_repo" --arg nwo "$nwo" '($r != "" and $r != $nwo) or (.isCrossRepository // false)' <<<"$pr")"
+    cross="$(jq -r --arg r "$pr_repo" --arg nwo "$nwo" "$DW_JQ_SAME_REPO"'($r != "" and (same_repo($r; $nwo) | not)) or (.isCrossRepository // false)' <<<"$pr")"
     open_prs="$(jq -c --argjson p "$pr" --argjson x "$cross" \
       'if $p.state == "OPEN" then . + [{number: $p.number, url: $p.url, branch: $p.headRefName, cross: $x}] else . end' <<<"$open_prs")"
     merged_prs="$(jq -c --argjson p "$pr" --argjson x "$cross" \
       'if $p.state == "MERGED" and ($x | not) then . + [{number: $p.number, url: $p.url, branch: $p.headRefName}] else . end' <<<"$merged_prs")"
     head="$(jq -r 'select((.state == "OPEN" or .state == "MERGED") and (.isCrossRepository | not)) | .headRefName' <<<"$pr")"
-    [ -n "$head" ] && [ "$pr_repo" = "$nwo" ] || continue
+    [ -n "$head" ] || continue
+    dw_same_repo "$pr_repo" "$nwo" || continue
     if jq -e --arg h "$head" 'any(.[]; .name == $h)' <<<"$branches" >/dev/null \
       || jq -e --arg h "$head" 'any(.[]; .name == $h)' <<<"$candidates" >/dev/null; then
       continue
@@ -481,6 +482,13 @@ dw_gh_find() {
   esac
 }
 
+# リポジトリ（OWNER/NAME）が同じかを、大文字小文字を区別せずに比べる。GitHub はリポジトリ名の大文字小文字を区別せず、
+# API の repository_url と gh repo view の nameWithOwner で綴りが違うことがあるため、比べる箇所はすべてこれを使う。
+# jq の中では、プログラムの先頭に "$DW_JQ_SAME_REPO" を足して same_repo(<a>; <b>) を使う。bash では dw_same_repo <a> <b>。
+# shellcheck disable=SC2016 # $a・$b は jq の変数で、bash に展開させない
+DW_JQ_SAME_REPO='def same_repo($a; $b): (($a // "") | ascii_downcase) == (($b // "") | ascii_downcase);'
+dw_same_repo() { [ "$(printf '%s' "$1" | tr '[:upper:]' '[:lower:]')" = "$(printf '%s' "$2" | tr '[:upper:]' '[:lower:]')" ]; }
+
 # Issue の親を、近い順に（親、親の親、…）たどって、JSON の配列を出力する。要素は {number, title, state, state_reason}。
 # 親が無ければ []。別のリポジトリの親に当たったら、そこで打ち切る（その親も、さらに上の親も含めない。設計書 §4：親子は同じリポジトリだけ扱う）。
 # GitHub の親子は8層までなので、念のため層の数で打ち切る。
@@ -491,8 +499,7 @@ dw_issue_parents() {
     # 関数は if の中から呼ばれると set -e が効かないので、失敗は明示して返す
     p="$(dw_gh_find gh api "repos/$repo/issues/$cur/parent")" || return 1
     [ "$p" != null ] || break
-    # リポジトリ名の大文字小文字は区別しない（GitHub は区別しないので、API の応答と gh repo view で綴りが違うことがある）
-    [ "$(jq -r --arg r "$repo" '(.repository_url | sub("^.*/repos/"; "") | ascii_downcase) == ($r | ascii_downcase)' <<<"$p")" = true ] || break
+    dw_same_repo "$(jq -r '.repository_url | sub("^.*/repos/"; "")' <<<"$p")" "$repo" || break
     out="$(jq -c --argjson p "$p" '. + [$p | {number, title, state, state_reason: (.state_reason // null)}]' <<<"$out")"
     cur="$(jq -r .number <<<"$p")"
     i=$((i + 1))
@@ -1084,8 +1091,8 @@ dw_project_item() {
   args=(-f q="repo:$2 is:issue" -f per_page=100)
   [ -z "${4:-}" ] || args+=(-f fields="$4")
   gh api --paginate "$1/items" -X GET "${args[@]}" \
-    | jq -sc --arg r "$2" --argjson n "$3" '
-        [add // [] | .[] | select(.content.number == $n and (.content.repository_url | endswith("/repos/" + $r)))][0]'
+    | jq -sc --arg r "$2" --argjson n "$3" "$DW_JQ_SAME_REPO"'
+        [add // [] | .[] | select(.content.number == $n and same_repo(.content.repository_url | sub("^.*/repos/"; ""); $r))][0]'
 }
 
 # Project の項目から、<Issue の URL> の項目の id（node id）を探して出力する。無ければ何も出さずに失敗する。

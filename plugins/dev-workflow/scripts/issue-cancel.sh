@@ -129,7 +129,7 @@ while [ "$(jq length <<<"$level")" -gt 0 ] && [ "$depth" -lt 8 ]; do
 done
 # 別のリポジトリの子孫は扱わない（このプラグインが起票する子は親と同じリポジトリだけ。設計書 §4）。
 # Issue も PR もブランチもそのリポジトリにあり、ここでは片付けきれないので、何もせずに止まる
-foreign="$(jq -r --arg nwo "$repo_nwo" 'map(select(.repo != $nwo) | "\(.repo)#\(.number)") | join(", ")' <<<"$open_subs")"
+foreign="$(jq -r --arg nwo "$repo_nwo" "$DW_JQ_SAME_REPO"'map(select(same_repo(.repo; $nwo) | not) | "\(.repo)#\(.number)") | join(", ")' <<<"$open_subs")"
 [ -z "$foreign" ] \
   || dw_die "Issue #${issue} の開いている子孫に、別のリポジトリの Issue（${foreign}）があります。その Issue を親から外すか、そのリポジトリで取りやめてから、もう一度実行してください" 2
 open_subs="$(jq -c 'map({number, title})' <<<"$open_subs")"

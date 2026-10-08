@@ -90,9 +90,9 @@ while :; do
   jq -e '.data.repositoryOwner.projectV2.items' >/dev/null 2>&1 <<<"$page" \
     || dw_die "Project が見つかりません: ${owner}/${number}（setup-project.sh で設定してください）"
   picked="$(jq -c --arg r "$repo_nwo" --arg todo "$todo_col" --arg hold "$hold_col" --argjson active "$active_cols" \
-    --argjson target "${target:-0}" '
+    --argjson target "${target:-0}" "$DW_JQ_SAME_REPO"'
     [.data.repositoryOwner.projectV2.items.nodes[]
-      | select(.content.__typename == "Issue" and .content.repository.nameWithOwner == $r and .content.state == "OPEN")
+      | select(.content.__typename == "Issue" and same_repo(.content.repository.nameWithOwner; $r) and .content.state == "OPEN")
       | {number: .content.number, title: .content.title, url: .content.url, body: (.content.body // ""),
          status: (.status.name // ""), story_point: (.sp.number // null),
          sub_issues: (.content.subIssuesSummary.total // 0)} | .parent = (.sub_issues > 0)
@@ -195,9 +195,9 @@ for n in $(jq -r '.[].number' <<<"$todo"); do
   api_all="$(gh api --paginate "$repo_issue_dir/$n/dependencies/blocked_by?per_page=100" | jq -sc 'add // []')" \
     || dw_die "Issue #${n} の依存関係を読めませんでした"
   body_deps="$(jq -c --argjson n "$n" '.[] | select(.number == $n) | .body_deps' <<<"$todo")"
-  deps="$(jq -c --argjson n "$n" --argjson a "$api_all" --argjson b "$body_deps" --arg repo "$repo_nwo" '
+  deps="$(jq -c --argjson n "$n" --argjson a "$api_all" --argjson b "$body_deps" --arg repo "$repo_nwo" "$DW_JQ_SAME_REPO"'
     . + [{number: $n, blockers: (
-      (($a | map({repo: ((.repository_url // "") | sub("^.*/repos/"; "") | if . == "" then $repo else . end),
+      (($a | map({repo: ((.repository_url // "") | sub("^.*/repos/"; "") | if . == "" or same_repo(.; $repo) then $repo else . end),
                   number, source: "dependency", state: (.state | ascii_downcase)}))
        + ($b | map({repo: $repo, number: ., source: "body", state: null})))
       | group_by([.repo, .number])
@@ -207,7 +207,7 @@ open_in_project="$(jq -c --argjson a "$active" --argjson h "$hold" '[.[].number]
 # 状態がまだ分からないもの（このリポジトリの本文の依存で、Project に無いもの）を REST で読む
 fetched='{}'
 for d in $(jq -r --argjson o "$open_in_project" --arg repo "$repo_nwo" \
-  '[.[].blockers[] | select(.state == null and .repo == $repo and (.number as $x | $o | index($x) | not)) | .number] | unique | .[]' <<<"$deps"); do
+  "$DW_JQ_SAME_REPO"'[.[].blockers[] | select(.state == null and same_repo(.repo; $repo) and (.number as $x | $o | index($x) | not)) | .number] | unique | .[]' <<<"$deps"); do
   # 本文の「依存」は手で書くので、無い Issue（404・410）の番号もありうる。止まらず、閉じたと分からないので待ちのままにする
   # （状態は not_found）。認証・通信などほかの失敗は、dw_gh_find が理由を伝えて止まる
   s="$(dw_gh_find gh api "$repo_issue_dir/$d" -q .state)"
@@ -217,12 +217,12 @@ done
 
 jq -n --argjson todo "$todo" --argjson active "$active" --argjson deps "$deps" --argjson fetched "$fetched" \
   --argjson in_project "$open_in_project" --argjson hold "$hold" \
-  --argjson prs "$prs" --arg repo "$repo_nwo" --arg owner "$owner" --argjson number "$number" "$odefs"'
+  --argjson prs "$prs" --arg repo "$repo_nwo" --arg owner "$owner" --argjson number "$number" "$DW_JQ_SAME_REPO$odefs"'
   ($active | active_paths($prs)) as $act
   | ($act | unknown_numbers) as $active_unknown
   | ($todo | map(. as $t
       | ($deps[] | select(.number == $t.number).blockers) as $bl
-      | . + {blocked_by: ($bl | map(. + {state: (.state // (if .repo == $repo and (.number | IN($in_project[])) then "open"
+      | . + {blocked_by: ($bl | map(. + {state: (.state // (if same_repo(.repo; $repo) and (.number | IN($in_project[])) then "open"
                                                           else ($fetched[.number | tostring] // "open") end))})
           | map(select(.state != "closed")))}
       | .waiting = (.blocked_by | length > 0)
