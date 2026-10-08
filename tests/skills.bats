@@ -656,7 +656,7 @@ has() {
     grep -q 'checks-commands.sh' "$f" || fail "${name} に、checks-commands.sh で実行するコマンドを決めることが書かれていません"
     grep -q 'checks.commands' "$f" || fail "${name} に、設定 checks.commands が書かれていません"
     grep -q -- '--save' "$f" || fail "${name} に、聞いた答えを設定に保存することが書かれていません"
-    for word in 'action' '`run`' '`confirm`' '`none`' '`infer`'; do
+    for word in action "\`run\`" "\`confirm\`" "\`none\`" "\`infer\`"; do
       grep -q -- "$word" "$f" || fail "${name} に、checks-commands.sh の action（${word}）に従うことが書かれていません"
     done
     grep -q '確認が取れるまで実行しない' "$f" || fail "${name} に、confirm のとき確認が取れるまで実行しないことが書かれていません"
