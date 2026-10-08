@@ -167,7 +167,7 @@ grader_pattern() { sed -n "s/^pattern: '\\(.*\\)'\$/\\1/p" "$EVALS/$1/graders/$2
   assert_equal "$(jq -c '[.action, .reasons]' <<<"$output")" '["hold",["breaking ラベルが付いています（破壊的変更と移行のしかたは、人が決めます）"]]'
   [ ! -s .fake-gh/writes ] || fail "auto-check.sh が書き込みました: $(cat .fake-gh/writes)"
   printf '止まった理由\n' >"$TMP/reason.md"
-  run "${TEST_BASH:-bash}" "$SCRIPTS/auto-hold.sh" --issue 2 --reason-file "$TMP/reason.md"
+  run "${TEST_BASH:-bash}" "$SCRIPTS/auto-hold.sh" --issue 2 --run-id eval1 --reason-file "$TMP/reason.md"
   assert_success
   assert_equal "$(jq -c '[.commented, .status.from, .status.to]' <<<"$output")" '[true,"Todo","On Hold"]'
   local c=task-auto-stops-on-breaking

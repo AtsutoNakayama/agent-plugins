@@ -609,7 +609,7 @@ has() {
   grep -qF '**AskUserQuestion は使わない**' "$f" || fail "AskUserQuestion を使わないことが書かれていません"
   stop="$(section "$f" '## 止まる')"
   has "止まる条件" "$stop" 'auto.max_fix_attempts' 'review.max_rounds' 'ADR にすべき判断' 'Issue があいまい' \
-    '「確認の代わりに決めること」に無い確認' 'auto-hold.sh --issue <番号> --reason-file <ファイル>' \
+    '「確認の代わりに決めること」に無い確認' 'auto-hold.sh --issue <番号> --run-id <実行の id> --reason-file <ファイル>' \
     '止まった理由' 'それまでの判断' '残したもの' '続けるには' 'ワークツリーとブランチは消さない'
   # breaking ラベルなど、スクリプトが決める条件は auto-check.sh に任せる
   has "止まる条件" "$stop" '`auto-check.sh` の `action` が `hold`'
