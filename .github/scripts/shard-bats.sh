@@ -44,7 +44,8 @@ printf '%s' "$files" | awk -v n="$n" -v wf="$weights" '
     FS = "\t"
     while ((getline line < wf) > 0) {
       if (line ~ /^#/ || line == "") continue
-      split(line, a, "\t")
+      # TAB で区切られた「ファイル名 秒（数）」の行だけを読む（壊れた行で平均を崩さない）
+      if (split(line, a, "\t") != 2 || a[2] !~ /^[0-9]+$/) continue
       w[a[1]] = a[2] + 0; sum += a[2]; cnt++
     }
     avg = cnt ? sum / cnt : 1

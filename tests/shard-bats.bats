@@ -89,20 +89,18 @@ shard() {
   assert_failure
 }
 
-@test "このリポジトリの tests/ の全ファイルがシャードに入り、表と tests/ が食い違わない" {
+@test "このリポジトリの tests/ の全ファイルがシャードに入り、表に載っているファイルが全部ある" {
   cd "$BATS_TEST_DIRNAME/.."
   run "${TEST_BASH:-bash}" "$SHARD" 4
   assert_success
   assert_equal "$(jq -r '.[].files | split(" ")[]' <<<"$output" | sort)" "$(printf '%s\n' tests/*.bats)"
-  # 表の更新漏れに気づけるよう、表と tests/ の食い違いを両方向で確かめる
-  local name f
+  # 改名・削除の更新漏れに気づけるよう、表に載っているのに無いファイルを確かめる
+  # （tests/ にあって表に無いファイルは、平均で見積もられるので、失敗にしない）
+  local name
   while IFS=$'\t' read -r name _; do
     case "$name" in '#'* | '') continue ;; esac
     [ -f "tests/$name" ] || fail "表に載っているのに無いファイル: $name"
   done <.github/scripts/bats-weights.tsv
-  for f in tests/*.bats; do
-    grep -q "^${f#tests/}"$'\t' .github/scripts/bats-weights.tsv || fail "tests/ にあるのに表に無いファイル（bats-weights.tsv に足す）: $f"
-  done
 }
 
 @test "実際の tests/ で、最も重いシャードが、平均の1.5倍を超えない（偏らない）" {
@@ -115,12 +113,22 @@ shard() {
   while read -r fs; do
     t=0
     for f in $fs; do
-      # 表に無いファイルは 0 とする（表の網羅は別のテストが確かめる）。数でなければ失敗させる
-      w=$(awk -F'\t' -v n="${f#tests/}" '$1 == n { v = $2 } END { print v + 0 }' .github/scripts/bats-weights.tsv)
+      # 表に無いファイルは、表の平均で見積もる（shard-bats.sh と同じ）。数でなければ失敗させる
+      w=$(awk -F'\t' -v n="${f#tests/}" '!/^#/ && NF { s += $2; c++; if ($1 == n) v = $2 } END { print (v != "") ? v + 0 : int(s / c) }' .github/scripts/bats-weights.tsv)
       [[ "$w" =~ ^[0-9]+$ ]] || fail "重みが数でない: $f / $w"
       t=$((t + w))
     done
     if [ "$t" -gt "$max" ]; then max=$t; fi
   done <<<"$files"
   [ $((max * 4)) -le $((total * 3 / 2)) ] || fail "偏っている: 最大 $max / 合計 $total"
+}
+
+@test "表の壊れた行（TAB が無い・秒が数でない）は読み飛ばし、平均を崩さない" {
+  mkdir "$TMP/u"
+  : >"$TMP/u/a.bats" && : >"$TMP/u/b.bats" && : >"$TMP/u/f.bats"
+  # 正しい行の平均は 80。壊れた行が 0 として数えられると 40 になり、f は b より軽く見積もられる
+  printf 'a.bats\t100\nb.bats\t60\nc.bats 5\nd.bats\tabc\n' >"$TMP/bad.tsv"
+  run "${TEST_BASH:-bash}" "$SHARD" 2 --dir "$TMP/u" --weights "$TMP/bad.tsv"
+  assert_success
+  assert_equal "$(jq -r '.[1].files' <<<"$output")" "$TMP/u/f.bats $TMP/u/b.bats"
 }
