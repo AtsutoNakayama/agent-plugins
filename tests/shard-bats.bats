@@ -132,3 +132,14 @@ shard() {
   assert_success
   assert_equal "$(jq -r '.[1].files' <<<"$output")" "$TMP/u/f.bats $TMP/u/b.bats"
 }
+
+@test "表のファイル名が空の行は読み飛ばし、平均を崩さない" {
+  mkdir "$TMP/v"
+  : >"$TMP/v/a.bats" && : >"$TMP/v/b.bats" && : >"$TMP/v/f.bats"
+  # 正しい行の平均は 80。空のファイル名の行が数えられると平均が上がり、f は a より重く見積もられる
+  printf 'a.bats\t100\nb.bats\t60\n\t500\n' >"$TMP/empty-name.tsv"
+  run "${TEST_BASH:-bash}" "$SHARD" 2 --dir "$TMP/v" --weights "$TMP/empty-name.tsv"
+  assert_success
+  assert_equal "$(jq -r '.[0].files' <<<"$output")" "$TMP/v/a.bats"
+  assert_equal "$(jq -r '.[1].files' <<<"$output")" "$TMP/v/f.bats $TMP/v/b.bats"
+}
