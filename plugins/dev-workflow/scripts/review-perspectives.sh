@@ -117,7 +117,8 @@ if [ "$auto" = true ]; then
     || dw_die "マージ先が見つかりません: ${target}（git fetch origin ${base_branch} で取得してください）" 2
   base="$(git merge-base "$target" HEAD)" || dw_die "${target} と HEAD の基点が見つかりません" 2
   branch="$(git symbolic-ref --short -q HEAD || true)"
-  IFS='|' read -r branch_type branch_issue <<<"$(dw_parse_branch "$config" "$branch")"
+  parsed="$(dw_parse_branch "$config" "$branch")" || exit $?
+  IFS='|' read -r branch_type branch_issue <<<"$parsed"
   # ブランチ名の番号は、先頭の 0 をそろえる（017 は 17）。Issue の番号として使えない（0 など）ときは、止まらずに Issue は無いものとする
   issue=""
   if [ -n "$branch_issue" ] && ! issue="$(dw_issue_number --issue "$branch_issue" 2>/dev/null)"; then

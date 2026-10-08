@@ -186,7 +186,8 @@ if [ "$(jq length <<<"$reasons")" = 0 ]; then
   if [ "$(jq length <<<"$reasons")" = 0 ] && [ "$(jq '.branches | length' <<<"$work")" = 1 ]; then
     resume="$(jq -c '.branches[0] | {branch: .name, worktree}' <<<"$work")"
     # type ラベル・ブランチ名・PR のタイトルの type は同じにする（設計書 §5）ので、ブランチの type が Issue と違えば使い回さない
-    btype="$(dw_parse_branch "$config" "$(jq -r .branch <<<"$resume")" | cut -d'|' -f1)"
+    bparsed="$(dw_parse_branch "$config" "$(jq -r .branch <<<"$resume")")" || exit $?
+    btype="${bparsed%%|*}"
     itype="$(jq -r '.type // ""' <<<"$summary")"
     if [ -n "$btype" ] && [ "$btype" != "$itype" ]; then
       add_reason "Issue #${issue} の作業のブランチ $(jq -r .branch <<<"$resume") の type（${btype}）が、Issue の type（${itype}）と違います。どれで続けるかは人が決めます"

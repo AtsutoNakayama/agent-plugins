@@ -11,7 +11,7 @@
 #
 # 形は設定の branch.pattern（既定: {type}/{issue_number}-{slug}）。
 # branch.pattern のプレースホルダ: {type} は type ラベル、{issue_number} は Issue の番号、{slug} は英語の短い説明。
-# --check は規約に合わなければ終了コード 1 で、理由を出力する。設定を読めなければ終了コード 2。
+# --check は規約に合わなければ終了コード 1 で、理由を出力する。設定を読めない、または branch.pattern が正規表現として正しくなければ終了コード 2。
 set -euo pipefail
 
 # shellcheck source=lib/common.sh

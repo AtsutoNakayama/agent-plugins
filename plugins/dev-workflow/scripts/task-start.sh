@@ -125,7 +125,8 @@ if ! $no_worktree; then
     branch="$use_branch"
     # この Issue の作業のブランチ（branch.pattern に合い、番号が一致する。dw_issue_branches の確かなブランチと同じ）だけを受け取る。
     # base_branch や別の Issue のブランチで着手しないため
-    parsed_issue="$(dw_parse_branch "$config" "$branch" | cut -d'|' -f2 | sed 's/^0*//')"
+    parsed="$(dw_parse_branch "$config" "$branch")" || exit $?
+    parsed_issue="$(cut -d'|' -f2 <<<"$parsed" | sed 's/^0*//')"
     [ "$parsed_issue" = "$issue" ] \
       || dw_die "ブランチ ${branch} は、Issue #${issue} の作業のブランチ（branch.pattern に合い、番号が ${issue}）ではありません" 2
     # 既にあるブランチだけを使う（無ければ origin/<base_branch> から作らない。前の作業を置き去りにした新しいブランチになるため）。

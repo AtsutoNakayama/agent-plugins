@@ -16,7 +16,7 @@
 # open_prs は、Issue を閉じる PR（closedByPullRequestsReferences）のうち開いているもの（フォークや別のリポジトリの PR も含む）。
 # Issue を閉じてよいかの判断に使う
 #
-# 止まるとき: PR の番号・無い番号（終了コード 2）、gh が古い（2）、origin・Issue・PR を読めない（1）
+# 止まるとき: PR の番号・無い番号（終了コード 2）、branch.pattern が正規表現として正しくない（2）、gh が古い（2）、origin・Issue・PR を読めない（1）
 #
 # 出力:
 #   issue       {number, title, state, url, open_sub_issues（開いている子の数）}

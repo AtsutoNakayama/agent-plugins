@@ -549,3 +549,14 @@ run_start() {
   [ ! -e .claude/worktrees ]
   assert_equal "$(called edit)" 0
 }
+
+@test "--branch は、branch.pattern が正規表現として正しくなければ、番号が合わないのではなく設定の誤りで終了コード 2" {
+  setup_fake_gh
+  echo '{"branch": {"pattern": "{type}/{issue_number}-{slug}("}}' >.claude/dev-workflow/config.json
+  setup_origin
+  git branch feat/17-x
+  run_start --issue 17 --branch feat/17-x
+  assert_failure 2
+  assert_output --partial "正規表現として正しくありません"
+  refute_output --partial "作業のブランチ（branch.pattern に合い"
+}

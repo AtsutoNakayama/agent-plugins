@@ -102,6 +102,7 @@ dw_read_issue() {
 #     Issue の作業と決めつけたりしない
 # PR からは探さない（Closes #17, #18 の PR やリリース用の PR のように、別の Issue のブランチまで拾うため）。
 # origin を読めなければ止まる（「origin に無い」と区別できないまま出すと、使う側が片付けを誤るため）。
+# branch.pattern が正規表現として正しくなければ、メッセージを出して終了コード 2 で止まる（dw_check_branch_pattern）。
 # 使い方: dw_issue_branches <メインのワークツリー> <Issue の番号（dw_issue_number でそろえたもの）> <設定の JSON>
 dw_issue_branches() {
   local names refs msg
@@ -428,15 +429,18 @@ DW_JQ_BRANCH_RE='def branch_re: .labels.types as $t | .branch.pattern
 
 # 設定の branch.pattern が、正規表現として正しいかを確かめる。正しくなければ、設定の誤りと分かる1行を出力して 1 を返す
 # （jq の test は正しくない正規表現で失敗し、ブランチ名が合わないのと区別できないため、先に確かめる）
+# branch.pattern が文字列でない（設定が空・部分的）ときは、組み立てられないだけで正規表現の誤りではないので、確かめずに通す
 # 使い方: dw_check_branch_pattern <設定の JSON>
 dw_check_branch_pattern() {
   # shellcheck disable=SC2016 # jq の変数（$re）を bash に展開させない
-  jq -e "$DW_JQ_BRANCH_RE"'branch_re as $re | "" | test($re) | true' <<<"$1" >/dev/null 2>&1 \
+  jq -e "$DW_JQ_BRANCH_RE"'if (.branch.pattern | type) != "string" then true
+    else (.labels.types //= []) | branch_re as $re | "" | test($re) | true end' <<<"$1" >/dev/null 2>&1 \
     || { printf 'branch.pattern（%s）が正規表現として正しくありません。設定を直してください\n' "$(jq -r '.branch.pattern' <<<"$1")"; return 1; }
 }
 
 # ブランチ名を branch.pattern に当て、type と Issue の番号を「<type>|<番号>」で出力する（無いものは空）
 # 区切りを空白にすると、read が先頭の空白を外して、type が空のときに番号を type と取り違える
+# branch.pattern が正規表現として正しくなければ、メッセージを出して終了コード 2 で止まる（dw_check_branch_pattern）。
 # 使い方: dw_parse_branch <設定の JSON> <ブランチ名>
 dw_parse_branch() {
   local msg

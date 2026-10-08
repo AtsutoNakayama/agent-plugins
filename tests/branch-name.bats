@@ -144,3 +144,11 @@ load fake_gh
   assert_success
   assert_output "feat|17"
 }
+
+@test "dw_check_branch_pattern は、設定が空・部分的（branch.pattern が文字列でない・labels.types が無い）でも、正規表現の誤りとはしない" {
+  for c in '{}' '{"labels":{"types":["feat"]}}' '{"branch":{"pattern":null},"labels":{"types":["feat"]}}' '{"branch":{"pattern":"{type}/{issue_number}"}}'; do
+    # shellcheck disable=SC2016 # bash -c の中で展開させる
+    run "${TEST_BASH:-bash}" -c '. "$1/lib/common.sh"; dw_check_branch_pattern "$2"' _ "$SCRIPTS" "$c"
+    assert_success
+  done
+}
