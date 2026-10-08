@@ -120,6 +120,8 @@ claude plugin validate --strict .                     # マーケットプレイ
 claude plugin validate --strict plugins/dev-workflow  # プラグイン本体（. だけではスキルなどは検査されない）
 ```
 
+CI の test ジョブは、`tests/*.bats` を所要時間が偏らないように複数のシャード（ubuntu は3つ、macOS は4つ）に分けて並列に動かします（分け方は `.github/scripts/shard-bats.sh`、ファイルごとの所要時間の目安は `.github/scripts/bats-weights.tsv`）。必須のチェック `test-result` は、全シャードが成功したときだけ成功になります（1つでも失敗・取り消しなら失敗です。ドキュメントだけの変更で test を飛ばしたときは、これまでどおり成功です）。手元では分けずに `bats tests/` で全部を動かして構いません。新しい `.bats` は、表に無くても必ずどれかのシャードに入ります。偏りが目立つようになったら、表を測り直します。
+
 bats は `--jobs` で並列に実行できます（GNU parallel が要ります）。テストは git や jq の起動を待つ時間が長いので、コア数の2倍くらいにすると速くなります。各テストは自分の一時ディレクトリで動くので、並列にしても結果は変わりません。
 
 ```bash
