@@ -23,7 +23,6 @@ load test_helper
 #   どれでもない（CI が全部成功・チェックが無い）               idle      nothing_to_do
 #
 # 偽の gh。
-# - gh repo view ... -q .nameWithOwner  me/demo を返す
 # - gh pr view [番号] --json ...   $FIX/pr-view.json を返す
 # - gh api graphql                クエリに PrWatch があれば $FIX/watch.json、無ければ（PrThreads）$FIX/PrThreads.json を返す
 # - それ以外（書き込みを含む）は、$CALLS に「WRITE <引数>」を記録して失敗する
@@ -36,7 +35,7 @@ setup_fake_gh() {
   cat >"$TMP/bin/gh" <<'SH'
 #!/usr/bin/env bash
 case "$1 $2" in
-  "repo view") echo me/demo ;;
+  "repo view") echo me/demo ;; # pr-feedback.sh が使う
   "pr view") echo "READ pr view" >>"$CALLS"; cat "$FIX/pr-view.json" ;;
   "api graphql")
     body="$(cat)"
@@ -69,8 +68,8 @@ pr_view() {
 # GraphQL（PrWatch）の応答を作る。使い方: watch <既定の値に上書きするオブジェクト（jq の式）>
 # 既定は、2026-10-01T00:00:00Z に作った、フォークでなく、キューにも入っていない、レビューの無い PR
 watch() {
-  jq -n "$1 as \$o | "'{data: {repository: {pullRequest: ({createdAt: "2026-10-01T00:00:00Z", isCrossRepository: false,
-    mergeQueueEntry: null, reviews: {nodes: []}} + $o)}}}' >"$FIX/watch.json"
+  jq -n "$1 as \$o | "'{data: {resource: ({createdAt: "2026-10-01T00:00:00Z", isCrossRepository: false,
+    mergeQueueEntry: null, reviews: {nodes: []}} + $o)}}' >"$FIX/watch.json"
 }
 
 # スレッドを1つ足す（write_threads で応答にする）。コメントは [[投稿者, 本文], ...]
@@ -259,8 +258,63 @@ expect() {
 
 @test "GraphQL を読めなければ、1行のメッセージで止まる" {
   setup_fake_gh
-  echo '{"data": {"repository": {"pullRequest": null}}}' >"$FIX/watch.json"
+  echo '{"data": {"resource": null}}' >"$FIX/watch.json"
   run_script pr-watch.sh --pr 5
   assert_failure 1
   assert_output --partial "PR #5 のマージキューの状態を読めません"
+}
+
+@test "表: reviews が空でも、スレッドの投稿者が handlers に当たれば（大文字小文字・[bot] の違いを無視）到着とみなし、待たない" {
+  setup_fake_gh
+  echo '{"pr_check": {"handlers": {"CodeRabbitAI[bot]": "coderabbit-respond"}}}' >"$REPO/.claude/dev-workflow/config.json"
+  thread '[["coderabbitai","直してください"],["me","直しました"]]'
+  write_threads
+  expect idle '["nothing_to_do"]'
+  assert_equal "$(jq -c .details.waiting_for <<<"$output")" '[]'
+}
+
+@test "表: コンフリクトと遅れが両方なら conflict で conflicting と behind" {
+  setup_fake_gh
+  pr_view '{mergeable: "CONFLICTING", mergeStateStatus: "BEHIND"}'
+  expect conflict '["conflicting","behind"]'
+}
+
+@test "表: CI 実行中・mergeable UNKNOWN・レビュー待ちが重なれば、wait の理由を並べる" {
+  setup_fake_gh
+  echo '{"pr_check": {"handlers": {"coderabbitai[bot]": "coderabbit-respond"}}}' >"$REPO/.claude/dev-workflow/config.json"
+  pr_view '{mergeable: "UNKNOWN", statusCheckRollup: [{__typename: "CheckRun", name: "t", status: "IN_PROGRESS"}]}'
+  expect wait '["ci_pending","awaiting_review:coderabbitai[bot]","mergeable_unknown"]'
+}
+
+@test "表: レビュー待ちの間でも、CI が失敗していれば act で ci_failed" {
+  setup_fake_gh
+  echo '{"pr_check": {"handlers": {"coderabbitai[bot]": "coderabbit-respond"}}}' >"$REPO/.claude/dev-workflow/config.json"
+  pr_view '{statusCheckRollup: [{__typename: "CheckRun", name: "t", status: "COMPLETED", conclusion: "FAILURE"}]}'
+  expect act '["ci_failed"]'
+}
+
+@test "pr-feedback.sh が失敗したら、その終了コードとメッセージを伝えて止まる" {
+  setup_fake_gh
+  echo '{"pr_check": {"handlers": []}}' >"$REPO/.claude/dev-workflow/config.json"
+  run_script pr-watch.sh --pr 5
+  assert_failure 1
+  assert_output --partial "pr_check.handlers"
+}
+
+@test "PrWatch の GraphQL 呼び出しが失敗したら、マージキューの状態を読めないと伝えて止まる" {
+  setup_fake_gh
+  rm "$FIX/watch.json"
+  run_script pr-watch.sh --pr 5
+  assert_failure 1
+  assert_output --partial "PR #5 のマージキューの状態を読めません"
+}
+
+@test "不明な引数は 64 で止まり、--help は使い方を出して 0 で終わる" {
+  setup_fake_gh
+  run_script pr-watch.sh --bogus
+  assert_failure 64
+  assert_output --partial "不明な引数です: --bogus"
+  run_script pr-watch.sh --help
+  assert_success
+  assert_output --partial "使い方: pr-watch.sh"
 }

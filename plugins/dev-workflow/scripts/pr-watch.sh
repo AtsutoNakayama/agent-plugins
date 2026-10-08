@@ -31,7 +31,7 @@
 #   6. idle  nothing_to_do  上のどれでもない（CI が全部通るか無く、対応する指摘も無い）
 #
 # 決まり:
-#   - 材料は pr-feedback.sh の出力と、GraphQL で読むマージキューの状態・作成時刻・フォークか・レビューの投稿者
+#   - 材料は pr-feedback.sh の出力と、GraphQL で読むマージキューの状態・作成時刻・フォークか・レビューの投稿者（PR の URL から引く）
 #     （マージキューの状態は gh pr view に無い。設計書 §10）
 #   - テストのため、環境変数 PR_WATCH_NOW（UNIX 秒）で今の時刻を差し替えられる
 set -euo pipefail
@@ -67,25 +67,28 @@ else
   fb="$("$BASH" "$DW_SCRIPTS_DIR/pr-feedback.sh")" || exit $?
 fi
 number="$(jq -r .pr.number <<<"$fb")"
-nwo="$(gh repo view --json nameWithOwner -q .nameWithOwner)" || dw_die "リポジトリを読めません"
-
-# shellcheck disable=SC2016 # GraphQL の変数（$owner など）を bash に展開させないため、シングルクォートで書く
-res="$(dw_gql 'query PrWatch($owner: String!, $name: String!, $number: Int!) {
-    repository(owner: $owner, name: $name) { pullRequest(number: $number) {
-      createdAt isCrossRepository
-      mergeQueueEntry { state }
-      reviews(first: 100) { nodes { author { login } } }
-    } }
-  }' "$(jq -nc --arg o "${nwo%%/*}" --arg n "${nwo#*/}" --argjson num "$number" '{owner: $o, name: $n, number: $num}')" 2>&1)" \
+# マージキューの状態などは gh pr view にも REST にも無いので GraphQL で読む（設計書 §10）。PR の URL から引くので、
+# リポジトリの所有者と名前を別に調べなくてよい（branch-status.sh と同じ）。
+# reviews は新しい方の 100 件だけ見る。超えても、待つのは PR を作ってから 60 分までなので害は小さい
+# shellcheck disable=SC2016 # GraphQL の変数（$url）を bash に展開させないため、シングルクォートで書く
+res="$(dw_gql 'query PrWatch($url: URI!) {
+    resource(url: $url) {
+      ... on PullRequest {
+        createdAt isCrossRepository
+        mergeQueueEntry { state }
+        reviews(last: 100) { nodes { author { login } } }
+      }
+    }
+  }' "$(jq -c '{url: .pr.url}' <<<"$fb")" 2>&1)" \
   || dw_die "PR #${number} のマージキューの状態を読めません: $res"
-jq -e '.data.repository.pullRequest | type == "object"' >/dev/null 2>&1 <<<"$res" \
+jq -e '.data.resource | type == "object" and has("createdAt")' >/dev/null 2>&1 <<<"$res" \
   || dw_die "PR #${number} のマージキューの状態を読めません: $res"
 
 now="${PR_WATCH_NOW:-$(date -u +%s)}"
 
 # jq の変数（$f など）を bash に展開させないため、シングルクォートで書く
 # shellcheck disable=SC2016
-jq -n --argjson f "$fb" --argjson g "$(jq -c .data.repository.pullRequest <<<"$res")" \
+jq -n --argjson f "$fb" --argjson g "$(jq -c .data.resource <<<"$res")" \
   --argjson now "$now" --argjson wait_min "$review_wait_minutes" '
   def norm: ascii_downcase | sub("\\[bot\\]$"; "");
   ($f.pr) as $p
