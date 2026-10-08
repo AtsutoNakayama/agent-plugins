@@ -36,7 +36,8 @@
 #              warning は、保存した層より優先される層が別の値を決めていて、保存した値が使われないときの知らせか null）
 #
 # 止まるとき: checks.commands が null でも配列でもない・文字列でない要素や空の要素がある（終了コード 2）、
-#             --save の引数の誤り（64）、設定を読めない・書けない（2）、--save で書き込み先の設定の checks がオブジェクトでない（2。設定は書き換えない）
+#             --save の引数の誤り（64）、--save がホームのリポジトリ（.claude/dev-workflow がユーザーの層と同じ場所）で、何も書かずに止まる（2）、
+#             設定を読めない・書けない（2）、--save で書き込み先の設定の checks がオブジェクトでない（2。設定は書き換えない）
 set -euo pipefail
 
 # shellcheck source=lib/common.sh
@@ -128,7 +129,10 @@ if [ "$commands" != null ]; then
   head_ref="$(git -C "$repo_root" symbolic-ref -q refs/remotes/origin/HEAD 2>/dev/null || true)"
   if [ -n "$head_ref" ] && merge_base="$(git -C "$repo_root" merge-base HEAD "$head_ref" 2>/dev/null)"; then
     any_changed=false any_unknown=false
-    for rel in .claude/dev-workflow/config.json .claude/dev-workflow/config.local.json; do
+    # ホームのリポジトリには、チームの設定も個人の上書きも無い（ユーザーの層のファイルは比べない）
+    rels=""
+    [ -z "$(dw_team_dir "$repo_root")" ] || rels=".claude/dev-workflow/config.json .claude/dev-workflow/config.local.json"
+    for rel in $rels; do
       # 個人の設定は、git に追跡されている（コミットされた）ときだけ比べる。追跡されていなければ、自分の設定なので信頼する
       if [ "$rel" = .claude/dev-workflow/config.local.json ] \
         && ! git -C "$repo_root" ls-files --error-unmatch -- "$rel" >/dev/null 2>&1; then

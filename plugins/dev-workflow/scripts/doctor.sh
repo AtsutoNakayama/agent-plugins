@@ -125,19 +125,22 @@ if [ -n "$repo_root" ]; then
   else
     check set-up false warn "このリポジトリにはプラグインを導入していません（.claude/dev-workflow/config.json がありません）。フック（main を守る・タスクの進め方を渡す・リンクを出す）は動かず、~/.claude/dev-workflow/ の設定・文章のガイド・レビューの観点も使いません。/dev-workflow:repo-setup で導入してください"
   fi
-  old_location "$repo_root/.claude/workflow.json" "$repo_root/.claude/dev-workflow/config.json"
-  old_location "$repo_root/.claude/workflow" "$repo_root/.claude/dev-workflow/"
-  old_location "$repo_root/.claude/review" "$repo_root/.claude/dev-workflow/review/"
-  old_location "$repo_root/.claude/labels.json" "$repo_root/.claude/dev-workflow/labels.json"
-  # 個人の設定はメインのワークツリーに置く
-  main_root="$(dw_main_root "$repo_root" || true)"
-  local_root="${main_root:-$repo_root}"
-  old_location "$local_root/.claude/workflow.local.json" "$local_root/.claude/dev-workflow/config.local.json"
-  # .gitignore が古い名前だけを無視している、または既にコミットしてあると、個人の設定がコミットされうる
-  # （dw_local_config_state で両方を見分け、それぞれに合う案内を出す）
-  if [ -f "$local_root/.claude/workflow.local.json" ] || [ -f "$(dw_local_config_file "$repo_root")" ]; then
-    hint="$(dw_local_config_hint "$(dw_local_config_state "$repo_root")")"
-    [ -z "$hint" ] || check local-ignored false warn "$hint"
+  # ホームのリポジトリには、チームの設定も個人の上書きも無い（置き場所がユーザーの層になる）ので、そこへ移すよう案内しない
+  if ! dw_is_home_repo "$repo_root"; then
+    old_location "$repo_root/.claude/workflow.json" "$repo_root/.claude/dev-workflow/config.json"
+    old_location "$repo_root/.claude/workflow" "$repo_root/.claude/dev-workflow/"
+    old_location "$repo_root/.claude/review" "$repo_root/.claude/dev-workflow/review/"
+    old_location "$repo_root/.claude/labels.json" "$repo_root/.claude/dev-workflow/labels.json"
+    # 個人の設定はメインのワークツリーに置く
+    main_root="$(dw_main_root "$repo_root" || true)"
+    local_root="${main_root:-$repo_root}"
+    old_location "$local_root/.claude/workflow.local.json" "$local_root/.claude/dev-workflow/config.local.json"
+    # .gitignore が古い名前だけを無視している、または既にコミットしてあると、個人の設定がコミットされうる
+    # （dw_local_config_state で両方を見分け、それぞれに合う案内を出す）
+    if [ -f "$local_root/.claude/workflow.local.json" ] || [ -f "$(dw_local_config_file "$repo_root")" ]; then
+      hint="$(dw_local_config_hint "$(dw_local_config_state "$repo_root")")"
+      [ -z "$hint" ] || check local-ignored false warn "$hint"
+    fi
   fi
 fi
 user_parent="$(dirname "$(dw_user_dir)")"

