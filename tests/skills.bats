@@ -594,6 +594,20 @@ has() {
 }
 
 # shellcheck disable=SC2016 # バッククォートはスキルの本文の文字で、展開させない
+@test "adr-create は、採択した ADR を書き換えないことと、一部だけ変える ADR の補足に関係を書くことを書く（設計書 §8）" {
+  adr="$SKILLS/adr-create/SKILL.md"
+  grep -qF '採択した ADR の本文は書き換えない' "$adr" || fail "adr-create に、採択した ADR を書き換えないことがありません"
+  grep -qF '「補足」に、その ADR へのリンクと、何を変えるかを書く（MADR の判断 0009）' "$adr" || fail "adr-create に、一部だけ変える ADR の補足の決まりがありません"
+  grep -qF '全部を覆すなら `--supersedes` で置き換える' "$adr" || fail "adr-create に、全部を覆すときは置き換えることがありません"
+  grep -qF '採択した ADR の本文は書き換えない' "$BATS_TEST_DIRNAME/../docs/design.md" || fail "設計書に、書き換えないことがありません"
+  grep -qF '関係を新しい ADR の「補足」に書く' "$BATS_TEST_DIRNAME/../docs/design.md" || fail "設計書に、補足に関係を書くことがありません"
+  grep -qF '「補足」に、その ADR へのリンクと、何を変えるかを書きます（MADR の判断 0009）' "$BATS_TEST_DIRNAME/../README.md" || fail "README に、補足に関係を書くことがありません"
+  tr="$BATS_TEST_DIRNAME/../plugins/dev-workflow/templates/adr/README.md"
+  grep -qF '`date` は、MADR では「判断を最後に更新した日」ですが、書き換えないので、判断をした日にします' "$tr" || fail "テンプレートの README に date の扱いがありません"
+  grep -qF '採択した ADR の本文は書き換えません' "$tr" || fail "テンプレートの README に、編集しないことがありません"
+}
+
+# shellcheck disable=SC2016 # バッククォートはスキルの本文の文字で、展開させない
 @test "task-auto は、auto-check.sh の action ごとにすることを書き、無効なら何もしない（設計書 §8・ADR 000267）" {
   f="$SKILLS/task-auto/SKILL.md"
   s1="$(step "$f" 1)"
