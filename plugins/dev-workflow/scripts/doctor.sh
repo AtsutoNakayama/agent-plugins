@@ -168,11 +168,11 @@ base_branch="$team_base"
 if $gh_auth && [ -n "$repo_root" ] && [ -n "$base_branch" ] \
   && rules="$(dw_branch_rules '{owner}/{repo}' "$base_branch")" \
   && required="$(dw_required_checks "$rules" "$(dw_classic_required_checks '{owner}/{repo}' "$base_branch")" 2>/dev/null)" \
-  && merge="$(jq -ser --argjson required "$required" "$DW_JQ_CHECK_RULES"'
+  && merge="$(jq -ser --argjson required "$required" "$DW_JQ_CHECK_RULES$DW_JQ_MERGE_QUEUE"'
     # --paginate はページごとに配列を出力するので、1つにまとめる
     add // []
     | if $required == [] then "no-checks"
-    elif any(.[]; .type == "merge_queue") then "queue"
+    elif merge_queue then "queue"
     elif any(check_rules[]; .parameters.strict_required_status_checks_policy) then "strict"
     elif check_rules != [] then "none"
     else "classic" end' <<<"$rules" 2>/dev/null)"; then
