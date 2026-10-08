@@ -199,3 +199,93 @@ run_common() {
   assert_line --index 0 "$REPO/.git"
   assert_line --index 2 "$REPO"
 }
+
+@test "dw_base_branch は、git のブランチ名として使える base_branch を出力する" {
+  run_common dw_base_branch '{"base_branch": "release/v1"}'
+  assert_success
+  assert_output "release/v1"
+}
+
+@test "dw_base_branch は、ダッシュで始まる base_branch を拒否する（git のオプションとして扱わせない）" {
+  for b in -v -foo --all; do
+    run_common dw_base_branch "$(jq -nc --arg b "$b" '{base_branch: $b}')"
+    assert_failure 2
+    assert_output "error: 設定の base_branch が git のブランチ名として使えません: ${b}"
+  done
+}
+
+@test "dw_base_branch は、書式に合わない値と、git が今の位置として扱う HEAD・@ を拒否する" {
+  for b in "" "a..b" "a b" "x@{-1}" "@{-1}" "refs/" "a.lock" HEAD @; do
+    run_common dw_base_branch "$(jq -nc --arg b "$b" '{base_branch: $b}')"
+    assert_failure 2
+    assert_output --partial "設定の base_branch が git のブランチ名として使えません"
+  done
+}
+
+@test "dw_base_branch は、git fetch が refspec の強制更新の印と読む + で始まる値を拒否する" {
+  run_common dw_base_branch '{"base_branch": "+develop"}'
+  assert_failure 2
+  assert_output "error: 設定の base_branch が git のブランチ名として使えません: +develop"
+}
+
+@test "dw_base_branch は、末尾に改行のある値を拒否する（改行を消してから検査しない）" {
+  for b in $'develop\n' $'develop\n\n'; do
+    run_common dw_base_branch "$(jq -nc --arg b "$b" '{base_branch: $b}')"
+    assert_failure 2
+    assert_output --partial "設定の base_branch が git のブランチ名として使えません"
+  done
+}
+
+@test "dw_base_branch は、文字列でない base_branch を拒否する" {
+  for v in null 1 true '["main"]'; do
+    run_common dw_base_branch "{\"base_branch\": $v}"
+    assert_failure 2
+    assert_output "error: 設定の base_branch が文字列ではありません"
+  done
+}
+
+@test "dw_team_base_branch は、チームの設定の base_branch を検査し、無ければプラグインの既定を使う" {
+  run_common dw_team_base_branch ""
+  assert_success
+  assert_output main
+  echo '{"base_branch": null}' >"$TMP/team.json"
+  run_common dw_team_base_branch "$TMP/team.json"
+  assert_output main
+  echo '{"base_branch": "develop"}' >"$TMP/team.json"
+  run_common dw_team_base_branch "$TMP/team.json"
+  assert_output develop
+
+  for v in 1 true '"-foo"'; do
+    echo "{\"base_branch\": $v}" >"$TMP/team.json"
+    run_common dw_team_base_branch "$TMP/team.json"
+    assert_failure 2
+  done
+  # JSON のオブジェクトとして読めなければ（空のファイルも）、渡した名前で示して止まる
+  for c in '{broken' '' '[]'; do
+    printf '%s' "$c" >"$TMP/team.json"
+    run_common dw_team_base_branch "$TMP/team.json" "チームの設定"
+    assert_failure 2
+    assert_output "error: チームの設定 を JSON のオブジェクトとして読めません"
+  done
+}
+
+@test "dw_team_config も、チームの設定を JSON のオブジェクトとして読めなければ（空のファイルも）1 を返す" {
+  echo '{"require_status_checks": false}' >"$TMP/team.json"
+  run_common dw_team_config "$TMP/team.json" require_status_checks
+  assert_success
+  assert_output false
+  for c in '{broken' '' '[]'; do
+    printf '%s' "$c" >"$TMP/team.json"
+    run_common dw_team_config "$TMP/team.json" require_status_checks
+    assert_failure 1
+    assert_output ""
+  done
+}
+
+@test "base_branch は、dw_base_branch・dw_team_base_branch を通さずに設定から読まない" {
+  # guard-git.sh は止まらずに使えない値を外すので、自分で dw_valid_base_branch で検査する（tests/guard-git.bats）
+  # --exclude は busybox の grep に無いので、見つけた行から外す。シェルのコメントの行（# の後が空白か行末）は読んでいないので外す
+  found="$(grep -rnE '\.base_branch|dw_team_config .*base_branch' "$SCRIPTS" "$SCRIPTS/../hooks" \
+    | grep -v -e '/lib/common\.sh:' -e '/guard-git\.sh:' | grep -vE '^[^:]+:[0-9]+:[[:space:]]*#([[:space:]]|$)' || true)"
+  assert_equal "$found" ""
+}

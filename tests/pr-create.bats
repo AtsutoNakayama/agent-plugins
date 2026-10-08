@@ -41,6 +41,18 @@ run_pr() {
   refute_output --partial --draft
 }
 
+@test "base_branch がダッシュで始まれば、取得せずに止まる（git fetch のオプションとして扱わせない）" {
+  setup_branch
+  fake_issue 17 '["feat"]'
+  jq '.base_branch = "-v"' .claude/dev-workflow/config.json >"$TMP/config.json"
+  mv "$TMP/config.json" .claude/dev-workflow/config.json
+  run_pr --issue 17 --body-file "$TMP/body.md"
+  assert_failure 2
+  assert_output --partial "設定の base_branch が git のブランチ名として使えません: -v"
+  run git ls-remote --heads origin feat/17-x
+  assert_output ""
+}
+
 @test "本文の空の Closes # の行を消し、Closes #N を末尾に足す" {
   setup_branch
   run_pr --issue 17 --body-file "$TMP/body.md"

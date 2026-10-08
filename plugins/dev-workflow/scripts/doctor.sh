@@ -61,6 +61,14 @@ else
   check gh false error "gh が見つかりません（https://cli.github.com/）"
 fi
 
+repo_root="$(dw_repo_root || true)"
+# チームの設定の base_branch。setup-repo.sh とマージキューの確認（下）が使う。使えない値なら空にし、理由を team_base_err に残す
+team_base="" team_base_err=""
+if [ -n "$repo_root" ]; then
+  team_base="$( (dw_team_base_branch "$repo_root/.claude/dev-workflow/config.json" .claude/dev-workflow/config.json) 2>&1)" \
+    || { team_base_err="${team_base#error: }"; team_base=""; }
+fi
+
 if config="$("$BASH" "$DW_SCRIPTS_DIR/config.sh" 2>&1)"; then
   check config true error "$(jq -r '.sources | join(", ")' <<<"$config")"
   if [ "$(jq -r '.project.number // empty' <<<"$config")" != "" ]; then
@@ -68,8 +76,23 @@ if config="$("$BASH" "$DW_SCRIPTS_DIR/config.sh" 2>&1)"; then
   else
     check project false warn "Project が未設定です（.claude/dev-workflow/config.json の project）"
   fi
+  # config.sh は base_branch を検査しないので、使う側（dw_base_branch）と同じ検査をここで行う。使えない値だと、
+  # base_branch を使うスクリプト（task-start・pr-create など）が止まる。個人の層が上書きしていても、チームの設定の値
+  # （team_base）も確かめる
+  if ! base_check="$(dw_base_branch "$config" 2>&1)"; then
+    check base-branch false error "${base_check#error: }"
+  elif [ -n "$team_base_err" ]; then
+    check base-branch false error "チームの設定: ${team_base_err}"
+  else
+    check base-branch true error "$base_check"
+  fi
 else
   check config false error "$config"
+  # 合わせた設定は読めなくても、チームの設定の値の誤りは知らせる（直した後に、もう1つ誤りが出てこないように）。
+  # チームの設定のファイルそのものが読めないときは、config の失敗と同じ誤りなので、二重に知らせない
+  if [ -n "$team_base_err" ] && dw_is_json_object "$repo_root/.claude/dev-workflow/config.json"; then
+    check base-branch false error "チームの設定: ${team_base_err}"
+  fi
 fi
 
 # 古い置き場所（.claude/dev-workflow/ にまとめる前）のファイルは使われないので、移すよう促す
@@ -83,7 +106,6 @@ old_location() {
   fi
   moves="$moves${moves:+、}$1 → $2"
 }
-repo_root="$(dw_repo_root || true)"
 if [ -n "$repo_root" ]; then
   # プラグインは導入したリポジトリにだけ効く（設計書 §1）。導入していないと、使う人が気づかないまま守りが外れるので知らせる
   if dw_is_set_up "$repo_root"; then
@@ -139,10 +161,8 @@ fi
 # 古い base_branch で通った CI の結果のままマージして壊れることがある。組織のルールセットも含めて見るため、
 # ブランチに効いているルール（rules/branches）を読む。ブランチは、setup-repo.sh がルールセットで守るものと同じく、
 # チームの設定で決める（個人の設定は使わない）。GitHub に問い合わせられないときは飛ばす
-base_branch=""
-if [ -n "$repo_root" ]; then
-  base_branch="$(dw_team_config "$repo_root/.claude/dev-workflow/config.json" base_branch || true)"
-fi
+# 使えない値なら、設定の確認（base-branch）で知らせ、ここでは問い合わせずに飛ばす
+base_branch="$team_base"
 # 必須のチェックの有無は、名前の一覧（required。ルールセットと古いブランチ保護を合わせる）だけで決め、strict かは、
 # 名前のあるルールセットのルール（check_rules）だけで見る。ルールがあっても名前が1つも無ければ、何も求めていない
 if $gh_auth && [ -n "$repo_root" ] && [ -n "$base_branch" ] \

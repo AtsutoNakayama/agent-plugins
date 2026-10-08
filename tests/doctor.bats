@@ -99,6 +99,8 @@ labels_check() { jq -c '.checks[] | select(.name == "labels") | [.ok, .level, .d
   run_script doctor.sh
   assert_failure 1
   assert_equal "$(jq -r '.checks[] | select(.name == "config") | .ok' <<<"$output")" false
+  # 同じ誤りを、base_branch の誤りとして二重に知らせない
+  assert_equal "$(jq -c '[.checks[] | select(.name == "base-branch")]' <<<"$output")" "[]"
 }
 
 @test "古い置き場所のファイルがあれば、止めずに移すよう促す" {
@@ -348,6 +350,41 @@ required_check() { jq -c '.checks[] | select(.name == "required-checks") | [.ok,
   run_script doctor.sh
   assert_equal "$(cat "$TMP/rules-path")" 'repos/{owner}/{repo}/rules/branches/release%2Fv1?per_page=100'
   assert_output --partial "release/v1 へのマージはマージキューを通します"
+}
+
+@test "base_branch が使えない値なら、base-branch が失敗し、マージキューは問い合わせない" {
+  fake_gh
+  export FAKE_SCOPES="project" FAKE_RULES="$QUEUE_RULES" FAKE_RULES_LOG="$TMP/rules-path"
+  echo '{"base_branch": "-v"}' >.claude/dev-workflow/config.json
+  run_script doctor.sh
+  assert_failure 1
+  assert_equal "$(jq -c '.checks[] | select(.name == "base-branch") | [.ok, .detail]' <<<"$output")" \
+    '[false,"設定の base_branch が git のブランチ名として使えません: -v"]'
+  [ ! -e "$TMP/rules-path" ]
+
+  # 文字列でない値も、マージキューを問い合わせない（"1" という名前のブランチとして扱わない）
+  echo '{"base_branch": 1}' >.claude/dev-workflow/config.json
+  run_script doctor.sh
+  assert_failure 1
+  assert_equal "$(jq -c '.checks[] | select(.name == "base-branch") | [.ok, .detail]' <<<"$output")" \
+    '[false,"設定の base_branch が文字列ではありません"]'
+  [ ! -e "$TMP/rules-path" ]
+
+  # 個人の層が使える値で上書きしていても、チームの設定の値が使えなければ知らせる（setup-repo.sh はその値で止まる）
+  echo '{"base_branch": "-v"}' >.claude/dev-workflow/config.json
+  echo '{"base_branch": "main"}' >.claude/dev-workflow/config.local.json
+  run_script doctor.sh
+  assert_failure 1
+  assert_equal "$(jq -c '.checks[] | select(.name == "base-branch") | [.ok, .detail]' <<<"$output")" \
+    '[false,"チームの設定: 設定の base_branch が git のブランチ名として使えません: -v"]'
+  [ ! -e "$TMP/rules-path" ]
+
+  # 個人の設定が壊れて config が失敗しても、チームの設定の値の誤りは知らせる
+  echo '{broken' >.claude/dev-workflow/config.local.json
+  run_script doctor.sh
+  assert_failure 1
+  assert_equal "$(jq -c '[.checks[] | select(.name == "config" or .name == "base-branch") | [.name, .ok]]' <<<"$output")" \
+    '[["config",false],["base-branch",false]]'
 }
 
 @test "マージキューの確認は、個人の設定の base_branch ではなく、チームの設定のブランチを見る" {

@@ -62,7 +62,7 @@ done
 repo_root="$(dw_repo_root)" || dw_die "リポジトリの中で実行してください" 64
 main_root="$(dw_main_root "$repo_root")" || dw_die "メインのワークツリーが分かりません"
 config="$("$BASH" "$DW_SCRIPTS_DIR/config.sh")"
-base="$(jq -r '.base_branch' <<<"$config")"
+base="$(dw_base_branch "$config")"
 
 if [ -z "$branch" ]; then
   branch="$(git -C "$repo_root" symbolic-ref --short -q HEAD || true)"

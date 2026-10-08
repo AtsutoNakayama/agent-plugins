@@ -34,7 +34,7 @@ agent-plugins/
 - プラグインは、**導入したリポジトリの中でだけ効く**。インストールの範囲（ユーザー単位・プロジェクト単位）に関わらず、プラグインの側で判定する（[ADR 000219](adr/000219-limit-scope-to-set-up-repos.md)）。
 - **導入したリポジトリ**は、チームの設定 `.claude/dev-workflow/config.json` があるリポジトリ（`lib/common.sh` の `dw_is_set_up`）。初期設定（repo-setup）が作るファイルで、中身は空（`{}`）でもよい。ワークツリーに無くても、メインのワークツリー（`dw_main_root`）にあれば導入したとみなす。`.claude/dev-workflow/` のディレクトリや `config.local.json` だけでは、導入したとみなさない。
 - 導入していないリポジトリ（リポジトリの外を含む）では、次のものが効かない。
-  - フック（§9）：`guard-git.sh`・`task-flow.sh`・`pr-link.sh` は何もしない。`guard-git.sh` は、操作の対象のリポジトリで判断する。対象は、コマンドと同じオプション・環境変数（`--git-dir`・`GIT_DIR` など。値の先頭の `~`・`$HOME` はシェルと同じく展開する）で `git rev-parse --git-common-dir` を実行して求め、ルートの候補を、その場所で git が同じリポジトリを見つけるかで確かめる。設定（`base_branch`・`branch.pattern`）も同じ対象から読む。ルートの候補は git のディレクトリが同じかで確かめ、ワークツリーの git のディレクトリを指したときは、その gitdir ファイルが記録するワークツリーを使う。ルートが分からなければ（bare リポジトリなど）、HEAD にコミットされたチームの設定で導入したかを判断し、`base_branch` はそのチームの設定、ユーザーの層の順に読み、ブランチ名は確かめない。git がリポジトリを見つけられなければ、導入したものとみなし、ユーザーの層の設定（無ければ既定）で調べる（[ADR 000219](adr/000219-resolve-guard-git-target-repo.md)）。
+  - フック（§9）：`guard-git.sh`・`task-flow.sh`・`pr-link.sh` は何もしない。`guard-git.sh` は、操作の対象のリポジトリで判断する。対象は、コマンドと同じオプション・環境変数（`--git-dir`・`GIT_DIR` など。値の先頭の `~`・`$HOME` はシェルと同じく展開する）で `git rev-parse --git-common-dir` を実行して求め、ルートの候補を、その場所で git が同じリポジトリを見つけるかで確かめる。設定（`base_branch`・`branch.pattern`）も同じ対象から読む。ルートの候補は git のディレクトリが同じかで確かめ、ワークツリーの git のディレクトリを指したときは、その gitdir ファイルが記録するワークツリーを使う。ルートが分からなければ（bare リポジトリなど）、HEAD にコミットされたチームの設定で導入したかを判断し、`base_branch` はそのチームの設定、ユーザーの層の順に読み（チームの設定が JSON のオブジェクト1つとして読めなければ main を守り、`base_branch` が無いときだけユーザーの層を読む。§10）、作るブランチの名前が規約（`branch.pattern`）に合うかは確かめない。git がリポジトリを見つけられなければ、導入したものとみなし、ユーザーの層の設定（無ければ既定）で調べる（[ADR 000219](adr/000219-resolve-guard-git-target-repo.md)）。
   - ユーザーの層（`~/.claude/dev-workflow/`）：設定（`config.json`）・文章のガイド（`*.md`）・レビューの観点（`review/*.md`）・タスクの進め方の追記（`task-flow.md`）を読まない。スキルはプラグインの既定とリポジトリの層だけで動く。
 - 導入したリポジトリの中では、ユーザーの層も効く。
 - 初期設定（repo-setup）は、`.claude/dev-workflow/config.json` を作るまでは導入していないリポジトリで動くので、それまでの手順ではユーザーの層の設定を読まない。
@@ -356,11 +356,17 @@ Todo が増えたとき、どれから着手するか、同時に進めてよい
     - 単一選択の項目の選択肢を足す（`setup-project.sh` の Status 列）。gh にも REST にも、既存の項目を変える操作が無い。
     - PR のマージキューの状態（`branch-status.sh`）。`gh pr list`・`gh pr view` の `--json` にも REST にも、キューが有効か（`isMergeQueueEnabled`）とキューでの状態・順番（`mergeQueueEntry`）、キューから外れたイベント（タイムラインの `RemovedFromMergeQueueEvent`）が無い。PR は URL で引く（`resource(url:)`）。
     - PR のスレッドが resolved かを読む（`pr-feedback.sh`）。`gh pr view` にもスレッドの項目が無く、REST の行ごとのコメントには resolved の状態が無い。
+- **設定の `base_branch` は、使う側が読む時点で検査する**（`common.sh` の `dw_base_branch`）。`base_branch` は `git fetch origin <base_branch>` などで git のコマンドの引数に渡るので、ダッシュで始まる値（`-foo`）はオプションとして扱われ、失敗すべきところで先へ進んでしまう。使う側ごとに `--` を付けるのではなく、`base_branch` を使うスクリプトは、設定から直接読まずに `dw_base_branch` で読み、文字列でない値・ダッシュで始まる値・git が今の位置として扱う値（`HEAD`・`@`）・`git fetch` が refspec の強制更新の印と読む `+` で始まる値・git のブランチ名の書式（`git check-ref-format`）に合わない値なら止まる。値は、コマンド置換で末尾の改行が消えないように読んでから検査する（`"develop\n"` を `develop` として通さない）。
+  - `config.sh` では検査しない。検査すると、`base_branch` を使わない項目を読むスクリプト（起票・列の移動など）やフック（pr-link）まで止まるため。
+  - `config.sh` を通さずにチームの設定を読む `setup-repo.sh` と `doctor.sh` は、同じ検査をする `dw_team_base_branch` を使う。チームの設定の読み方（JSON のオブジェクト1つかの判定と、無い項目をプラグインの既定で補うこと）は、`dw_team_config` と共通（`dw_team_pick`）。オブジェクト1つかの判定は、jq の定義 `DW_JQ_ONE_OBJECT` 1つにまとめ、`dw_check_json` と `guard-git.sh` のコミット済みの設定の読み方でも使う。`doctor.sh` は、合わせた設定の値とチームの設定の値（個人の層が上書きしていても、`setup-repo.sh` とマージキューの確認が使う）のどちらかが使えなければ、設定の確認（`base-branch`）で知らせ、マージキューの確認を飛ばす。
+  - main を守るフック（`guard-git.sh`）は止まらずに、使えない値を使わない。合わせた設定の値が使えなければチームの設定の値を守る。チームの設定に値があって使えないとき、またはチームの設定のファイルが JSON のオブジェクト1つとして読めないときは、個人の層の値（上書きやユーザーの層）は使わずに main を守る（`setup-repo.sh` もその設定で止まり、ルールセットを作らない）。
+  - Claude が手順で実行する `git fetch origin <マージ先>`（観点 `main-drift`）には、念のため `--` も付ける（`git fetch origin -- <マージ先>`）。手順の値は Claude が設定から読むので、スクリプトの検査を通らないことがあるため。
+  - スクリプトが `dw_base_branch`・`dw_team_base_branch` を通さずに base_branch を読んでいないことを、bats のテスト（`tests/common.bats`）で確かめる（`guard-git.sh` は自分で検査するので除く）。
 - **gh は新しいものを前提にする**。古い gh のための回り道は書かず、要る機能が無い gh では止まって更新を促す（`common.sh` の `DW_GH_MIN_VERSION`。`doctor.sh` も更新を促す）。
 
 | プラグイン側（`plugins/dev-workflow/scripts/`） | 役割 |
 |---|---|
-| `doctor.sh` | 認証とスコープ、gh・`jq`・bash のバージョン、設定ファイルを確認する（導入していないリポジトリ（`.claude/dev-workflow/config.json` が無い）なら、フックとユーザーの層が効かないことを警告して repo-setup を案内し、gh が古ければ更新を促し、古い置き場所の設定・ガイド・観点・ラベルの定義があれば移すよう促し、個人の設定が git に無視されていなければ .gitignore に足すよう促し、既にコミットしてあれば git rm --cached で追跡を外すよう促し、ラベルの定義にあってリポジトリに無いラベルがあれば repo-setup を案内し、base_branch にマージキューと strict のどちらが効いているかを示し、必須のチェックが無ければ警告し（チームの設定の `require_status_checks` が false なら警告しない）、キューを使っていれば必須のチェックのワークフローが merge_group で動くかを示す） |
+| `doctor.sh` | 認証とスコープ、gh・`jq`・bash のバージョン、設定ファイルと、設定の base_branch が使える値かを確認する（導入していないリポジトリ（`.claude/dev-workflow/config.json` が無い）なら、フックとユーザーの層が効かないことを警告して repo-setup を案内し、gh が古ければ更新を促し、古い置き場所の設定・ガイド・観点・ラベルの定義があれば移すよう促し、個人の設定が git に無視されていなければ .gitignore に足すよう促し、既にコミットしてあれば git rm --cached で追跡を外すよう促し、ラベルの定義にあってリポジトリに無いラベルがあれば repo-setup を案内し、base_branch にマージキューと strict のどちらが効いているかを示し、必須のチェックが無ければ警告し（チームの設定の `require_status_checks` が false なら警告しない）、キューを使っていれば必須のチェックのワークフローが merge_group で動くかを示す） |
 | `config.sh` | 5つの層を合わせた設定を出力する |
 | `issue-create.sh` | 起票、ラベルの付与、Project への追加、列と Story Point の設定、依存関係（blocked by）の登録、親の Issue への紐付け（サブ Issue） |
 | `issue-depend.sh` | 既にある Issue に、依存する Issue を足す（GitHub の依存関係（blocked by）と本文の「依存」。既にある依存は足さない。Issue が閉じていれば止まり、閉じた依存先は飛ばす）。`task-start` で今は着手しないことにしたときに使う |

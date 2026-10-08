@@ -114,6 +114,71 @@ silent() {
   denied "develop へは push しません" "git push"
 }
 
+@test "個人の層の base_branch が使えない値なら、チームの設定の base_branch を守る（main に変えない）" {
+  echo '{"base_branch": "develop"}' >.claude/dev-workflow/config.json
+  echo '{"base_branch": "-foo"}' >.claude/dev-workflow/config.local.json
+  git checkout -q -b develop
+  denied "develop の上ではコミットしません" "git commit -m x"
+  denied "develop へは push しません" "git push"
+}
+
+@test "末尾に改行のある base_branch は、改行を消して使わず、使えない値として扱う" {
+  echo '{"base_branch": "develop"}' >.claude/dev-workflow/config.json
+  printf '%s\n' '{"base_branch": "release\n"}' >.claude/dev-workflow/config.local.json
+  git checkout -q -b develop
+  denied "develop の上ではコミットしません" "git commit -m x"
+  # ユーザーの層の値も同じ（ルートが分からず、チームの設定が値を決めていないとき）
+  git init -q -b main --separate-git-dir "$TMP/sep.git" "$TMP/sep"
+  mkdir -p "$TMP/sep/.claude/dev-workflow"
+  echo '{}' >"$TMP/sep/.claude/dev-workflow/config.json"
+  git -C "$TMP/sep" add .claude/dev-workflow/config.json
+  git -C "$TMP/sep" commit -q -m setup
+  printf '%s\n' '{"base_branch": "release\n"}' >"$WORKFLOW_USER_DIR/config.json"
+  denied "main の上ではコミットしません" "cd $TMP && git --git-dir=$TMP/sep.git commit -m x"
+}
+
+@test "チームの設定の base_branch も使えない値なら、止まらずに main を守る" {
+  echo '{"base_branch": "-foo"}' >.claude/dev-workflow/config.json
+  denied "main の上ではコミットしません" "git commit -m x"
+  denied "main へは push しません" "git push"
+  warned foo "git switch -c foo"
+}
+
+@test "HEAD にコミットしたチームの設定の base_branch が使えない値なら、main を守る" {
+  git init -q -b main --separate-git-dir "$TMP/sep.git" "$TMP/sep"
+  mark_set_up "$TMP/sep"
+  echo '{"base_branch": "-foo"}' >"$TMP/sep/.claude/dev-workflow/config.json"
+  git -C "$TMP/sep" add .claude/dev-workflow/config.json
+  git -C "$TMP/sep" commit -q -m setup
+  denied "main の上ではコミットしません" "cd $TMP && git --git-dir=$TMP/sep.git commit -m x"
+  # チームの設定に値があれば、使えなくてもユーザーの層の値には進まない（develop ではなく main を守る）
+  echo '{"base_branch": "develop"}' >"$WORKFLOW_USER_DIR/config.json"
+  denied "main の上ではコミットしません" "cd $TMP && git --git-dir=$TMP/sep.git commit -m x"
+  # false も値として扱う（「値が無い」とみなさない）
+  echo '{"base_branch": false}' >"$TMP/sep/.claude/dev-workflow/config.json"
+  git -C "$TMP/sep" commit -q -am false
+  denied "main の上ではコミットしません" "cd $TMP && git --git-dir=$TMP/sep.git commit -m x"
+  # 壊れていても、ユーザーの層の値には進まない（ルートが分かるときと同じく main を守る）
+  for c in '{broken' '[]' ''; do
+    printf '%s' "$c" >"$TMP/sep/.claude/dev-workflow/config.json"
+    git -C "$TMP/sep" commit -q -am "broken: $c"
+    denied "main の上ではコミットしません" "cd $TMP && git --git-dir=$TMP/sep.git commit -m x"
+  done
+  # 値が無いときだけ、ユーザーの層の値を守る
+  echo '{}' >"$TMP/sep/.claude/dev-workflow/config.json"
+  git -C "$TMP/sep" commit -q -am none
+  silent "cd $TMP && git --git-dir=$TMP/sep.git commit -m x"
+  # ユーザーの層も、JSON のオブジェクト1つとして読めなければ使わない（複数の値が並んでいても読まない）
+  echo '{"base_branch": "develop"}{}' >"$WORKFLOW_USER_DIR/config.json"
+  denied "main の上ではコミットしません" "cd $TMP && git --git-dir=$TMP/sep.git commit -m x"
+}
+
+@test "チームの設定の base_branch が使えなければ、個人の層が上書きしていても、その値ではなく main を守る" {
+  echo '{"base_branch": "-foo"}' >.claude/dev-workflow/config.json
+  echo '{"base_branch": "develop"}' >.claude/dev-workflow/config.local.json
+  denied "main の上ではコミットしません" "git commit -m x"
+}
+
 @test "main への push を止める" {
   denied "main へは push しません" \
     "git push" \

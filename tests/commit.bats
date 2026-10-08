@@ -25,6 +25,16 @@ commit_with() {
   assert_equal "$(jq -r .sha <<<"$output")" "$(git rev-parse HEAD)"
 }
 
+@test "base_branch が使えない値なら、コミットせずに止まる" {
+  setup_branch
+  echo '{"base_branch": "-v"}' >.claude/dev-workflow/config.json
+  before="$(git rev-parse HEAD)"
+  commit_with "feat: 足す"
+  assert_failure 2
+  assert_output --partial "設定の base_branch が git のブランチ名として使えません: -v"
+  assert_equal "$(git rev-parse HEAD)" "$before"
+}
+
 @test "メッセージは標準入力からも渡せる" {
   setup_branch
   run bash -c "printf 'docs: 説明を直す\n' | ${TEST_BASH:-bash} '$SCRIPTS/commit.sh' --message-file -"

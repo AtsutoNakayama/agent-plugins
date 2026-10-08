@@ -192,3 +192,10 @@ load test_helper
   run_script config.sh '[.language, .guides.commit] | tojson'
   assert_output "[\"en\",[\"$WORKFLOW_USER_DIR/commit.md\"]]"
 }
+
+@test "base_branch が不正でも、ほかの項目は読める（base_branch は使う側の dw_base_branch で検査する）" {
+  echo '{"base_branch": "-foo"}' >.claude/dev-workflow/config.json
+  run_script config.sh .status.start
+  assert_success
+  assert_output "In Progress"
+}

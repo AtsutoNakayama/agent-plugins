@@ -245,6 +245,30 @@ assert_no_calls() {
   assert_output --partial "守るブランチ develop は、リポジトリの既定のブランチ（main）と違います"
 }
 
+@test "設定の base_branch がダッシュで始まれば、dry-run でも止まる" {
+  setup_fake_gh
+  echo '{"base_branch": "-v"}' >.claude/dev-workflow/config.json
+  run_setup --dry-run
+  assert_failure 2
+  assert_output --partial "設定の base_branch が git のブランチ名として使えません: -v"
+}
+
+@test "チームの設定が空のファイルなら、JSON として読めないことを示して止まる" {
+  setup_fake_gh
+  : >.claude/dev-workflow/config.json
+  run_setup --dry-run
+  assert_failure 2
+  assert_output --partial "me/demo の .claude/dev-workflow/config.json を JSON のオブジェクトとして読めません"
+}
+
+@test "設定の base_branch が文字列でなければ、dry-run でも止まる（\"1\" という名前のブランチを守ろうとしない）" {
+  setup_fake_gh
+  echo '{"base_branch": 1}' >.claude/dev-workflow/config.json
+  run_setup --dry-run
+  assert_failure 2
+  assert_output --partial "設定の base_branch が文字列ではありません"
+}
+
 @test "個人の設定（config.local.json・ユーザーの設定）の base_branch は使わない" {
   # ユーザーの層も読む、導入したリポジトリで確かめる
   mark_set_up

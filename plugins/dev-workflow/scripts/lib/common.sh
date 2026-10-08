@@ -393,8 +393,18 @@ dw_require_gh_version() {
 
 # 設定ファイルが JSON のオブジェクト1つだけでできているか確かめる。違えば終了する。
 dw_check_json() {
-  jq -se 'length == 1 and (.[0] | type) == "object"' "$1" >/dev/null 2>&1 \
-    || dw_die "JSON のオブジェクトとして読めません: $1" 2
+  dw_is_json_object "$1" || dw_die "JSON のオブジェクトとして読めません: $1" 2
+}
+
+# 読んだもの（jq -s で配列にしたもの）が JSON のオブジェクト1つなら、そのオブジェクトにし、違えば（空・複数の値・
+# オブジェクトでない値）エラーにする jq のフィルター。設定のファイルを読むところは、どれもこの決め方を使う
+# shellcheck disable=SC2034 # source した側（guard-git.sh）でも使う
+DW_JQ_ONE_OBJECT='if length == 1 and (.[0] | type) == "object" then .[0] else error("JSON のオブジェクトではありません") end'
+
+# ファイルが、JSON のオブジェクト1つなら 0 を返す（DW_JQ_ONE_OBJECT）。
+# 使い方: dw_is_json_object <ファイル>
+dw_is_json_object() {
+  jq -se "$DW_JQ_ONE_OBJECT" "$1" >/dev/null 2>&1
 }
 
 # 設定（入力）の branch.pattern を、type と Issue の番号を取り出す正規表現にする jq の定義（dw_parse_branch・dw_issue_branches）
@@ -463,19 +473,67 @@ dw_fetch_repo_file() {
   esac
 }
 
+# 設定の base_branch が、git のブランチ名として使える値なら 0 を返す（設計書 §10）。
+# ダッシュで始まる値（-foo）は、git fetch origin <base_branch> などでオプションとして扱われ、失敗すべきところで先へ
+# 進んでしまうので、使う側ごとに -- を付けるのではなく、読む時点で拒否する。git check-ref-format --branch は
+# @{-1} などを今のリポジトリで展開してしまうので、refs/heads/ を付けて書式だけを検査し、ダッシュは別に拒否する。
+# HEAD と @ は書式には合うが、git が今の位置として扱う（git fetch origin HEAD は相手の既定のブランチを取る）ので拒否する。
+# + で始まる値も書式には合うが、git fetch が refspec の強制更新の印と読む（+develop は develop を取る）ので拒否する。
+# 使い方: dw_valid_base_branch <base_branch>
+dw_valid_base_branch() {
+  case "$1" in
+    -* | +* | HEAD | @) return 1 ;;
+  esac
+  git check-ref-format "refs/heads/$1" 2>/dev/null
+}
+
+# 設定（JSON のオブジェクト）の base_branch を出力する。文字列でない値や、git のブランチ名として使えない値
+# （dw_valid_base_branch）なら、終了コード 2 で終了する。base_branch を使うスクリプトは、設定から直接読まずに、
+# これで読む（設計書 §10）。config.sh は検査しないので、base_branch を使わない項目は、値が不正でも読める。
+# 使い方: dw_base_branch <設定の JSON>
+dw_base_branch() {
+  local b
+  # コマンド置換は末尾の改行を消し、"develop\n" が develop として検査を通るので、末尾に印（.）を付けて受けて外す
+  b="$(jq -r '.base_branch | if type == "string" then . + "." else error end' <<<"$1" 2>/dev/null)" \
+    || dw_die "設定の base_branch が文字列ではありません" 2
+  b="${b%.}"
+  dw_valid_base_branch "$b" || dw_die "設定の base_branch が git のブランチ名として使えません: ${b}" 2
+  printf '%s\n' "$b"
+}
+
+# チームの設定から項目を1つ選び、{"<キー>": <値>} の形（1行）で出力する。設定のファイルが無いか、項目が無い（null）なら
+# プラグインの既定を使う（// と違い、false は値として保つ）。ファイルを JSON のオブジェクト1つとして読めなければ
+# （DW_JQ_ONE_OBJECT。空のファイルを含む）1 を返す。jq は1回だけ動かす（フックからも呼ぶため）。
+# 使い方: dw_team_pick <チームの設定のファイル（空なら無い）> <キー>
+dw_team_pick() {
+  # shellcheck disable=SC2016 # jq の変数（$k・$d）を bash に展開させない
+  local pick='{($k): (if .[$k] == null then $d[0][$k] else .[$k] end)}'
+  if [ -n "$1" ] && [ -f "$1" ]; then
+    jq -sc --arg k "$2" --slurpfile d "$DW_PLUGIN_ROOT/defaults/workflow.json" "$DW_JQ_ONE_OBJECT | $pick" "$1" 2>/dev/null \
+      || return 1
+  else
+    jq -nc --arg k "$2" --slurpfile d "$DW_PLUGIN_ROOT/defaults/workflow.json" "{} | $pick"
+  fi
+}
+
+# チームの設定の base_branch を、dw_team_config と同じ決め方（dw_team_pick）で読み、dw_base_branch と同じく検査して
+# 出力する。チームの設定を JSON のオブジェクトとして読めない（空のファイルを含む）か、使えない値なら、終了コード 2 で
+# 終了する。
+# 使い方: dw_team_base_branch <チームの設定のファイル（空なら無い）> [エラーで示すファイルの名前（既定はパス）]
+dw_team_base_branch() {
+  local c
+  c="$(dw_team_pick "$1" base_branch)" || dw_die "${2:-$1} を JSON のオブジェクトとして読めません" 2
+  dw_base_branch "$c"
+}
+
 # チームの設定の項目（トップレベルのキー）を出力する。ルールセットのようにリポジトリ全体で共有するものに使い、
-# 個人の層（config.local.json・~/.claude/dev-workflow）は使わず、チームの設定とプラグインの既定だけで決める。
-# チームの設定のファイルが無いか、キーが無い（null）ならプラグインの既定を使う（// と違い、false は値として保つ）。
-# JSON として読めなければ 1 を返す。
+# 個人の層（config.local.json・~/.claude/dev-workflow）は使わず、チームの設定とプラグインの既定だけで決める
+# （dw_team_pick）。JSON のオブジェクトとして読めなければ（空のファイルを含む）1 を返す。
 # 使い方: dw_team_config <チームの設定のファイル（空なら無い）> <キー>
 dw_team_config() {
-  local d
-  d="$(jq -c --arg k "$2" '.[$k]' "$DW_PLUGIN_ROOT/defaults/workflow.json")"
-  if [ -n "$1" ] && [ -f "$1" ]; then
-    jq -r --arg k "$2" --argjson d "$d" 'if .[$k] == null then $d else .[$k] end' "$1" 2>/dev/null
-  else
-    jq -rn --argjson d "$d" '$d'
-  fi
+  local c
+  c="$(dw_team_pick "$1" "$2")" || return 1
+  jq -r --arg k "$2" '.[$k]' <<<"$c"
 }
 
 # 必須のチェックを求めるルール（rules/branches の required_status_checks のうち、名前が1つ以上あるもの）を選ぶ jq の定義。

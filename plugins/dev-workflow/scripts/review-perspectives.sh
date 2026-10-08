@@ -109,7 +109,7 @@ if [ "$auto" = true ]; then
   # review.model もほかの設定と同じく層を合わせた値を使う（ユーザーの層は、導入したリポジトリの中でだけ効く。設計書 §7）
   model="$(jq -c '.review.model' <<<"$config")"
   dw_review_model_ok "$model" || dw_die "review.model は null か $(dw_review_model_names) のどれかにしてください: ${model}" 2
-  base_branch="$(jq -r .base_branch <<<"$config")"
+  base_branch="$(dw_base_branch "$config")"
   target="origin/$base_branch"
   git fetch -q origin "$base_branch" 2>/dev/null \
     || dw_warn "${target} を最新にできませんでした。手元の ${target} で判断します"
