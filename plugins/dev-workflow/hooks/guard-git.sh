@@ -144,6 +144,11 @@ check_push() {
         ;;
     esac
     dest="${dest#refs/heads/}"
+    # ":" は、先を書かない matching refspec（同じ名前のブランチをすべて push する）。先を書かない push と同じに扱う
+    if [ "$w" = ":" ]; then
+      ! target_unknown || deny "$(unknown_target_message "push 先を書かない push")"
+      dest="$current"
+    fi
     [ -z "$dest" ] || [ "$dest" != "$base" ] \
       || deny "${base} へは push しません。作業用のブランチ（task-start）で PR を作ってください"
   done
