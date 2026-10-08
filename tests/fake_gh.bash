@@ -23,11 +23,12 @@
 #                                   「api-rules <パス>」を $CALLS に記録し、ブランチに効いているルールとして $FIX/rules/<ブランチ>.json、
 #                                   無ければ $FIX/rules.json、それも無ければ [] を返す。<ブランチ> は、パスの URL エンコードを戻した
 #                                   ブランチ名そのままで、/ はディレクトリの区切りになる（release/v1 なら $FIX/rules/release/v1.json）
+# - gh api repos/.../issues/N/parent  「api-parent N」を $CALLS に記録し、$FIX/parent-N.json を返す（無ければ HTTP 404 で失敗する）
 # - gh api repos/...                「api-get <パス>」を $CALLS に記録する。$FIX/remote-ref があれば {} を、無ければ HTTP 404 で失敗する
 # - gh api -X DELETE <パス>          「api-delete <パス>」を $CALLS に記録する
-# - gh api graphql                  操作名ごとに $FIX/<操作名>.json を返し、「<操作名> <変数>」を $CALLS に記録する
+# - gh api graphql                  操作名ごとに $FIX/<操作名>.json（変数 number があり $FIX/<操作名>-issue-<number>.json があればそれ）を返し、「<操作名> <変数>」を $CALLS に記録する
 # - gh project ・Project の REST     fake_gh_project.bash が受け持つ（ProjectView・ProjectFields・AddItem・SetField など）
-# FAKE_FAIL に指定した操作名（issue-view・edit・issue-comment・issue-close・pr-list・pr-view・pr-create・pr-comment・pr-close・api-get・api-delete・api-sub-issues・api-rules を含む）は、FAKE_FAIL_MSG（既定: gh: failed）を出して失敗する。
+# FAKE_FAIL に指定した操作名（issue-view・edit・issue-comment・issue-close・pr-list・pr-view・pr-create・pr-comment・pr-close・api-get・api-delete・api-sub-issues・api-rules・api-parent を含む）は、FAKE_FAIL_MSG（既定: gh: failed）を出して失敗する。
 
 setup_fake_gh() {
   FIX="$TMP/fix"
@@ -115,6 +116,14 @@ case "$1 $2" in
         ;;
     esac
     ;;
+  "api repos/"*/issues/*/parent)
+    n="${2%/parent}"
+    n="${n##*/}"
+    echo "api-parent $n" >>"$CALLS"
+    fail api-parent
+    [ -f "$FIX/parent-$n.json" ] || { echo "gh: No parent issue found (HTTP 404)" >&2; exit 1; }
+    cat "$FIX/parent-$n.json"
+    ;;
   "api repos/"*)
     echo "api-get $2" >>"$CALLS"
     fail api-get
@@ -150,7 +159,10 @@ case "$1 $2" in
     op="$(jq -r .query <<<"$body" | grep -oE '(query|mutation) [A-Za-z]+' | head -n 1 | cut -d' ' -f2)"
     echo "$op $(jq -c .variables <<<"$body")" >>"$CALLS"
     fail "$op"
-    if [ -f "$FIX/$op.json" ]; then cat "$FIX/$op.json"; else echo '{"data": {}}'; fi
+    # 変数の number（Issue の番号）ごとの応答 <操作名>-issue-<番号>.json があれば、それを返す（親の Issue の列を試す）
+    num="$(jq -r '.variables.number // empty' <<<"$body")"
+    if [ -n "$num" ] && [ -f "$FIX/$op-issue-$num.json" ]; then cat "$FIX/$op-issue-$num.json"
+    elif [ -f "$FIX/$op.json" ]; then cat "$FIX/$op.json"; else echo '{"data": {}}'; fi
     ;;
 esac
 SH
