@@ -175,8 +175,8 @@ if [ "$(jq length <<<"$reasons")" = 0 ]; then
     # フォークの PR は、ブランチ名が同じでも別のブランチなので、名前で比べない
     (.open_prs[] | select(.cross)
       | "Issue #\($n) を閉じる PR #\(.number) が、フォーク（別のリポジトリ）から開いています。どれで続けるかは人が決めます"),
-    # 候補に出したブランチの PR は、上の理由と重ねて出さない
-    (.open_prs[] | select((.cross | not) and .branch != ($b[0] // null) and (.branch as $x | $c | index([$x]) | not))
+    # 確かなブランチや候補に出したブランチの PR は、上の理由と重ねて出さない
+    (.open_prs[] | select((.cross | not) and (IN(.branch; $b[], $c[]) | not))
       | "Issue #\($n) を閉じる PR #\(.number) が、別のブランチ（\(.branch)）で開いています。どれで続けるかは人が決めます"),
     # 使い回すブランチがマージ済みなら、終わった作業の上に続けない
     (if ($b | length) == 1 then .merged_prs[] | select(.branch == $b[0])
@@ -185,6 +185,13 @@ if [ "$(jq length <<<"$reasons")" = 0 ]; then
   # 名前を短い説明から作り直さず、そのまま task-start.sh --branch に渡す（作り直すと、番号の先頭の 0 などで別の名前になりうる）
   if [ "$(jq length <<<"$reasons")" = 0 ] && [ "$(jq '.branches | length' <<<"$work")" = 1 ]; then
     resume="$(jq -c '.branches[0] | {branch: .name, worktree}' <<<"$work")"
+    # type ラベル・ブランチ名・PR のタイトルの type は同じにする（設計書 §5）ので、ブランチの type が Issue と違えば使い回さない
+    btype="$(dw_parse_branch "$config" "$(jq -r .branch <<<"$resume")" | cut -d'|' -f1)"
+    itype="$(jq -r '.type // ""' <<<"$summary")"
+    if [ -n "$btype" ] && [ "$btype" != "$itype" ]; then
+      add_reason "Issue #${issue} の作業のブランチ $(jq -r .branch <<<"$resume") の type（${btype}）が、Issue の type（${itype}）と違います。どれで続けるかは人が決めます"
+      resume=null
+    fi
   fi
 fi
 

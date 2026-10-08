@@ -270,32 +270,39 @@ run_check() {
   setup_auto
   git branch feat/17-a
   git branch feat/17-b
+  # 確かなブランチのどれかの PR は、「別のブランチ」の理由を重ねて出さない
+  link_prs 5:OPEN:feat/17-b
   run_check --issue 17
-  assert_equal "$(jq -r .action <<<"$output")" hold
-  assert_output --partial "Issue #17 の作業のブランチが複数あります（feat/17-a, feat/17-b）"
-  assert_equal "$(jq -c .resume <<<"$output")" null
-  git branch -D -q feat/17-a feat/17-b
+  assert_equal "$(jq -c '[.action, .reasons, .resume]' <<<"$output")" \
+    '["hold",["Issue #17 の作業のブランチが複数あります（feat/17-a, feat/17-b）。どれで続けるかは人が決めます"],null]'
+  git branch -D -q feat/17-b
+  link_prs
+  # 確かなブランチの type が Issue の type と違えば、type ラベル・ブランチ名・PR のタイトルの type がそろわないので止まる
+  fake_issue 17 '["fix"]'
+  fake_issue_body 17 "$BODY"
+  run_check --issue 17
+  assert_equal "$(jq -c '[.action, .resume]' <<<"$output")" '["hold",null]'
+  assert_output --partial "Issue #17 の作業のブランチ feat/17-a の type（feat）が、Issue の type（fix）と違います"
+  fake_issue 17 '["feat"]'
+  fake_issue_body 17 "$BODY"
+  git branch -D -q feat/17-a
   git branch wip/17-try
   run_check --issue 17
   assert_equal "$(jq -c '[.action, .resume]' <<<"$output")" '["hold",null]'
   assert_output --partial "Issue #17 の作業かもしれないブランチがあります（wip/17-try）"
   # 候補のブランチを head に持つ開いている PR は、同じ理由を重ねて出さない
-  jq '. + {closedByPullRequestsReferences: [{number: 5, url: "https://github.com/me/demo/pull/5", repository: {name: "demo", owner: {login: "me"}}}]}' \
-    "$FIX/issue-17.json" >"$TMP/i.json" && mv "$TMP/i.json" "$FIX/issue-17.json"
-  echo '{"number": 5, "url": "https://github.com/me/demo/pull/5", "state": "OPEN", "headRefName": "wip/17-try", "isCrossRepository": false}' >"$FIX/pr-5.json"
+  link_prs 5:OPEN:wip/17-try
   run_check --issue 17
   assert_equal "$(jq -r '.reasons | length' <<<"$output")" 1
   git branch -D -q wip/17-try
-  git branch fix/17-a
-  jq '. + {closedByPullRequestsReferences: [{number: 5, url: "https://github.com/me/demo/pull/5", repository: {name: "demo", owner: {login: "me"}}}]}' \
-    "$FIX/issue-17.json" >"$TMP/i.json" && mv "$TMP/i.json" "$FIX/issue-17.json"
-  echo '{"number": 5, "url": "https://github.com/me/demo/pull/5", "state": "OPEN", "headRefName": "other-branch", "isCrossRepository": false}' >"$FIX/pr-5.json"
+  git branch feat/17-a
+  link_prs 5:OPEN:other-branch
   run_check --issue 17
   assert_equal "$(jq -r .action <<<"$output")" hold
   assert_output --partial "Issue #17 を閉じる PR #5 が、別のブランチ（other-branch）で開いています"
-  echo '{"number": 5, "url": "https://github.com/me/demo/pull/5", "state": "OPEN", "headRefName": "fix/17-a", "isCrossRepository": false}' >"$FIX/pr-5.json"
+  link_prs 5:OPEN:feat/17-a
   run_check --issue 17
-  assert_equal "$(jq -c '[.action, .resume.branch]' <<<"$output")" '["proceed","fix/17-a"]'
+  assert_equal "$(jq -c '[.action, .resume.branch]' <<<"$output")" '["proceed","feat/17-a"]'
 }
 
 @test "行の中の <!-- … --> は外してから見る（コメントだけの項目は空、見出しの後ろのコメントは見出しの一部にしない）" {
@@ -336,35 +343,37 @@ run_check() {
   assert_equal "$(called issue-view)" 0
 }
 
-# 使い方: link_pr <番号> <状態> <ブランチ> [フォークか（既定 false）] → Issue #17 を閉じる PR を1つにする
-link_pr() {
-  jq --argjson n "$1" '. + {closedByPullRequestsReferences: [{number: $n, url: "https://github.com/me/demo/pull/\($n)", repository: {name: "demo", owner: {login: "me"}}}]}' \
-    "$FIX/issue-17.json" >"$TMP/i.json" && mv "$TMP/i.json" "$FIX/issue-17.json"
-  jq -n --argjson n "$1" --arg s "$2" --arg b "$3" --argjson f "${4:-false}" \
-    '{number: $n, url: "https://github.com/me/demo/pull/\($n)", state: $s, headRefName: $b, isCrossRepository: $f}' >"$FIX/pr-$1.json"
-}
-
-@test "使い回すブランチが、Issue を閉じる PR でマージ済みなら hold（終わった作業の上に続けない）" {
+@test "使い回すブランチが、Issue を閉じる今のリポジトリの PR でマージ済みなら hold（終わった作業の上に続けない）" {
   setup_auto
   git branch feat/17-old
-  link_pr 5 MERGED feat/17-old
+  link_prs 5:MERGED:feat/17-old
   run_check --issue 17
   assert_equal "$(jq -c '[.action, .resume]' <<<"$output")" '["hold",null]'
   assert_output --partial "Issue #17 の作業のブランチ feat/17-old は、PR #5 でマージ済みです"
-  # 別のブランチ（もう残っていない）のマージ済みの PR は、使い回すブランチには関係しない
-  link_pr 5 MERGED feat/17-other
+  # 別のブランチ（もう残っていない）や、フォーク・別のリポジトリのマージ済みの PR は、使い回すブランチには関係しない
+  for spec in 5:MERGED:feat/17-other 5:MERGED:feat/17-old:me/demo:true 5:MERGED:feat/17-old:other/demo; do
+    link_prs "$spec"
+    run_check --issue 17
+    assert_equal "$(jq -c '[.action, .resume.branch]' <<<"$output")" '["proceed","feat/17-old"]'
+  done
+  # 参照に repository が無くても、フォークでなければ今のリポジトリの PR として扱う
+  link_prs 5:MERGED:feat/17-old:none
   run_check --issue 17
-  assert_equal "$(jq -c '[.action, .resume.branch]' <<<"$output")" '["proceed","feat/17-old"]'
+  assert_output --partial "PR #5 でマージ済みです"
 }
 
-@test "Issue を閉じるフォークの PR が開いていれば、ブランチ名が同じでも hold" {
+@test "Issue を閉じるフォークか別のリポジトリの PR が開いていれば、ブランチ名が同じでも hold（参照に repository が無ければ isCrossRepository で決める）" {
   setup_auto
   git branch feat/17-x
-  link_pr 6 OPEN feat/17-x true
-  run_check --issue 17
-  assert_equal "$(jq -c '[.action, .resume]' <<<"$output")" '["hold",null]'
-  assert_output --partial "Issue #17 を閉じる PR #6 が、フォーク（別のリポジトリ）から開いています"
-  link_pr 6 OPEN feat/17-x false
-  run_check --issue 17
-  assert_equal "$(jq -c '[.action, .resume.branch]' <<<"$output")" '["proceed","feat/17-x"]'
+  for spec in 6:OPEN:feat/17-x:me/demo:true 6:OPEN:feat/17-x:other/demo; do
+    link_prs "$spec"
+    run_check --issue 17
+    assert_equal "$(jq -c '[.action, .resume]' <<<"$output")" '["hold",null]'
+    assert_output --partial "Issue #17 を閉じる PR #6 が、フォーク（別のリポジトリ）から開いています"
+  done
+  for spec in 6:OPEN:feat/17-x 6:OPEN:feat/17-x:none; do
+    link_prs "$spec"
+    run_check --issue 17
+    assert_equal "$(jq -c '[.action, .resume.branch]' <<<"$output")" '["proceed","feat/17-x"]'
+  done
 }
