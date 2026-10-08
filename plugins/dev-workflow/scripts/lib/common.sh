@@ -435,7 +435,7 @@ dw_check_branch_pattern() {
   # shellcheck disable=SC2016 # jq の変数（$re）を bash に展開させない
   jq -e "$DW_JQ_BRANCH_RE"'if (.branch.pattern | type) != "string" then true
     else (.labels.types //= []) | branch_re as $re | "" | test($re) | true end' <<<"$1" >/dev/null 2>&1 \
-    || { printf 'branch.pattern（%s）が正規表現として正しくありません。設定を直してください\n' "$(jq -r '.branch.pattern' <<<"$1")"; return 1; }
+    || { printf 'branch.pattern（%s）が正規表現として正しくありません。設定を直してください\n' "$(jq -c '.branch.pattern' <<<"$1")"; return 1; }
 }
 
 # ブランチ名を branch.pattern に当て、type と Issue の番号を「<type>|<番号>」で出力する（無いものは空）

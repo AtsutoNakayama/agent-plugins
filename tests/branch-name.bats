@@ -132,6 +132,14 @@ load fake_gh
   assert_output --partial "正規表現として正しくありません"
 }
 
+@test "--check は branch.pattern に改行を含んでいても、設定の誤りを1行のメッセージで報告する" {
+  printf '%s\n' '{"branch": {"pattern": "{type}/{issue_number}-{slug}(\n)("}}' >.claude/dev-workflow/config.json
+  run_script branch-name.sh --check feat/17-add-login
+  assert_failure 2
+  assert_output --partial "正規表現として正しくありません"
+  assert_equal "${#lines[@]}" 1
+}
+
 @test "dw_parse_branch は branch.pattern が正規表現として正しくなければ、取り出せないのではなく設定の誤りで終了コード 2" {
   # shellcheck disable=SC2016 # bash -c の中で展開させる
   run "${TEST_BASH:-bash}" -c '. "$1/lib/common.sh"; dw_parse_branch "$2" feat/17-x' _ "$SCRIPTS" \
