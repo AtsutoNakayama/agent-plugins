@@ -49,12 +49,13 @@ warned() {
   for c in "$@"; do
     run_hook "$c"
     [ "$status" -eq 0 ] || fail "止めてしまった（$status）: $c / $output"
-    jq -e . <<<"$output" >/dev/null || fail "JSON を出していない: $c / $output"
-    assert_equal "$(jq -r .hookSpecificOutput.hookEventName <<<"$output")" PreToolUse
-    assert_equal "$(jq -r .hookSpecificOutput.permissionDecision <<<"$output")" null
-    assert_equal "$(jq -r .systemMessage <<<"$output")" "$(jq -r .hookSpecificOutput.additionalContext <<<"$output")"
-    [[ "$(jq -r .systemMessage <<<"$output")" == *"ブランチ名 ${name} は規約に合いません"* ]] \
-      || fail "警告に名前が無い: $c / $output"
+    # 1コマンドごとの jq の起動を減らすため、検査は1回の jq にまとめる（JSON でない出力も、ここで失敗する）
+    jq -e --arg n "ブランチ名 ${name} は規約に合いません" '
+      .hookSpecificOutput.hookEventName == "PreToolUse"
+      and .hookSpecificOutput.permissionDecision == null
+      and .systemMessage == .hookSpecificOutput.additionalContext
+      and (.systemMessage | contains($n))
+    ' <<<"$output" >/dev/null || fail "警告が期待どおりでない（JSON、hookEventName、permissionDecision なし、systemMessage と additionalContext の一致、名前）: $c / $output"
   done
 }
 
