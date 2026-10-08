@@ -59,14 +59,16 @@ while [ $# -gt 0 ]; do
   esac
 done
 
-# bare リポジトリ＋ワークツリーの配置の、.git ファイルを置いたディレクトリ（メインのワークツリー）には作業ツリーが無く、
-# dw_repo_root が失敗する。ここで実行してもよいが、今のブランチは分からない（--branch が要る）
+# bare リポジトリ＋ワークツリーの配置の、.git ファイルを置いたディレクトリ（メインのワークツリー）には作業ツリーが無い。
+# ここで実行してもよいが、今のブランチは分からない（--branch が要る）。
+# 作業ツリーの有無は、dw_repo_root の成功ではなく git で確かめる（WORKFLOW_REPO_ROOT があると、作業ツリーが無くても成功するため）
 has_toplevel=true
-if repo_root="$(dw_repo_root)"; then
+repo_root="$(dw_repo_root || true)"
+if [ -n "$repo_root" ] && git -C "$repo_root" rev-parse --show-toplevel >/dev/null 2>&1; then
   main_root="$(dw_main_root "$repo_root")" || dw_die "メインのワークツリーが分かりません"
 else
   has_toplevel=false
-  main_root="$(dw_main_root "$PWD")" || dw_die "リポジトリの外か、メインのワークツリーが分からない配置（--separate-git-dir のワークツリーなど）です" 64
+  main_root="$(dw_main_root "${repo_root:-$PWD}")" || dw_die "リポジトリの外か、メインのワークツリーが分からない配置（--separate-git-dir のワークツリーなど）です" 64
   repo_root="$main_root"
 fi
 config="$("$BASH" "$DW_SCRIPTS_DIR/config.sh")"

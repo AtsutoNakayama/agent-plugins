@@ -715,6 +715,19 @@ make_bare_layout() {
   assert_output --partial "ブランチの上にいません"
 }
 
+@test "WORKFLOW_REPO_ROOT が作業ツリーの無いルートを指しても、--branch を省略して bare リポジトリの HEAD のブランチを消さない（#233）" {
+  setup_branch
+  make_bare_layout
+  git -C "$PROJ/.bare" symbolic-ref HEAD refs/heads/feat/17-x
+  cd "$PROJ"
+  WORKFLOW_REPO_ROOT="$PROJ" run_cleanup --abandon
+  assert_failure 64
+  assert_output --partial "ブランチの上にいません"
+  [ -e "$PROJ/feat" ]
+  run git -C "$PROJ" show-ref --verify --quiet refs/heads/feat/17-x
+  assert_success
+}
+
 @test "リポジトリの外で実行すると、使い方の誤りで止まる" {
   mkdir "$TMP/outside"
   cd "$TMP/outside"
