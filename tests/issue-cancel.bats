@@ -435,6 +435,15 @@ writes() { grep -oE '^(issue-comment|issue-close|pr-comment|pr-close|api-delete)
   assert_equal "$(writes)" ""
 }
 
+@test "子孫のリポジトリ名が大文字小文字だけ違うときは、同じリポジトリとして扱う" {
+  setup_cancel
+  set_subs 17 "$(sub_issue 30 open 0 Me/Demo)"
+  cancel_issue 30
+  run_script issue-cancel.sh --issue 17 --reason "やめます" --sub-issues close
+  assert_success
+  assert_equal "$(jq -c '.sub_issues.open | map(.number)' <<<"$output")" '[30]'
+}
+
 @test "子を閉じるのに失敗したら、親には触れずに止まる。再実行では、同じ理由をコメント済みの子にはコメントし直さない" {
   setup_cancel
   sub_tree

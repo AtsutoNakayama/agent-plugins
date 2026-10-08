@@ -545,6 +545,11 @@ has() {
   # 相談のときの違いは1つの節にまとめ、手順の中に書き分けない（書き分けると、手順の間の継ぎ目が抜けるため）
   consult="$(section "$f" "## 起票を頼まれていない相談で呼ばれたとき")"
   [ -n "$consult" ] || fail "相談で呼ばれたときの節がありません"
+  # 導入していないリポジトリでは使わずに止まる。導入したかは config.sh の set_up で読む（設定ファイルを自分で探さない。#244）
+  grep -qF 'config.sh .set_up' <<<"$consult" || fail "相談の節に、導入したかを config.sh .set_up で確かめることが書かれていません"
+  # shellcheck disable=SC2016 # バッククォートはスキルの本文の文字で、展開させない
+  grep -qF '`false`' <<<"$consult" && grep -qF 'このスキルを使わずに止め' <<<"$consult" || fail "相談の節に、導入していなければ使わずに止まることが書かれていません"
+  grep -qF '設定ファイルを自分で探さない' <<<"$consult" || fail "相談の節に、設定ファイルを自分で探さないことが書かれていません"
   grep -qF '手順1〜3は起票を頼まれたときと同じに進める' <<<"$consult" || fail "相談の節に、手順は起票と同じに進めることが書かれていません"
   grep -qF 'ラベルと説明を「起票する」ではなく「下書きする」と書く' <<<"$consult" || fail "相談の節に、選択肢の書き方がありません"
   grep -qF '「このまま設定する」は「この値で下書きする」と書く' <<<"$consult" || fail "相談の節に、分割の提案の選択肢の書き方がありません"
@@ -723,4 +728,32 @@ has() {
   # 求められないときは移らずに止まる
   grep -q '移らずに' "$SKILLS/task-finish/SKILL.md"
   grep -q '移らずに' "$SKILLS/task-cancel/SKILL.md"
+}
+
+@test "task-finish と task-cancel は、子がすべて閉じた親を閉じるかを確認する手順を持ち、task-start・task-status は親の列を伝える（設計書 §4）" {
+  for name in task-finish task-cancel; do
+    f="$SKILLS/$name/SKILL.md"
+    grep -q '### [0-9]*\. 子がすべて閉じた親を閉じるか確認する' "$f" || fail "${name} に親を閉じるかの確認の手順がありません"
+    grep -q 'parent-state.sh' "$f" || fail "${name} が parent-state.sh を使っていません"
+    grep -q 'AskUserQuestion' "$f" || fail "${name} に確認（AskUserQuestion）がありません"
+    grep -q '下の親から順に' "$f" || fail "${name} に、上の親も下から順に確認することがありません"
+  done
+  grep -q 'not_planned' "$SKILLS/task-cancel/SKILL.md" || fail "task-cancel に、子がすべて取りやめのときの案がありません"
+  for name in task-start task-status; do
+    grep -q 'parents' "$SKILLS/$name/SKILL.md" || fail "${name} に、親の列の移動を伝えることがありません"
+  done
+  [ -x "$BATS_TEST_DIRNAME/../plugins/dev-workflow/scripts/parent-state.sh" ]
+}
+
+@test "親を閉じる確認は suggest が null でない親だけを対象にし、not_planned は issue-cancel.sh で閉じる。task-finish は複数の Issue をまとめて渡す" {
+  for name in task-finish task-cancel; do
+    f="$SKILLS/$name/SKILL.md"
+    grep -qF 'が null でないものがあれば' "$f" || fail "${name} に、suggest が null でない親だけを確認することがありません"
+    grep -q 'issue-cancel.sh --issue <親の番号> --reason' "$f" || fail "${name} に、not_planned を issue-cancel.sh で閉じる手順がありません"
+    grep -q -e '--sub-issues keep' "$f" || fail "${name} に --sub-issues keep がありません"
+  done
+  grep -q '二重に聞かない' "$SKILLS/task-finish/SKILL.md" || fail "task-finish に、同じ親を二重に聞かないことがありません"
+  grep -q '<番号1>,<番号2>' "$SKILLS/task-finish/SKILL.md" || fail "task-finish に、閉じる Issue をまとめて渡すことがありません"
+  grep -qF 'parent-state.sh --issue <番号> --assume-closed <番号>:<理由>' "$SKILLS/task-cancel/SKILL.md" || fail "task-cancel が取りやめた Issue を --assume-closed で渡していません"
+  grep -q '「Issue だけ閉じる」を選んだときも含む' "$SKILLS/task-cancel/SKILL.md" || fail "task-cancel の手順8の実行条件がありません"
 }
