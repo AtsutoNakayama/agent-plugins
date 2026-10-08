@@ -27,6 +27,11 @@ setup_auto() {
   setup_fake_gh
   set_config '. + {auto: {enabled: true}, status: {hold: "On Hold"}}'
   fake_issue_body 17 "$BODY"
+  # 前の作業のブランチを探す（dw_issue_work）ために、origin を作る
+  git add -A && git commit -q -m config
+  git init -q --bare -b main "$TMP/origin.git"
+  git remote add origin "$TMP/origin.git"
+  git push -q origin main
 }
 
 run_check() {
@@ -240,4 +245,48 @@ run_check() {
   setup_auto
   run_check --issue 17
   assert_equal "$(jq -r .issue.body <<<"$output")" "$BODY"
+}
+
+@test "前の作業の確かなブランチが1つあれば、それを使い回す（resume。手元に無く origin だけにあっても）" {
+  setup_auto
+  run_check --issue 17
+  assert_equal "$(jq -c .resume <<<"$output")" null
+  git branch feat/17-old-work
+  run_check --issue 17
+  assert_success
+  assert_equal "$(jq -c '[.action, .resume]' <<<"$output")" '["proceed",{"branch":"feat/17-old-work","slug":"old-work","worktree":null}]'
+  git branch -D -q feat/17-old-work
+  git push -q origin main:refs/heads/feat/017-remote-only
+  run_check --issue 17
+  assert_equal "$(jq -c '.resume | [.branch, .slug]' <<<"$output")" '["feat/017-remote-only","remote-only"]'
+}
+
+@test "前の作業のブランチを1つに決められなければ hold（複数・type が違う・候補だけ・別のブランチの開いた PR）" {
+  setup_auto
+  git branch feat/17-a
+  git branch feat/17-b
+  run_check --issue 17
+  assert_equal "$(jq -r .action <<<"$output")" hold
+  assert_output --partial "Issue #17 の作業のブランチが複数あります（feat/17-a, feat/17-b）"
+  git branch -D -q feat/17-b
+  fake_issue 17 '["fix"]'
+  fake_issue_body 17 "$BODY"
+  run_check --issue 17
+  assert_output --partial "Issue #17 の作業のブランチ feat/17-a の type（feat）が、Issue の type（fix）と違います"
+  git branch -D -q feat/17-a
+  git branch wip/17-try
+  run_check --issue 17
+  assert_equal "$(jq -c '[.action, .resume]' <<<"$output")" '["hold",null]'
+  assert_output --partial "Issue #17 の作業かもしれないブランチがあります（wip/17-try）"
+  git branch -D -q wip/17-try
+  git branch fix/17-a
+  jq '. + {closedByPullRequestsReferences: [{number: 5, url: "https://github.com/me/demo/pull/5", repository: {name: "demo", owner: {login: "me"}}}]}' \
+    "$FIX/issue-17.json" >"$TMP/i.json" && mv "$TMP/i.json" "$FIX/issue-17.json"
+  echo '{"number": 5, "url": "https://github.com/me/demo/pull/5", "state": "OPEN", "headRefName": "other-branch", "isCrossRepository": false}' >"$FIX/pr-5.json"
+  run_check --issue 17
+  assert_equal "$(jq -r .action <<<"$output")" hold
+  assert_output --partial "Issue #17 を閉じる PR #5 が、別のブランチ（other-branch）で開いています"
+  echo '{"number": 5, "url": "https://github.com/me/demo/pull/5", "state": "OPEN", "headRefName": "fix/17-a", "isCrossRepository": false}' >"$FIX/pr-5.json"
+  run_check --issue 17
+  assert_equal "$(jq -c '[.action, .resume.branch]' <<<"$output")" '["proceed","fix/17-a"]'
 }

@@ -15,6 +15,10 @@
 # 止まる条件のうち、スクリプトが決めるもの（hold）:
 #   - breaking ラベルがある（移行のしかたを含め、人が決めることなので）
 #   - type ラベル（labels.types）が1つではない
+#   - 前の作業のブランチ（実行し直したとき）を1つに決められない：Issue の確かなブランチ（issue-branches.sh の branches）が
+#     複数ある、確かなブランチの type が今の Issue の type と違う、確かなブランチが無いのに候補（名前が似ている・Issue を閉じる
+#     PR のブランチ）がある、Issue を閉じる開いている PR が確かなブランチとは別のブランチにある。新しいブランチを作ると、
+#     前の作業のコミットを置き去りにするため。確かなブランチが1つなら、それを使い回す（resume）
 #   - 「やること」の節（見出しが やること・Tasks・To do）に項目が無い
 #   - 「完了条件」の節（見出しが 完了条件・Acceptance criteria・Definition of done）に項目が無い
 #   本文は、ほかのスクリプトと同じく md_scan（lib/common.sh）の決まりで読む（コードブロックと複数行の HTML のコメントの中は見ない）。
@@ -24,13 +28,15 @@
 # 解釈が分かれるかや、差分に ADR にすべき判断があるかは、AI が判断する（このスクリプトでは決めない）
 #
 # 止まるとき（有効なときだけ。無効なら設定の値は検査しない）: auto.max_fix_attempts が1以上の整数でない・auto.max_new_issues が0以上の整数でない・
-#             保留の列がほかの役割と同じ名前（終了コード 2）、PR の番号・無い番号（2）、Issue を読めない（1）
+#             保留の列がほかの役割と同じ名前（終了コード 2）、PR の番号・無い番号（2）、Issue・origin・PR を読めない（1）、gh が古い（2）
 #
 # 出力:
 #   issue      {number, title, url, state, body, type（type ラベルが1つなら、その名前。ほかは null）, breaking}。
 #              disabled・no_hold では null。task-auto は、この body で Issue があいまいかを判断する（読み直さない）
 #   action     上の値
 #   reasons    action の理由（文の配列。proceed では空）
+#   resume     前の作業の確かなブランチを使い回すとき {branch, slug（task-start.sh の --slug に渡す短い説明）, worktree（無ければ null）}。
+#              無ければ null（新しいブランチを作る）。not_startable・disabled・no_hold では null
 #   settings   {max_fix_attempts, max_new_issues, hold（保留の列の名前か null）}。disabled では null
 set -euo pipefail
 
@@ -60,10 +66,10 @@ issue="$(dw_issue_number --issue "$issue")"
 config="$("$BASH" "$DW_SCRIPTS_DIR/config.sh")"
 
 # 使い方: out <action> <Issue の JSON か null> <理由の配列>
-settings=null
+settings=null resume=null
 out() {
-  jq -n --arg a "$1" --argjson i "$2" --argjson r "$3" --argjson s "$settings" \
-    '{issue: $i, action: $a, reasons: $r, settings: $s}'
+  jq -n --arg a "$1" --argjson i "$2" --argjson r "$3" --argjson s "$settings" --argjson w "$resume" \
+    '{issue: $i, action: $a, reasons: $r, resume: $w, settings: $s}'
 }
 
 # 無効なら、ほかの設定を検査せずに止まる（無効のリポジトリで、使わない設定の誤りで止まらないように）
@@ -94,8 +100,13 @@ if [ -z "$hold" ]; then
 fi
 dw_check_hold_column "$config"
 
+repo_root="$(dw_repo_root)" || dw_die "リポジトリの中で実行してください" 64
+main_root="$(dw_main_root "$repo_root")" || dw_die "メインのワークツリーが分かりません"
+# closedByPullRequestsReferences を読む（前の作業のブランチを探す。issue-branches.sh と同じ）
+dw_require_gh_version "$DW_GH_MIN_VERSION" "Issue を閉じる PR を読む（gh issue view --json closedByPullRequestsReferences）"
+
 # PR の番号なら止まる（dw_read_issue）
-issue_json="$(dw_read_issue "$issue" number,title,state,labels,body,subIssuesSummary)"
+issue_json="$(dw_read_issue "$issue" number,title,state,labels,body,subIssuesSummary,closedByPullRequestsReferences)"
 labels="$(jq -c '[.labels[].name]' <<<"$issue_json")"
 types="$(jq -c --argjson t "$(jq -c '.labels.types' <<<"$config")" "$DW_JQ_ISSUE_TYPES"' issue_types($t)' <<<"$labels")"
 # GitHub と同じく、ラベルの名前は大文字と小文字を区別せずに照合する
@@ -126,6 +137,30 @@ case "$(jq length <<<"$types")" in
   0) add_reason "type ラベルがありません（$(jq -r '.labels.types | join(", ")' <<<"$config") のどれか1つを付けてください）" ;;
   *) add_reason "type ラベルが1つではありません（今は $(jq -r 'join(", ")' <<<"$types")）" ;;
 esac
+
+# 前の作業のブランチ（止まった後に実行し直したとき）。issue-branches.sh と同じ判定（dw_issue_work）で探し、1つに決める
+work="$(dw_issue_work "$main_root" "$issue" "$config" "$issue_json")"
+type="$(jq -r '.type // ""' <<<"$summary")"
+while IFS= read -r r; do
+  [ -n "$r" ] && add_reason "$r"
+done < <(jq -r --arg n "$issue" --arg t "$type" '
+  (.branches | map(.name)) as $b | (.candidates | map(.name)) as $c
+  | if ($b | length) > 1 then "Issue #\($n) の作業のブランチが複数あります（\($b | join(", "))）。どれで続けるかは人が決めます"
+    elif ($b | length) == 0 and ($c | length) > 0 then
+      "Issue #\($n) の作業かもしれないブランチがあります（\($c | join(", "))）。前の作業を置き去りにしないよう、どれで続けるかは人が決めます"
+    else empty end,
+  (.open_prs[] | select(.branch != ($b[0] // null))
+    | "Issue #\($n) を閉じる PR #\(.number) が、別のブランチ（\(.branch)）で開いています。どれで続けるかは人が決めます")' <<<"$work")
+if [ "$(jq '.branches | length' <<<"$work")" = 1 ]; then
+  resume="$(jq -c --argjson c "$config" "$DW_JQ_BRANCH_RE"'
+    .branches[0] as $w | ($c | branch_re) as $re | ($w.name | capture($re)) as $m
+    | {branch: $w.name, slug: ($m.slug // "work"), worktree: $w.worktree, type: ($m.type // null)}' <<<"$work")"
+  btype="$(jq -r '.type // ""' <<<"$resume")"
+  if [ -n "$btype" ] && [ -n "$type" ] && [ "$btype" != "$type" ]; then
+    add_reason "Issue #${issue} の作業のブランチ $(jq -r .branch <<<"$resume") の type（${btype}）が、Issue の type（${type}）と違います。どれで続けるかは人が決めます"
+  fi
+  resume="$(jq -c 'del(.type)' <<<"$resume")"
+fi
 
 # 本文の「やること」（tasks）と「完了条件」（criteria）の節のうち、中身のあるものの名前を1行ずつ出す（上の説明の決まり）
 filled="$(jq -r "$DW_JQ_MD_SCAN"'

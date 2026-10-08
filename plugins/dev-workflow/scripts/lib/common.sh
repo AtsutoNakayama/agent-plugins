@@ -407,13 +407,14 @@ dw_is_json_object() {
   jq -se "$DW_JQ_ONE_OBJECT" "$1" >/dev/null 2>&1
 }
 
-# 設定（入力）の branch.pattern を、type と Issue の番号を取り出す正規表現にする jq の定義（dw_parse_branch・dw_issue_branches）
+# 設定（入力）の branch.pattern を、type と Issue の番号と短い説明（slug。pattern に {slug} が無ければ無い）を取り出す
+# 正規表現にする jq の定義（dw_parse_branch・dw_issue_branches・auto-check.sh）
 # jq の変数（$t）を bash に展開させないため、シングルクォートで書く
 # shellcheck disable=SC2016
 DW_JQ_BRANCH_RE='def branch_re: .labels.types as $t | .branch.pattern
   | gsub("\\{type\\}"; "(?<type>" + ($t | join("|")) + ")")
   | gsub("\\{issue_number\\}"; "(?<issue>[0-9]+)")
-  | gsub("\\{slug\\}"; "[a-z0-9]+(?:-[a-z0-9]+)*")
+  | gsub("\\{slug\\}"; "(?<slug>[a-z0-9]+(?:-[a-z0-9]+)*)")
   | "^" + . + "$";'
 
 # ブランチ名を branch.pattern に当て、type と Issue の番号を「<type>|<番号>」で出力する（無いものは空）
