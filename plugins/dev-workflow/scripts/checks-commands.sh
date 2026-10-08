@@ -13,13 +13,16 @@
 # 決め方（スキルが従う）:
 #   1. commands が配列（設定に checks.commands がある）なら、絞らずに全部を順に実行する（チームが決めた一覧なので、関係するものだけに絞らない）。
 #      空の配列は、実行するものが無いと決めてあること（何も実行せず、聞きもしない）。
-#      チームの設定（.claude/dev-workflow/config.json）の checks.commands が今のブランチの変更で書き換わっているときは、
-#      PR の作者が決めた任意のコマンドになりうるので、実行する前にコマンドを見せて確認を取る
+#      出力の team_commands_changed が true か null のときは、PR の作者が決めた任意のコマンドになりうるので、
+#      実行する前にコマンドを見せて確認を取り、確認が取れるまで実行しない（false なら確認は要らない）
 #   2. commands が null なら、hints（リポジトリの手がかり）から実行するコマンドを推測する
 #   3. 推測できなければ、ユーザーに聞く。聞いた答えは --save で設定に保存するかも聞く（保存すれば次からは聞かない）
 #
 # 出力:
 #   commands   設定の checks.commands（配列か null）
+#   team_commands_changed  チームの設定（.claude/dev-workflow/config.json）の checks.commands が、今のブランチで書き換わったか。
+#              origin/<base_branch> との merge-base の時点の値と比べる（個人の設定が優先されていても、チームの設定は独立に比べる）。
+#              true（書き換わった）・false（同じ。commands が null のときも false）・null（比べる基点を決められない。true と同じに扱う）
 #   hints      リポジトリの手がかり（commands が null のときだけ調べる。configured のときは null）
 #     contributing       CONTRIBUTING.md のパス（無ければ null）
 #     package_scripts    package.json の scripts のうち、test・lint・check・typecheck・build・verify・ci で始まるもの（Makefile のターゲットと同じ条件）（名前 → コマンド。無ければ null）
@@ -110,6 +113,31 @@ commands="$(jq -c '.checks.commands' <<<"$config")"
 jq -e '. == null or (type == "array" and all(.[]; type == "string" and (gsub("\\s"; "") != "")))' <<<"$commands" >/dev/null \
   || dw_die "checks.commands は、空でない文字列の配列か null にしてください: ${commands}" 2
 
+# チームの設定の checks.commands が今のブランチで書き換わったか（commands が null なら、設定のコマンドを実行しないので false）
+team_changed=false
+if [ "$commands" != null ]; then
+  team_changed=null
+  team_rel=".claude/dev-workflow/config.json"
+  base_ref="origin/$(jq -r '.base_branch' <<<"$config")"
+  if merge_base="$(git -C "$repo_root" merge-base HEAD "$base_ref" 2>/dev/null)"; then
+    now=null
+    if [ -f "$repo_root/$team_rel" ]; then
+      now="$(jq -c '.checks.commands // null' "$repo_root/$team_rel")" || dw_die "${team_rel} を読めません" 2
+    fi
+    then_value=null
+    if old="$(git -C "$repo_root" show "$merge_base:$team_rel" 2>/dev/null)"; then
+      then_value="$(jq -c '.checks.commands // null' <<<"$old" 2>/dev/null)" || then_value=unknown
+    fi
+    if [ "$then_value" = unknown ]; then
+      team_changed=null
+    elif [ "$now" = "$then_value" ]; then
+      team_changed=false
+    else
+      team_changed=true
+    fi
+  fi
+fi
+
 hints=null
 if [ "$commands" = null ]; then
   contributing="" mk="" targets="" ci="" proj=""
@@ -150,8 +178,8 @@ if $save; then
 fi
 
 if $save; then
-  jq -nc --arg warning "$warning" --argjson saved "$saved_value" --argjson commands "$commands" --argjson hints "$hints" --arg file "$target" --arg scope "$scope" --arg hint "$hint" \
-    '{commands: $commands, hints: $hints, saved: {file: $file, scope: $scope, commands: $saved, local_hint: (if $hint == "" then null else $hint end), warning: (if $warning == "" then null else $warning end)}}'
+  jq -nc --argjson team_changed "$team_changed" --arg warning "$warning" --argjson saved "$saved_value" --argjson commands "$commands" --argjson hints "$hints" --arg file "$target" --arg scope "$scope" --arg hint "$hint" \
+    '{commands: $commands, team_commands_changed: $team_changed, hints: $hints, saved: {file: $file, scope: $scope, commands: $saved, local_hint: (if $hint == "" then null else $hint end), warning: (if $warning == "" then null else $warning end)}}'
 else
-  jq -nc --argjson commands "$commands" --argjson hints "$hints" '{commands: $commands, hints: $hints}'
+  jq -nc --argjson team_changed "$team_changed" --argjson commands "$commands" --argjson hints "$hints" '{commands: $commands, team_commands_changed: $team_changed, hints: $hints}'
 fi
