@@ -13,6 +13,7 @@
 # 標準出力に出し、終了コード 0 で終わる。
 # 操作の対象のリポジトリ（cd・pushd・popd・git -C・env -C で移った先、--git-dir・GIT_DIR などで指したリポジトリ）が、導入して
 # いないリポジトリなら何もしない（gc_target・target_set_up）。git がリポジトリを見つけられないときは、守りを外さないよう調べる（設計書 §1）。
+# ただし今のブランチを読めないので、コミットと、push 先を書かない push（と HEAD・@ への push）は止める（target_unknown）。
 # コマンドの文字列の解析は、pr-link.sh と共有する（scripts/lib/git-command.sh）。timeout・env などの前に付くコマンドは飛ばすが、
 # sh -c・xargs などを通したコマンドや git の別名（alias）を通すと見逃す。
 # 最後の守りは GitHub のルールセット（setup-repo.sh）。
@@ -49,7 +50,7 @@ deny() { dw_die "$1" 2; }
 #   - ルートが分かれば、そこ（かメインのワークツリー）にチームの設定があるか（dw_is_set_up）
 #   - リポジトリは分かるがルートが分からない（bare リポジトリ、外から指した --separate-git-dir のリポジトリなど）ときは、
 #     HEAD にチームの設定がコミットされているか
-#   - git がリポジトリを見つけられない（ディレクトリが分からない cd - の後など）ときは、守りを外さないよう、導入したものとみなす
+#   - git がリポジトリを見つけられない（ディレクトリが分からない cd - の後など）ときは、守りを外さないよう、導入したものとみなす（ただし今のブランチを読めないので、コミットと push 先を書かない push（と HEAD・@ への push）は止める。target_unknown）
 target_set_up() {
   if [ -n "$gc_root" ]; then
     dw_is_set_up "$gc_root"
@@ -136,7 +137,11 @@ check_push() {
       *) dest="$w" ;;
     esac
     case "$dest" in
-      HEAD | @) dest="$current" ;;
+      HEAD | @)
+        # 今のブランチを読めないと dest が空になって通ってしまうので、止める
+        ! target_unknown || deny "$(unknown_target_message "HEAD・@ への push")"
+        dest="$current"
+        ;;
     esac
     dest="${dest#refs/heads/}"
     [ -z "$dest" ] || [ "$dest" != "$base" ] \
@@ -174,7 +179,7 @@ check_git() {
   shift
   case "$sub" in
     commit | push | switch | checkout | branch | worktree)
-      # 操作の対象を求め、導入していないリポジトリなら何もしない（git がリポジトリを見つけられないときは、今までどおり調べる）
+      # 操作の対象を求め、導入していないリポジトリなら何もしない（git がリポジトリを見つけられないときは、今までどおり調べる。ただし今のブランチを読めないので、コミットと push 先を書かない push（と HEAD・@ への push）は止める。target_unknown）
       gc_target
       target_set_up || return 0
       ;;
