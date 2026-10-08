@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # テストとチェックのコマンドを、設定から読む。設定が無ければ、リポジトリから決める手がかりを出す。
-# branch-update（手順3）・pr-respond・review が、実行するコマンドを決めるのに使う。
+# branch-update（手順3）・gh-pr-check・review が、実行するコマンドを決めるのに使う。
 #
 # 使い方:
 #   checks-commands.sh                                  設定と手がかりを出力する（何も変えない）

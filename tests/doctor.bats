@@ -92,6 +92,33 @@ labels_check() { jq -c '.checks[] | select(.name == "labels") | [.ok, .level, .d
   assert_equal "$(jq -r '.checks[] | select(.name == "project") | .level' <<<"$output")" warn
 }
 
+@test "旧キー pr_respond が設定に残っていれば、pr_check に改めるよう警告する（失敗にはしない）" {
+  fake_gh
+  export FAKE_SCOPES="project"
+  echo '{"pr_respond": {"handlers": {"coderabbitai[bot]": "coderabbit-respond"}}}' >.claude/dev-workflow/config.json
+  run_script doctor.sh
+  assert_success
+  assert_equal "$(jq -r '.checks[] | select(.name == "old-pr-respond-key") | [.ok, .level] | @tsv' <<<"$output")" $'false\twarn'
+  assert_output --partial "pr_check に改めてください"
+}
+
+@test "旧キー pr_respond が個人の設定（config.local.json）にあっても警告する" {
+  fake_gh
+  export FAKE_SCOPES="project"
+  echo '{"pr_respond": {"handlers": {}}}' >.claude/dev-workflow/config.local.json
+  run_script doctor.sh
+  assert_equal "$(jq -r '.checks[] | select(.name == "old-pr-respond-key") | .ok' <<<"$output")" false
+}
+
+@test "pr_check を使っていれば、旧キーの警告は出ない" {
+  fake_gh
+  export FAKE_SCOPES="project"
+  echo '{"pr_check": {"handlers": {}}}' >.claude/dev-workflow/config.json
+  run_script doctor.sh
+  assert_success
+  assert_equal "$(jq -r '[.checks[] | select(.name == "old-pr-respond-key")] | length' <<<"$output")" 0
+}
+
 @test "設定が壊れていれば config が失敗する" {
   fake_gh
   export FAKE_SCOPES="project"

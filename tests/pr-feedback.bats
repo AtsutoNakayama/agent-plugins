@@ -158,7 +158,7 @@ out_of() { jq -c "$1" <<<"$output"; }
 
 @test "担当の skill が無い書き手（人）がいるスレッドは、順番によらず、その人の分にする" {
   setup_fake_gh
-  echo '{"pr_respond": {"handlers": {"coderabbitai[bot]": "coderabbit-respond"}}}' >"$REPO/.claude/dev-workflow/config.json"
+  echo '{"pr_check": {"handlers": {"coderabbitai[bot]": "coderabbit-respond"}}}' >"$REPO/.claude/dev-workflow/config.json"
   # bot のスレッドに人が質問を書いたら、担当の skill（人のコメントを扱わない）ではなく、その人の分として汎用の手順で扱う
   thread false '[["coderabbitai", "指摘"], ["alice", "この指摘は本当ですか"]]'
   thread false '[["coderabbitai", "指摘"], ["me", "直しました"], ["alice", "直し方に質問です"]]'
@@ -177,7 +177,7 @@ out_of() { jq -c "$1" <<<"$output"; }
 
 @test "replied は、スレッドの持ち主の最後のコメントの後に PR の作者が書いたかで決める" {
   setup_fake_gh
-  echo '{"pr_respond": {"handlers": {"coderabbitai[bot]": "coderabbit-respond"}}}' >"$REPO/.claude/dev-workflow/config.json"
+  echo '{"pr_check": {"handlers": {"coderabbitai[bot]": "coderabbit-respond"}}}' >"$REPO/.claude/dev-workflow/config.json"
   # alice の分。作者が alice に答えた後に bot が書いても、alice には返信済み
   thread false '[["coderabbitai", "指摘"], ["alice", "質問"], ["me", "回答"], ["coderabbitai", "確認"]]'
   # alice の分。作者の返信の後に alice が書いたので、返信していない
@@ -201,7 +201,7 @@ out_of() { jq -c "$1" <<<"$output"; }
 
 @test "担当の skill を、大文字と小文字・末尾の [bot] を区別せずに投稿者へ対応させる" {
   setup_fake_gh
-  echo '{"pr_respond": {"handlers": {"CodeRabbitAI[bot]": "coderabbit-respond"}}}' >"$REPO/.claude/dev-workflow/config.json"
+  echo '{"pr_check": {"handlers": {"CodeRabbitAI[bot]": "coderabbit-respond"}}}' >"$REPO/.claude/dev-workflow/config.json"
   pr_view '{comments: [
     {id: "C1", author: {login: "coderabbitai"}, body: "要約", createdAt: "t1", url: "u1"},
     {id: "C2", author: {login: "alice"}, body: "質問", createdAt: "t2", url: "u2"}]}'
@@ -219,13 +219,24 @@ out_of() { jq -c "$1" <<<"$output"; }
   assert_equal "$(out_of '[.handlers, .feedback[0].handler]')" '[{},null]'
 }
 
+@test "旧キー pr_respond が設定に残っていれば、使われないことを警告し、担当の skill には任せない" {
+  setup_fake_gh
+  echo '{"pr_respond": {"handlers": {"coderabbitai[bot]": "coderabbit-respond"}}}' >"$REPO/.claude/dev-workflow/config.json"
+  pr_view '{comments: [{id: "C1", author: {login: "coderabbitai"}, body: "要約", createdAt: "t1", url: "u1"}]}'
+  run_script pr-feedback.sh
+  assert_success
+  assert_output --partial "設定のキー pr_respond は使われません。pr_check に改めてください"
+  out="$("${TEST_BASH:-bash}" "$SCRIPTS/pr-feedback.sh" 2>/dev/null)"
+  assert_equal "$(jq -c '[.handlers, .feedback[0].handler]' <<<"$out")" '[{},null]'
+}
+
 @test "担当の設定がオブジェクトでなければ止まる" {
   setup_fake_gh
   for h in '["coderabbit-respond"]' '{"alice": 1}' '{"alice": ""}'; do
-    echo "{\"pr_respond\": {\"handlers\": $h}}" >"$REPO/.claude/dev-workflow/config.json"
+    echo "{\"pr_check\": {\"handlers\": $h}}" >"$REPO/.claude/dev-workflow/config.json"
     run_script pr-feedback.sh
     assert_failure 1
-    assert_output --partial "設定の pr_respond.handlers は、投稿者を担当する skill の名前に対応させるオブジェクトにしてください"
+    assert_output --partial "設定の pr_check.handlers は、投稿者を担当する skill の名前に対応させるオブジェクトにしてください"
   done
   assert_equal "$(called PrView)" 0
 }

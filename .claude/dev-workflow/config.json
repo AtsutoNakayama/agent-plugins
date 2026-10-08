@@ -7,7 +7,7 @@
     "pr_opened": "In Review",
     "hold": "On Hold"
   },
-  "pr_respond": {
+  "pr_check": {
     "handlers": {
       "coderabbitai[bot]": "coderabbit-respond"
     }

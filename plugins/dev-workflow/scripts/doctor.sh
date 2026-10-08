@@ -95,6 +95,12 @@ else
   fi
 fi
 
+# 改名前の設定のキー pr_respond は使われない（pr_check に改めた。別名は残さない）ので、残っていれば知らせる
+# （config.sh が失敗したときの $config はエラーメッセージなので、jq が読めず、ここには入らない）
+if jq -e 'type == "object" and has("pr_respond")' >/dev/null 2>&1 <<<"$config"; then
+  check old-pr-respond-key false warn "設定のキー pr_respond は使われません。pr_check に改めてください（例：pr_respond.handlers → pr_check.handlers）。どの層の設定にあっても同じです（.claude/dev-workflow/config.json・config.local.json・~/.claude/dev-workflow/config.json）"
+fi
+
 # 古い置き場所（.claude/dev-workflow/ にまとめる前）のファイルは使われないので、移すよう促す
 moves=""
 # 使い方: old_location <古いパス> <新しいパス>。古いパスがディレクトリなら、*.md があるときだけ数える
