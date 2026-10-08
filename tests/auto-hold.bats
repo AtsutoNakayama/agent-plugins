@@ -140,3 +140,14 @@ run_hold() {
   assert_equal "$(called issue-view)" 0
   assert_equal "$(called issue-comment)" 0
 }
+
+@test "同じ本文でも、その後に別の理由で止まったコメントがあれば、付け直す（新しく止まったことを Issue に残す）" {
+  setup_hold
+  same="$(printf '<!-- dev-workflow:task-auto -->\n\n## 止まった理由\n- テストが3回直しても通りません')"
+  jq --arg s "$same" '. + {comments: [{body: $s}, {body: "<!-- dev-workflow:task-auto -->\n\n## 止まった理由\n- 別の理由"}, {body: "人のコメント"}]}' \
+    "$FIX/issue-17.json" >"$TMP/i.json" && mv "$TMP/i.json" "$FIX/issue-17.json"
+  run_hold --issue 17 --reason-file "$TMP/reason.md"
+  assert_success
+  assert_equal "$(jq -r .commented <<<"$output")" true
+  assert_equal "$(called issue-comment)" 1
+}

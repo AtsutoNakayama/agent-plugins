@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # task-auto が止まる条件に当たったときに、理由とそれまでの判断を Issue にコメントし、Issue を保留の列（status.hold）に移す。
 # ワークツリー・ブランチ・コミットには触れない（人が続きから進められるように残す）。
-# 何度実行しても同じ結果になる（Issue に同じ本文のコメントがあれば、最後のものでなくても付け直さず、既に保留の列なら移さない）ので、
+# 何度実行しても同じ結果になる（task-auto のコメント（印の付いたもの）のうち一番新しいものが同じ本文なら、その後に人のコメントがあっても付け直さず、既に保留の列なら移さない）ので、
 # 途中で止まっても、もう一度実行すれば続きから進む。
 #
 # 使い方: auto-hold.sh --issue N --reason-file PATH [--dry-run]
@@ -65,8 +65,9 @@ body="$(printf '%s\n\n%s' "$MARK" "$reason")"
 # PR の番号なら止まる（dw_read_issue）
 found="$(dw_read_issue "$issue" number,comments)"
 commented=true
-# 列の移動に失敗した後、誰かがコメントしてから実行し直しても二重に付けないよう、最後のコメントだけでなく全部と比べる
-if jq -e --arg b "$body" 'any(.comments[]?; .body == $b)' <<<"$found" >/dev/null; then
+# task-auto のコメントのうち一番新しいものとだけ比べる。最後のコメントと比べると、列の移動に失敗した後に誰かがコメントしてから
+# 実行し直したときに二重に付く。全部と比べると、その後に別の理由で止まってから同じ理由でまた止まったときに、新しく止まったことが残らない
+if jq -e --arg b "$body" --arg m "$MARK" '[.comments[]? | select(.body | startswith($m))] | last | .body == $b' <<<"$found" >/dev/null; then
   commented=false
 fi
 
