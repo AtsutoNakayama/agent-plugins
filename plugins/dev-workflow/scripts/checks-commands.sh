@@ -10,15 +10,17 @@
 #   --scope S   書く層。local（<repo>/.claude/dev-workflow/config.local.json。自分だけ）・
 #               team（<repo>/.claude/dev-workflow/config.json。コミットして共有する）
 #
-# 決め方（スキルが従う）:
-#   1. commands が配列（設定に checks.commands がある）なら、絞らずに全部を順に実行する（チームが決めた一覧なので、関係するものだけに絞らない）。
-#      空の配列は、実行するものが無いと決めてあること（何も実行せず、聞きもしない）。
-#      出力の commands_changed が true か null のときは、PR の作者が決めた任意のコマンドになりうるので、
-#      実行する前にコマンドを見せて確認を取り、確認が取れるまで実行しない（false なら確認は要らない）
-#   2. commands が null なら、hints（リポジトリの手がかり）から実行するコマンドを推測する
-#   3. 推測できなければ、ユーザーに聞く。聞いた答えは --save で設定に保存するかも聞く（保存すれば次からは聞かない）
+# 決め方（スキルが従う。出力の action で決まる）:
+#   run      commands が空でない配列で、commands_changed が false。commands を、絞らずに全部順に実行する
+#            （チームが決めた一覧なので、関係するものだけに絞らない）
+#   confirm  commands が空でない配列で、commands_changed が true か null。PR の作者が決めた任意のコマンドになりうるので、
+#            実行する前にコマンドを見せて確認を取り、確認が取れるまで実行しない（確認が取れたら run と同じく全部実行する）
+#   none     commands が空の配列。実行するものが無いと決めてあること（何も実行せず、聞きもしない）
+#   infer    commands が null。hints（リポジトリの手がかり）から実行するコマンドを推測する。推測できなければユーザーに聞く。
+#            聞いた答えは --save で設定に保存するかも聞く（保存すれば次からは聞かない）
 #
 # 出力:
+#   action     上の run・confirm・none・infer（commands と commands_changed から、スクリプトが決める）
 #   commands   設定の checks.commands（配列か null）
 #   commands_changed  リポジトリにコミットされた設定（チームの設定 .claude/dev-workflow/config.json と、git に追跡されている個人の設定）の
 #              checks.commands が、今のブランチで書き換わったか。origin/HEAD（リモートの既定のブランチ）との merge-base の時点の値と比べる
@@ -154,6 +156,16 @@ if [ "$commands" != null ]; then
   fi
 fi
 
+if [ "$commands" = null ]; then
+  action=infer
+elif [ "$commands" = '[]' ]; then
+  action=none
+elif [ "$commands_changed" = false ]; then
+  action=run
+else
+  action=confirm
+fi
+
 hints=null
 if [ "$commands" = null ]; then
   contributing="" mk="" targets="" ci="" proj=""
@@ -194,8 +206,8 @@ if $save; then
 fi
 
 if $save; then
-  jq -nc --argjson commands_changed "$commands_changed" --arg warning "$warning" --argjson saved "$saved_value" --argjson commands "$commands" --argjson hints "$hints" --arg file "$target" --arg scope "$scope" --arg hint "$hint" \
-    '{commands: $commands, commands_changed: $commands_changed, hints: $hints, saved: {file: $file, scope: $scope, commands: $saved, local_hint: (if $hint == "" then null else $hint end), warning: (if $warning == "" then null else $warning end)}}'
+  jq -nc --arg action "$action" --argjson commands_changed "$commands_changed" --arg warning "$warning" --argjson saved "$saved_value" --argjson commands "$commands" --argjson hints "$hints" --arg file "$target" --arg scope "$scope" --arg hint "$hint" \
+    '{action: $action, commands: $commands, commands_changed: $commands_changed, hints: $hints, saved: {file: $file, scope: $scope, commands: $saved, local_hint: (if $hint == "" then null else $hint end), warning: (if $warning == "" then null else $warning end)}}'
 else
-  jq -nc --argjson commands_changed "$commands_changed" --argjson commands "$commands" --argjson hints "$hints" '{commands: $commands, commands_changed: $commands_changed, hints: $hints}'
+  jq -nc --arg action "$action" --argjson commands_changed "$commands_changed" --argjson commands "$commands" --argjson hints "$hints" '{action: $action, commands: $commands, commands_changed: $commands_changed, hints: $hints}'
 fi

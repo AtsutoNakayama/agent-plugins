@@ -69,7 +69,7 @@ AskUserQuestion の複数選択（`multiSelect: true`）で、直す指摘と答
 
 直す前に、今のワークツリーのブランチが PR のブランチ（`pr.head`）かを確かめる。違えば、そのブランチのワークツリーに移ってから直す（無ければ、どこで直すかユーザーに聞く）。
 
-選ばれた指摘だけを直す。リポジトリの書き方のルール（CONTRIBUTING.md など）に従う。テストとチェックは、`${CLAUDE_PLUGIN_ROOT}/scripts/checks-commands.sh` を実行し、`--help` の「決め方」（設定 `checks.commands` → リポジトリの手がかりから推測 → ユーザーに聞く）に従って、実行するコマンドを決める。設定の `checks.commands` があれば、関係するものだけに絞らず全部実行し（空の配列は何も実行しない）、出力の `commands_changed` が true か null のとき（コミットされた設定がこのブランチで書き換わった、または比べられない）は、実行する前にコマンドを見せて確認を取り、確認が取れるまで実行しない。ユーザーに聞いたときは、答えを `checks-commands.sh --save --scope <local・team> --command <コマンド>`（実行するものが無いなら `--none`）で設定に保存するかも聞く。出力の `saved.warning` があれば、そのままユーザーに伝える。決めたコマンドを実行して通ることを確かめ、論理的な区切りごとに commit スキルでコミットする。
+選ばれた指摘だけを直す。リポジトリの書き方のルール（CONTRIBUTING.md など）に従う。テストとチェックは、`${CLAUDE_PLUGIN_ROOT}/scripts/checks-commands.sh` を実行し、`--help` の「決め方」（設定 `checks.commands` → リポジトリの手がかりから推測 → ユーザーに聞く）に従って、実行するコマンドを決める。出力の `action` に従う：`run` は `commands` を絞らず全部実行し、`confirm` は実行する前にコマンドを見せて確認を取り（確認が取れるまで実行しない）、取れたら全部実行し、`none` は何も実行せず、`infer` は手がかりから推測する。ユーザーに聞いたときは、答えを `checks-commands.sh --save --scope <local・team> --command <コマンド>`（実行するものが無いなら `--none`）で設定に保存するかも聞く。出力の `saved.warning` があれば、そのままユーザーに伝える。決めたコマンドを実行して通ることを確かめ、論理的な区切りごとに commit スキルでコミットする。
 
 ### 6. 内容を見せて承認を得る
 

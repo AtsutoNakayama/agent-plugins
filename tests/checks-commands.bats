@@ -145,7 +145,7 @@ LOCAL=.claude/dev-workflow/config.local.json
 @test "--help に決め方（設定 → 推測 → 聞いて保存）が書かれている（スキルはここを指す）" {
   run_script checks-commands.sh --help
   assert_success
-  assert_output --partial "commands が配列"
+  assert_output --partial "run・confirm・none・infer"
   assert_output --partial "hints"
   assert_output --partial "--save"
 }
@@ -257,4 +257,34 @@ branch_off_main() {
   git commit -q -m local
   run_script checks-commands.sh
   assert_equal "$(jq -c .commands_changed <<<"$output")" true
+}
+
+@test "action：commands と commands_changed の組み合わせで run・confirm・none・infer を決める" {
+  # infer：commands が null
+  run_script checks-commands.sh
+  assert_equal "$(jq -r .action <<<"$output")" infer
+
+  # none：空の配列（commands_changed は問わない）
+  echo '{"checks": {"commands": []}}' >"$TEAM"
+  branch_off_main
+  run_script checks-commands.sh
+  assert_equal "$(jq -r .action <<<"$output")" none
+
+  # run：空でない配列で、変わっていない
+  echo '{"checks": {"commands": ["make test"]}}' >"$TEAM"
+  git commit -q -am set
+  git update-ref refs/remotes/origin/main HEAD
+  run_script checks-commands.sh
+  assert_equal "$(jq -c '[.action, .commands_changed]' <<<"$output")" '["run",false]'
+
+  # confirm：空でない配列で、書き換わった
+  echo '{"checks": {"commands": ["make evil"]}}' >"$TEAM"
+  git commit -q -am evil
+  run_script checks-commands.sh
+  assert_equal "$(jq -c '[.action, .commands_changed]' <<<"$output")" '["confirm",true]'
+
+  # confirm：空でない配列で、比べられない（origin/HEAD が無い）
+  git symbolic-ref --delete refs/remotes/origin/HEAD
+  run_script checks-commands.sh
+  assert_equal "$(jq -c '[.action, .commands_changed]' <<<"$output")" '["confirm",null]'
 }
