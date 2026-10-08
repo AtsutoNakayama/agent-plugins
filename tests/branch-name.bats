@@ -112,3 +112,15 @@ load fake_gh
   assert_failure 2
   assert_output --partial "#21 は PR です。Issue の番号を指定してください"
 }
+
+@test "type ラベルは大文字と小文字を区別せずに照合し、設定の書き方の type にする（Fix と fix は1つと数える）" {
+  setup_fake_gh
+  fake_issue 17 '["Fix"]'
+  run_script branch-name.sh --issue 17 --slug x
+  assert_success
+  assert_equal "$(jq -r .branch <<<"$output")" fix/17-x
+  fake_issue 17 '["fix", "FIX"]'
+  run_script branch-name.sh --issue 17 --slug x
+  assert_success
+  assert_equal "$(jq -r .type <<<"$output")" fix
+}

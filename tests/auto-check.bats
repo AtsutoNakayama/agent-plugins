@@ -175,3 +175,14 @@ run_check() {
   assert_failure 2
   assert_output --partial "#17 は PR です"
 }
+
+@test "type ラベルは大文字と小文字を区別せずに照合し、設定の書き方の type にする（Fix と fix は1つと数える）" {
+  setup_auto
+  for labels in '["Fix"]' '["Fix", "fix"]'; do
+    fake_issue 17 "$labels"
+    fake_issue_body 17 "$BODY"
+    run_check --issue 17
+    assert_success
+    assert_equal "$(jq -c '[.action, .issue.type]' <<<"$output")" '["proceed","fix"]'
+  done
+}

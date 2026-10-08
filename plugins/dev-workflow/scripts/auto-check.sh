@@ -92,7 +92,7 @@ dw_check_hold_column "$config"
 # PR の番号なら止まる（dw_read_issue）
 issue_json="$(dw_read_issue "$issue" number,title,state,labels,body,subIssuesSummary)"
 labels="$(jq -c '[.labels[].name]' <<<"$issue_json")"
-types="$(jq -c --argjson t "$(jq -c '.labels.types' <<<"$config")" 'map(select(. as $n | $t | index($n)))' <<<"$labels")"
+types="$(jq -c --argjson t "$(jq -c '.labels.types' <<<"$config")" "$DW_JQ_ISSUE_TYPES"' issue_types($t)' <<<"$labels")"
 # GitHub と同じく、ラベルの名前は大文字と小文字を区別せずに照合する
 breaking="$(jq --arg b "$DW_BREAKING_LABEL" 'any(.[]; ascii_downcase == $b)' <<<"$labels")"
 summary="$(jq -c --argjson t "$types" --argjson b "$breaking" \

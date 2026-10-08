@@ -585,3 +585,14 @@ auto_branch() {
   assert_success
   assert_equal "$(jq -c '[.context.issue, .context.type, .context.type_from]' <<<"$output")" '[17,"feat","issue"]'
 }
+
+@test "--auto は、Issue の type ラベルを大文字と小文字を区別せずに照合し、設定の書き方の type にする" {
+  auto_branch 17-bug
+  echo '{"branch": {"pattern": "{issue_number}-{slug}"}}' >"$REPO/.claude/dev-workflow/config.json"
+  for labels in '["FIX"]' '["FIX", "fix"]'; do
+    fake_issue 17 "$labels"
+    run_script review-perspectives.sh --auto
+    assert_success
+    assert_equal "$(jq -c '[.context.issue, .context.type, .context.type_from]' <<<"$output")" '[17,"fix","issue"]'
+  done
+}

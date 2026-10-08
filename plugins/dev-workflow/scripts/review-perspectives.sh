@@ -130,7 +130,7 @@ if [ "$auto" = true ]; then
       dw_warn "gh が無いので Issue #${issue} を読めません。type はブランチ名から決めます"
     elif labels="$(dw_try_read_issue "$issue" labels 2>"$err")"; then
       type="$(jq -r --argjson t "$(jq -c .labels.types <<<"$config")" \
-        '[.labels[].name | select(. as $n | $t | index($n))] | if length == 1 then .[0] else "" end' <<<"$labels")"
+        "$DW_JQ_ISSUE_TYPES"' [.labels[].name] | issue_types($t) | if length == 1 then .[0] else "" end' <<<"$labels")"
       [ -z "$type" ] || type_from=issue
     else
       # PR の番号・無い番号なら Issue は無いものとし、読めなければ番号は使う（dw_try_read_issue の終了コード）

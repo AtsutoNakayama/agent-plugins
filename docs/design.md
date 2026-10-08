@@ -146,6 +146,7 @@ agent-plugins/
 
 - `ci` は CI/CD パイプラインの変更、`build` はビルドの設定・依存関係・Dockerfile の変更に使う。
 - type ラベル・ブランチ名・PR のタイトル・コミットの type は、同じ type で1対1に対応させる（読み替えはしない）。
+- Issue の type ラベルは、GitHub と同じく大文字と小文字を区別せずに `labels.types` と照合し、設定の書き方の type として使う（`Fix` のラベルも `fix` として読み、`Fix` と `fix` は1つと数える）。照合は `lib/common.sh` の `DW_JQ_ISSUE_TYPES` にまとめ、type ラベルを読むスクリプト（`pr-create.sh`・`branch-name.sh`・`review-perspectives.sh`・`auto-check.sh`）で同じにする。`breaking` ラベルも大文字と小文字を区別しない。
 - 緊急の修正も `fix` にする（緊急の修正のための type は設けない）。GitHub Flow には緊急の修正のための別の手順が無く、違いは緊急度だけなので、type では区別しない。緊急度が必要なら type とは別のラベル（`priority: high` など）で表す（[ADR 000026](adr/000026-unify-hotfix-into-fix.md)）。
 - 破壊的変更は、type とは別の `breaking` ラベルで表す（`labels.types` には入れない。type ラベルは1つだけという決まりはそのまま）。破壊的変更はどの type にも起こりうるので、`feat!` のような type ごとのラベルは作らない。ラベル → PR のタイトル（`<type>!: …`）→ スカッシュのコミットと情報が流れるので、Issue の段階で付けておけば `!` の付け忘れがなくなる（[ADR 000052](adr/000052-breaking-label.md)）。
   - 破壊的変更とは、既存の利用者が設定やコマンドを直さないと動かなくなる変更（設定キーやプレースホルダの名前の変更、スクリプトの引数の変更・削除、スキル名の変更など）。

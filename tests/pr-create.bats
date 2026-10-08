@@ -678,3 +678,13 @@ fake_issue_tasks() {
   run git rev-parse -q --verify refs/remotes/origin/feat/17-x
   assert_failure
 }
+
+@test "type ラベルは大文字と小文字を区別せずに照合し、タイトルの type は設定の書き方にする（Feat と feat は1つと数える）" {
+  setup_branch
+  for labels in '["Feat"]' '["Feat", "feat"]'; do
+    fake_issue 17 "$labels"
+    run_pr --issue 17 --body-file "$TMP/body.md" --dry-run
+    assert_success
+    assert_equal "$(jq -r .title <<<"$json")" "feat: 作業 17"
+  done
+}

@@ -587,6 +587,17 @@ DW_SUB_ISSUE_DEPTH_GUIDE=2
 # shellcheck disable=SC2034
 DW_BREAKING_LABEL=breaking
 
+# Issue のラベルの名前の配列から、type ラベル（設定の labels.types のどれか）を、設定の書き方で出す jq の関数 issue_types。
+# GitHub と同じく、ラベルの名前は大文字と小文字を区別せずに照合する（Fix のラベルも fix として読み、Fix と fix は1つと数える）。
+# 順はラベルの順。type ラベルを読むスクリプト（pr-create.sh・branch-name.sh・review-perspectives.sh・auto-check.sh）で、照合をそろえる。
+# source した側で使う
+# 使い方: jq --argjson t "$(jq -c .labels.types <<<"$config")" "$DW_JQ_ISSUE_TYPES"' [.labels[].name] | issue_types($t)'
+# shellcheck disable=SC2016,SC2034 # jq のプログラムなので、$ は展開しない
+DW_JQ_ISSUE_TYPES='
+  def issue_types($t):
+    reduce (.[] | ascii_downcase as $n | $t[] | select(ascii_downcase == $n)) as $x ([]; if index([$x]) then . else . + [$x] end);
+'
+
 # Markdown の本文（文字列）を読む jq の関数 md_scan を定義する。上から順に、チェックリストの項目（items。
 # {line（0 からの行番号）, checked, text}）と、見出しの行番号（headings）を出す。
 # GitHub と同じく、コードブロック（3つ以上の ` か ~ で囲む）の中の行は、項目とも見出しともみなさない。
