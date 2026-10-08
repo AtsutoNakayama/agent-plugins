@@ -2,9 +2,13 @@
 # Issue の作業を始める。ワークツリーとブランチを作り（--no-worktree では作らず）、Issue を自分に割り当て、Project の start の列に移す。
 # 何度実行しても同じ結果になる（既にあるワークツリー・ブランチ・割り当ては使い回す）。
 #
-# 使い方: task-start.sh --issue N (--slug TEXT | --no-worktree) [--dry-run]
+# 使い方: task-start.sh --issue N (--slug TEXT | --branch NAME | --no-worktree) [--dry-run]
 #   --issue N        Issue の番号（#N でもよい）
 #   --slug TEXT      ブランチ名の短い説明（英語）。branch-name.sh で整える
+#   --branch NAME    既にあるブランチ（手元か origin のもの）を、名前を作り直さずにそのまま使う。task-auto が、止まった後に
+#                    実行し直したときに、前の作業のブランチ（auto-check.sh の resume）から続けるのに使う（名前を短い説明から
+#                    作り直すと、番号の先頭の 0 や短い説明の長さの違いで、別の新しいブランチができるため）。
+#                    手元にも origin にも無ければ、何も作らずに止まる（終了コード 2）
 #   --no-worktree    リポジトリを変えないタスク（調査・Issue の整理など）。1 と 2 を飛ばし、
 #                    割り当てと列の移動だけを行う（branch と worktree は null）。
 #                    Issue に確かなブランチ（branch.pattern に合い番号が一致するもの。マージ済みでも）があれば、作らずに着手せず
@@ -15,7 +19,7 @@
 # 親の Issue（サブ Issue を持つ Issue）は作業の単位ではないので、何もせずに止まる（終了コード 2）。作業は子の Issue で進める。
 #
 # 行うこと:
-#   1. ブランチ名を決める（branch.pattern に従う。既定は {type}/{issue_number}-{slug}）
+#   1. ブランチ名を決める（branch.pattern に従う。既定は {type}/{issue_number}-{slug}。--branch ならその名前）
 #   2. <branch.worktree_dir>/<ブランチ名> にワークツリーを作る（相対パスはメインのワークツリーから）。
 #      ブランチが無ければ、origin に push 済みならそこから、無ければ origin/<base_branch> から作る。
 #      origin を読めなければ（通信や認証の失敗）、push 済みか分からないので、ブランチもワークツリーも作らずに止まる。
@@ -40,14 +44,15 @@ need_value() {
   fi
 }
 
-issue="" slug="" dry_run=false no_worktree=false
+issue="" slug="" use_branch="" dry_run=false no_worktree=false
 while [ $# -gt 0 ]; do
   case "$1" in
-    --issue | --slug)
+    --issue | --slug | --branch)
       need_value "$@"
       case "$1" in
         --issue) issue="$2" ;;
         --slug) slug="$2" ;;
+        --branch) use_branch="$2" ;;
       esac
       shift 2
       ;;
@@ -62,6 +67,12 @@ done
 issue="$(dw_issue_number --issue "$issue")"
 if $no_worktree; then
   [ -z "$slug" ] || dw_die "--no-worktree と --slug は一緒に指定できません" 64
+  [ -z "$use_branch" ] || dw_die "--no-worktree と --branch は一緒に指定できません" 64
+elif [ -n "$use_branch" ]; then
+  [ -z "$slug" ] || dw_die "--branch と --slug は一緒に指定できません" 64
+  # git のオプションとして扱われる名前（-x）や、ブランチ名に使えない名前は受け取らない
+  case "$use_branch" in -*) dw_die "--branch のブランチ名が正しくありません: ${use_branch}" 64 ;; esac
+  git check-ref-format --branch "$use_branch" >/dev/null 2>&1 || dw_die "--branch のブランチ名が正しくありません: ${use_branch}" 64
 else
   [ -n "$slug" ] || dw_die "--slug は必須です（ワークツリーを作らないときは --no-worktree）" 64
 fi
@@ -110,7 +121,15 @@ fi
 branch="" path="" worktree_created=false branch_created=false
 if ! $no_worktree; then
   # --- 1. ブランチ名 --------------------------------------------------------------
-  branch="$("$BASH" "$DW_SCRIPTS_DIR/branch-name.sh" --issue "$issue" --slug "$slug" | jq -r .branch)"
+  if [ -n "$use_branch" ]; then
+    branch="$use_branch"
+    # 既にあるブランチだけを使う（無ければ origin/<base_branch> から作らない。前の作業を置き去りにした新しいブランチになるため）。
+    # origin を読めなければ止まる（dw_remote_has_branch）
+    git -C "$main_root" show-ref --verify --quiet "refs/heads/$branch" || dw_remote_has_branch "$main_root" "$branch" \
+      || dw_die "ブランチ ${branch} が手元にも origin にもありません（--branch は既にあるブランチだけを使います）" 2
+  else
+    branch="$("$BASH" "$DW_SCRIPTS_DIR/branch-name.sh" --issue "$issue" --slug "$slug" | jq -r .branch)"
+  fi
   # 置き場所が絶対パスならそのまま、相対パスならメインのワークツリーから
   case "$worktree_dir" in
     /*) path="${worktree_dir%/}/$branch" ;;

@@ -471,3 +471,42 @@ run_start() {
   assert_success
   assert_output --partial "Issue #17 に関係するかもしれないブランチ（fix-foo）があります"
 }
+
+@test "--branch は、既にあるブランチを名前を作り直さずにそのまま使う（番号の先頭が 0・長い短い説明でも。手元か origin のもの）" {
+  setup_fake_gh
+  setup_origin
+  long="feat/017-$(printf 'a%.0s' $(seq 1 50))"
+  git branch "$long"
+  run_start --issue 17 --branch "$long"
+  assert_success
+  assert_equal "$(jq -c '[.branch, .created.worktree, .created.branch]' <<<"$json")" "[\"$long\",true,false]"
+  assert_equal "$(git -C ".claude/worktrees/$long" rev-parse --abbrev-ref HEAD)" "$long"
+  git push -q origin main:refs/heads/fix/17-remote
+  run_start --issue 17 --branch fix/17-remote
+  assert_success
+  assert_equal "$(git -C .claude/worktrees/fix/17-remote rev-parse --abbrev-ref '@{upstream}')" origin/fix/17-remote
+}
+
+@test "--branch のブランチが手元にも origin にも無ければ、何も作らずに止まる" {
+  setup_fake_gh
+  setup_origin
+  run_start --issue 17 --branch feat/17-none
+  assert_failure 2
+  assert_output --partial "ブランチ feat/17-none が手元にも origin にもありません"
+  [ ! -d .claude/worktrees ] || fail "ワークツリーを作りました"
+  assert_equal "$(called edit)" 0
+}
+
+@test "--branch は --slug・--no-worktree と一緒に指定できず、ブランチ名として正しくない名前は受け取らない" {
+  setup_fake_gh
+  setup_origin
+  run_start --issue 17 --branch feat/17-x --slug x
+  assert_failure 64
+  run_start --issue 17 --branch feat/17-x --no-worktree
+  assert_failure 64
+  run_start --issue 17 --branch '-x'
+  assert_failure 64
+  run_start --issue 17 --branch 'a..b'
+  assert_failure 64
+  assert_equal "$(called edit)" 0
+}
