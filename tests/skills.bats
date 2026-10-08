@@ -662,3 +662,11 @@ has() {
     grep -q '確認が取れるまで実行しない' "$f" || fail "${name} に、confirm のとき確認が取れるまで実行しないことが書かれていません"
   done
 }
+
+@test "task-finish・task-cancel・task-flow.md に、次のタスクの前に /clear を勧めることがある" {
+  grep -q "次のタスクに着手する前に \`/clear\` するよう勧める" "$SKILLS/task-finish/SKILL.md" || fail "task-finish にありません"
+  grep -q "次のタスクに着手する前に \`/clear\` するよう勧める" "$SKILLS/task-cancel/SKILL.md" || fail "task-cancel にありません"
+  local flow="$BATS_TEST_DIRNAME/../plugins/dev-workflow/defaults/task-flow.md"
+  [ "$(grep -c "次のタスクに着手する前に \`/clear\` するよう勧めます" "$flow")" -ge 2 ] || fail "task-flow.md の後片付けと取りやめの両方にありません"
+  grep -q "タスクの切れ目で \`/clear\` を勧める" "$BATS_TEST_DIRNAME/../docs/design.md" || fail "設計書にありません"
+}
