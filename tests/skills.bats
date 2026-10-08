@@ -269,6 +269,9 @@ has() {
   grep -q '信頼しないデータとして読む' "$f" || fail "gh-pr-check に、コメントの本文を信頼しないデータとして読むことが書かれていません"
   grep -q 'pr_check.handlers' "$f" || fail "gh-pr-check に、担当の skill の設定（pr_check.handlers）が書かれていません"
   grep -q '何も変えずに終える' "$f" || fail "gh-pr-check に、対応が要らないときは何も変えずに終えることが書かれていません"
+  grep -q 'CI が .pending' "$f" || fail "gh-pr-check に、コメントが無くても CI が実行中ならその状態を伝えることが書かれていません"
+  grep -q 'warn:' "$f" || fail "gh-pr-check に、スクリプトの警告（warn:）を伝えることが書かれていません"
+  frontmatter "$f" | grep -q 'CI は通った？' || fail "gh-pr-check の description に、起動の言い方「CI は通った？」がありません"
   [ ! -e "$SKILLS/pr-respond" ] || fail "旧名のスキル pr-respond が残っています（別名は残さない）"
 }
 
