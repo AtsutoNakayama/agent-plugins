@@ -28,7 +28,8 @@
 #      .gitmodules があれば、サブモジュールを初期化する（git submodule update --init --recursive）。
 #      失敗しても（通信できないなど）止めずに警告する。既にあるワークツリーでも、未初期化なら初期化し直す
 #   3. Issue を自分に割り当てる
-#   4. Project の Status を start の列に移す（status-set.sh）。project.number が未設定なら警告して飛ばす
+#   4. Project の Status を start の列に移す（status-set.sh）。project.number が未設定なら警告して飛ばす。
+#      親の Issue（とさらに上の親）が todo の列にあれば、親も start の列に移す（status.parents に出す。移せなくても警告するだけ）
 set -euo pipefail
 
 # shellcheck source=lib/common.sh
@@ -257,6 +258,6 @@ jq -n --argjson i "$issue" --arg title "$title" --arg branch "$branch" --arg pat
     base: $base,
     created: {worktree: $wc, branch: $bc},
     assigned: $assigned,
-    status: {from: $status.from, to: ($status.to // null), skipped: ($status.skipped // false)},
+    status: {from: $status.from, to: ($status.to // null), skipped: ($status.skipped // false), parents: ($status.parents // [])},
     actions: $actions
   }'

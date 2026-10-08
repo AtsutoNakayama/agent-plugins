@@ -481,6 +481,38 @@ dw_gh_find() {
   esac
 }
 
+# Issue の親を、近い順に（親、親の親、…）たどって、JSON の配列を出力する。要素は {number, title, state, state_reason}。
+# 親が無ければ []。別のリポジトリの親に当たったら、そこで打ち切る（その親も、さらに上の親も含めない。設計書 §4：親子は同じリポジトリだけ扱う）。
+# GitHub の親子は8層までなので、念のため層の数で打ち切る。
+# 使い方: dw_issue_parents <OWNER/NAME> <Issue の番号>
+dw_issue_parents() {
+  local repo="$1" cur="$2" out='[]' p i=0
+  while [ "$i" -lt 8 ]; do
+    # 関数は if の中から呼ばれると set -e が効かないので、失敗は明示して返す
+    p="$(dw_gh_find gh api "repos/$repo/issues/$cur/parent")" || return 1
+    [ "$p" != null ] || break
+    [ "$(jq -r '.repository_url | sub("^.*/repos/"; "")' <<<"$p")" = "$repo" ] || break
+    out="$(jq -c --argjson p "$p" '. + [$p | {number, title, state, state_reason: (.state_reason // null)}]' <<<"$out")"
+    cur="$(jq -r .number <<<"$p")"
+    i=$((i + 1))
+  done
+  printf '%s\n' "$out"
+}
+
+# Issue の url と、Project の項目（id・project.id・今の Status の列）を GraphQL で読み、
+# {url, projectItems: {nodes: [...]}} を出力する。Issue が無ければ null（gh の GraphQL にも REST にも、Issue から Project の項目を引く手段が無い。設計書 §10）。
+# 使い方: dw_issue_items <OWNER/NAME> <Issue の番号>
+dw_issue_items() {
+  # GraphQL の変数（$owner など）を bash に展開させないため、クエリはシングルクォートで書く
+  # shellcheck disable=SC2016
+  dw_gh_find dw_gql 'query IssueItem($owner: String!, $name: String!, $number: Int!) {
+  repository(owner: $owner, name: $name) { issue(number: $number) { url
+    projectItems(first: 50) { nodes { id project { id }
+      fieldValueByName(name: "Status") { ... on ProjectV2ItemFieldSingleSelectValue { name } } } } } }
+}' "$(jq -nc --arg r "$1" --argjson n "$2" '{owner: ($r | split("/")[0]), name: ($r | split("/")[1]), number: $n}')" \
+    | jq -c '.data.repository.issue // null'
+}
+
 # リポジトリの既定のブランチ（<ブランチ> を指定すればそのブランチ）にあるファイルを取り出して <出力先> に書く。
 # 無ければ（404）1 を返す。それ以外の失敗は、違う内容で進めないよう終了する。
 # 使い方: dw_fetch_repo_file <OWNER/NAME> <パス> <出力先> [ブランチ]
