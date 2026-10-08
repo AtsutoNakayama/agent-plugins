@@ -672,3 +672,89 @@ run_cleanup() {
   run jq -r '.. | strings' <<<"$json"
   refute_output --partial gh-readonly-queue
 }
+
+# bare リポジトリ＋ワークツリーの配置（<ルート>/.bare と、それを指す <ルート>/.git のファイル）を $TMP/proj に作る。
+# main と feat/17-x のワークツリーを作る。setup_branch の後、squash_merge の前に呼ぶ（origin の main は後で進む）
+make_bare_layout() {
+  PROJ="$TMP/proj"
+  git clone -q --bare "$TMP/origin.git" "$PROJ/.bare"
+  git -C "$PROJ/.bare" config remote.origin.fetch '+refs/heads/*:refs/remotes/origin/*'
+  git -C "$PROJ/.bare" fetch -q origin
+  echo 'gitdir: ./.bare' >"$PROJ/.git"
+  git -C "$PROJ" worktree add -q "$PROJ/main" main
+  git -C "$PROJ" worktree add -q "$PROJ/feat" feat/17-x
+}
+
+@test "bare リポジトリ＋ワークツリーの配置で、main-root.sh が求めた場所（作業ツリーの無いルート）から片付けられる（#233）" {
+  setup_branch
+  make_bare_layout
+  squash_merge
+  fake_pr MERGED
+  cd "$PROJ/feat"
+  run_script main-root.sh
+  assert_success
+  assert_equal "$(jq -r .main_root <<<"$output")" "$PROJ"
+  cd "$(jq -r .main_root <<<"$output")"
+  run_cleanup --branch feat/17-x
+  assert_success
+  assert_equal "$(jq -c '[.branch, .main_root, .worktree, .removed.worktree, .removed.branch]' <<<"$json")" \
+    "[\"feat/17-x\",\"$PROJ\",\"$PROJ/feat\",true,true]"
+  [ ! -e "$PROJ/feat" ]
+  run git -C "$PROJ" show-ref --verify --quiet refs/heads/feat/17-x
+  assert_failure
+  assert_equal "$(git -C "$PROJ/main" rev-parse main)" "$(git -C "$PROJ/main" rev-parse origin/main)"
+}
+
+@test "作業ツリーの無いルートでは、--branch を省略しても、bare リポジトリの HEAD のブランチを今のブランチとみなさない（#233）" {
+  setup_branch
+  make_bare_layout
+  git -C "$PROJ/.bare" symbolic-ref HEAD refs/heads/feat/17-x
+  cd "$PROJ"
+  run_cleanup
+  assert_failure 64
+  assert_output --partial "ブランチの上にいません"
+}
+
+@test "WORKFLOW_REPO_ROOT が作業ツリーの無いルートを指しても、--branch を省略して bare リポジトリの HEAD のブランチを消さない（#233）" {
+  setup_branch
+  make_bare_layout
+  git -C "$PROJ/.bare" symbolic-ref HEAD refs/heads/feat/17-x
+  cd "$PROJ"
+  WORKFLOW_REPO_ROOT="$PROJ" run_cleanup --abandon
+  assert_failure 64
+  assert_output --partial "ブランチの上にいません"
+  [ -e "$PROJ/feat" ]
+  run git -C "$PROJ" show-ref --verify --quiet refs/heads/feat/17-x
+  assert_success
+}
+
+@test "リポジトリの外で実行すると、使い方の誤りで止まる" {
+  mkdir "$TMP/outside"
+  cd "$TMP/outside"
+  run_cleanup --branch feat/17-x
+  assert_failure 64
+  assert_output --partial "リポジトリの外か、メインのワークツリーが分からない配置"
+}
+
+@test "サブモジュールのワークツリーでも、main-root.sh が求めたサブモジュールの作業ツリーから片付けられる（#233）" {
+  # 上のリポジトリ（super）の中のサブモジュール sm を、cleanup の対象にする（main_root は .git/modules ではなく super/sm）
+  git init -q -b main "$TMP/super"
+  git -C "$TMP/super" commit -q --allow-empty -m init
+  git -C "$TMP/super" -c protocol.file.allow=always submodule add -q "$REPO" sm
+  SM="$TMP/super/sm"
+  git -C "$SM" remote set-url origin "$TMP/origin.git"
+  setup_branch
+  git -C "$SM" fetch -q origin
+  git -C "$SM" worktree add -q "$TMP/smwt" -b feat/17-x origin/feat/17-x
+  squash_merge
+  fake_pr MERGED "$(git -C "$TMP/smwt" rev-parse HEAD)"
+  cd "$TMP/smwt"
+  run_script main-root.sh
+  assert_success
+  assert_equal "$(jq -r .main_root <<<"$output")" "$SM"
+  cd "$(jq -r .main_root <<<"$output")"
+  run_cleanup --branch feat/17-x
+  assert_success
+  assert_equal "$(jq -c '[.main_root, .worktree, .removed.worktree, .removed.branch]' <<<"$json")" "[\"$SM\",\"$TMP/smwt\",true,true]"
+  [ ! -e "$TMP/smwt" ]
+}

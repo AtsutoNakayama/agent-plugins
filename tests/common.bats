@@ -176,6 +176,18 @@ run_common() {
   assert_output "$TMP/proj"
 }
 
+@test "dw_main_root は、作業ツリーの無い、bare リポジトリ＋ワークツリーの配置のルートでも、そのルートを返す（#233）" {
+  git clone -q --bare "$REPO" "$TMP/proj/.bare"
+  echo 'gitdir: ./.bare' >"$TMP/proj/.git"
+  run_common dw_main_root "$TMP/proj"
+  assert_success
+  assert_output "$TMP/proj"
+  # メインのワークツリーを記録していない bare のミラーは、分からない
+  git clone -q --mirror "$REPO" "$TMP/mirror.git"
+  run_common dw_main_root "$TMP/mirror.git"
+  assert_failure
+}
+
 @test "dw_main_root・dw_is_set_up は、CDPATH を export していても動く" {
   git worktree add -q "$TMP/wt" -b feat/1-x
   mark_set_up

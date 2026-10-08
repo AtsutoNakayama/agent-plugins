@@ -413,7 +413,8 @@ Todo が増えたとき、どれから着手するか、同時に進めてよい
 | `auto-check.sh` | task-auto が始める前に、設定（`auto.*`・`status.hold`）と Issue から、進めるか・止まるか（`action`：`disabled`・`no_hold`・`not_startable`・`hold`・`proceed`）と理由を決め、前の作業のブランチを使い回すか（`resume`）も決める。無効なら設定の値を検査しない。何も変えない |
 | `auto-hold.sh` | task-auto が止まるときに、理由とそれまでの判断を Issue にコメントし（実行ごとの id を入れた印 `<!-- dev-workflow:task-auto run=<id> -->` を付ける。同じ実行の印のコメントがあれば、その後に人のコメントがあっても付け直さない）、保留の列に移す |
 | `issue-branches.sh` | Issue の作業のブランチを、確かなブランチ（`branch.pattern` に合い番号が一致する）と候補（名前が似ている・Issue を閉じる PR のブランチのうち、手元か origin に残っているもの）に分けて探し、Issue の状態と、Issue を閉じる開いている PR を出す。何も変えない。`task-finish`・`task-cancel` が使う（`task-start.sh --no-worktree` と `auto-check.sh` も、同じ判定の `dw_issue_work` を使う） |
-| `cleanup.sh` | マージを確認し、ワークツリーとブランチを削除し、main を最新にし、PR が閉じる Issue の状態（`issues`）を出す。未コミットの変更や git が無視するファイルがあれば、何も消さずに止まる（無視するファイルは `--remove-ignored` で消せる）。`--abandon` では、マージの確認・main の更新・Issue の状態の確認を飛ばし、失うものを一覧にして削除する |
+| `main-root.sh` | メインのワークツリーの場所を `{"main_root": ...}` で出す。サブモジュールや bare リポジトリ＋ワークツリーの配置でも、git が記録している場所から確かめて求める（bare 配置では、`.git` ファイルを置いたルート）。何も変えない。求められないとき（`--separate-git-dir` のワークツリーなど）は失敗する。`task-finish`・`task-cancel` が、削除するワークツリーの外へ移る先に使う |
+| `cleanup.sh` | マージを確認し、ワークツリーとブランチを削除し、main を最新にし、PR が閉じる Issue の状態（`issues`）を出す。未コミットの変更や git が無視するファイルがあれば、何も消さずに止まる（無視するファイルは `--remove-ignored` で消せる）。`--abandon` では、マージの確認・main の更新・Issue の状態の確認を飛ばし、失うものを一覧にして削除する。作業ツリーの無い場所（bare 配置のルートなど）でも実行できる（その場所では `--branch` が必須） |
 
 | 初期設定用（`plugins/dev-workflow/scripts/setup/`） | 役割 |
 |---|---|

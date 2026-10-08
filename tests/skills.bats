@@ -698,3 +698,16 @@ has() {
     fail "pr-create の手順7のキューが無いときの案内に、キューのことが書かれています"
   fi
 }
+
+@test "task-finish・task-cancel は、削除するワークツリーの外へ移る先を main-root.sh で求め、git-common-dir/.. からは求めない（#233）" {
+  for s in task-finish task-cancel; do
+    grep -q 'main-root\.sh' "$SKILLS/$s/SKILL.md" || fail "$s に main-root.sh の手順がありません"
+    # shellcheck disable=SC2016 # バッククォートや $( は検索する文字で、展開させない
+    if grep -qF '$(git rev-parse --git-common-dir)/..' "$SKILLS/$s/SKILL.md"; then
+      fail "$s が git rev-parse --git-common-dir から移る先を求めています（サブモジュールや bare の配置で、cleanup.sh を実行できない場所に移る）"
+    fi
+  done
+  # 求められないときは移らずに止まる
+  grep -q '移らずに' "$SKILLS/task-finish/SKILL.md"
+  grep -q '移らずに' "$SKILLS/task-cancel/SKILL.md"
+}

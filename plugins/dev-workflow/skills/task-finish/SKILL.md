@@ -15,6 +15,7 @@ PR がマージされた作業のワークツリーとローカルのブラン�
 スクリプト（どれも JSON を出力する）:
 
 - `${CLAUDE_PLUGIN_ROOT}/scripts/issue-branches.sh`：Issue の作業のブランチを、確かなブランチ（`branches`）と候補（`candidates`。名前が似ている・Issue を閉じる PR のブランチ）に分けて探し、Issue の状態と、Issue を閉じる開いている PR を出す。何も変えない（`--help` で使い方）
+- `${CLAUDE_PLUGIN_ROOT}/scripts/main-root.sh`：メインのワークツリーの場所（`main_root`）を出力する。何も変えない
 - `${CLAUDE_PLUGIN_ROOT}/scripts/cleanup.sh`：マージの確認、ワークツリーとブランチの削除、`base_branch` の更新、PR が閉じる Issue の状態の確認（`--help` で使い方）
 
 ## 手順
@@ -31,7 +32,7 @@ PR がマージされた作業のワークツリーとローカルのブラン�
 
 ### 2. 実行する
 
-削除するワークツリーの外に出てから（Bash では `cd "$(git rev-parse --git-common-dir)/.."` でメインのワークツリーに移る）、`cleanup.sh --branch <ブランチ>` を実行する。ワークツリーの中にいたままだと、削除した後に今の場所が無くなる。実行の前に AskUserQuestion で確認を取らない。
+削除するワークツリーの外に出てから（まず `main-root.sh` を実行して `main_root` を読み、Bash でそこに `cd` する。`git rev-parse --git-common-dir` からは求めない。サブモジュールや bare リポジトリ＋ワークツリーの配置では、実行できない場所に移ってしまう）、`cleanup.sh --branch <ブランチ>` を実行する。`main-root.sh` が失敗したら（`--separate-git-dir` で作ったワークツリーなど、メインのワークツリーが分からない）、移らずに、標準エラーの1行のメッセージを伝えて終える。ワークツリーの中にいたままだと、削除した後に今の場所が無くなる。実行の前に AskUserQuestion で確認を取らない。
 
 止まったときは、標準エラーの1行のメッセージをそのまま伝えて終える（git が無視するファイルで止まったときだけは、下のとおり確認を取って続けられる）。それ以外では、削除のために変更を捨てたり、強制したりしない。
 
