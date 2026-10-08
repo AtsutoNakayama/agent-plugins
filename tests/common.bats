@@ -314,6 +314,7 @@ run_common() {
 }
 
 @test "dw_team_dir は、ユーザーの層と同じ場所なら空で、違えばチームの設定の置き場所を出す（シンボリックリンクや、まだ無いディレクトリも実体で比べる）" {
+  # shellcheck disable=SC2016 # $1・$2 は bash -c の中で展開する
   team_dir() { "${TEST_BASH:-bash}" -c '. "$1"; dw_team_dir "$2"' _ "$SCRIPTS/lib/common.sh" "$1"; }
   # 違う場所
   assert_equal "$(team_dir "$REPO")" "$REPO/.claude/dev-workflow"
@@ -337,6 +338,7 @@ run_common() {
 }
 
 @test "ホームのリポジトリは、ユーザーの層のファイルがあっても導入したとみなさない（dw_is_set_up）" {
+  # shellcheck disable=SC2016 # $1・$2 は bash -c の中で展開する
   is_set_up() { "${TEST_BASH:-bash}" -c '. "$1"; dw_is_set_up "$2"' _ "$SCRIPTS/lib/common.sh" "$1"; }
   mark_set_up
   run is_set_up "$REPO"
