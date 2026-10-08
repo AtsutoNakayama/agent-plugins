@@ -1,0 +1,266 @@
+#!/usr/bin/env bats
+# bats はテストごとにサブシェルで動くので、変数の変更がテスト内に閉じるのは意図どおり
+# shellcheck disable=SC2030,SC2031
+
+load test_helper
+
+# 判定の表（PR の状態 × 入力 → action と reasons）。上から順に最初に当てはまったもの。このファイルのテストは、表の全行を確かめる。
+#
+#   PR の状態 / 入力                                           action    reasons
+#   state が OPEN でない（MERGED・CLOSED）                      idle      not_open
+#   ドラフト                                                    idle      draft
+#   フォークからの PR                                           idle      fork
+#   マージキューに入っている                                    wait      in_merge_queue
+#   mergeable が CONFLICTING、または merge_state が DIRTY       conflict  conflicting
+#   merge_state が BEHIND                                       conflict  behind
+#   CI の失敗                                                   act       ci_failed
+#   返事の無い resolved でないスレッド                          act       unresolved_threads
+#   変更の要求か本文のあるレビューで、作者の後のコメントが無い  act       unanswered_reviews
+#   作者以外の PR のコメントで、作者の後のコメントが無い        act       unanswered_comments
+#   CI が実行中                                                 wait      ci_pending
+#   担当の skill がある投稿者の最初のレビュー待ち（60 分まで）  wait      awaiting_review:<投稿者>
+#   mergeable が UNKNOWN                                        wait      mergeable_unknown
+#   どれでもない（CI が全部成功・チェックが無い）               idle      nothing_to_do
+#
+# 偽の gh。
+# - gh repo view ... -q .nameWithOwner  me/demo を返す
+# - gh pr view [番号] --json ...   $FIX/pr-view.json を返す
+# - gh api graphql                クエリに PrWatch があれば $FIX/watch.json、無ければ（PrThreads）$FIX/PrThreads.json を返す
+# - それ以外（書き込みを含む）は、$CALLS に「WRITE <引数>」を記録して失敗する
+setup_fake_gh() {
+  FIX="$TMP/fix"
+  CALLS="$TMP/calls"
+  export FIX CALLS
+  mkdir -p "$TMP/bin" "$FIX"
+  : >"$CALLS"
+  cat >"$TMP/bin/gh" <<'SH'
+#!/usr/bin/env bash
+case "$1 $2" in
+  "repo view") echo me/demo ;;
+  "pr view") echo "READ pr view" >>"$CALLS"; cat "$FIX/pr-view.json" ;;
+  "api graphql")
+    body="$(cat)"
+    if [ "$(jq -r '.query | contains("query PrWatch")' <<<"$body")" = true ]; then
+      echo "READ PrWatch" >>"$CALLS"; cat "$FIX/watch.json"
+    else
+      echo "READ PrThreads" >>"$CALLS"; cat "$FIX/PrThreads.json"
+    fi
+    ;;
+  *) echo "WRITE $*" >>"$CALLS"; echo "gh: 想定外の呼び出し: $*" >&2; exit 1 ;;
+esac
+SH
+  chmod +x "$TMP/bin/gh"
+  export PATH="$TMP/bin:$PATH"
+  # 今は PR を作ってから 10 分後（2026-10-01T00:10:00Z）
+  export PR_WATCH_NOW=1790813400
+  : >"$FIX/threads"
+  pr_view '{}'
+  watch '{}'
+  write_threads
+}
+
+# PR の JSON を作る。使い方: pr_view <既定の値に上書きするオブジェクト（jq の式）>
+pr_view() {
+  jq -n "$1 as \$o | "'{number: 5, url: "https://github.com/me/demo/pull/5", title: "feat: x", state: "OPEN", isDraft: false,
+    author: {login: "me"}, headRefName: "feat/5-x", headRefOid: "abc", baseRefName: "main", mergeable: "MERGEABLE", mergeStateStatus: "CLEAN",
+    reviewDecision: "", reviews: [], comments: [], statusCheckRollup: []} + $o' >"$FIX/pr-view.json"
+}
+
+# GraphQL（PrWatch）の応答を作る。使い方: watch <既定の値に上書きするオブジェクト（jq の式）>
+# 既定は、2026-10-01T00:00:00Z に作った、フォークでなく、キューにも入っていない、レビューの無い PR
+watch() {
+  jq -n "$1 as \$o | "'{data: {repository: {pullRequest: ({createdAt: "2026-10-01T00:00:00Z", isCrossRepository: false,
+    mergeQueueEntry: null, reviews: {nodes: []}} + $o)}}}' >"$FIX/watch.json"
+}
+
+# スレッドを1つ足す（write_threads で応答にする）。コメントは [[投稿者, 本文], ...]
+thread() {
+  jq -nc --argjson c "$1" '{isResolved: false, isOutdated: false, path: "a.sh", line: 3,
+    comments: {nodes: [$c | to_entries[] | {databaseId: (100 + .key), author: {login: .value[0]}, body: .value[1],
+      url: "https://github.com/me/demo/pull/5#discussion_r\(100 + .key)", createdAt: "2026-10-01T00:00:0\(.key)Z"}]}}' >>"$FIX/threads"
+}
+
+write_threads() {
+  jq -sc '{data: {repository: {pullRequest: {reviewThreads: {pageInfo: {hasNextPage: false, endCursor: null}, nodes: .}}}}}' \
+    "$FIX/threads" >"$FIX/PrThreads.json"
+  : >"$FIX/threads"
+}
+
+check_ok() { echo '{__typename: "CheckRun", name: "test", status: "COMPLETED", conclusion: "SUCCESS", workflowName: "CI", detailsUrl: "u"}'; }
+
+# 実行して、action と reasons を確かめる。使い方: expect <action> <reasons の JSON>
+expect() {
+  run_script pr-watch.sh --pr 5
+  assert_success
+  assert_equal "$(jq -c '[.action, .reasons]' <<<"$output")" "[\"$1\",$2]"
+}
+
+@test "表: OPEN でない PR（MERGED・CLOSED）は idle で not_open" {
+  setup_fake_gh
+  for s in MERGED CLOSED; do
+    pr_view "{state: \"$s\", statusCheckRollup: [{__typename: \"CheckRun\", name: \"t\", status: \"COMPLETED\", conclusion: \"FAILURE\"}]}"
+    expect idle '["not_open"]'
+  done
+}
+
+@test "表: ドラフトの PR は idle で draft（指摘や失敗があっても対象外）" {
+  setup_fake_gh
+  pr_view '{isDraft: true, mergeable: "CONFLICTING"}'
+  expect idle '["draft"]'
+}
+
+@test "表: フォークからの PR は idle で fork" {
+  setup_fake_gh
+  watch '{isCrossRepository: true}'
+  expect idle '["fork"]'
+}
+
+@test "表: マージキューに入っている PR は wait で in_merge_queue（CI が実行中でも）" {
+  setup_fake_gh
+  watch '{mergeQueueEntry: {state: "QUEUED"}}'
+  pr_view "{statusCheckRollup: [{__typename: \"CheckRun\", name: \"t\", status: \"IN_PROGRESS\"}]}"
+  expect wait '["in_merge_queue"]'
+}
+
+@test "表: コンフリクト（CONFLICTING・DIRTY）は conflict で conflicting" {
+  setup_fake_gh
+  pr_view '{mergeable: "CONFLICTING", mergeStateStatus: "DIRTY"}'
+  expect conflict '["conflicting"]'
+  pr_view '{mergeStateStatus: "DIRTY"}'
+  expect conflict '["conflicting"]'
+}
+
+@test "表: base_branch に遅れている（BEHIND）は conflict で behind" {
+  setup_fake_gh
+  pr_view '{mergeStateStatus: "BEHIND"}'
+  expect conflict '["behind"]'
+}
+
+@test "表: コンフリクトは CI の失敗や指摘より先に扱う" {
+  setup_fake_gh
+  pr_view '{mergeable: "CONFLICTING", mergeStateStatus: "DIRTY", statusCheckRollup: [{__typename: "CheckRun", name: "t", status: "COMPLETED", conclusion: "FAILURE"}]}'
+  expect conflict '["conflicting"]'
+}
+
+@test "表: CI の失敗は act で ci_failed（失敗したチェックの名前を details に出す）" {
+  setup_fake_gh
+  pr_view '{statusCheckRollup: [{__typename: "CheckRun", name: "lint", status: "COMPLETED", conclusion: "FAILURE"},
+    {__typename: "CheckRun", name: "test", status: "IN_PROGRESS"}]}'
+  expect act '["ci_failed"]'
+  assert_equal "$(jq -c .details.failed_checks <<<"$output")" '["lint"]'
+}
+
+@test "表: 返事の無いスレッドは act で unresolved_threads。作者が返事をしたスレッドは数えない" {
+  setup_fake_gh
+  thread '[["alice","直してください"]]'
+  write_threads
+  expect act '["unresolved_threads"]'
+  assert_equal "$(jq -c .details.unanswered <<<"$output")" '{"threads":1,"reviews":0,"comments":0}'
+  thread '[["alice","直してください"],["me","直しました"]]'
+  write_threads
+  expect idle '["nothing_to_do"]'
+}
+
+@test "表: 変更の要求か本文のあるレビューは、作者のコメントが後に無ければ act で unanswered_reviews" {
+  setup_fake_gh
+  pr_view '{reviews: [{id: "R1", author: {login: "alice"}, state: "CHANGES_REQUESTED", body: "", submittedAt: "2026-10-01T00:05:00Z"}]}'
+  expect act '["unanswered_reviews"]'
+  pr_view '{reviews: [{id: "R1", author: {login: "alice"}, state: "COMMENTED", body: "質問です", submittedAt: "2026-10-01T00:05:00Z"}]}'
+  expect act '["unanswered_reviews"]'
+  # 作者が後でコメントしていれば、対応済み
+  pr_view '{reviews: [{id: "R1", author: {login: "alice"}, state: "COMMENTED", body: "質問です", submittedAt: "2026-10-01T00:05:00Z"}],
+    comments: [{id: "C1", author: {login: "me"}, body: "答えました", createdAt: "2026-10-01T00:06:00Z", url: "u"}]}'
+  expect idle '["nothing_to_do"]'
+  # 本文の無い承認・コメントは、対応が要らない
+  pr_view '{reviews: [{id: "R1", author: {login: "alice"}, state: "APPROVED", body: "", submittedAt: "2026-10-01T00:05:00Z"},
+    {id: "R2", author: {login: "alice"}, state: "COMMENTED", body: "", submittedAt: "2026-10-01T00:05:00Z"}]}'
+  expect idle '["nothing_to_do"]'
+}
+
+@test "表: 作者以外の PR のコメントは、作者のコメントが後に無ければ act で unanswered_comments" {
+  setup_fake_gh
+  pr_view '{comments: [{id: "C1", author: {login: "bob"}, body: "なぜ？", createdAt: "2026-10-01T00:05:00Z", url: "u"}]}'
+  expect act '["unanswered_comments"]'
+  pr_view '{comments: [{id: "C1", author: {login: "bob"}, body: "なぜ？", createdAt: "2026-10-01T00:05:00Z", url: "u"},
+    {id: "C2", author: {login: "me"}, body: "理由です", createdAt: "2026-10-01T00:06:00Z", url: "u"}]}'
+  expect idle '["nothing_to_do"]'
+}
+
+@test "表: act の理由は、当てはまるものをすべて並べる" {
+  setup_fake_gh
+  thread '[["alice","直してください"]]'
+  write_threads
+  pr_view '{statusCheckRollup: [{__typename: "CheckRun", name: "t", status: "COMPLETED", conclusion: "FAILURE"}],
+    comments: [{id: "C1", author: {login: "bob"}, body: "なぜ？", createdAt: "2026-10-01T00:05:00Z", url: "u"}]}'
+  expect act '["ci_failed","unresolved_threads","unanswered_comments"]'
+}
+
+@test "表: CI が実行中なら wait で ci_pending" {
+  setup_fake_gh
+  pr_view '{statusCheckRollup: [{__typename: "CheckRun", name: "t", status: "IN_PROGRESS"}]}'
+  expect wait '["ci_pending"]'
+  pr_view '{statusCheckRollup: [{__typename: "StatusContext", context: "ext", state: "PENDING"}]}'
+  expect wait '["ci_pending"]'
+}
+
+@test "表: 担当の skill がある投稿者の最初のレビューが無ければ wait で awaiting_review。付けば待たない" {
+  setup_fake_gh
+  echo '{"pr_check": {"handlers": {"coderabbitai[bot]": "coderabbit-respond"}}}' >"$REPO/.claude/dev-workflow/config.json"
+  pr_view "{statusCheckRollup: [$(check_ok)]}"
+  expect wait '["awaiting_review:coderabbitai[bot]"]'
+  assert_equal "$(jq -c .details.waiting_for <<<"$output")" '["coderabbitai[bot]"]'
+  # レビューが付いた（本文が空のレビューでも、到着として数える。gh は [bot] を除いた名前を返す）
+  watch '{reviews: {nodes: [{author: {login: "coderabbitai"}}]}}'
+  expect idle '["nothing_to_do"]'
+}
+
+@test "表: 最初のレビューを待つのは、PR を作ってから 60 分まで" {
+  setup_fake_gh
+  echo '{"pr_check": {"handlers": {"coderabbitai[bot]": "coderabbit-respond"}}}' >"$REPO/.claude/dev-workflow/config.json"
+  PR_WATCH_NOW=1790816399 expect wait '["awaiting_review:coderabbitai[bot]"]'
+  PR_WATCH_NOW=1790816400 expect idle '["nothing_to_do"]'
+}
+
+@test "表: マージできるかを GitHub が計算中（UNKNOWN）なら wait で mergeable_unknown" {
+  setup_fake_gh
+  pr_view '{mergeable: "UNKNOWN", mergeStateStatus: "UNKNOWN"}'
+  expect wait '["mergeable_unknown"]'
+}
+
+@test "表: CI が全部成功、またはチェックが無く、対応する指摘が無ければ idle で nothing_to_do" {
+  setup_fake_gh
+  expect idle '["nothing_to_do"]'
+  pr_view "{statusCheckRollup: [$(check_ok)], mergeStateStatus: \"BLOCKED\", reviewDecision: \"REVIEW_REQUIRED\"}"
+  expect idle '["nothing_to_do"]'
+}
+
+@test "--pr を省略すると今のブランチの PR を見る。PR の番号が正しくなければ使い方の誤りで止まる" {
+  setup_fake_gh
+  run_script pr-watch.sh
+  assert_success
+  assert_equal "$(jq -r .pr.number <<<"$output")" 5
+  run_script pr-watch.sh --pr abc
+  assert_failure 64
+  run_script pr-watch.sh --pr
+  assert_failure 64
+}
+
+@test "何も書き込まない（gh は読む呼び出しだけ）" {
+  setup_fake_gh
+  thread '[["alice","直してください"]]'
+  write_threads
+  run_script pr-watch.sh --pr 5
+  assert_success
+  run grep -c '^WRITE ' "$CALLS"
+  assert_output 0
+  run grep -c '^READ ' "$CALLS"
+  refute_output 0
+}
+
+@test "GraphQL を読めなければ、1行のメッセージで止まる" {
+  setup_fake_gh
+  echo '{"data": {"repository": {"pullRequest": null}}}' >"$FIX/watch.json"
+  run_script pr-watch.sh --pr 5
+  assert_failure 1
+  assert_output --partial "PR #5 のマージキューの状態を読めません"
+}
