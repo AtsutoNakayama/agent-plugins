@@ -35,6 +35,9 @@
 #      HTML のコメントの中の行は、項目とみなさない。足す項目は、最初の項目がある節（次の見出しの手前まで）の最後の
 #      空でない行の後に、最初の項目と同じ字下げで置く（改行が \r\n なら \r\n で書く）。その行がリストの項目でなければ
 #      （項目の続きの行・HTML の塊・区切り線など）、空行を挟む。項目が無ければ本文の最後に置く
+#
+# 出力の merge_queue は、base_branch へのマージがマージキューを通すか（true・false。ブランチに効いているルールを
+# 読めなければ null）。PR を出した後の案内（キューに入れるか、base_branch が進んだら取り込むか）を切り替えるのに使う
 set -euo pipefail
 
 # shellcheck source=lib/common.sh
@@ -307,12 +310,18 @@ if ! $dry_run && [ "$(jq -n --argjson c "$to_check" --argjson a "$to_add" '$c + 
     || dw_die "PR #${pr_number} はできていますが、Issue #${issue} のチェックリストを変えられませんでした（もう一度実行すれば変えます）"
 fi
 
+# --- マージキュー ----------------------------------------------------------------
+# PR を出した後の案内を切り替えるため、base_branch へのマージがキューを通すかを読む（doctor.sh と同じく、組織の
+# ルールセットも含めてブランチに効いているルールで見る）。読むだけなので dry-run でも読む。読めなければ null にし、止めない
+merge_queue="$(dw_merge_queue_enabled '{owner}/{repo}' "$base")" || merge_queue=null
+[ -n "$merge_queue" ] || merge_queue=null
+
 # 本文は大きいことがあるので、引数ではなく標準入力で jq に渡す（引数1つの長さには上限がある）
 printf '%s' "$body" | jq -Rs --argjson i "$issue" --arg branch "$branch" --arg base "$base" --arg title "$title" \
   --argjson labels "$labels" --argjson breaking "$breaking" --argjson draft "$draft" --argjson created "$created" \
   --arg number "$pr_number" --arg url "$pr_url" --argjson status "$status" \
   --argjson tasks "$tasks" --argjson checked "$to_check" --argjson added "$to_add" \
-  --argjson dry "$dry_run" --argjson actions "$actions" '. as $body | {
+  --argjson dry "$dry_run" --argjson actions "$actions" --argjson merge_queue "$merge_queue" '. as $body | {
     issue: $i,
     dry_run: $dry,
     branch: $branch,
@@ -331,5 +340,7 @@ printf '%s' "$body" | jq -Rs --argjson i "$issue" --arg branch "$branch" --arg b
     checked: $checked,
     # この実行で足す項目の文（文が同じ項目が既にあるものは除く。実行したときは、読み直した本文に実際に足したもの）
     added: $added,
+    # base_branch へのマージがマージキューを通すか（読めなければ null）
+    merge_queue: $merge_queue,
     actions: $actions
   }'

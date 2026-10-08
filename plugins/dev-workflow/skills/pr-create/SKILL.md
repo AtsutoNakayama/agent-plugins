@@ -109,3 +109,9 @@ dry-run が止まったときは、標準エラーの1行のメッセージに�
 ### 7. 結果を伝える
 
 PR の番号と URL（`pr.number`・`pr.url`）を伝える。列を移したとき（`status.skipped` が false）は、移した列（`status.to`）も伝える。Issue にチェックを付けたとき（`checked` が空でない）や、項目を足したとき（`added` が空でない。ADR の提案を断った記録）は、付けた・足した項目と Issue の URL も伝える。マージは人間が行う（`allow_ai_merge` が true でない限り、AI はマージしない）。
+
+PR を出した後にすることを、出力の `merge_queue`（`base_branch` へのマージがマージキューを通すか）で切り替えて添える。
+
+- `true`：CI が通ったら、PR をキューに入れる（PR の「Merge when ready」か `gh pr merge <PR番号>`。入れるのは人）。キューが最新の `base_branch` と組み合わせて確かめるので、`base_branch` が進んでも PR に取り込み直す必要はない。取り込むのは、`base_branch` とコンフリクトしたときだけ（branch-update スキル）
+- `false`：`base_branch` が進んで PR が遅れたり、コンフリクトしたりしたら、branch-update スキルで最新の `base_branch` を取り込む
+- `null`（キューを使うか読めなかった）：`base_branch` が進んで PR をマージできなくなったら、branch-update スキルを使う（キューを使うリポジトリかは branch-update が調べ、要るときだけ取り込む）

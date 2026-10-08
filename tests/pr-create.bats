@@ -701,3 +701,30 @@ fake_issue_tasks() {
   assert_success
   assert_equal "$(jq -r .draft <<<"$json")" true
 }
+
+@test "base_branch へのマージがマージキューを通すかを merge_queue に出す（PR を出した後の案内を切り替えるため。dry-run でも読む）" {
+  setup_branch
+  fake_issue 17 '["feat"]'
+  # ページごとの配列を並べたもの（--paginate）。キューのルールは2ページ目にある
+  printf '%s\n' '[{"type": "pull_request"}]' '[{"type": "merge_queue", "parameters": {"merge_method": "SQUASH"}}]' >"$FIX/rules.json"
+  run_pr --issue 17 --body-file "$TMP/body.md" --dry-run
+  assert_success
+  assert_equal "$(jq .merge_queue <<<"$json")" true
+  # base_branch のルールを、ブランチ名を URL に使える形にして読む
+  assert_equal "$(args api-rules)" 'repos/{owner}/{repo}/rules/branches/main?per_page=100'
+  run_pr --issue 17 --body-file "$TMP/body.md"
+  assert_success
+  assert_equal "$(jq -c '[.created, .merge_queue]' <<<"$json")" '[true,true]'
+}
+
+@test "base_branch にマージキューのルールが無ければ merge_queue は false、ルールを読めなければ null にし、PR は作る" {
+  setup_branch
+  fake_issue 17 '["feat"]'
+  echo '[{"type": "required_status_checks", "parameters": {"strict_required_status_checks_policy": true}}]' >"$FIX/rules.json"
+  run_pr --issue 17 --body-file "$TMP/body.md" --dry-run
+  assert_success
+  assert_equal "$(jq .merge_queue <<<"$json")" false
+  FAKE_FAIL=api-rules run_pr --issue 17 --body-file "$TMP/body.md"
+  assert_success
+  assert_equal "$(jq -c '[.created, .merge_queue]' <<<"$json")" '[true,null]'
+}
