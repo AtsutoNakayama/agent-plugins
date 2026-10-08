@@ -170,7 +170,7 @@ names() { jq -c --arg k "${1:-branches}" '[.[$k][] | [.name, .local, .remote]]' 
 @test "gh が古ければ（Issue を閉じる PR を読めない）、更新を促して止まる" {
   FAKE_GH_VERSION=2.72.0 run_branches --issue 17
   assert_failure 2
-  assert_output --partial "gh 2.88.0 以上が要ります（今は 2.72.0）"
+  assert_output --partial "gh 2.94.0 以上が要ります（今は 2.72.0）"
 }
 
 @test "Issue を読めなければ止まる。--issue が数字でなければ使い方の誤り" {

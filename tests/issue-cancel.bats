@@ -89,9 +89,9 @@ writes() { grep -oE '^(issue-comment|issue-close|pr-comment|pr-close|api-delete)
 
 @test "--duplicate-of は gh が古ければ、更新を促して何もせずに止まる" {
   setup_cancel
-  FAKE_GH_VERSION=2.87.0 run_script issue-cancel.sh --issue 17 --reason "重複です" --duplicate-of 20
+  FAKE_GH_VERSION=2.93.0 run_script issue-cancel.sh --issue 17 --reason "重複です" --duplicate-of 20
   assert_failure 2
-  assert_output --partial "重複として閉じる（gh issue close --duplicate-of）には gh 2.88.0 以上が要ります（今は 2.87.0）。gh を更新してください"
+  assert_output --partial "重複として閉じる（gh issue close --duplicate-of）には gh 2.94.0 以上が要ります（今は 2.93.0）。gh を更新してください"
   assert_equal "$(writes)" ""
 }
 

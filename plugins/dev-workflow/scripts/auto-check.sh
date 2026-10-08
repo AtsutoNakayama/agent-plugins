@@ -105,7 +105,7 @@ dw_check_hold_column "$config"
 repo_root="$(dw_repo_root)" || dw_die "リポジトリの中で実行してください" 64
 main_root="$(dw_main_root "$repo_root")" || dw_die "メインのワークツリーが分かりません"
 # closedByPullRequestsReferences を読む（前の作業のブランチを探す。issue-branches.sh と同じ）
-dw_require_gh_version "$DW_GH_MIN_VERSION" "Issue を閉じる PR を読む（gh issue view --json closedByPullRequestsReferences）"
+dw_require_gh_version "$DW_GH_MIN_VERSION" "サブ Issue と Issue を閉じる PR を読む（gh issue view --json subIssuesSummary,closedByPullRequestsReferences）"
 
 # PR の番号なら止まる（dw_read_issue）
 issue_json="$(dw_read_issue "$issue" number,title,state,labels,body,subIssuesSummary,closedByPullRequestsReferences)"

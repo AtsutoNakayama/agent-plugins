@@ -219,6 +219,18 @@ run_start() {
   assert_equal "$(called SetField)" 0
 }
 
+@test "gh が 2.94.0 より古ければ（subIssuesSummary を読めない）、何も変えずに更新を促して止まる（--no-worktree も同じ）" {
+  setup_fake_gh
+  setup_origin
+  FAKE_GH_VERSION=2.93.0 run_start --issue 17 --slug "task start"
+  assert_failure 2
+  assert_output --partial "サブ Issue を読む（gh issue view --json subIssuesSummary）には gh 2.94.0 以上が要ります（今は 2.93.0）"
+  FAKE_GH_VERSION=2.93.0 run_start --issue 17 --no-worktree
+  assert_failure 2
+  assert_output --partial "gh 2.94.0 以上が要ります"
+  [ ! -d "$REPO/.claude/worktrees/feat/17-task-start" ]
+}
+
 @test "サブ Issue が無い Issue（subIssuesSummary の total が 0）には着手する" {
   setup_fake_gh
   setup_origin

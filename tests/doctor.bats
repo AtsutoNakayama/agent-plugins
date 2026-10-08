@@ -165,14 +165,21 @@ labels_check() { jq -c '.checks[] | select(.name == "labels") | [.ok, .level, .d
 
 @test "gh が古ければ、止めずに更新を促す" {
   fake_gh
-  export FAKE_SCOPES="repo, project" FAKE_GH_VERSION=2.87.9
+  export FAKE_SCOPES="repo, project" FAKE_GH_VERSION=2.93.9
   run_script doctor.sh
   assert_success
   assert_equal "$(jq -c '.checks[] | select(.name == "gh-version") | [.ok, .level]' <<<"$output")" '[false,"warn"]'
-  assert_output --partial "gh 2.88.0 以上を使ってください（今は 2.87.9）。gh を更新してください"
+  assert_output --partial "gh 2.94.0 以上を使ってください（今は 2.93.9）。gh を更新してください"
 }
 
-@test "gh のバージョンは数字ごとに比べる（2.100.0 は 2.88.0 より新しい）" {
+@test "gh 2.94.0 ちょうどなら通る（サブ Issue を gh issue で扱える最初の版）" {
+  fake_gh
+  export FAKE_SCOPES="repo, project" FAKE_GH_VERSION=2.94.0
+  run_script doctor.sh
+  assert_equal "$(jq -r '.checks[] | select(.name == "gh-version") | .ok' <<<"$output")" true
+}
+
+@test "gh のバージョンは数字ごとに比べる（2.100.0 は 2.94.0 より新しい）" {
   fake_gh
   export FAKE_SCOPES="repo, project" FAKE_GH_VERSION=2.100.0
   run_script doctor.sh
