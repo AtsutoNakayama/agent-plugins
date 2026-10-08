@@ -112,7 +112,7 @@ PR の番号と URL（`pr.number`・`pr.url`）を伝える。列を移したと
 
 PR を出した後にすることを添える。以下の「マージ先」は、出力の `pr_base`（PR のマージ先。既にある PR を使ったときは、その PR のマージ先で、設定の `base_branch`（出力の `base`）と違うことがある）を指す。
 
-出力の `draft` が true（下書きの PR）なら、`merge_queue` の値にかかわらず、マージする（キューに入れる）前に、PR をレビューできる状態にする（PR の「Ready for review」か `gh pr ready <PR番号>`）ことを添える。下書きの PR は、マージもキューへの追加もできない。
+出力の `draft` が true（下書きの PR）なら、`merge_queue` の値にかかわらず、マージする（キューに入れる）前に、PR をレビューできる状態にする（PR の「Ready for review」か `gh pr ready <PR番号>`）ことを添える。下書きの PR は、マージもキューへの追加もできない。既にある PR を使ったとき（`created` が false）の `draft` は、その PR の今の状態で、`--draft` や `pr.draft` の指定ではない（既にある PR の下書きかどうかは変えないため）。
 
 そのうえで、出力の `merge_queue`（`pr_base` へのマージがマージキューを通すか）で切り替えて添える。
 

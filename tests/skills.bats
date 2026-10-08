@@ -672,6 +672,8 @@ has() {
   # 下書きの案内は、merge_queue の値の項目から切り離し、どの値でも添える
   draft_line="$(grep -F -- '出力の `draft` が true' <<<"$step7")"
   has "pr-create の手順7の下書きの案内" "$draft_line" '`merge_queue` の値にかかわらず' 'Ready for review' 'gh pr ready'
+  # 既にある PR を使ったときの draft は、その PR の今の状態（--draft の指定ではない）
+  has "pr-create の手順7の下書きの案内" "$draft_line" 'その PR の今の状態'
   if grep -E -- '^- `(true|false|null)' <<<"$step7" | grep -q -e 'gh pr ready' -e '下書き'; then
     fail "pr-create の手順7の下書きの案内が、merge_queue の値の項目の中にあります（どの値でも添える）"
   fi
