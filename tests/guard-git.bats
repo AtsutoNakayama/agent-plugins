@@ -382,8 +382,18 @@ silent() {
   denied "強制 push" "$(printf 'git commit -F - <<EOF\nfix: x\nEOF\ngit push -f')"
 }
 
-@test "リポジトリの外や、行き先の分からない cd の後は、ブランチでは止めない" {
-  allowed "cd $TMP && git commit -m x" "cd \$SOMEWHERE && git commit -m x"
+@test "対象のリポジトリが分からないときは、コミットと push 先を書かない push を止め、対象の書き直し方を案内する" {
+  # 導入していない設定でも、ディレクトリが分からない cd の後も、リポジトリの外も、今のブランチを読めない
+  denied "対象のリポジトリが分からない" \
+    "cd - && git commit -m x" "cd \$SOMEWHERE && git commit -m x" "cd $TMP && git commit -m x" \
+    "cd - && git push" "cd \$SOMEWHERE && git push origin" "cd $TMP && git push"
+  denied "git -C <絶対パス>" "cd - && git commit -m x"
+  # push 先を書いた push は、書かれた先で判断できる
+  allowed "cd - && git push origin feat/1-x"
+  denied "main へは push しません" "cd - && git push origin main"
+  # 対象を書き直せば、そのリポジトリで判断する
+  git checkout -q -b feat/1-x
+  allowed "cd - && git -C $REPO commit -m x" "cd - && git -C $REPO push"
 }
 
 @test "規約に合わない名前でブランチを作るコマンドは、止めずに警告する" {

@@ -59,6 +59,16 @@ target_set_up() {
   gc_git cat-file -e "HEAD:.claude/dev-workflow/config.json"
 }
 
+# 対象のリポジトリを git が見つけられないとき（ディレクトリが分からない cd - の後など）に成功する。gc_target の後に呼ぶ。
+# このときは HEAD を読めず、今のブランチが分からない。空のブランチを base_branch ではないとみなして通すと守りが外れるので、
+# 今のブランチに頼る操作（コミットと、push 先を書かない push）は止める。push 先を書いた push は、書かれた先で判断できるので通す
+target_unknown() { [ -z "$gc_repo" ]; }
+
+# 対象が分からないときに止める理由。使い方: unknown_target_message <止める操作>
+unknown_target_message() {
+  echo "操作の対象のリポジトリが分からないので、${1}は止めます（今のブランチが分からず、base_branch の上かを確かめられません）。cd -- <絶対パス> && git ...、または git -C <絶対パス> ... で対象を書き直してください"
+}
+
 # 対象のリポジトリの base_branch を求め、base_of に入れる。読めなければ main。gc_target・target_set_up の後（導入した
 # リポジトリのとき）に呼ぶ。1つのコマンドの中で同じリポジトリを何度も調べるので、対象（gc_root・gc_repo）ごとに覚えておく。
 # ルートが分かれば、そのリポジトリの設定（config.sh。導入したリポジトリなのでユーザーの層も合わせる）から読む。
@@ -114,6 +124,7 @@ check_push() {
   load_base_branch
   base="$base_of"
   if [ "${#gc_push_refs[@]}" -eq 0 ]; then
+    ! target_unknown || deny "$(unknown_target_message "push 先を書かない push")"
     [ "$current" != "$base" ] \
       || deny "${base} へは push しません。作業用のブランチ（task-start）で PR を作ってください"
     return 0
@@ -172,6 +183,7 @@ check_git() {
 
   case "$sub" in
     commit)
+      ! target_unknown || deny "$(unknown_target_message "コミット")"
       load_base_branch
       base="$base_of"
       [ "$(gc_branch)" != "$base" ] \
