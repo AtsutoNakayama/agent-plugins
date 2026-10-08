@@ -21,7 +21,7 @@ setup() {
   local f out failed=""
   for f in plugins/dev-workflow/scripts/*.sh plugins/dev-workflow/scripts/setup/*.sh plugins/dev-workflow/hooks/*.sh; do
     # 読み込みに失敗すると、source できないというエラーが出る。読み込んだ後の動作（引数が無い等）は問わない
-    out="$(PATH="$TMP/bin:$PATH" CDPATH="$TMP/work" timeout 30 "${TEST_BASH:-bash}" "$f" </dev/null 2>&1 || true)"
+    out="$(PATH="$TMP/bin:$PATH" CDPATH="$TMP/work" "${TEST_BASH:-bash}" "$f" </dev/null 2>&1 || true)"
     case "$out" in
       *"No such file"* | *"lib/common.sh"*) failed="$failed $f" ;;
     esac
