@@ -56,7 +56,7 @@ jobs:
   test:
     needs: changes
     if: needs.changes.outputs.docs_only != 'true'
-    name: test (${{ matrix.os }}, シャード ${{ matrix.shard }})
+    name: test (${{ matrix.os }}, shard ${{ matrix.shard }})
     strategy:
       fail-fast: false
       matrix: ${{ fromJSON(needs.changes.outputs.matrix) }}
