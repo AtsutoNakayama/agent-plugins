@@ -22,7 +22,8 @@
 #   issue       {number, title, state, url, open_sub_issues（開いている子の数）}
 #   branches    [{name, local, remote, worktree（無ければ null）}]
 #   candidates  [{name, local, remote, worktree, from（name か pr）, pr（from が pr のときの PR の番号。ほかは null）}]
-#   open_prs    [{number, url, branch}]
+#   open_prs    [{number, url, branch, cross（フォークか別のリポジトリの PR なら true）}]
+#   merged_prs  Issue を閉じる PR のうちマージ済みの、今のリポジトリのもの [{number, url, branch}]（auto-check.sh が使う）
 #   action      task-finish がすること（上から順に、当てはまった最初のもの）
 #                 cleanup             確かなブランチがある。片付ける（複数あれば、どれかを聞く）
 #                 cleanup_candidate   Issue は閉じていて、候補がある。候補で片付けるかを聞く

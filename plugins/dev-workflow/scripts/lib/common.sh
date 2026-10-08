@@ -128,11 +128,13 @@ dw_issue_branches() {
 #               マージ済みかは見ない（マージの確かめは、厳密に確かめる cleanup.sh に任せる）
 #   candidates  名前が似ているだけのブランチ（from: name）と、Issue を閉じる PR（開いている・マージ済み。今のリポジトリのもの）の
 #               ブランチのうち、手元か origin に残っているもの（from: pr）。[{name, local, remote, worktree, from, pr}]
-#   open_prs    Issue を閉じる PR のうち開いているもの（フォークや別のリポジトリの PR も含む）。[{number, url, branch}]
+#   open_prs    Issue を閉じる PR のうち開いているもの（フォークや別のリポジトリの PR も含む）。[{number, url, branch,
+#               cross（フォークか別のリポジトリの PR なら true。branch は、今のリポジトリのブランチとは限らない）}]
+#   merged_prs  Issue を閉じる PR のうちマージ済みの、今のリポジトリのもの。[{number, url, branch}]
 # origin・PR を読めなければ止まる。
 # 使い方: dw_issue_work <メインのワークツリー> <Issue の番号> <設定の JSON> <Issue の JSON（closedByPullRequestsReferences を含む）>
 dw_issue_work() {
-  local found branches='[]' candidates='[]' open_prs='[]' b is_local is_remote confirmed wt nwo="" url pr_repo pr head
+  local found branches='[]' candidates='[]' open_prs='[]' merged_prs='[]' b is_local is_remote confirmed wt nwo="" url pr_repo pr head
   # $(...) の中で呼ばれると set -e は効かないので、止まったときは明示的に抜ける
   found="$(dw_issue_branches "$1" "$2" "$3")" || exit $?
   while IFS="$(printf '\t')" read -r b is_local is_remote confirmed; do
@@ -156,8 +158,12 @@ dw_issue_work() {
   while IFS="$(printf '\t')" read -r url pr_repo; do
     [ -n "$url" ] || continue
     pr="$(gh pr view "$url" --json number,url,state,headRefName,isCrossRepository)" || dw_die "PR ${url} を読めませんでした"
-    open_prs="$(jq -c --argjson p "$pr" \
-      'if $p.state == "OPEN" then . + [{number: $p.number, url: $p.url, branch: $p.headRefName}] else . end' <<<"$open_prs")"
+    open_prs="$(jq -c --argjson p "$pr" --argjson x "$([ "$pr_repo" = "$nwo" ] && echo false || echo true)" \
+      'if $p.state == "OPEN" then . + [{number: $p.number, url: $p.url, branch: $p.headRefName,
+         cross: ($x or ($p.isCrossRepository // false))}] else . end' <<<"$open_prs")"
+    merged_prs="$(jq -c --argjson p "$pr" --arg r "$pr_repo" --arg nwo "$nwo" \
+      'if $p.state == "MERGED" and $r == $nwo and ($p.isCrossRepository | not) then
+         . + [{number: $p.number, url: $p.url, branch: $p.headRefName}] else . end' <<<"$merged_prs")"
     head="$(jq -r 'select((.state == "OPEN" or .state == "MERGED") and (.isCrossRepository | not)) | .headRefName' <<<"$pr")"
     [ -n "$head" ] && [ "$pr_repo" = "$nwo" ] || continue
     if jq -e --arg h "$head" 'any(.[]; .name == $h)' <<<"$branches" >/dev/null \
@@ -176,7 +182,8 @@ dw_issue_work() {
       '. + [{name: $b, local: $l, remote: $r, worktree: (if $w == "" then null else $w end), from: "pr", pr: $n}]' <<<"$candidates")"
   done < <(jq -r '.closedByPullRequestsReferences // [] | .[]
     | [.url, (if .repository then "\(.repository.owner.login)/\(.repository.name)" else "" end)] | @tsv' <<<"$4")
-  jq -n --argjson b "$branches" --argjson c "$candidates" --argjson o "$open_prs" '{branches: $b, candidates: $c, open_prs: $o}'
+  jq -n --argjson b "$branches" --argjson c "$candidates" --argjson o "$open_prs" --argjson m "$merged_prs" \
+    '{branches: $b, candidates: $c, open_prs: $o, merged_prs: $m}'
 }
 
 # ブランチを使っているワークツリーの場所。ディレクトリが無い（手で消して記録だけが残った）ものは、無いものとして空を返す。

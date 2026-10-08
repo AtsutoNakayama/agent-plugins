@@ -17,7 +17,8 @@
 #   - type ラベル（labels.types）が1つではない
 #   - 前の作業のブランチ（実行し直したとき）を1つに決められない：Issue の確かなブランチ（issue-branches.sh の branches）が
 #     複数ある、確かなブランチの type が今の Issue の type と違う、確かなブランチが無いのに候補（名前が似ている・Issue を閉じる
-#     PR のブランチ）がある、Issue を閉じる開いている PR が確かなブランチとは別のブランチにある。新しいブランチを作ると、
+#     PR のブランチ）がある、Issue を閉じる開いている PR が確かなブランチとは別のブランチかフォークにある、確かなブランチが
+#     Issue を閉じる PR でマージ済み。新しいブランチを作ると、
 #     前の作業のコミットを置き去りにするため。確かなブランチが1つなら、それを名前のまま使い回す（resume）。
 #     origin と PR を読むので、ほかの理由で止まるときは探さない
 #   - 「やること」の節（見出しが やること・Tasks・To do）に項目が無い
@@ -171,9 +172,16 @@ if [ "$(jq length <<<"$reasons")" = 0 ]; then
       elif ($b | length) == 0 and ($c | length) > 0 then
         "Issue #\($n) の作業かもしれないブランチがあります（\($c | join(", "))）。前の作業を置き去りにしないよう、どれで続けるかは人が決めます"
       else empty end,
+    # フォークの PR は、ブランチ名が同じでも別のブランチなので、名前で比べない
+    (.open_prs[] | select(.cross)
+      | "Issue #\($n) を閉じる PR #\(.number) が、フォーク（別のリポジトリ）から開いています。どれで続けるかは人が決めます"),
     # 候補に出したブランチの PR は、上の理由と重ねて出さない
-    (.open_prs[] | select(.branch != ($b[0] // null) and (.branch as $x | $c | index([$x]) | not))
-      | "Issue #\($n) を閉じる PR #\(.number) が、別のブランチ（\(.branch)）で開いています。どれで続けるかは人が決めます")' <<<"$work")
+    (.open_prs[] | select((.cross | not) and .branch != ($b[0] // null) and (.branch as $x | $c | index([$x]) | not))
+      | "Issue #\($n) を閉じる PR #\(.number) が、別のブランチ（\(.branch)）で開いています。どれで続けるかは人が決めます"),
+    # 使い回すブランチがマージ済みなら、終わった作業の上に続けない
+    (if ($b | length) == 1 then .merged_prs[] | select(.branch == $b[0])
+      | "Issue #\($n) の作業のブランチ \(.branch) は、PR #\(.number) でマージ済みです。終わった作業なら task-finish で片付けてから、もう一度実行してください"
+     else empty end)' <<<"$work")
   # 名前を短い説明から作り直さず、そのまま task-start.sh --branch に渡す（作り直すと、番号の先頭の 0 などで別の名前になりうる）
   if [ "$(jq length <<<"$reasons")" = 0 ] && [ "$(jq '.branches | length' <<<"$work")" = 1 ]; then
     resume="$(jq -c '.branches[0] | {branch: .name, worktree}' <<<"$work")"

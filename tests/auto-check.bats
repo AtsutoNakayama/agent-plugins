@@ -335,3 +335,36 @@ run_check() {
   assert_output --partial "gh"
   assert_equal "$(called issue-view)" 0
 }
+
+# 使い方: link_pr <番号> <状態> <ブランチ> [フォークか（既定 false）] → Issue #17 を閉じる PR を1つにする
+link_pr() {
+  jq --argjson n "$1" '. + {closedByPullRequestsReferences: [{number: $n, url: "https://github.com/me/demo/pull/\($n)", repository: {name: "demo", owner: {login: "me"}}}]}' \
+    "$FIX/issue-17.json" >"$TMP/i.json" && mv "$TMP/i.json" "$FIX/issue-17.json"
+  jq -n --argjson n "$1" --arg s "$2" --arg b "$3" --argjson f "${4:-false}" \
+    '{number: $n, url: "https://github.com/me/demo/pull/\($n)", state: $s, headRefName: $b, isCrossRepository: $f}' >"$FIX/pr-$1.json"
+}
+
+@test "使い回すブランチが、Issue を閉じる PR でマージ済みなら hold（終わった作業の上に続けない）" {
+  setup_auto
+  git branch feat/17-old
+  link_pr 5 MERGED feat/17-old
+  run_check --issue 17
+  assert_equal "$(jq -c '[.action, .resume]' <<<"$output")" '["hold",null]'
+  assert_output --partial "Issue #17 の作業のブランチ feat/17-old は、PR #5 でマージ済みです"
+  # 別のブランチ（もう残っていない）のマージ済みの PR は、使い回すブランチには関係しない
+  link_pr 5 MERGED feat/17-other
+  run_check --issue 17
+  assert_equal "$(jq -c '[.action, .resume.branch]' <<<"$output")" '["proceed","feat/17-old"]'
+}
+
+@test "Issue を閉じるフォークの PR が開いていれば、ブランチ名が同じでも hold" {
+  setup_auto
+  git branch feat/17-x
+  link_pr 6 OPEN feat/17-x true
+  run_check --issue 17
+  assert_equal "$(jq -c '[.action, .resume]' <<<"$output")" '["hold",null]'
+  assert_output --partial "Issue #17 を閉じる PR #6 が、フォーク（別のリポジトリ）から開いています"
+  link_pr 6 OPEN feat/17-x false
+  run_check --issue 17
+  assert_equal "$(jq -c '[.action, .resume.branch]' <<<"$output")" '["proceed","feat/17-x"]'
+}
