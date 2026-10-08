@@ -632,3 +632,13 @@ has() {
   has "task-auto の手順6" "$s6" '--draft --dry-run' '必ず `--draft` を付ける' '「自動で決めたこと」の節' '`pending` なら止まる' '`--add-task` は付けない'
   grep -qF 'マージはしない（`allow_ai_merge` にかかわらず）' "$f" || fail "マージしないことが書かれていません"
 }
+
+@test "スキルが直接実行するスクリプト（scripts/ と scripts/setup/ の .sh）は、git で実行権限が付いている（lib/ は読み込むだけなので除く）" {
+  # bats はスクリプトを bash で起動するので、実行権限が無くても通ってしまう。スキルは ${CLAUDE_PLUGIN_ROOT}/scripts/… を
+  # そのまま実行するので、権限が無いと Permission denied で止まる（task-auto の eval で見つかった）
+  run git -C "$BATS_TEST_DIRNAME/.." ls-files -s -- 'plugins/dev-workflow/scripts/*.sh' 'plugins/dev-workflow/scripts/setup/*.sh'
+  assert_success
+  [ -n "$output" ] || fail "スクリプトが見つかりません"
+  bad="$(awk '$1 != "100755" && $4 !~ /\/lib\// { print $4 }' <<<"$output")"
+  [ -z "$bad" ] || fail "実行権限がありません（git update-index --chmod=+x で付けてください）: ${bad}"
+}
