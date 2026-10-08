@@ -11,5 +11,8 @@
     "handlers": {
       "coderabbitai[bot]": "coderabbit-respond"
     }
+  },
+  "auto": {
+    "enabled": true
   }
 }
