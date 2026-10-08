@@ -31,7 +31,7 @@ issue: 280
 
 * レビューが `review.max_rounds` の周でも範囲内の指摘を出したときは、もう1周せずに、指摘を反映してコミットし、テストとチェックが通れば、止まらずに PR の作成へ進む。テストやチェックが通らなければ、他の場面と同じく `auto.max_fix_attempts` まで直させ、通らなければ止まる。
 * 最後の反映はレビューされていないので、反映したコミットと指摘を、PR の本文の「自動で決めたこと」に「上限の周の反映（未レビュー）」として書く。無ければ「なし」と書く。
-* PR は draft にせず、レビューできる状態（オープン）で出す（`pr-create.sh` に `--draft` を付けない）。`pr-create.sh` の `--draft` は、使う人のために残す。
+* PR は draft にせず、レビューできる状態（オープン）で出す（`pr-create.sh --no-draft` を付ける）。設定 `pr.draft` が true のリポジトリでも、`--draft` を付けないだけでは下書きになるため、`--no-draft`（設定にかかわらず下書きにしない。`--draft` と同時には指定できない）を足した。`--draft` は、人が下書きにしたいときのために残す。
 * マージは人が行う（`allow_ai_merge` にかかわらず）。この点は ADR 000267 のまま変えない。
 * ADR 000267 は書き換えない。ADR 000267 の「レビューが上限の周でも指摘を出すと止まる」と「PR は必ず draft で出す」は、この ADR が置き換える。それ以外の判断は、そのまま残る。
 
@@ -44,7 +44,7 @@ issue: 280
 
 ### 確認
 
-`tests/skills.bats` で、task-auto の SKILL.md が、`--draft` を付けないこと、上限の周の後に止まらず PR へ進むこと、「上限の周の反映（未レビュー）」を本文に書くことを確かめる。eval のケース（`task-auto-stops-on-breaking`・`task-auto-disabled-does-nothing`）は、PR まで進める依頼で、止まる条件と無効のときの振る舞いを確かめる。
+`tests/skills.bats` で、task-auto の SKILL.md が、`--no-draft` を付けること、上限の周の後に止まらず PR へ進むこと、「上限の周の反映（未レビュー）」を本文に書くことを確かめる。eval のケース（`task-auto-stops-on-breaking`・`task-auto-disabled-does-nothing`）は、PR まで進める依頼で、止まる条件と無効のときの振る舞いを確かめる。
 
 ## 各案の長所と短所
 

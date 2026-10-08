@@ -636,16 +636,17 @@ has() {
   has "task-auto の手順4" "$(step "$f" 4)" '/dev-workflow:review' '範囲内の指摘はすべて反映する' 'この差分より前からある不具合' 'review の手順9：行わない'
   has "task-auto の手順5" "$(step "$f" 5)" '同じ内容の Issue があるかを探す' 'max_new_issues' 'Story Point・親・依存は付けない' 'issue-create.sh'
   s6="$(step "$f" 6)"
-  has "task-auto の手順6" "$s6" '--dry-run' '`--draft` は付けない' '「自動で決めたこと」の節' '`pending` なら止まる' '`--add-task` は付けない'
+  has "task-auto の手順6" "$s6" '--no-draft --dry-run' '必ず `--no-draft` を付ける' '「自動で決めたこと」の節' '`pending` なら止まる' '`--add-task` は付けない'
   grep -qF 'マージはしない（`allow_ai_merge` にかかわらず）' "$f" || fail "マージしないことが書かれていません"
-  # draft で出さない（PR の自動レビューの多くは draft をレビューしない。ADR 000280）
-  grep -qF -- '--draft --dry-run' "$f" && fail "dry-run に --draft が付いています"
-  grep -qF '必ず `--draft` を付ける' "$f" && fail "PR を必ず draft で出すと書かれています"
+  # draft で出さない（PR の自動レビューの多くは draft をレビューしない。ADR 000280）。--draft の語そのものを手順6に書かない（--no-draft は許す）
+  ! grep -qF -e '--draft' <<<"${s6//--no-draft/}" || fail "手順6に --draft が書かれています"
   grep -qF 'PR は draft にせず、レビューできる状態（オープン）で出す' "$f" || fail "draft にせず出すことが書かれていません"
   # 上限の周の指摘は、反映してコミットしたら止まらずに PR へ進み、未レビューの反映を本文に書く
   has "task-auto の手順4" "$(step "$f" 4)" 'もう1周せずに手順5・6へ進む。止まらない' '上限の周の反映（未レビュー）'
   has "task-auto の手順6" "$s6" '上限の周の反映（未レビュー）'
-  ! sed -n '/^次のどれかに当たったら/,/^止まるときは/p' "$f" | grep -qF 'review.max_rounds' || fail "止まる条件に、上限の周の指摘が残っています"
+  stopcond="$(sed -n '/^次のどれかに当たったら/,/^止まるときは/p' "$f")"
+  has "止まる条件の節" "$stopcond" 'auto-check.sh'
+  ! grep -qF 'review.max_rounds' <<<"$stopcond" || fail "止まる条件に、上限の周の指摘が残っています"
   grep -qF '| review 手順8 | 上限の周でも指摘が出たら、もう1周するか | もう1周しない。範囲内の指摘を反映してコミットし、テストとチェックが通れば、止まらずに PR の作成（手順6）へ進む' "$f" \
     || fail "表の review 手順8が、PR の作成へ進むことになっていません"
 }
