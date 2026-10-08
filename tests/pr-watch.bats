@@ -40,7 +40,7 @@ case "$1 $2" in
   "api graphql")
     body="$(cat)"
     if [ "$(jq -r '.query | contains("query PrWatch")' <<<"$body")" = true ]; then
-      echo "READ PrWatch" >>"$CALLS"; cat "$FIX/watch.json"
+      echo "READ PrWatch $(jq -r .variables.url <<<"$body")" >>"$CALLS"; cat "$FIX/watch.json"
     else
       echo "READ PrThreads" >>"$CALLS"; cat "$FIX/PrThreads.json"
     fi
@@ -317,4 +317,12 @@ expect() {
   run_script pr-watch.sh --help
   assert_success
   assert_output --partial "使い方: pr-watch.sh"
+}
+
+@test "マージキューの状態は、PR の URL で引く" {
+  setup_fake_gh
+  run_script pr-watch.sh --pr 5
+  assert_success
+  run grep '^READ PrWatch ' "$CALLS"
+  assert_output "READ PrWatch $(jq -r .url "$FIX/pr-view.json")"
 }
