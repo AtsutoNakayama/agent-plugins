@@ -59,13 +59,22 @@ while [ $# -gt 0 ]; do
   esac
 done
 
-repo_root="$(dw_repo_root)" || dw_die "リポジトリの中で実行してください" 64
-main_root="$(dw_main_root "$repo_root")" || dw_die "メインのワークツリーが分かりません"
+# bare リポジトリ＋ワークツリーの配置の、.git ファイルを置いたディレクトリ（メインのワークツリー）には作業ツリーが無く、
+# dw_repo_root が失敗する。ここで実行してもよいが、今のブランチは分からない（--branch が要る）
+has_toplevel=true
+if repo_root="$(dw_repo_root)"; then
+  main_root="$(dw_main_root "$repo_root")" || dw_die "メインのワークツリーが分かりません"
+else
+  has_toplevel=false
+  main_root="$(dw_main_root "$PWD")" || dw_die "リポジトリの中で実行してください" 64
+  repo_root="$main_root"
+fi
 config="$("$BASH" "$DW_SCRIPTS_DIR/config.sh")"
 base="$(dw_base_branch "$config")"
 
 if [ -z "$branch" ]; then
-  branch="$(git -C "$repo_root" symbolic-ref --short -q HEAD || true)"
+  # 作業ツリーが無い場所の HEAD は、今のブランチではない
+  ! $has_toplevel || branch="$(git -C "$repo_root" symbolic-ref --short -q HEAD || true)"
   [ -n "$branch" ] || dw_die "ブランチの上にいません。--branch で指定してください" 64
 fi
 [ "$branch" != "$base" ] || dw_die "${base} は片付けられません。--branch で作業用のブランチを指定してください" 64
