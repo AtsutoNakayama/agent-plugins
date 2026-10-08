@@ -4,7 +4,9 @@
 #
 # 使い方: parent-state.sh --issue N [--assume-closed M]...
 #   --issue N          Issue の番号（#N でもよい）。この Issue の親を、近い順にたどる
-#   --assume-closed M  Issue M を、閉じたものとして数える。繰り返して指定するか、カンマ区切り（M1,M2）で複数の番号を渡せる。PR のマージで GitHub が閉じる Issue は、
+#   --assume-closed M  Issue M を、閉じたものとして数える。繰り返して指定するか、カンマ区切り（M1,M2）で複数の番号を渡せる。
+#                      番号の後に :理由 を付けると、その閉じ方（completed・not_planned・duplicate）で数える（M:not_planned。付けなければ completed）。
+#                      GitHub がまだ open と返す子の閉じ方を、suggest に反映するため（task-cancel は取りやめの理由を付けて渡す）PR のマージで GitHub が閉じる Issue は、
 #                      マージの直後は少し遅れて閉じるので、task-finish が片付けている Issue を渡す
 #
 # 出力: {issue, parents: [近い順の親]}。親の要素は
@@ -35,8 +37,16 @@ while [ $# -gt 0 ]; do
         IFS=, read -r -a parts <<<"$2"
         for v in ${parts[@]+"${parts[@]}"}; do
           [ -n "$v" ] || continue
+          why=completed
+          case "$v" in
+            *:*) why="${v#*:}"; v="${v%%:*}" ;;
+          esac
+          case "$why" in
+            completed | not_planned | duplicate) ;;
+            *) dw_die "$1 の理由は completed・not_planned・duplicate のどれかにしてください: $why" 64 ;;
+          esac
           n="$(dw_issue_number "$1" "$v")"
-          assumed="$(jq -c --argjson n "$n" '. + [$n]' <<<"$assumed")"
+          assumed="$(jq -c --argjson n "$n" --arg w "$why" '. + [{number: $n, reason: $w}]' <<<"$assumed")"
         done
       fi
       shift 2
@@ -73,8 +83,9 @@ for p in $(jq -r '.[].number' <<<"$chain"); do
   fi
   out="$(jq -c --argjson parent "$parent" --argjson kids "$children" --argjson assumed "$assumed" --arg column "$column" '
     ($kids | map(. as $k | {number, title,
-      state: (if ($assumed | index($k.number)) != null then "closed" else $k.state end),
-      state_reason: (if ($assumed | index($k.number)) != null and $k.state != "closed" then "completed" else ($k.state_reason // null) end)})) as $list
+      state: (if ($assumed | any(.number == $k.number)) then "closed" else $k.state end),
+      state_reason: (if ($assumed | any(.number == $k.number)) and $k.state != "closed"
+        then ([$assumed[] | select(.number == $k.number)][0].reason) else ($k.state_reason // null) end)})) as $list
     | ($list | map(select(.state == "closed")) | length) as $closed
     | ($list | length > 0 and $closed == ($list | length)) as $all
     | . + [$parent + {

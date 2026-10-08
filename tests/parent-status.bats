@@ -363,9 +363,9 @@ set_children() { local p="$1"; shift; printf '%s\n' "$@" | jq -s . >"$FIX/sub-is
   FAKE_FAIL=SetField.2 FAKE_FAIL_MSG="gh: boom" run_script status-set.sh --issue 17 --to start
   assert_success
   assert_equal "$(json_of "$output" | jq -c '.warnings | length')" 1
-  assert_equal "$(json_of "$output" | jq -r '.warnings[0]')" "親の Issue #10 の列を start に移せませんでした（Issue #17 の移動は済んでいます）（原因: error: Issue #10 の Status を「In Progress」にできませんでした）"
+  assert_equal "$(json_of "$output" | jq -r '.warnings[0]')" "親の Issue #10 の列を start に移せませんでした（Issue #17 の移動は済んでいます）（原因: Issue #10 の Status を「In Progress」にできませんでした）"
   FAKE_FAIL=api-parent FAKE_FAIL_MSG="gh: boom" run_script status-set.sh --issue 17 --to start
-  assert_equal "$(json_of "$output" | jq -r '.warnings[0]')" "Issue #17 の親を読めなかったので、親の列は移しません（原因: error: GitHub の API に失敗しました: gh: boom）"
+  assert_equal "$(json_of "$output" | jq -r '.warnings[0]')" "Issue #17 の親を読めなかったので、親の列は移しません（原因: GitHub の API に失敗しました: gh: boom）"
   run_script status-set.sh --issue 17 --to start
   assert_equal "$(json_of "$output" | jq -c '.warnings')" "[]"
 }
@@ -374,5 +374,50 @@ set_children() { local p="$1"; shift; printf '%s\n' "$@" | jq -s . >"$FIX/sub-is
   setup_parents
   FAKE_FAIL=SetField.2 FAKE_FAIL_MSG="gh: boom" run_script status-set.sh --issue 17 --to start
   assert_success
-  assert_equal "$(json_of "$output" | jq -r '.warnings[0]')" "親の Issue #10 の列を start に移せませんでした（Issue #17 の移動は済んでいます）（原因: error: Issue #10 の Status を「In Progress」にできませんでした）"
+  assert_equal "$(json_of "$output" | jq -r '.warnings[0]')" "親の Issue #10 の列を start に移せませんでした（Issue #17 の移動は済んでいます）（原因: Issue #10 の Status を「In Progress」にできませんでした）"
+}
+
+@test "parent-state: --assume-closed に理由を付けると、その閉じ方で suggest が決まる（全員取りやめなら not_planned）" {
+  setup_parents
+  set_children 10 "$(sub 17 open)" "$(sub 18 closed not_planned)"
+  run_script parent-state.sh --issue 17 --assume-closed 17:not_planned
+  assert_success
+  assert_equal "$(jq -c '.parents[0] | [.suggest, .children.list[0].state_reason]' <<<"$output")" '["not_planned","not_planned"]'
+  run_script parent-state.sh --issue 17 --assume-closed 17:duplicate
+  assert_equal "$(jq -r '.parents[0].suggest' <<<"$output")" not_planned
+  # 理由なしは completed
+  run_script parent-state.sh --issue 17 --assume-closed 17
+  assert_equal "$(jq -r '.parents[0].suggest' <<<"$output")" completed
+  # カンマ区切り・繰り返しと両立し、不正な理由は 64
+  set_children 10 "$(sub 17 open)" "$(sub 19 open)"
+  run_script parent-state.sh --issue 17 --assume-closed 17:not_planned,19:not_planned
+  assert_equal "$(jq -r '.parents[0].suggest' <<<"$output")" not_planned
+  run_script parent-state.sh --issue 17 --assume-closed 17:not_planned --assume-closed 19
+  assert_equal "$(jq -r '.parents[0].suggest' <<<"$output")" completed
+  run_script parent-state.sh --issue 17 --assume-closed 17:bogus
+  assert_failure 64
+}
+
+@test "親の移動が成功したときに内側が出した標準エラーの警告も、外側の標準エラーと warnings に引き継ぐ" {
+  setup_parents
+  mkdir -p "$TMP/wrap"
+  cat >"$TMP/wrap/gh" <<SH
+#!/usr/bin/env bash
+if [ "\$1 \$2" = "project item-edit" ] && [ -n "\${NOISY:-}" ]; then echo "gh: deprecated flag" >&2; fi
+exec "$TMP/bin/gh" "\$@"
+SH
+  chmod +x "$TMP/wrap/gh"
+  PATH="$TMP/wrap:$PATH" NOISY=1 run_script status-set.sh --issue 17 --to start
+  assert_success
+  assert_output --partial "warn: 親の Issue #10: gh: deprecated flag"
+  assert_equal "$(json_of "$output" | jq -r '.warnings[0]')" "親の Issue #10: gh: deprecated flag"
+  assert_equal "$(json_of "$output" | jq -c '[.parents[].issue]')" "[10,5]"
+}
+
+@test "親の読み取り用の一時ファイルは、終了時に残さない" {
+  setup_parents
+  mkdir -p "$TMP/tmpdir"
+  TMPDIR="$TMP/tmpdir" run_script status-set.sh --issue 17 --to start
+  assert_success
+  assert_equal "$(find "$TMP/tmpdir" -type f | wc -l | tr -d ' ')" 0
 }

@@ -153,13 +153,24 @@ case "$to" in
 esac
 if ! $no_parents && $move_parents && [ "$column" = "$(jq -r '.status.start // empty' <<<"$config")" ]; then
   err="$(mktemp)"
+  trap 'rm -f "$err"' EXIT
+  # 成功した呼び出しが標準エラーに出した警告も、外側の標準エラーと warnings に引き継ぐ（$err に捨てない）
+  forward_err() {
+    local line
+    while IFS= read -r line; do
+      [ -n "$line" ] || continue
+      warn "${1}${line#warn: }"
+    done <"$err"
+  }
   # 失敗の原因は、標準エラーの最後の1行を警告に添える
-  reason_of() { local l; l="$(grep -v '^[[:space:]]*$' "$err" | tail -n 1 || true)"; [ -z "$l" ] || printf '（原因: %s）' "$l"; }
+  reason_of() { local l; l="$(grep -v '^[[:space:]]*$' "$err" | tail -n 1 | sed 's/^error: //' || true)"; [ -z "$l" ] || printf '（原因: %s）' "$l"; }
   if chain="$(dw_issue_parents "$repo_nwo" "$issue" 2>"$err")"; then
+    forward_err "親の読み取り: "
     for p in $(jq -r '.[] | select(.state == "open") | .number' <<<"$chain"); do
       args=(--issue "$p" --to start --only-from todo --no-parents)
       $dry_run && args+=(--dry-run)
       if res="$("$BASH" "$DW_SCRIPTS_DIR/status-set.sh" "${args[@]}" 2>"$err")"; then
+        forward_err "親の Issue #${p}: "
         [ "$(jq -r '.changed // false' <<<"$res")" = true ] || continue
         parents="$(jq -c --argjson r "$res" '. + [$r | {issue, from, to, changed, dry_run}]' <<<"$parents")"
         while IFS= read -r a; do
@@ -172,7 +183,6 @@ if ! $no_parents && $move_parents && [ "$column" = "$(jq -r '.status.start // em
   else
     warn "Issue #${issue} の親を読めなかったので、親の列は移しません$(reason_of)"
   fi
-  rm -f "$err"
 fi
 
 jq -n --argjson i "$issue" --arg item "$item_id" --arg from "$from" --arg to "$column" \

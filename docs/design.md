@@ -399,7 +399,7 @@ Todo が増えたとき、どれから着手するか、同時に進めてよい
 | `issue-create.sh` | 起票、ラベルの付与、Project への追加、列と Story Point の設定、依存関係（blocked by）の登録、親の Issue への紐付け（サブ Issue） |
 | `issue-depend.sh` | 既にある Issue に、依存する Issue を足す（GitHub の依存関係（blocked by）と本文の「依存」。既にある依存は足さない。Issue が閉じていれば止まり、閉じた依存先は飛ばす）。`task-start` で今は着手しないことにしたときに使う |
 | `status-set.sh` | 列を移す。`start` の列に移したときは、`todo` の列にある親（とさらに上の親）も移す（`--no-parents` で親を動かさない。`--only-from` は今の列が指定の列のときだけ移す） |
-| `parent-state.sh` | Issue の親（とさらに上の親）の状態（子の数・閉じた子の数・閉じているか・列・閉じ方の案）を JSON で返す。`--assume-closed` で、閉じる途中の Issue（複数可）を閉じたものとして数える。Project を読めないときは列を null にして続ける。何も変えない（`task-finish`・`task-cancel` が使う） |
+| `parent-state.sh` | Issue の親（とさらに上の親）の状態（子の数・閉じた子の数・閉じているか・列・閉じ方の案）を JSON で返す。`--assume-closed` で、閉じる途中の Issue（複数可）を閉じたものとして数える（`12:not_planned` のように閉じ方も付けられる。付けなければ completed。`task-cancel` は取りやめの閉じ方を付けて渡す）。Project を読めないときは列を null にして続ける。何も変えない（`task-finish`・`task-cancel` が使う） |
 | `next-tasks.sh` | Todo の Issue を Project の並び順で読み、依存（blocked by と本文の「依存」）・本文の「変更するファイル・領域」・着手中の PR のファイルを添えて JSON で返す。待ち・親の Issue・保留の Issue（`status.hold` が設定されていれば）と、領域の重なりも判定する。`--issue N` では、Issue N と着手中の Issue との重なりと、その判断（`overlap`・`can_defer`）だけを返す（`task-start` が使う）。何も変えない |
 | `branch-name.sh` | ブランチ名を作り、検証する |
 | `task-start.sh` | ワークツリーの作成（サブモジュールの初期化を含む）、割り当て、In Progress への移動。`--no-worktree` では割り当てと移動だけ（Issue に確かなブランチがあれば、マージ済みでも止まる）。`--branch` では、既にあるブランチ（手元か origin のもの）を名前のまま使い、無ければ何も作らずに止まる（task-auto が前の作業から続けるのに使う）。親の Issue では何もせずに止まる |

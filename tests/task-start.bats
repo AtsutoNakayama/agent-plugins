@@ -569,7 +569,7 @@ run_start() {
   FAKE_FAIL=SetField.2 FAKE_FAIL_MSG="gh: boom" run_start --issue 17 --slug "task start"
   assert_success
   assert_equal "$(jq -c '.status.warnings | length' <<<"$json")" 1
-  assert_equal "$(jq -r '.status.warnings[0]' <<<"$json")" "親の Issue #10 の列を start に移せませんでした（Issue #17 の移動は済んでいます）（原因: error: Issue #10 の Status を「In Progress」にできませんでした）"
+  assert_equal "$(jq -r '.status.warnings[0]' <<<"$json")" "親の Issue #10 の列を start に移せませんでした（Issue #17 の移動は済んでいます）（原因: Issue #10 の Status を「In Progress」にできませんでした）"
   assert_equal "$(jq -c '.status.parents' <<<"$json")" "[]"
 }
 
