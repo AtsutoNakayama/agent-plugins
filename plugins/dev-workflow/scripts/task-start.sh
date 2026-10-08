@@ -8,7 +8,8 @@
 #   --branch NAME    既にあるブランチ（手元か origin のもの）を、名前を作り直さずにそのまま使う。task-auto が、止まった後に
 #                    実行し直したときに、前の作業のブランチ（auto-check.sh の resume）から続けるのに使う（名前を短い説明から
 #                    作り直すと、番号の先頭の 0 や短い説明の長さの違いで、別の新しいブランチができるため）。
-#                    手元にも origin にも無ければ、何も作らずに止まる（終了コード 2）
+#                    この Issue の作業のブランチ（branch.pattern に合い、番号が一致する）でなければ、または手元にも
+#                    origin にも無ければ、何も作らずに止まる（終了コード 2）
 #   --no-worktree    リポジトリを変えないタスク（調査・Issue の整理など）。1 と 2 を飛ばし、
 #                    割り当てと列の移動だけを行う（branch と worktree は null）。
 #                    Issue に確かなブランチ（branch.pattern に合い番号が一致するもの。マージ済みでも）があれば、作らずに着手せず
@@ -70,9 +71,8 @@ if $no_worktree; then
   [ -z "$use_branch" ] || dw_die "--no-worktree と --branch は一緒に指定できません" 64
 elif [ -n "$use_branch" ]; then
   [ -z "$slug" ] || dw_die "--branch と --slug は一緒に指定できません" 64
-  # git のオプションとして扱われる名前（-x）や、ブランチ名に使えない名前は受け取らない
-  case "$use_branch" in -*) dw_die "--branch のブランチ名が正しくありません: ${use_branch}" 64 ;; esac
-  git check-ref-format --branch "$use_branch" >/dev/null 2>&1 || dw_die "--branch のブランチ名が正しくありません: ${use_branch}" 64
+  # git のオプションとして扱われる名前（-x）や、ブランチ名に使えない名前は受け取らない（dw_valid_branch_name）
+  dw_valid_branch_name "$use_branch" || dw_die "--branch のブランチ名が正しくありません: ${use_branch}" 64
 else
   [ -n "$slug" ] || dw_die "--slug は必須です（ワークツリーを作らないときは --no-worktree）" 64
 fi
@@ -123,6 +123,11 @@ if ! $no_worktree; then
   # --- 1. ブランチ名 --------------------------------------------------------------
   if [ -n "$use_branch" ]; then
     branch="$use_branch"
+    # この Issue の作業のブランチ（branch.pattern に合い、番号が一致する。dw_issue_branches の確かなブランチと同じ）だけを受け取る。
+    # base_branch や別の Issue のブランチで着手しないため
+    parsed_issue="$(dw_parse_branch "$config" "$branch" | cut -d'|' -f2 | sed 's/^0*//')"
+    [ "$parsed_issue" = "$issue" ] \
+      || dw_die "ブランチ ${branch} は、Issue #${issue} の作業のブランチ（branch.pattern に合い、番号が ${issue}）ではありません" 2
     # 既にあるブランチだけを使う（無ければ origin/<base_branch> から作らない。前の作業を置き去りにした新しいブランチになるため）。
     # origin を読めなければ止まる（dw_remote_has_branch）
     git -C "$main_root" show-ref --verify --quiet "refs/heads/$branch" || dw_remote_has_branch "$main_root" "$branch" \

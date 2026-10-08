@@ -481,19 +481,23 @@ dw_fetch_repo_file() {
   esac
 }
 
-# 設定の base_branch が、git のブランチ名として使える値なら 0 を返す（設計書 §10）。
+# 値が、git のブランチ名として使える値なら 0 を返す（設計書 §10。設定の base_branch と、task-start.sh の --branch で使う）。
 # ダッシュで始まる値（-foo）は、git fetch origin <base_branch> などでオプションとして扱われ、失敗すべきところで先へ
 # 進んでしまうので、使う側ごとに -- を付けるのではなく、読む時点で拒否する。git check-ref-format --branch は
 # @{-1} などを今のリポジトリで展開してしまうので、refs/heads/ を付けて書式だけを検査し、ダッシュは別に拒否する。
 # HEAD と @ は書式には合うが、git が今の位置として扱う（git fetch origin HEAD は相手の既定のブランチを取る）ので拒否する。
 # + で始まる値も書式には合うが、git fetch が refspec の強制更新の印と読む（+develop は develop を取る）ので拒否する。
-# 使い方: dw_valid_base_branch <base_branch>
-dw_valid_base_branch() {
+# 使い方: dw_valid_branch_name <ブランチ名>
+dw_valid_branch_name() {
   case "$1" in
     -* | +* | HEAD | @) return 1 ;;
   esac
   git check-ref-format "refs/heads/$1" 2>/dev/null
 }
+
+# 設定の base_branch が、git のブランチ名として使える値なら 0 を返す（dw_valid_branch_name）
+# 使い方: dw_valid_base_branch <base_branch>
+dw_valid_base_branch() { dw_valid_branch_name "$1"; }
 
 # 設定（JSON のオブジェクト）の base_branch を出力する。文字列でない値や、git のブランチ名として使えない値
 # （dw_valid_base_branch）なら、終了コード 2 で終了する。base_branch を使うスクリプトは、設定から直接読まずに、

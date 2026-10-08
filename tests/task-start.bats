@@ -504,9 +504,36 @@ run_start() {
   assert_failure 64
   run_start --issue 17 --branch feat/17-x --no-worktree
   assert_failure 64
-  run_start --issue 17 --branch '-x'
-  assert_failure 64
-  run_start --issue 17 --branch 'a..b'
-  assert_failure 64
+  # dw_valid_base_branch と同じ決まりで、名前の書式だけを見る（@{-1} を今のリポジトリで展開しない。HEAD・@・+ も断る）
+  for name in -x a..b '@{-1}' HEAD @ +feat/17-x; do
+    run_start --issue 17 --branch "$name"
+    assert_failure 64
+    assert_output --partial "--branch のブランチ名が正しくありません"
+  done
+  assert_equal "$(called edit)" 0
+}
+
+@test "--branch は、branch.pattern に合い番号が --issue と同じブランチだけを受け取る（main や別の Issue のブランチは断る）" {
+  setup_fake_gh
+  setup_origin
+  git branch feat/99-other
+  git branch wip-17
+  for name in main feat/99-other wip-17; do
+    run_start --issue 17 --branch "$name"
+    assert_failure 2
+    assert_output --partial "ブランチ ${name} は、Issue #17 の作業のブランチ（branch.pattern に合い、番号が 17）ではありません"
+  done
+  [ ! -e .claude/worktrees ]
+  assert_equal "$(called edit)" 0
+}
+
+@test "--branch で手元に無いブランチを渡し、origin を読めなければ、「無い」とせずに何も作らずに止まる" {
+  setup_fake_gh
+  setup_origin
+  git remote set-url origin "$TMP/no-such.git"
+  run_start --issue 17 --branch feat/17-x
+  assert_failure 1
+  assert_output --partial "origin のブランチを読めませんでした（通信や認証を確かめてください）"
+  [ ! -e .claude/worktrees ]
   assert_equal "$(called edit)" 0
 }
