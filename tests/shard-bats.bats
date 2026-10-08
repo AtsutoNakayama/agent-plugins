@@ -71,38 +71,56 @@ shard() {
   assert_failure
 }
 
+@test "未知のオプションと余分な位置引数は、使い方を出して断る" {
+  run "${TEST_BASH:-bash}" "$SHARD" 2 --foo --dir "$TMP/t"
+  assert_failure
+  assert_output --partial "使い方"
+  run "${TEST_BASH:-bash}" "$SHARD" --foo --dir "$TMP/t"
+  assert_failure
+  assert_output --partial "使い方"
+  run "${TEST_BASH:-bash}" "$SHARD" 2 3 --dir "$TMP/t"
+  assert_failure
+  assert_output --partial "使い方"
+}
+
 @test ".bats が無いディレクトリはエラー" {
   mkdir "$TMP/empty"
   run "${TEST_BASH:-bash}" "$SHARD" 2 --dir "$TMP/empty"
   assert_failure
 }
 
-@test "このリポジトリの tests/ の全ファイルが入り、表に無い・消えたファイルは無い" {
+@test "このリポジトリの tests/ の全ファイルがシャードに入り、表と tests/ が食い違わない" {
   cd "$BATS_TEST_DIRNAME/.."
   run "${TEST_BASH:-bash}" "$SHARD" 4
   assert_success
   assert_equal "$(jq -r '.[].files | split(" ")[]' <<<"$output" | sort)" "$(printf '%s\n' tests/*.bats)"
-  # 表の更新漏れに気づけるよう、表のファイルが実在するかも確かめる
-  local name
+  # 表の更新漏れに気づけるよう、表と tests/ の食い違いを両方向で確かめる
+  local name f
   while IFS=$'\t' read -r name _; do
     case "$name" in '#'* | '') continue ;; esac
     [ -f "tests/$name" ] || fail "表に載っているのに無いファイル: $name"
   done <.github/scripts/bats-weights.tsv
-  [ "$(grep -vc '^#' .github/scripts/bats-weights.tsv)" -ge 1 ]
+  for f in tests/*.bats; do
+    grep -q "^${f#tests/}"$'\t' .github/scripts/bats-weights.tsv || fail "tests/ にあるのに表に無いファイル（bats-weights.tsv に足す）: $f"
+  done
 }
 
 @test "実際の tests/ で、最も重いシャードが、平均の1.5倍を超えない（偏らない）" {
   cd "$BATS_TEST_DIRNAME/.."
   run "${TEST_BASH:-bash}" "$SHARD" 4
   assert_success
-  local total max=0 l
-  total=$(awk -F'\t' '!/^#/ && NF { s += $2 } END { print s }' .github/scripts/bats-weights.tsv)
-  while read -r l; do
-    [ "$l" -gt "$max" ] && max=$l
-  done < <(jq -r '.[].files' <<<"$output" | while read -r fs; do
+  local total max=0 files t f w
+  total=$(awk -F'\t' '!/^#/ && NF { s += $2 } END { print s + 0 }' .github/scripts/bats-weights.tsv)
+  files=$(jq -r '.[].files' <<<"$output")
+  while read -r fs; do
     t=0
-    for f in $fs; do t=$((t + $(awk -F'\t' -v n="${f#tests/}" '$1 == n { print $2 }' .github/scripts/bats-weights.tsv))); done
-    echo "$t"
-  done)
+    for f in $fs; do
+      # 表に無いファイルは 0 とする（表の網羅は別のテストが確かめる）。数でなければ失敗させる
+      w=$(awk -F'\t' -v n="${f#tests/}" '$1 == n { v = $2 } END { print v + 0 }' .github/scripts/bats-weights.tsv)
+      [[ "$w" =~ ^[0-9]+$ ]] || fail "重みが数でない: $f / $w"
+      t=$((t + w))
+    done
+    if [ "$t" -gt "$max" ]; then max=$t; fi
+  done <<<"$files"
   [ $((max * 4)) -le $((total * 3 / 2)) ] || fail "偏っている: 最大 $max / 合計 $total"
 }

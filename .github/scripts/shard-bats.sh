@@ -9,6 +9,11 @@
 set -euo pipefail
 
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+usage() {
+  echo "使い方: shard-bats.sh <シャードの数（1以上の整数）> [--dir <ディレクトリ>] [--weights <表>]" >&2
+  exit 1
+}
+
 dir=tests
 weights="$here/bats-weights.tsv"
 n=""
@@ -16,11 +21,12 @@ while [ $# -gt 0 ]; do
   case "$1" in
     --dir) dir="${2:?--dir にはディレクトリが要ります}"; shift 2 ;;
     --weights) weights="${2:?--weights にはファイルが要ります}"; shift 2 ;;
-    *) n="$1"; shift ;;
+    -*) usage ;;
+    *) [ -z "$n" ] || usage; n="$1"; shift ;;
   esac
 done
 case "$n" in
-  '' | *[!0-9]* | 0) echo "使い方: shard-bats.sh <シャードの数（1以上の整数）> [--dir <ディレクトリ>] [--weights <表>]" >&2; exit 1 ;;
+  '' | *[!0-9]* | 0) usage ;;
 esac
 
 files=""

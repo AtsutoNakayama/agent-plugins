@@ -36,6 +36,7 @@ setup-labels.bats	5
 setup-models.bats	4
 setup-project.bats	11
 setup-repo.bats	14
+shard-bats.bats	2
 skills.bats	9
 status-set.bats	4
 task-flow.bats	5
