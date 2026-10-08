@@ -2,8 +2,8 @@
 # 各スクリプトから source する共通処理。
 # macOS 標準の bash 3.2 でも動くよう、連想配列・mapfile・${var,,} などは使わない。
 
-DW_SCRIPTS_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-DW_PLUGIN_ROOT="$(cd "$DW_SCRIPTS_DIR/.." && pwd)"
+DW_SCRIPTS_DIR="$(CDPATH='' cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+DW_PLUGIN_ROOT="$(CDPATH='' cd "$DW_SCRIPTS_DIR/.." && pwd)"
 export DW_SCRIPTS_DIR DW_PLUGIN_ROOT
 
 # エラーを1行で標準エラーに出して終了する。

@@ -37,7 +37,7 @@
 set -euo pipefail
 
 # shellcheck source=lib/common.sh
-. "$(cd "$(dirname "$0")" && pwd)/lib/common.sh"
+. "$(CDPATH='' cd "$(dirname "$0")" && pwd)/lib/common.sh"
 dw_require gh jq
 
 # macOS の BSD sed が日本語で失敗しないよう、バイト列として扱わせる

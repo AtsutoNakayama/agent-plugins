@@ -38,7 +38,7 @@ export LC_ALL=C
 
 command -v jq >/dev/null 2>&1 || exit 0
 # shellcheck source=../scripts/lib/common.sh
-. "$(cd "$(dirname "$0")" && pwd)/../scripts/lib/common.sh"
+. "$(CDPATH='' cd "$(dirname "$0")" && pwd)/../scripts/lib/common.sh"
 # shellcheck source=../scripts/lib/git-command.sh
 . "$DW_SCRIPTS_DIR/lib/git-command.sh"
 
@@ -62,9 +62,9 @@ created=false
 # フックの入力の cwd は、コマンドを実行した後の Claude Code のディレクトリ（外側の cd で移った先。
 # プロジェクトの外へ移ったときは、Claude Code が戻した先（プロジェクトのルート。$CLAUDE_PROJECT_DIR））
 cwd="$(jq -r '.cwd // empty' <<<"$input")"
-dir="$( (cd "${cwd:-.}" && pwd -P) 2>/dev/null || true)"
+dir="$( (CDPATH='' cd "${cwd:-.}" && pwd -P) 2>/dev/null || true)"
 project_dir=""
-[ -z "${CLAUDE_PROJECT_DIR:-}" ] || project_dir="$( (cd "$CLAUDE_PROJECT_DIR" && pwd -P) 2>/dev/null || true)"
+[ -z "${CLAUDE_PROJECT_DIR:-}" ] || project_dir="$( (CDPATH='' cd "$CLAUDE_PROJECT_DIR" && pwd -P) 2>/dev/null || true)"
 
 # 操作ごとの対象を、同じ添え字で持つ
 #   ev_kind    push・commit・created（PR・Issue を作った）・create（ブランチを作る）

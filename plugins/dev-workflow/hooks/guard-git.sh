@@ -24,7 +24,7 @@ set -euo pipefail
 export LC_ALL=C
 
 # shellcheck source=../scripts/lib/common.sh
-. "$(cd "$(dirname "$0")" && pwd)/../scripts/lib/common.sh"
+. "$(CDPATH='' cd "$(dirname "$0")" && pwd)/../scripts/lib/common.sh"
 # shellcheck source=../scripts/lib/git-command.sh
 . "$DW_SCRIPTS_DIR/lib/git-command.sh"
 dw_require jq
@@ -37,7 +37,7 @@ case "$cmd" in
   *) exit 0 ;;
 esac
 cwd="$(jq -r '.cwd // empty' <<<"$input")"
-dir="$( (cd "${cwd:-.}" && pwd -P) 2>/dev/null || true)"
+dir="$( (CDPATH='' cd "${cwd:-.}" && pwd -P) 2>/dev/null || true)"
 # ブランチ名の警告（最後にまとめて出す）
 warnings=() nwarn=0
 
