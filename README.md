@@ -59,6 +59,22 @@ Issue の番号を取るスキル（`task-start`・`task-status`・`task-finish`
 }
 ```
 
+### テストとチェックのコマンド
+
+`branch-update`・`pr-respond`・`review` は、直した後や取り込んだ後に、テストとチェックを実行します。実行するコマンドは、次の順で決めます。
+
+1. 設定（`.claude/dev-workflow/config.json`。自分だけなら `config.local.json`）の `checks.commands` があれば、それを順に実行します。空の配列（`[]`）は、実行するものが無いと決めたことになります。
+2. 無ければ（既定は `null`）、リポジトリの手がかりから推測します。`plugins/dev-workflow/scripts/checks-commands.sh` が、CONTRIBUTING.md・package.json の scripts・Makefile のターゲット・CI の設定ファイル・`Cargo.toml` や `go.mod` などを JSON で出します。CONTRIBUTING.md が無くても使えます。
+3. それでも分からなければ、ユーザーに聞きます。答えを設定に保存するかも聞き、保存すれば次からは聞きません（`checks-commands.sh --save --scope <local・team> --command "<コマンド>"`。実行するものが無いなら `--none`）。
+
+```json
+{
+  "checks": {
+    "commands": ["make lint", "make test"]
+  }
+}
+```
+
 ### 自動で進める（task-auto）
 
 `/dev-workflow:task-auto 12` のように Issue を指定すると、ユーザーの承認や入力なしで、Issue #12 から draft の PR まで進めます。今のスキル（`task-start`・`commit`・`review`・`pr-create`）の手順をたどり、それぞれの確認には、決まった表のとおりに AI が代わりに答えます。実装・テスト・コミットはサブエージェントに任せ、レビューは `/dev-workflow:review` で行います。
