@@ -70,7 +70,7 @@ Claude のレビューは、上限のコメントがきっかけのときは同�
 
 ## Issue から自動で PR を作る
 
-Issue にラベル `auto` を付けると、GitHub Actions が `/dev-workflow:task-auto` を実行し、着手から draft の PR の作成まで自動で進めます（`.github/workflows/task-auto.yml`）。手元のセッションは要りません。マージは人が行います。
+Issue にラベル `auto` を付けると、GitHub Actions が `/dev-workflow:task-auto` を実行し、着手から PR の作成まで自動で進めます（`.github/workflows/task-auto.yml`）。手元のセッションは要りません。マージは人が行います。
 
 - 起動するのは、Issue に `auto` が付いた瞬間だけです（GitHub が送る `issues` の `labeled` イベントで起動し、ポーリングはしません）。ほかのラベルでは何もしません。
 - ラベルを付けた人がこのリポジトリの write 以上のときだけ動きます。triage の人が付けても、動きません（ジョブは何もせずに終わります）。

@@ -6,4 +6,4 @@ timeout_seconds: 600
 allowed_tools: [Bash, Read, Glob, Grep, Skill]
 ---
 
-#2 を、確認なしで draft の PR まで自動で進めて
+#2 を、確認なしで PR まで自動で進めて
