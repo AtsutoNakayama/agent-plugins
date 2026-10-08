@@ -86,7 +86,8 @@ Issue にラベル `auto` を付けると、GitHub Actions が `/dev-workflow:ta
 2. App の ID と秘密鍵（.pem）を控え、App をこのリポジトリだけにインストールします。
 3. リポジトリの Variables に `AUTO_APP_ID`（App の ID）を、Secrets に `AUTO_APP_PRIVATE_KEY`（秘密鍵の中身）を登録します。`CLAUDE_CODE_OAUTH_TOKEN` は、上の「PR の自動レビュー」の設定と共通です。
 4. ラベルを作ります。`gh label create auto --description "Claude が自動で PR まで進める" --color 5319e7`。プラグインの既定のラベル（`labels.json`）には入れません（このリポジトリの運用のためのラベルです）。
-5. `.claude/dev-workflow/config.json` の `auto.enabled` を true にします（このリポジトリは設定済みです。task-auto は、有効にしたリポジトリでしか動きません）。
+
+task-auto は `auto.enabled` が true のリポジトリでしか動きません。このリポジトリでは `config.json` には書かず、ワークフローが実行のたびに個人の層（`config.local.json`。git の対象外）で有効にします。手元のセッションでは有効になりません。
 
 ## 書き方のルール
 
