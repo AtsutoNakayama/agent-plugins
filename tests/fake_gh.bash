@@ -14,6 +14,7 @@
 #                                   https://github.com/me/demo/pull/42 を返す
 # - gh pr comment N --body-file -   「pr-comment N」を $CALLS に記録し、標準入力を $TMP/pr-comment-body に写す
 # - gh pr close N                   「pr-close N」を $CALLS に記録する
+# - gh pr ready N                   「pr-ready N」を $CALLS に記録する
 # - gh --version                    gh version $FAKE_GH_VERSION（既定: 2.96.0）を返す
 # - gh api user                     login: me を返す
 # - gh api --paginate repos/.../issues/N/sub_issues?...
@@ -78,6 +79,10 @@ case "$1 $2" in
   "pr close")
     echo "pr-close $3" >>"$CALLS"
     fail pr-close
+    ;;
+  "pr ready")
+    echo "pr-ready $3" >>"$CALLS"
+    fail pr-ready
     ;;
   "api -X")
     echo "api-delete $4" >>"$CALLS"

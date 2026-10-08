@@ -723,3 +723,13 @@ fake_issue_tasks() {
   assert_success
   assert_equal "$(jq -r .draft <<<"$json")" true
 }
+
+@test "既にある下書きの PR に --no-draft を付けても、下書きのままにして gh pr ready を呼ばない" {
+  setup_branch
+  echo '[{"number": 7, "url": "https://github.com/me/demo/pull/7", "isCrossRepository": false, "isDraft": true}]' >"$FIX/pr-list.json"
+  run_pr --issue 17 --body-file "$TMP/body.md" --no-draft
+  assert_success
+  assert_equal "$(jq -c '[.created, .pr.number, .draft]' <<<"$json")" '[false,7,true]'
+  assert_equal "$(called pr-create)" 0
+  assert_equal "$(called pr-ready)" 0
+}
