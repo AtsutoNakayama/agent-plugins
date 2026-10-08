@@ -102,6 +102,14 @@ labels_check() { jq -c '.checks[] | select(.name == "labels") | [.ok, .level, .d
   assert_output --partial "pr_check に改めてください"
 }
 
+@test "旧キー pr_respond が個人の設定（config.local.json）にあっても警告する" {
+  fake_gh
+  export FAKE_SCOPES="project"
+  echo '{"pr_respond": {"handlers": {}}}' >.claude/dev-workflow/config.local.json
+  run_script doctor.sh
+  assert_equal "$(jq -r '.checks[] | select(.name == "old-pr-respond-key") | .ok' <<<"$output")" false
+}
+
 @test "pr_check を使っていれば、旧キーの警告は出ない" {
   fake_gh
   export FAKE_SCOPES="project"

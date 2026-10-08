@@ -1,6 +1,6 @@
 ---
 name: gh-pr-check
-description: 自分が出した PR の状態（CI・レビュー・マージできるか）を確かめ、付いた指摘・質問・コメントや CI の失敗があれば、直すものをユーザーに選んでもらって直し、内容を見せて承認を得てから push と返信を行う。対応が要らなければ、状態を見せるだけで何も変えない。投稿者ごとに担当の skill が設定されていれば（例：CodeRabbit は coderabbit-respond）、その分は担当の skill に任せる。「PR を確認して」「#12 の PR を見て」「CI は通った？」「マージできる？」「指摘に対応して」「コメントに返信して」のように使う。人の PR のコードレビューには使わない（それは review）。
+description: 自分が出した PR の状態（CI・レビュー・マージできるか）を確かめ、付いた指摘・質問・コメントや CI の失敗があれば、直すものをユーザーに選んでもらって直し、内容を見せて承認を得てから push と返信を行う。対応が要らなければ、状態を見せるだけで何も変えない。投稿者ごとに担当の skill が設定されていれば（例：CodeRabbit は coderabbit-respond）、その分は担当の skill に任せる。「PR を確認して」「#12 の PR を見て」「指摘に対応して」「コメントに返信して」のように使う。人の PR のコードレビューには使わない（それは review）。
 argument-hint: "[PR番号]"
 ---
 
@@ -31,7 +31,7 @@ PR を出した後の任意の寄り道で、マージや task-finish はこの�
 - レビュー：`pr.review_decision`（`APPROVED`・`CHANGES_REQUESTED`・`REVIEW_REQUIRED`、無ければ null）
 - マージできるか：`pr.mergeable`・`pr.merge_state`（`CLEAN` ならマージできる。`BLOCKED` はチェックの失敗・承認待ち・未解決のスレッドなど、`BEHIND` は base_branch の取り込み待ち、`DIRTY` はコンフリクト。`BEHIND`・`DIRTY` なら branch-update スキルを案内する）
 
-`pr.state` が `OPEN` でなければ（マージ済み・閉じた）、状態だけを伝えて終える。`feedback` が空で、`checks.state` が `failure` でもなければ、「対応するコメントはありません」と伝えて、何も変えずに終える。
+`pr.state` が `OPEN` でなければ（マージ済み・閉じた）、状態だけを伝えて終える。`feedback` が空で、`checks.state` が `failure` でもなければ、何も変えずに終える。このとき、コメントが無いことに加えて、CI が `pending`（実行中）か、`pr.merge_state` が `CLEAN` でない（`BLOCKED` など）なら、「対応するコメントはありませんが、CI が実行中です」「マージはまだできません（`BLOCKED`）」のように、その状態も伝える（「対応するコメントはありません」だけだと、問題が無いと読めるため）。
 
 ### 2. 担当を分ける
 

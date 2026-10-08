@@ -53,7 +53,12 @@ done
 # スキルの引数の #5 も受け、先頭の 0 をそろえる（dw_number。Issue の番号と同じ受け取り方）
 [ -z "$pr" ] || pr="$(dw_number --pr "$pr" PR)"
 
-handlers="$("$BASH" "$DW_SCRIPTS_DIR/config.sh" '.pr_check.handlers // {}' | jq -c .)"
+settings="$("$BASH" "$DW_SCRIPTS_DIR/config.sh" '{handlers: (.pr_check.handlers // {}), old_key: has("pr_respond")}')"
+handlers="$(jq -c .handlers <<<"$settings")"
+# 改名前のキーは使われない。黙って担当の skill に任せなくなるので知らせる（doctor.sh も警告する）
+if [ "$(jq -r .old_key <<<"$settings")" = true ]; then
+  dw_warn "設定のキー pr_respond は使われません。pr_check に改めてください（担当の skill に任せるには pr_check.handlers が要ります）"
+fi
 jq -e 'type == "object" and all(.[]; type == "string" and . != "")' >/dev/null <<<"$handlers" \
   || dw_die "設定の pr_check.handlers は、投稿者を担当する skill の名前に対応させるオブジェクトにしてください"
 

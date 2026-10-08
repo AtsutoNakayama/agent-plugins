@@ -219,6 +219,17 @@ out_of() { jq -c "$1" <<<"$output"; }
   assert_equal "$(out_of '[.handlers, .feedback[0].handler]')" '[{},null]'
 }
 
+@test "旧キー pr_respond が設定に残っていれば、使われないことを警告し、担当の skill には任せない" {
+  setup_fake_gh
+  echo '{"pr_respond": {"handlers": {"coderabbitai[bot]": "coderabbit-respond"}}}' >"$REPO/.claude/dev-workflow/config.json"
+  pr_view '{comments: [{id: "C1", author: {login: "coderabbitai"}, body: "要約", createdAt: "t1", url: "u1"}]}'
+  run_script pr-feedback.sh
+  assert_success
+  assert_output --partial "設定のキー pr_respond は使われません。pr_check に改めてください"
+  out="$("${TEST_BASH:-bash}" "$SCRIPTS/pr-feedback.sh" 2>/dev/null)"
+  assert_equal "$(jq -c '[.handlers, .feedback[0].handler]' <<<"$out")" '[{},null]'
+}
+
 @test "担当の設定がオブジェクトでなければ止まる" {
   setup_fake_gh
   for h in '["coderabbit-respond"]' '{"alice": 1}' '{"alice": ""}'; do
