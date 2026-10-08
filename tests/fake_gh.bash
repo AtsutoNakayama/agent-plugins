@@ -19,8 +19,9 @@
 # - gh api --paginate repos/.../issues/N/sub_issues?...
 #                                   「api-sub-issues <パス（? より前）>」を $CALLS に記録し、$FIX/sub-issues-N.json（無ければ []）を返す
 # - gh api --paginate repos/.../rules/branches/<ブランチ>?...
-#                                   「api-rules <パス>」を $CALLS に記録し、ブランチに効いているルールとして $FIX/rules-<ブランチ（パスのままの形）>.json、
-#                                   無ければ $FIX/rules.json、それも無ければ [] を返す
+#                                   「api-rules <パス>」を $CALLS に記録し、ブランチに効いているルールとして $FIX/rules/<ブランチ>.json、
+#                                   無ければ $FIX/rules.json、それも無ければ [] を返す。<ブランチ> は、パスの URL エンコードを戻した
+#                                   ブランチ名そのままで、/ はディレクトリの区切りになる（release/v1 なら $FIX/rules/release/v1.json）
 # - gh api repos/...                「api-get <パス>」を $CALLS に記録する。$FIX/remote-ref があれば {} を、無ければ HTTP 404 で失敗する
 # - gh api -X DELETE <パス>          「api-delete <パス>」を $CALLS に記録する
 # - gh api graphql                  操作名ごとに $FIX/<操作名>.json を返し、「<操作名> <変数>」を $CALLS に記録する
@@ -100,8 +101,9 @@ case "$1 $2" in
         echo "api-rules $3" >>"$CALLS"
         fail api-rules
         rb="${3#*/rules/branches/}"
-        rb="${rb%%\?*}"
-        if [ -f "$FIX/rules-$rb.json" ]; then cat "$FIX/rules-$rb.json"
+        rb="$(jq -rn --arg b "${rb%%\?*}" '$b | gsub("%(?<h>[0-9A-Fa-f]{2})"; .h | ascii_downcase | explode
+          | map(if . >= 97 then . - 87 else . - 48 end) | .[0] * 16 + .[1] | [.] | implode)')"
+        if [ -f "$FIX/rules/$rb.json" ]; then cat "$FIX/rules/$rb.json"
         elif [ -f "$FIX/rules.json" ]; then cat "$FIX/rules.json"
         else echo '[]'; fi
         ;;

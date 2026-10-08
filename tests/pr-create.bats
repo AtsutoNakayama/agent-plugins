@@ -733,16 +733,32 @@ fake_issue_tasks() {
   setup_branch
   fake_issue 17 '["feat"]'
   # 設定の base_branch（main）はキューを通すが、PR のマージ先（release/v1）は通さない
-  echo '[{"type": "merge_queue", "parameters": {"merge_method": "SQUASH"}}]' >"$FIX/rules-main.json"
-  echo '[{"type": "pull_request"}]' >"$FIX/rules-release%2Fv1.json"
+  mkdir -p "$FIX/rules/release"
+  echo '[{"type": "merge_queue", "parameters": {"merge_method": "SQUASH"}}]' >"$FIX/rules/main.json"
+  echo '[{"type": "pull_request"}]' >"$FIX/rules/release/v1.json"
   echo '[{"number": 7, "url": "https://github.com/me/demo/pull/7", "isCrossRepository": false, "baseRefName": "release/v1"}]' >"$FIX/pr-list.json"
   run_pr --issue 17 --body-file "$TMP/body.md" --dry-run
   assert_success
-  assert_equal "$(jq -c '[.created, .merge_queue]' <<<"$json")" '[false,false]'
+  assert_equal "$(jq -c '[.created, .base, .pr_base, .merge_queue]' <<<"$json")" '[false,"main","release/v1",false]'
   assert_equal "$(args api-rules)" 'repos/{owner}/{repo}/rules/branches/release%2Fv1?per_page=100'
-  # PR が無ければ、設定の base_branch で見る
+  # PR が無ければ、作る PR のマージ先（設定の base_branch）で見る
   rm "$FIX/pr-list.json"
   run_pr --issue 17 --body-file "$TMP/body.md" --dry-run
   assert_success
-  assert_equal "$(jq -c '[.created, .merge_queue]' <<<"$json")" '[true,true]'
+  assert_equal "$(jq -c '[.created, .base, .pr_base, .merge_queue]' <<<"$json")" '[true,"main","main",true]'
+}
+
+@test "既にある PR に push するとき（dry-run でない）も、pr_base とマージキューの判定は、その PR のマージ先にする（#178）" {
+  setup_branch
+  fake_issue 17 '["feat"]'
+  mkdir -p "$FIX/rules/release"
+  echo '[{"type": "pull_request"}]' >"$FIX/rules/main.json"
+  echo '[{"type": "merge_queue", "parameters": {"merge_method": "SQUASH"}}]' >"$FIX/rules/release/v1.json"
+  echo '[{"number": 7, "url": "https://github.com/me/demo/pull/7", "isCrossRepository": false, "baseRefName": "release/v1"}]' >"$FIX/pr-list.json"
+  run_pr --issue 17 --body-file "$TMP/body.md"
+  assert_success
+  assert_equal "$(jq -c '[.created, .pr.number, .base, .pr_base, .merge_queue]' <<<"$json")" '[false,7,"main","release/v1",true]'
+  assert_equal "$(git rev-parse origin/feat/17-x)" "$(git rev-parse HEAD)"
+  assert_equal "$(called pr-create)" 0
+  assert_equal "$(args api-rules)" 'repos/{owner}/{repo}/rules/branches/release%2Fv1?per_page=100'
 }
