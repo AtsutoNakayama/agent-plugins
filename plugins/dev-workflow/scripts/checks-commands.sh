@@ -23,7 +23,8 @@
 #     makefile_targets   Makefile のターゲットのうち、同じ名前で始まるもの
 #     ci_workflows       CI の設定ファイルのパス
 #     project_files      ビルドやテストの手がかりになるファイル（Cargo.toml・go.mod・pyproject.toml など）のパス
-#   saved      --save のときだけ。{file, scope, commands, local_hint}（local_hint は個人の設定が git に無視されていないときの案内か null）
+#   saved      --save のときだけ。{file, scope, commands, local_hint, warning}（local_hint は個人の設定が git に無視されていないときの案内か null。
+#              warning は、保存した層より優先される層が別の値を決めていて、保存した値が使われないときの知らせか null）
 #
 # 止まるとき: checks.commands が null でも配列でもない・文字列でない要素や空の要素がある（終了コード 2）、
 #             --save の引数の誤り（64）、設定を読めない・書けない（2）
@@ -46,7 +47,7 @@ while [ $# -gt 0 ]; do
       case "$1" in
         --scope) scope="$2" ;;
         --command)
-          [ -n "$2" ] || dw_die "--command には空でないコマンドを指定してください" 64
+          case "$2" in *[![:space:]]*) ;; *) dw_die "--command には空でないコマンドを指定してください" 64 ;; esac
           case "$2" in *$'\n'*) dw_die "--command に改行は使えません" 64 ;; esac
           cmds="${cmds}${2}"$'\n'
           ;;
@@ -87,6 +88,11 @@ if $save; then
     target="$repo_root/.claude/dev-workflow/config.json"
   fi
   value="$(printf '%s' "$cmds" | jq -R . | jq -sc .)"
+  if [ -f "$target" ]; then
+    dw_check_json "$target"
+    jq -e '(.checks // {}) | type == "object"' "$target" >/dev/null \
+      || dw_die "${target} の checks がオブジェクトではありません。直してから保存してください" 2
+  fi
   # $v は jq の変数で、bash に展開させない
   # shellcheck disable=SC2016
   dw_write_config "$target" --argjson v "$value" '.checks = ((.checks // {}) + {commands: $v})'
@@ -111,7 +117,7 @@ if [ "$commands" = null ]; then
     if [ -z "$mk" ] && [ -f "$repo_root/$f" ]; then mk="$f"; fi
   done
   if [ -n "$mk" ]; then
-    targets="$(LC_ALL=C sed -n 's/^\(\(test\|lint\|check\|typecheck\|build\|verify\|ci\)[A-Za-z0-9_.-]*\):\([^=]\|$\).*/\1/p' "$repo_root/$mk" | sort -u)"
+    targets="$(LC_ALL=C sed -En 's/^((test|lint|check|typecheck|build|verify|ci)[A-Za-z0-9_.-]*):([^=]|$).*/\1/p' "$repo_root/$mk" | sort -u)"
   fi
   for f in .github/workflows/*.yml .github/workflows/*.yaml .gitlab-ci.yml .circleci/config.yml Jenkinsfile; do
     if [ -f "$repo_root/$f" ]; then ci="${ci}${f}"$'\n'; fi
@@ -121,7 +127,7 @@ if [ "$commands" = null ]; then
   done
   scripts=null
   if [ -f "$repo_root/package.json" ]; then
-    scripts="$(jq -c '(.scripts // {}) | with_entries(select(.key | test("^(test|lint|check|typecheck|build|verify|ci)([:_.-].*)?$")))' "$repo_root/package.json" 2>/dev/null)" \
+    scripts="$(jq -c '((.scripts // {}) | if type == "object" then . else {} end) | with_entries(select(.key | test("^(test|lint|check|typecheck|build|verify|ci)([:_.-].*)?$")))' "$repo_root/package.json" 2>/dev/null)" \
       || dw_die "package.json を JSON として読めません" 2
   fi
   lines() { printf '%s' "$1" | jq -R . | jq -sc 'map(select(. != ""))'; }
@@ -130,9 +136,18 @@ if [ "$commands" = null ]; then
     '{contributing: (if $c == "" then null else $c end), package_scripts: $s, makefile_targets: $t, ci_workflows: $w, project_files: $p}')"
 fi
 
+warning="" saved_value=""
 if $save; then
-  jq -nc --argjson commands "$commands" --argjson hints "$hints" --arg file "$target" --arg scope "$scope" --arg hint "$hint" \
-    '{commands: $commands, hints: $hints, saved: {file: $file, scope: $scope, commands: $commands, local_hint: (if $hint == "" then null else $hint end)}}'
+  saved_value="$(printf '%s' "$cmds" | jq -R . | jq -sc .)"
+  if $none; then saved_value='[]'; fi
+  if [ "$commands" != "$saved_value" ]; then
+    warning="保存した値（${scope}）より優先される層が checks.commands を決めているため、実際に使われるのは ${commands} です"
+  fi
+fi
+
+if $save; then
+  jq -nc --arg warning "$warning" --argjson saved "$saved_value" --argjson commands "$commands" --argjson hints "$hints" --arg file "$target" --arg scope "$scope" --arg hint "$hint" \
+    '{commands: $commands, hints: $hints, saved: {file: $file, scope: $scope, commands: $saved, local_hint: (if $hint == "" then null else $hint end), warning: (if $warning == "" then null else $warning end)}}'
 else
   jq -nc --argjson commands "$commands" --argjson hints "$hints" '{commands: $commands, hints: $hints}'
 fi

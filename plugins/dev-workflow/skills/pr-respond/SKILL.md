@@ -69,7 +69,7 @@ AskUserQuestion の複数選択（`multiSelect: true`）で、直す指摘と答
 
 直す前に、今のワークツリーのブランチが PR のブランチ（`pr.head`）かを確かめる。違えば、そのブランチのワークツリーに移ってから直す（無ければ、どこで直すかユーザーに聞く）。
 
-選ばれた指摘だけを直す。リポジトリの書き方のルール（CONTRIBUTING.md など）に従う。テストとチェックは、`${CLAUDE_PLUGIN_ROOT}/scripts/checks-commands.sh` を実行して、実行するコマンドを決める。`commands` が配列なら（設定の `checks.commands`）それを順に実行する（空の配列は、実行するものが無いと決めてあること）。null なら、`hints`（package.json の scripts・Makefile のターゲット・CI の設定・`contributing` など）を読んで推測する（CONTRIBUTING.md が無くても、ほかの手がかりを使う）。それでも分からなければ、ユーザーに聞き、答えを `checks-commands.sh --save --scope <local・team> --command <コマンド>`（実行するものが無いなら `--none`）で設定に保存するかも聞く（保存すれば次からは聞かない）。決めたコマンドを実行して通ることを確かめ（関係するものだけに絞ってよい）、論理的な区切りごとに commit スキルでコミットする。
+選ばれた指摘だけを直す。リポジトリの書き方のルール（CONTRIBUTING.md など）に従う。テストとチェックは、`${CLAUDE_PLUGIN_ROOT}/scripts/checks-commands.sh` を実行し、`--help` の「決め方」（設定 `checks.commands` → リポジトリの手がかりから推測 → ユーザーに聞く）に従って、実行するコマンドを決める。ユーザーに聞いたときは、答えを `checks-commands.sh --save --scope <local・team> --command <コマンド>`（実行するものが無いなら `--none`）で設定に保存するかも聞く。出力の `saved.warning` があれば、そのままユーザーに伝える。決めたコマンドを実行して通ることを確かめ（関係するものだけに絞ってよい）、論理的な区切りごとに commit スキルでコミットする。
 
 ### 6. 内容を見せて承認を得る
 

@@ -16,7 +16,7 @@ LOCAL=.claude/dev-workflow/config.local.json
 
 @test "package.json・Makefile・CI・CONTRIBUTING.md・言語の設定ファイルから手がかりを出す（CONTRIBUTING.md が無くても出る）" {
   echo '{"scripts": {"test": "jest", "lint:fix": "eslint --fix .", "start": "node ."}}' >package.json
-  printf 'VAR=1\ntest:\n\tbats tests\nlint-all: a\nother:\n' >Makefile
+  printf 'VAR=1\ntest:\n\tbats tests\nlint-all: a\nother:\ntest-x := 1\ntest:=1\n' >Makefile
   mkdir -p .github/workflows
   : >.github/workflows/ci.yml
   : >go.mod
@@ -106,10 +106,46 @@ LOCAL=.claude/dev-workflow/config.local.json
   assert_failure 64
   run_script checks-commands.sh --save --scope team --command ""
   assert_failure 64
+  run_script checks-commands.sh --save --scope team --command "  "
+  assert_failure 64
+  run_script checks-commands.sh --save --scope team --command $'a\nb'
+  assert_failure 64
   run_script checks-commands.sh --scope team
   assert_failure 64
   run_script checks-commands.sh --bogus
   assert_failure 64
   [ ! -e "$TEAM" ] || [ "$(jq -c '.checks // null' "$TEAM")" = null ]
   [ ! -e "$LOCAL" ]
+}
+
+@test "package.json の scripts がオブジェクトでなくても止まらず、package_scripts は空になる" {
+  echo '{"scripts": []}' >package.json
+  run_script checks-commands.sh
+  assert_success
+  assert_equal "$(jq -c .hints.package_scripts <<<"$output")" '{}'
+}
+
+@test "--save は、checks がオブジェクトでない設定を壊さず、2 で止まる" {
+  echo '{"checks": "make test"}' >"$TEAM"
+  run_script checks-commands.sh --save --scope team --command "make test"
+  assert_failure 2
+  assert_equal "$(jq -c .checks "$TEAM")" '"make test"'
+}
+
+@test "--save は、優先される層が別の値を決めていて保存した値が使われないとき、warning を出す" {
+  echo '{"checks": {"commands": ["make ci"]}}' >"$LOCAL"
+  run_script checks-commands.sh --save --scope team --command "make test"
+  assert_success
+  assert_equal "$(jq -c '[.saved.commands, .commands]' <<<"$output")" '[["make test"],["make ci"]]'
+  jq -e '.saved.warning | test("make ci")' <<<"$output" >/dev/null
+  run_script checks-commands.sh --save --scope local --command "make ci"
+  assert_equal "$(jq -c .saved.warning <<<"$output")" null
+}
+
+@test "--help に決め方（設定 → 推測 → 聞いて保存）が書かれている（スキルはここを指す）" {
+  run_script checks-commands.sh --help
+  assert_success
+  assert_output --partial "commands が配列"
+  assert_output --partial "hints"
+  assert_output --partial "--save"
 }
