@@ -7,7 +7,7 @@
 set -euo pipefail
 
 here="$(CDPATH='' cd "$(dirname "$0")" && pwd)"
-plugin="$(cd "$here/../../plugins/dev-workflow" && pwd)"
+plugin="$(CDPATH='' cd "$here/../../plugins/dev-workflow" && pwd)"
 
 command -v claude >/dev/null 2>&1 || { echo "error: claude（Claude Code）が見つかりません" >&2; exit 1; }
 

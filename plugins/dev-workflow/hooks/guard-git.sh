@@ -37,7 +37,7 @@ case "$cmd" in
   *) exit 0 ;;
 esac
 cwd="$(jq -r '.cwd // empty' <<<"$input")"
-dir="$( (cd "${cwd:-.}" && pwd -P) 2>/dev/null || true)"
+dir="$( (CDPATH='' cd "${cwd:-.}" && pwd -P) 2>/dev/null || true)"
 # ブランチ名の警告（最後にまとめて出す）
 warnings=() nwarn=0
 

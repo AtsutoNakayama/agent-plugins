@@ -28,7 +28,7 @@ cwd=""
 if command -v jq >/dev/null 2>&1; then
   cwd="$(jq -r '.cwd // empty' <<<"$input" 2>/dev/null || true)"
 fi
-repo_root="$( (cd "${cwd:-.}" 2>/dev/null && dw_repo_root) || true)"
+repo_root="$( (CDPATH='' cd "${cwd:-.}" 2>/dev/null && dw_repo_root) || true)"
 # 導入していないリポジトリでは何もしない
 dw_is_set_up "$repo_root" || exit 0
 
