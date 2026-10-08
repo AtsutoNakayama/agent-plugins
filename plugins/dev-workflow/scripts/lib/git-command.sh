@@ -73,7 +73,7 @@ gc_resolve_dir() {
 # 使い方: gc_git <コマンド>...   （gc_git_dir と gc_gopts と gc_genv を参照する）
 gc_git() {
   [ -n "$gc_git_dir" ] || return 1
-  (cd "$gc_git_dir" && env ${gc_genv[@]+"${gc_genv[@]}"} git ${gc_gopts[@]+"${gc_gopts[@]}"} "$@" 2>/dev/null)
+  (CDPATH='' cd "$gc_git_dir" && env ${gc_genv[@]+"${gc_genv[@]}"} git ${gc_gopts[@]+"${gc_gopts[@]}"} "$@" 2>/dev/null)
 }
 
 # 操作の対象（gc_git_dir・gc_gopts・gc_genv）のリポジトリを求めて、gc_repo と gc_root に入れる。コールバックの中で呼ぶ。

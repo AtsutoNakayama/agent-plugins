@@ -13,7 +13,7 @@ load lib/bats-assert/load
 # 一時ディレクトリに git リポジトリを作って、そこに移る。独自の setup() から呼べるよう、名前を付けてある
 test_helper_setup() {
   # macOS の /var は /private/var へのシンボリックリンクなので、git が返すパスと揃えるため実体にする
-  TMP="$(cd "$(mktemp -d)" && pwd -P)"
+  TMP="$(CDPATH='' cd "$(mktemp -d)" && pwd -P)"
   REPO="$TMP/repo"
   export WORKFLOW_USER_DIR="$TMP/user"
   # CI やコンテナには git の名前とメールアドレスが無いので、テストでコミットできるよう決めておく

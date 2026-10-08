@@ -440,6 +440,14 @@ has() {
   grep -q 'models.actions' "$f" || fail "手順3の予定に、レビューのモデルの変更が入っていません"
 }
 
+@test "task-start は、ワークツリーを作って着手したら結果を伝えた後に止まらず実装に続け、決まらないときは AskUserQuestion で聞く（#239）" {
+  s7="$(step "$SKILLS/task-start/SKILL.md" 7)"
+  # shellcheck disable=SC2016 # バッククォートはスキルの本文の文字で、展開させない
+  has "手順7" "$s7" '止まらず、そのまま同じワークツリーで Issue の「やること」の作業（実装）に取りかかる' 'AskUserQuestion で聞いてから進める' 'ワークツリーを作らずに着手したとき（`worktree` が `null`）'
+  # task-auto は手順7の続行をしない（実装は作業役に任せる）
+  grep -qF 'task-start 手順7の、結果を伝えた後に実装へ続ける動きは、ここでは行わない' "$SKILLS/task-auto/SKILL.md" || fail "task-auto が手順7の続行を行わないと書かれていません"
+}
+
 @test "task-start は、既にブランチがあって --no-worktree が止まったら、そのワークツリーで作業するよう案内する" {
   grep -q '「Issue #N には既にブランチ … があります」で止まったら' "$SKILLS/task-start/SKILL.md"
 }
@@ -545,6 +553,11 @@ has() {
   # 相談のときの違いは1つの節にまとめ、手順の中に書き分けない（書き分けると、手順の間の継ぎ目が抜けるため）
   consult="$(section "$f" "## 起票を頼まれていない相談で呼ばれたとき")"
   [ -n "$consult" ] || fail "相談で呼ばれたときの節がありません"
+  # 導入していないリポジトリでは使わずに止まる。導入したかは config.sh の set_up で読む（設定ファイルを自分で探さない。#244）
+  grep -qF 'config.sh .set_up' <<<"$consult" || fail "相談の節に、導入したかを config.sh .set_up で確かめることが書かれていません"
+  # shellcheck disable=SC2016 # バッククォートはスキルの本文の文字で、展開させない
+  grep -qF '`false`' <<<"$consult" && grep -qF 'このスキルを使わずに止め' <<<"$consult" || fail "相談の節に、導入していなければ使わずに止まることが書かれていません"
+  grep -qF '設定ファイルを自分で探さない' <<<"$consult" || fail "相談の節に、設定ファイルを自分で探さないことが書かれていません"
   grep -qF '手順1〜3は起票を頼まれたときと同じに進める' <<<"$consult" || fail "相談の節に、手順は起票と同じに進めることが書かれていません"
   grep -qF 'ラベルと説明を「起票する」ではなく「下書きする」と書く' <<<"$consult" || fail "相談の節に、選択肢の書き方がありません"
   grep -qF '「このまま設定する」は「この値で下書きする」と書く' <<<"$consult" || fail "相談の節に、分割の提案の選択肢の書き方がありません"
@@ -586,6 +599,20 @@ has() {
     grep -q "| \`$v\` |" "$SKILLS/adr-create/SKILL.md" || fail "adr-create に proposal の $v がありません"
   done
   grep -q '出力の `proposal` に従う' "$SKILLS/pr-create/SKILL.md" || fail "pr-create が proposal に従いません"
+}
+
+# shellcheck disable=SC2016 # バッククォートはスキルの本文の文字で、展開させない
+@test "adr-create は、採択した ADR を書き換えないことと、一部だけ変える ADR の補足に関係を書くことを書く（設計書 §8）" {
+  adr="$SKILLS/adr-create/SKILL.md"
+  grep -qF '採択した ADR の本文は書き換えない' "$adr" || fail "adr-create に、採択した ADR を書き換えないことがありません"
+  grep -qF '「補足」に、その ADR へのリンクと、何を変えるかを書く（MADR の判断 0009）' "$adr" || fail "adr-create に、一部だけ変える ADR の補足の決まりがありません"
+  grep -qF '全部を覆すなら `--supersedes` で置き換える' "$adr" || fail "adr-create に、全部を覆すときは置き換えることがありません"
+  grep -qF '採択した ADR の本文は書き換えない' "$BATS_TEST_DIRNAME/../docs/design.md" || fail "設計書に、書き換えないことがありません"
+  grep -qF '関係を新しい ADR の「補足」に書く' "$BATS_TEST_DIRNAME/../docs/design.md" || fail "設計書に、補足に関係を書くことがありません"
+  grep -qF '「補足」に、その ADR へのリンクと、何を変えるかを書きます（MADR の判断 0009）' "$BATS_TEST_DIRNAME/../README.md" || fail "README に、補足に関係を書くことがありません"
+  tr="$BATS_TEST_DIRNAME/../plugins/dev-workflow/templates/adr/README.md"
+  grep -qF '`date` は、MADR では「判断を最後に更新した日」ですが、書き換えないので、判断をした日にします' "$tr" || fail "テンプレートの README に date の扱いがありません"
+  grep -qF '採択した ADR の本文は書き換えません' "$tr" || fail "テンプレートの README に、編集しないことがありません"
 }
 
 # shellcheck disable=SC2016 # バッククォートはスキルの本文の文字で、展開させない
@@ -723,4 +750,32 @@ has() {
   # 求められないときは移らずに止まる
   grep -q '移らずに' "$SKILLS/task-finish/SKILL.md"
   grep -q '移らずに' "$SKILLS/task-cancel/SKILL.md"
+}
+
+@test "task-finish と task-cancel は、子がすべて閉じた親を閉じるかを確認する手順を持ち、task-start・task-status は親の列を伝える（設計書 §4）" {
+  for name in task-finish task-cancel; do
+    f="$SKILLS/$name/SKILL.md"
+    grep -q '### [0-9]*\. 子がすべて閉じた親を閉じるか確認する' "$f" || fail "${name} に親を閉じるかの確認の手順がありません"
+    grep -q 'parent-state.sh' "$f" || fail "${name} が parent-state.sh を使っていません"
+    grep -q 'AskUserQuestion' "$f" || fail "${name} に確認（AskUserQuestion）がありません"
+    grep -q '下の親から順に' "$f" || fail "${name} に、上の親も下から順に確認することがありません"
+  done
+  grep -q 'not_planned' "$SKILLS/task-cancel/SKILL.md" || fail "task-cancel に、子がすべて取りやめのときの案がありません"
+  for name in task-start task-status; do
+    grep -q 'parents' "$SKILLS/$name/SKILL.md" || fail "${name} に、親の列の移動を伝えることがありません"
+  done
+  [ -x "$BATS_TEST_DIRNAME/../plugins/dev-workflow/scripts/parent-state.sh" ]
+}
+
+@test "親を閉じる確認は suggest が null でない親だけを対象にし、not_planned は issue-cancel.sh で閉じる。task-finish は複数の Issue をまとめて渡す" {
+  for name in task-finish task-cancel; do
+    f="$SKILLS/$name/SKILL.md"
+    grep -qF 'が null でないものがあれば' "$f" || fail "${name} に、suggest が null でない親だけを確認することがありません"
+    grep -q 'issue-cancel.sh --issue <親の番号> --reason' "$f" || fail "${name} に、not_planned を issue-cancel.sh で閉じる手順がありません"
+    grep -q -e '--sub-issues keep' "$f" || fail "${name} に --sub-issues keep がありません"
+  done
+  grep -q '二重に聞かない' "$SKILLS/task-finish/SKILL.md" || fail "task-finish に、同じ親を二重に聞かないことがありません"
+  grep -q '<番号1>,<番号2>' "$SKILLS/task-finish/SKILL.md" || fail "task-finish に、閉じる Issue をまとめて渡すことがありません"
+  grep -qF 'parent-state.sh --issue <番号> --assume-closed <番号>:<理由>' "$SKILLS/task-cancel/SKILL.md" || fail "task-cancel が取りやめた Issue を --assume-closed で渡していません"
+  grep -q '「Issue だけ閉じる」を選んだときも含む' "$SKILLS/task-cancel/SKILL.md" || fail "task-cancel の手順8の実行条件がありません"
 }

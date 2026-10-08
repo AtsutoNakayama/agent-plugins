@@ -16,6 +16,8 @@
 # ~/.claude/dev-workflow/*.md）は読まない（設計書 §1）。
 # ホームのリポジトリ（<repo>/.claude/dev-workflow が ~/.claude/dev-workflow と同じ場所）は、導入したリポジトリにならず、
 # その場所のファイルはチームの設定としても個人の上書きとしても読まない（dw_team_dir）。
+# 導入したかは、出力のトップレベルの set_up（真偽値）でも分かる。スキルが設定ファイルを自分で探さずに読むための値で、
+# ユーザーの層の判定（user_dir）と同じ1回の判定から決め、層を合わせた後に足すので、どの層の設定でも変えられない。
 set -euo pipefail
 
 # shellcheck source=lib/common.sh
@@ -29,6 +31,9 @@ user_dir="$(dw_user_dir_for "$repo_root")"
 # チームの設定の置き場所。ホームのリポジトリ（ユーザーの層と同じ場所）では空で、チームの設定としては読まない
 team_dir=""
 [ -z "$repo_root" ] || team_dir="$(dw_team_dir "$repo_root")"
+# 導入したか（user_dir は導入したときだけ空でなくなる。判定は dw_is_set_up の1回だけ）
+set_up=false
+[ -z "$user_dir" ] || set_up=true
 
 layers=()
 sources=()
@@ -97,6 +102,6 @@ done
 sources_json="$(printf '%s\n' ${sources[@]+"${sources[@]}"} | jq -R . | jq -sc 'map(select(. != ""))')"
 
 printf '%s\n' "${layers[@]}" \
-  | jq -s --argjson guides "$guides" --argjson sources "$sources_json" \
-      'reduce .[] as $l ({}; . * $l) + {guides: $guides, sources: $sources}' \
+  | jq -s --argjson guides "$guides" --argjson sources "$sources_json" --argjson set_up "$set_up" \
+      'reduce .[] as $l ({}; . * $l) + {guides: $guides, sources: $sources, set_up: $set_up}' \
   | jq -r "$filter"

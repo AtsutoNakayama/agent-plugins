@@ -8,7 +8,7 @@
 # macOS 標準の bash 3.2 でも動く。
 set -euo pipefail
 
-here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+here="$(CDPATH='' cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 usage() {
   echo "使い方: shard-bats.sh <シャードの数（1以上の整数）> [--dir <ディレクトリ>] [--weights <表>]" >&2
   exit 1
