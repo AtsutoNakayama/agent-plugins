@@ -38,7 +38,7 @@ export LC_ALL=C
 
 command -v jq >/dev/null 2>&1 || exit 0
 # shellcheck source=../scripts/lib/common.sh
-. "$(cd "$(dirname "$0")" && pwd)/../scripts/lib/common.sh"
+. "$(CDPATH='' cd "$(dirname "$0")" && pwd)/../scripts/lib/common.sh"
 # shellcheck source=../scripts/lib/git-command.sh
 . "$DW_SCRIPTS_DIR/lib/git-command.sh"
 

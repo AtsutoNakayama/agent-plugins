@@ -6,7 +6,7 @@
 #   例: tests/eval/run.sh --model sonnet --tag task-create --runs 1 --ablation none
 set -euo pipefail
 
-here="$(cd "$(dirname "$0")" && pwd)"
+here="$(CDPATH='' cd "$(dirname "$0")" && pwd)"
 plugin="$(cd "$here/../../plugins/dev-workflow" && pwd)"
 
 command -v claude >/dev/null 2>&1 || { echo "error: claude（Claude Code）が見つかりません" >&2; exit 1; }

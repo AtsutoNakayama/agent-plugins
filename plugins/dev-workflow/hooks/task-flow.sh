@@ -16,7 +16,7 @@
 set -euo pipefail
 
 # shellcheck source=../scripts/lib/common.sh
-. "$(cd "$(dirname "$0")" && pwd)/../scripts/lib/common.sh"
+. "$(CDPATH='' cd "$(dirname "$0")" && pwd)/../scripts/lib/common.sh"
 
 # Claude Code がフックの出力をそのまま渡す上限（文字数）
 limit=10000
