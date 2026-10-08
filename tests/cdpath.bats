@@ -6,6 +6,7 @@ load test_helper
 
 setup() {
   test_helper_setup
+  mark_set_up
   ROOT="$(CDPATH='' cd "$BATS_TEST_DIRNAME/.." && pwd -P)"
 }
 
@@ -37,11 +38,37 @@ setup() {
 $ROOT/plugins/dev-workflow"
 }
 
+@test "CDPATH を export していても、gc_git は相対パスの対象で git を実行できる" {
+  cd "$TMP"
+  # shellcheck disable=SC2016 # 起動した bash の中で展開させる
+  run env CDPATH="$TMP" "${TEST_BASH:-bash}" -c '. "$1/common.sh"; . "$1/git-command.sh"; gc_git_dir=repo; gc_git rev-parse --abbrev-ref HEAD' _ "$ROOT/plugins/dev-workflow/scripts/lib"
+  assert_success
+  assert_output "main"
+}
+
+@test "CDPATH を export していても、main を守るフックは相対パスの cwd のリポジトリで判断する" {
+  cd "$TMP"
+  jq -n '{hook_event_name: "PreToolUse", tool_name: "Bash", tool_input: {command: "git commit -m x"}, cwd: "repo"}' >"$TMP/input.json"
+  run env CDPATH="$TMP" "${TEST_BASH:-bash}" "$ROOT/plugins/dev-workflow/hooks/guard-git.sh" <"$TMP/input.json"
+  assert_failure 2
+  assert_output --partial "main の上ではコミットしません"
+}
+
+@test "CDPATH を export していても、SessionStart のフックは相対パスの cwd のリポジトリの設定を読む" {
+  cd "$TMP"
+  printf 'MARKER_FROM_REPO\n' >"$REPO/.claude/dev-workflow/task-flow.md"
+  jq -n '{hook_event_name: "SessionStart", source: "startup", cwd: "repo"}' >"$TMP/input.json"
+  run env CDPATH="$TMP" "${TEST_BASH:-bash}" "$ROOT/plugins/dev-workflow/hooks/task-flow.sh" <"$TMP/input.json"
+  assert_success
+  assert_output --partial "MARKER_FROM_REPO"
+}
+
 @test "スクリプトとフックの置き場所を求める cd は、CDPATH を空にして実行する" {
   cd "$ROOT"
   # $(cd ... のように、CDPATH='' を付けずに dirname の結果へ cd する書き方が残っていないこと
+  # 相対パスになりうる cwd・CLAUDE_PROJECT_DIR・gc_git_dir・here への cd も同じ
   # shellcheck disable=SC2016 # 正規表現の $ をそのまま渡す
-  run git grep -nE '\$\(cd "\$\(dirname|\$\(cd "\$DW_SCRIPTS_DIR' -- plugins .github/scripts tests/eval tests/test_helper.bash
+  run git grep -nE '(\$\(|\( ?)cd "(\$\(dirname|\$DW_SCRIPTS_DIR|\$\{cwd|\$CLAUDE_PROJECT_DIR|\$gc_git_dir|\$here)' -- plugins .github/scripts tests/eval tests/test_helper.bash
   assert_failure 1
   assert_output ""
 }
