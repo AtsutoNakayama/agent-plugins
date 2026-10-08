@@ -129,10 +129,7 @@ if [ "$commands" != null ]; then
   head_ref="$(git -C "$repo_root" symbolic-ref -q refs/remotes/origin/HEAD 2>/dev/null || true)"
   if [ -n "$head_ref" ] && merge_base="$(git -C "$repo_root" merge-base HEAD "$head_ref" 2>/dev/null)"; then
     any_changed=false any_unknown=false
-    # ホームのリポジトリには、チームの設定も個人の上書きも無い（ユーザーの層のファイルは比べない）
-    rels=""
-    [ -z "$(dw_team_dir "$repo_root")" ] || rels=".claude/dev-workflow/config.json .claude/dev-workflow/config.local.json"
-    for rel in $rels; do
+    for rel in .claude/dev-workflow/config.json .claude/dev-workflow/config.local.json; do
       # 個人の設定は、git に追跡されている（コミットされた）ときだけ比べる。追跡されていなければ、自分の設定なので信頼する
       if [ "$rel" = .claude/dev-workflow/config.local.json ] \
         && ! git -C "$repo_root" ls-files --error-unmatch -- "$rel" >/dev/null 2>&1; then

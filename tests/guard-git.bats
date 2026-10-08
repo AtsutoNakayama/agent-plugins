@@ -906,3 +906,19 @@ EOF
   export CDPATH="$TMP"
   silent "cd $TMP && git --git-dir=$TMP/cfg.git --work-tree=home push --force"
 }
+
+@test "ホームのリポジトリを、展開前の \$HOME・\${HOME}・GIT_WORK_TREE=~ で指しても、導入したとみなさない" {
+  export HOME="$TMP/home"
+  export WORKFLOW_USER_DIR="$HOME/.claude/dev-workflow"
+  mkdir -p "$WORKFLOW_USER_DIR"
+  echo '{}' >"$WORKFLOW_USER_DIR/config.json"
+  git init -q -b main "$HOME"
+  git -C "$HOME" add .claude/dev-workflow/config.json
+  git -C "$HOME" commit -q -m dotfiles
+  git clone -q --bare "$HOME" "$HOME/.dotfiles"
+  # shellcheck disable=SC2016
+  silent 'git --git-dir=$HOME/.dotfiles --work-tree=$HOME commit -m x' \
+    'git --git-dir=${HOME}/.dotfiles --work-tree ${HOME} push --force' \
+    'git --git-dir ~/.dotfiles --work-tree ~ push --force' \
+    'GIT_DIR=~/.dotfiles GIT_WORK_TREE=~ git push --force'
+}
