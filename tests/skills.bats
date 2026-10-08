@@ -724,3 +724,18 @@ has() {
   grep -q '移らずに' "$SKILLS/task-finish/SKILL.md"
   grep -q '移らずに' "$SKILLS/task-cancel/SKILL.md"
 }
+
+@test "task-finish と task-cancel は、子がすべて閉じた親を閉じるかを確認する手順を持ち、task-start・task-status は親の列を伝える（設計書 §4）" {
+  for name in task-finish task-cancel; do
+    f="$SKILLS/$name/SKILL.md"
+    grep -q '### [0-9]*\. 子がすべて閉じた親を閉じるか確認する' "$f" || fail "${name} に親を閉じるかの確認の手順がありません"
+    grep -q 'parent-state.sh' "$f" || fail "${name} が parent-state.sh を使っていません"
+    grep -q 'AskUserQuestion' "$f" || fail "${name} に確認（AskUserQuestion）がありません"
+    grep -q '下の親から順に' "$f" || fail "${name} に、上の親も下から順に確認することがありません"
+  done
+  grep -q 'not_planned' "$SKILLS/task-cancel/SKILL.md" || fail "task-cancel に、子がすべて取りやめのときの案がありません"
+  for name in task-start task-status; do
+    grep -q 'parents' "$SKILLS/$name/SKILL.md" || fail "${name} に、親の列の移動を伝えることがありません"
+  done
+  [ -x "$BATS_TEST_DIRNAME/../plugins/dev-workflow/scripts/parent-state.sh" ]
+}
