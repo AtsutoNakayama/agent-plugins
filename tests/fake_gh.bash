@@ -19,11 +19,15 @@
 # - gh api user                     login: me を返す
 # - gh api --paginate repos/.../issues/N/sub_issues?...
 #                                   「api-sub-issues <パス（? より前）>」を $CALLS に記録し、$FIX/sub-issues-N.json（無ければ []）を返す
+# - gh api --paginate repos/.../rules/branches/<ブランチ>?...
+#                                   「api-rules <パス>」を $CALLS に記録し、ブランチに効いているルールとして $FIX/rules/<ブランチ>.json、
+#                                   無ければ $FIX/rules.json、それも無ければ [] を返す。<ブランチ> は、パスの URL エンコードを戻した
+#                                   ブランチ名そのままで、/ はディレクトリの区切りになる（release/v1 なら $FIX/rules/release/v1.json）
 # - gh api repos/...                「api-get <パス>」を $CALLS に記録する。$FIX/remote-ref があれば {} を、無ければ HTTP 404 で失敗する
 # - gh api -X DELETE <パス>          「api-delete <パス>」を $CALLS に記録する
 # - gh api graphql                  操作名ごとに $FIX/<操作名>.json を返し、「<操作名> <変数>」を $CALLS に記録する
 # - gh project ・Project の REST     fake_gh_project.bash が受け持つ（ProjectView・ProjectFields・AddItem・SetField など）
-# FAKE_FAIL に指定した操作名（issue-view・edit・issue-comment・issue-close・pr-list・pr-view・pr-create・pr-comment・pr-close・api-get・api-delete・api-sub-issues を含む）は、FAKE_FAIL_MSG（既定: gh: failed）を出して失敗する。
+# FAKE_FAIL に指定した操作名（issue-view・edit・issue-comment・issue-close・pr-list・pr-view・pr-create・pr-comment・pr-close・api-get・api-delete・api-sub-issues・api-rules を含む）は、FAKE_FAIL_MSG（既定: gh: failed）を出して失敗する。
 
 setup_fake_gh() {
   FIX="$TMP/fix"
@@ -97,6 +101,17 @@ case "$1 $2" in
         n="${path%/sub_issues}"
         n="${n##*/}"
         if [ -f "$FIX/sub-issues-$n.json" ]; then cat "$FIX/sub-issues-$n.json"; else echo '[]'; fi
+        ;;
+      repos/*/rules/branches/*)
+        echo "api-rules $3" >>"$CALLS"
+        fail api-rules
+        rb="${3#*/rules/branches/}"
+        # %XX をバイト列として戻す（printf の %b の \xXX）。1文字ずつ戻すと、UTF-8 の多バイトの名前が化ける
+        rb="${rb%%\?*}"
+        rb="$(printf '%b' "${rb//%/\\x}")"
+        if [ -f "$FIX/rules/$rb.json" ]; then cat "$FIX/rules/$rb.json"
+        elif [ -f "$FIX/rules.json" ]; then cat "$FIX/rules.json"
+        else echo '[]'; fi
         ;;
     esac
     ;;

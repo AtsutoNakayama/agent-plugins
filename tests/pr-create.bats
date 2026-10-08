@@ -226,7 +226,7 @@ set_pr_opened() {
   assert_equal "$(called pr-create)" 0
   assert_equal "$(called SetField)" 0
   assert_equal "$(git rev-parse origin/feat/17-x)" "$(git rev-parse HEAD)"
-  assert_equal "$(args pr-list)" "--head feat/17-x --state open --json number,url,title,body,isCrossRepository,isDraft"
+  assert_equal "$(args pr-list)" "--head feat/17-x --state open --json number,url,title,body,isCrossRepository,isDraft,baseRefName"
 }
 
 @test "PR を出した後に breaking ラベルを付けたら、既にある PR に ! と BREAKING CHANGE が無いと push せずに止まる" {
@@ -732,4 +732,93 @@ fake_issue_tasks() {
   assert_equal "$(jq -c '[.created, .pr.number, .draft]' <<<"$json")" '[false,7,true]'
   assert_equal "$(called pr-create)" 0
   assert_equal "$(called pr-ready)" 0
+}
+
+@test "PR のマージ先（新しく作る PR では base_branch）へのマージがマージキューを通すかを merge_queue に出す（PR を出した後の案内を切り替えるため。dry-run でも読む）" {
+  setup_branch
+  fake_issue 17 '["feat"]'
+  # ページごとの配列を並べたもの（--paginate）。キューのルールは2ページ目にある
+  printf '%s\n' '[{"type": "pull_request"}]' '[{"type": "merge_queue", "parameters": {"merge_method": "SQUASH"}}]' >"$FIX/rules.json"
+  run_pr --issue 17 --body-file "$TMP/body.md" --dry-run
+  assert_success
+  assert_equal "$(jq .merge_queue <<<"$json")" true
+  # base_branch のルールを、ブランチ名を URL に使える形にして読む
+  assert_equal "$(args api-rules)" 'repos/{owner}/{repo}/rules/branches/main?per_page=100'
+  run_pr --issue 17 --body-file "$TMP/body.md"
+  assert_success
+  assert_equal "$(jq -c '[.created, .merge_queue]' <<<"$json")" '[true,true]'
+}
+
+@test "base_branch にマージキューのルールが無ければ merge_queue は false、ルールを読めなければ null にし、PR は作る" {
+  setup_branch
+  fake_issue 17 '["feat"]'
+  echo '[{"type": "required_status_checks", "parameters": {"strict_required_status_checks_policy": true}}]' >"$FIX/rules.json"
+  run_pr --issue 17 --body-file "$TMP/body.md" --dry-run
+  assert_success
+  assert_equal "$(jq .merge_queue <<<"$json")" false
+  FAKE_FAIL=api-rules run_pr --issue 17 --body-file "$TMP/body.md"
+  assert_success
+  assert_equal "$(jq -c '[.created, .merge_queue]' <<<"$json")" '[true,null]'
+}
+
+@test "既にある PR を使うときは、設定の base_branch ではなく、その PR のマージ先でマージキューを通すかを見る（#178）" {
+  setup_branch
+  fake_issue 17 '["feat"]'
+  # 設定の base_branch（main）はキューを通すが、PR のマージ先（release/v1）は通さない
+  mkdir -p "$FIX/rules/release"
+  echo '[{"type": "merge_queue", "parameters": {"merge_method": "SQUASH"}}]' >"$FIX/rules/main.json"
+  echo '[{"type": "pull_request"}]' >"$FIX/rules/release/v1.json"
+  echo '[{"number": 7, "url": "https://github.com/me/demo/pull/7", "isCrossRepository": false, "baseRefName": "release/v1"}]' >"$FIX/pr-list.json"
+  run_pr --issue 17 --body-file "$TMP/body.md" --dry-run
+  assert_success
+  assert_equal "$(jq -c '[.created, .base, .pr_base, .merge_queue]' <<<"$json")" '[false,"main","release/v1",false]'
+  assert_equal "$(args api-rules)" 'repos/{owner}/{repo}/rules/branches/release%2Fv1?per_page=100'
+  # PR が無ければ、作る PR のマージ先（設定の base_branch）で見る
+  rm "$FIX/pr-list.json"
+  run_pr --issue 17 --body-file "$TMP/body.md" --dry-run
+  assert_success
+  assert_equal "$(jq -c '[.created, .base, .pr_base, .merge_queue]' <<<"$json")" '[true,"main","main",true]'
+}
+
+@test "既にある PR に push するとき（dry-run でない）も、pr_base とマージキューの判定は、その PR のマージ先にする（#178）" {
+  setup_branch
+  fake_issue 17 '["feat"]'
+  mkdir -p "$FIX/rules/release"
+  echo '[{"type": "pull_request"}]' >"$FIX/rules/main.json"
+  echo '[{"type": "merge_queue", "parameters": {"merge_method": "SQUASH"}}]' >"$FIX/rules/release/v1.json"
+  echo '[{"number": 7, "url": "https://github.com/me/demo/pull/7", "isCrossRepository": false, "baseRefName": "release/v1"}]' >"$FIX/pr-list.json"
+  run_pr --issue 17 --body-file "$TMP/body.md"
+  assert_success
+  assert_equal "$(jq -c '[.created, .pr.number, .base, .pr_base, .merge_queue]' <<<"$json")" '[false,7,"main","release/v1",true]'
+  assert_equal "$(git rev-parse origin/feat/17-x)" "$(git rev-parse HEAD)"
+  assert_equal "$(called pr-create)" 0
+  assert_equal "$(args api-rules)" 'repos/{owner}/{repo}/rules/branches/release%2Fv1?per_page=100'
+}
+
+@test "既にある PR の応答にマージ先（baseRefName）が無いか空なら、pr_base とマージキューの判定は設定の base_branch にする（#178）" {
+  setup_branch
+  fake_issue 17 '["feat"]'
+  mkdir -p "$FIX/rules"
+  echo '[{"type": "merge_queue", "parameters": {"merge_method": "SQUASH"}}]' >"$FIX/rules/main.json"
+  for pr in '{"number": 7, "url": "https://github.com/me/demo/pull/7", "isCrossRepository": false}' \
+    '{"number": 7, "url": "https://github.com/me/demo/pull/7", "isCrossRepository": false, "baseRefName": ""}'; do
+    echo "[$pr]" >"$FIX/pr-list.json"
+    : >"$CALLS"
+    run_pr --issue 17 --body-file "$TMP/body.md" --dry-run
+    assert_success
+    assert_equal "$(jq -c '[.created, .base, .pr_base, .merge_queue]' <<<"$json")" '[false,"main","main",true]'
+    assert_equal "$(args api-rules)" 'repos/{owner}/{repo}/rules/branches/main?per_page=100'
+  done
+}
+
+@test "日本語を含むマージ先（feat/日本語）でも、そのブランチのルールでマージキューを通すかを見る（#178）" {
+  setup_branch
+  fake_issue 17 '["feat"]'
+  mkdir -p "$FIX/rules/feat"
+  echo '[{"type": "merge_queue", "parameters": {"merge_method": "SQUASH"}}]' >"$FIX/rules/feat/日本語.json"
+  echo '[{"number": 7, "url": "https://github.com/me/demo/pull/7", "isCrossRepository": false, "baseRefName": "feat/日本語"}]' >"$FIX/pr-list.json"
+  run_pr --issue 17 --body-file "$TMP/body.md" --dry-run
+  assert_success
+  assert_equal "$(jq -c '[.pr_base, .merge_queue]' <<<"$json")" '["feat/日本語",true]'
+  assert_equal "$(args api-rules)" 'repos/{owner}/{repo}/rules/branches/feat%2F%E6%97%A5%E6%9C%AC%E8%AA%9E?per_page=100'
 }

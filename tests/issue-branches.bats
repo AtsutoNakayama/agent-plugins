@@ -243,3 +243,12 @@ action_of() {
   assert_equal "$(action_of OPEN 2)" cleanup
   assert_equal "$(action_of CLOSED 0)" cleanup
 }
+
+@test "マージキューの一時的なブランチ（gh-readonly-queue/main/pr-<PR番号>-<sha>）は、PR の番号が Issue と同じでも、確かなブランチにも候補にもしない（#178）" {
+  sha="$(git rev-parse main)"
+  git push -q origin "main:refs/heads/gh-readonly-queue/main/pr-17-$sha"
+  git push -q origin "main:refs/heads/gh-readonly-queue/main/pr-5-17-$sha"
+  run_branches --issue 17
+  assert_success
+  assert_equal "$(jq -c '[.branches, .candidates]' <<<"$json")" '[[],[]]'
+}
