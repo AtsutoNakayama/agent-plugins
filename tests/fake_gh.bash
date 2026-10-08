@@ -101,8 +101,9 @@ case "$1 $2" in
         echo "api-rules $3" >>"$CALLS"
         fail api-rules
         rb="${3#*/rules/branches/}"
-        rb="$(jq -rn --arg b "${rb%%\?*}" '$b | gsub("%(?<h>[0-9A-Fa-f]{2})"; .h | ascii_downcase | explode
-          | map(if . >= 97 then . - 87 else . - 48 end) | .[0] * 16 + .[1] | [.] | implode)')"
+        # %XX をバイト列として戻す（printf の %b の \xXX）。1文字ずつ戻すと、UTF-8 の多バイトの名前が化ける
+        rb="${rb%%\?*}"
+        rb="$(printf '%b' "${rb//%/\\x}")"
         if [ -f "$FIX/rules/$rb.json" ]; then cat "$FIX/rules/$rb.json"
         elif [ -f "$FIX/rules.json" ]; then cat "$FIX/rules.json"
         else echo '[]'; fi

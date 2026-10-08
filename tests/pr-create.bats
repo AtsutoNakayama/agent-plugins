@@ -778,3 +778,15 @@ fake_issue_tasks() {
     assert_equal "$(args api-rules)" 'repos/{owner}/{repo}/rules/branches/main?per_page=100'
   done
 }
+
+@test "日本語を含むマージ先（feat/日本語）でも、そのブランチのルールでマージキューを通すかを見る（#178）" {
+  setup_branch
+  fake_issue 17 '["feat"]'
+  mkdir -p "$FIX/rules/feat"
+  echo '[{"type": "merge_queue", "parameters": {"merge_method": "SQUASH"}}]' >"$FIX/rules/feat/日本語.json"
+  echo '[{"number": 7, "url": "https://github.com/me/demo/pull/7", "isCrossRepository": false, "baseRefName": "feat/日本語"}]' >"$FIX/pr-list.json"
+  run_pr --issue 17 --body-file "$TMP/body.md" --dry-run
+  assert_success
+  assert_equal "$(jq -c '[.pr_base, .merge_queue]' <<<"$json")" '["feat/日本語",true]'
+  assert_equal "$(args api-rules)" 'repos/{owner}/{repo}/rules/branches/feat%2F%E6%97%A5%E6%9C%AC%E8%AA%9E?per_page=100'
+}
