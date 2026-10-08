@@ -11,7 +11,7 @@
 #
 # 形は設定の branch.pattern（既定: {type}/{issue_number}-{slug}）。
 # branch.pattern のプレースホルダ: {type} は type ラベル、{issue_number} は Issue の番号、{slug} は英語の短い説明。
-# --check は規約に合わなければ終了コード 1 で、理由を出力する。設定を読めなければ終了コード 2。
+# --check は規約に合わなければ終了コード 1 で、理由を出力する。設定を読めない、または branch.pattern が正規表現として正しくなければ終了コード 2。
 set -euo pipefail
 
 # shellcheck source=lib/common.sh
@@ -66,6 +66,8 @@ if [ -n "$check" ]; then
   if [ -z "$reason" ]; then
     # 設定を読めないときは、規約に合わない（1）と区別できるよう 2 で終わる
     config="$("$BASH" "$DW_SCRIPTS_DIR/config.sh")" || dw_die "設定を読めません" 2
+    # 正規表現として正しくない branch.pattern は、ブランチ名が合わない（1）ではなく設定の誤り（2）にする
+    msg="$(dw_check_branch_pattern "$config")" || dw_die "$msg" 2
     # branch.pattern を正規表現にする（lib/common.sh の DW_JQ_BRANCH_RE。dw_parse_branch・dw_issue_branches と同じ）
     # shellcheck disable=SC2016 # jq の変数（$b・$re）を bash に展開させない
     jq -e -n --arg b "$check" --argjson c "$config" "$DW_JQ_BRANCH_RE"'

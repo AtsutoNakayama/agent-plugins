@@ -30,7 +30,7 @@
 # 解釈が分かれるかや、差分に ADR にすべき判断があるかは、AI が判断する（このスクリプトでは決めない）
 #
 # 止まるとき（有効なときだけ。無効なら設定の値は検査しない）: auto.max_fix_attempts が1以上の整数でない・auto.max_new_issues が0以上の整数でない・
-#             保留の列がほかの役割と同じ名前（終了コード 2）、PR の番号・無い番号（2）、Issue・origin・PR を読めない（1）、gh が古い（2）
+#             保留の列がほかの役割と同じ名前（終了コード 2）、PR の番号・無い番号（2）、branch.pattern が正規表現として正しくない（2）、Issue・origin・PR を読めない（1）、gh が古い（2）
 #
 # 出力:
 #   issue      {number, title, url, state, body, type（type ラベルが1つなら、その名前。ほかは null）, breaking}。

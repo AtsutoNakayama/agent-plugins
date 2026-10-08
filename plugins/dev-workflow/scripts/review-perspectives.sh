@@ -10,7 +10,7 @@
 #
 #   --auto    次を決めて絞り込み、決めた値を context に出す
 #             - マージ先: origin/<base_branch>（git fetch origin <base_branch> で最新にする。できなければ警告して
-#               手元の origin/<base_branch> を使う。それも無ければ終了コード 2）
+#               手元の origin/<base_branch> を使う。それも無ければ終了コード 2。branch.pattern が正規表現として正しくないときも、設定の誤りとして終了コード 2）
 #             - 基点: git merge-base <マージ先> HEAD
 #             - Issue の番号: ブランチ名（branch.pattern の {issue_number}。先頭の 0 はそろえる）。番号として使えない値（0 など）なら
 #               Issue は無いものとする（警告）。gh で Issue を読み、見つからないか、番号が PR のものなら、Issue は無いものとする（警告）。
@@ -117,7 +117,8 @@ if [ "$auto" = true ]; then
     || dw_die "マージ先が見つかりません: ${target}（git fetch origin ${base_branch} で取得してください）" 2
   base="$(git merge-base "$target" HEAD)" || dw_die "${target} と HEAD の基点が見つかりません" 2
   branch="$(git symbolic-ref --short -q HEAD || true)"
-  IFS='|' read -r branch_type branch_issue <<<"$(dw_parse_branch "$config" "$branch")"
+  parsed="$(dw_parse_branch "$config" "$branch")" || exit $?
+  IFS='|' read -r branch_type branch_issue <<<"$parsed"
   # ブランチ名の番号は、先頭の 0 をそろえる（017 は 17）。Issue の番号として使えない（0 など）ときは、止まらずに Issue は無いものとする
   issue=""
   if [ -n "$branch_issue" ] && ! issue="$(dw_issue_number --issue "$branch_issue" 2>/dev/null)"; then

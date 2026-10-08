@@ -252,3 +252,11 @@ action_of() {
   assert_success
   assert_equal "$(jq -c '[.branches, .candidates]' <<<"$json")" '[[],[]]'
 }
+
+@test "branch.pattern が正規表現として正しくなければ、候補に落とさず設定の誤りとして終了コード 2" {
+  echo '{"branch": {"pattern": "{type}/{issue_number}-{slug}("}}' >.claude/dev-workflow/config.json
+  git branch feat/17-x
+  run_script issue-branches.sh --issue 17
+  assert_failure 2
+  assert_output --partial "正規表現として正しくありません"
+}

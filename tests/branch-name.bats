@@ -167,3 +167,39 @@ assert_check_matches_parse() {
   assert_success
   assert_equal "$(jq -r .type <<<"$output")" fix
 }
+
+@test "--check は branch.pattern が正規表現として正しくなければ、設定の誤りとして終了コード 2" {
+  echo '{"branch": {"pattern": "{type}/{issue_number}-{slug}("}}' >.claude/dev-workflow/config.json
+  run_script branch-name.sh --check feat/17-add-login
+  assert_failure 2
+  assert_output --partial "正規表現として正しくありません"
+}
+
+@test "--check は branch.pattern に改行を含んでいても、設定の誤りを1行のメッセージで報告する" {
+  printf '%s\n' '{"branch": {"pattern": "{type}/{issue_number}-{slug}(\n)("}}' >.claude/dev-workflow/config.json
+  run_script branch-name.sh --check feat/17-add-login
+  assert_failure 2
+  assert_output --partial "正規表現として正しくありません"
+  assert_equal "${#lines[@]}" 1
+}
+
+@test "dw_parse_branch は branch.pattern が正規表現として正しくなければ、取り出せないのではなく設定の誤りで終了コード 2" {
+  # shellcheck disable=SC2016 # bash -c の中で展開させる
+  run "${TEST_BASH:-bash}" -c '. "$1/lib/common.sh"; dw_parse_branch "$2" feat/17-x' _ "$SCRIPTS" \
+    '{"labels":{"types":["feat"]},"branch":{"pattern":"{type}/{issue_number}-{slug}("}}'
+  assert_failure 2
+  assert_output --partial "正規表現として正しくありません"
+  # shellcheck disable=SC2016 # bash -c の中で展開させる
+  run "${TEST_BASH:-bash}" -c '. "$1/lib/common.sh"; dw_parse_branch "$2" feat/17-x' _ "$SCRIPTS" \
+    '{"labels":{"types":["feat"]},"branch":{"pattern":"{type}/{issue_number}-{slug}"}}'
+  assert_success
+  assert_output "feat|17"
+}
+
+@test "dw_check_branch_pattern は、設定が空・部分的（branch.pattern が文字列でない・labels.types が無い）でも、正規表現の誤りとはしない" {
+  for c in '{}' '{"labels":{"types":["feat"]}}' '{"branch":{"pattern":null},"labels":{"types":["feat"]}}' '{"branch":{"pattern":"{type}/{issue_number}"}}'; do
+    # shellcheck disable=SC2016 # bash -c の中で展開させる
+    run "${TEST_BASH:-bash}" -c '. "$1/lib/common.sh"; dw_check_branch_pattern "$2"' _ "$SCRIPTS" "$c"
+    assert_success
+  done
+}

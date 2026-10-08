@@ -608,3 +608,11 @@ auto_branch() {
   assert_success
   assert_equal "$(jq -r '.perspectives[] | select(.name == "many") | .title' <<<"$output")" "最初の title"
 }
+
+@test "--auto は、branch.pattern が正規表現として正しくなければ、Issue は無いものとせず設定の誤りで終了コード 2" {
+  auto_branch feat/17-add-thing
+  echo '{"branch": {"pattern": "{type}/{issue_number}-{slug}("}}' >.claude/dev-workflow/config.json
+  run_script review-perspectives.sh --auto
+  assert_failure 2
+  assert_output --partial "正規表現として正しくありません"
+}
