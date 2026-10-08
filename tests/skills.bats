@@ -595,7 +595,7 @@ has() {
   grep -qF '「補足」に、その ADR へのリンクと、何を変えるかを書く（MADR の判断 0009）' "$adr" || fail "adr-create に、一部だけ変える ADR の補足の決まりがありません"
   grep -qF '全部を覆すなら `--supersedes` で置き換える' "$adr" || fail "adr-create に、全部を覆すときは置き換えることがありません"
   grep -qF '採択した ADR の本文は書き換えない' "$BATS_TEST_DIRNAME/../docs/design.md" || fail "設計書に、書き換えないことがありません"
-  grep -qF '補足」に書く' "$BATS_TEST_DIRNAME/../docs/design.md" || fail "設計書に、補足に関係を書くことがありません"
+  grep -qF '関係を新しい ADR の「補足」に書く' "$BATS_TEST_DIRNAME/../docs/design.md" || fail "設計書に、補足に関係を書くことがありません"
   grep -qF 'MADR の判断 0009' "$BATS_TEST_DIRNAME/../README.md" || fail "README に、補足に関係を書くことがありません"
   tr="$BATS_TEST_DIRNAME/../plugins/dev-workflow/templates/adr/README.md"
   grep -qF '`date` は、MADR では「判断を最後に更新した日」ですが、書き換えないので、判断をした日にします' "$tr" || fail "テンプレートの README に date の扱いがありません"
