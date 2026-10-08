@@ -562,6 +562,21 @@ dw_branch_rules() {
   gh api --paginate "repos/$1/rules/branches/$(jq -rn --arg b "$2" '$b | @uri')?per_page=100" 2>/dev/null
 }
 
+# ブランチへのマージがマージキューを通すか（ブランチに効いているルールに merge_queue があるか）を判定する jq の定義。
+# 入力は、rules/branches のページをまとめた1つの配列。source した側で、jq のフィルターの先頭に付けて使う
+# shellcheck disable=SC2034
+DW_JQ_MERGE_QUEUE='def merge_queue: any(.[]; .type == "merge_queue");'
+
+# ブランチへのマージがマージキューを通すかを、true か false で出力する。組織のルールセットも含めて、ブランチに効いている
+# ルール（dw_branch_rules）で決める（doctor.sh と同じ読み方）。読めなければ非0を返す（どう扱うかは呼び出し側で決める）。
+# 使い方: dw_merge_queue_enabled <owner/repo（{owner}/{repo} でもよい）> <ブランチ>
+dw_merge_queue_enabled() {
+  local rules
+  rules="$(dw_branch_rules "$1" "$2")" || return 1
+  # --paginate はページごとに配列を出力するので、1つにまとめる
+  jq -s "$DW_JQ_MERGE_QUEUE"' add // [] | merge_queue' <<<"$rules" 2>/dev/null
+}
+
 # 古いブランチ保護（ルールセットでない）が求める必須のチェックの名前の一覧（JSON の配列）を出力する。
 # rules/branches には出ないので、ブランチの情報（branches/<ブランチ> の protection）から読む。
 # 読めなければ（保護が無い・権限が無いなど）[] を出力する。

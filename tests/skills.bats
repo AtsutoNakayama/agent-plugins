@@ -662,3 +662,28 @@ has() {
     grep -q '確認が取れるまで実行しない' "$f" || fail "${name} に、confirm のとき確認が取れるまで実行しないことが書かれていません"
   done
 }
+
+# shellcheck disable=SC2016 # バッククォートはスキルの本文の文字で、展開させない
+@test "pr-create は、PR を出した後の案内を merge_queue で切り替える（キューがあればキューに入れ、無ければ branch-update で取り込む。#178）" {
+  step7="$(step "$SKILLS/pr-create/SKILL.md" 7)"
+  has "pr-create の手順7" "$step7" '出力の `merge_queue`' '- `true`：' '- `false`：' '- `null`'
+  # マージ先は、設定の base_branch（base）ではなく、出力の pr_base（既にある PR は、マージ先を変えていることがある）
+  has "pr-create の手順7" "$step7" '出力の `pr_base`' 'PR のマージ先'
+  # 下書きの案内は、merge_queue の値の項目から切り離し、どの値でも添える
+  draft_line="$(grep -F -- '出力の `draft` が true' <<<"$step7")"
+  has "pr-create の手順7の下書きの案内" "$draft_line" '`merge_queue` の値にかかわらず' 'Ready for review' 'gh pr ready'
+  # 既にある PR を使ったときの draft は、その PR の今の状態（--draft の指定ではない）
+  has "pr-create の手順7の下書きの案内" "$draft_line" 'その PR の今の状態'
+  if grep -E -- '^- `(true|false|null)' <<<"$step7" | grep -q -e 'gh pr ready' -e '下書き'; then
+    fail "pr-create の手順7の下書きの案内が、merge_queue の値の項目の中にあります（どの値でも添える）"
+  fi
+  # キューがあるときは、キューに入れることと、取り込むのはコンフリクトしたときだけであることを案内する
+  has "pr-create の手順7のキューがあるときの案内" "$(grep -F -- '- `true`：' <<<"$step7")" \
+    'キューに入れる' 'Merge when ready' 'コンフリクトしたときだけ' 'branch-update' \
+    'ルールセットが求めるもの' 'リポジトリによって違う'
+  # キューが無いときは、マージ先が進んだら branch-update で取り込むことを案内する
+  has "pr-create の手順7のキューが無いときの案内" "$(grep -F -- '- `false`：' <<<"$step7")" 'branch-update'
+  if grep -F -- '- `false`：' <<<"$step7" | grep -q 'キュー'; then
+    fail "pr-create の手順7のキューが無いときの案内に、キューのことが書かれています"
+  fi
+}

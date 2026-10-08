@@ -635,3 +635,40 @@ run_cleanup() {
   assert_output --partial "のサブモジュールを確かめられませんでした"
   [ -d "$WT" ]
 }
+
+@test "マージキューでマージされた PR（先に別の PR がマージされ、キューの一時的なブランチが origin に残っている）も片付ける（#178）" {
+  setup_branch
+  # 先に並んだ別の PR が main に入る
+  git switch -q -c other main
+  echo other >other.txt
+  git add other.txt
+  git commit -q -m "feat: other (#4)"
+  git push -q origin other:main
+  git switch -q main
+  git branch -q -D other
+  # キューは、最新の main に PR を重ねた一時的なブランチで CI を動かし、スカッシュで main にマージする。
+  # feat/17-x は main を取り込み直していない（PR の最後のコミットのまま）
+  git fetch -q origin main
+  git switch -q --detach origin/main
+  git merge -q --squash feat/17-x
+  git commit -q -m "feat: 作業 17 (#5)"
+  queue_ref="refs/heads/gh-readonly-queue/main/pr-5-$(git rev-parse feat/17-x)"
+  git push -q origin "HEAD:$queue_ref"
+  git push -q origin HEAD:main
+  git switch -q main
+  git push -q origin --delete feat/17-x
+  git fetch -q origin
+  fake_pr MERGED
+  run_cleanup --branch feat/17-x
+  assert_success
+  [ ! -e "$WT" ]
+  run git show-ref --verify --quiet refs/heads/feat/17-x
+  assert_failure
+  assert_equal "$(git rev-parse main)" "$(git rev-parse origin/main)"
+  assert_equal "$(git log -1 --format=%s main)" "feat: 作業 17 (#5)"
+  # キューの一時的なブランチは GitHub が片付けるもので、作業のブランチではないので、消さずに残し、出力にも出さない
+  run git ls-remote --exit-code origin "$queue_ref"
+  assert_success
+  run jq -r '.. | strings' <<<"$json"
+  refute_output --partial gh-readonly-queue
+}
