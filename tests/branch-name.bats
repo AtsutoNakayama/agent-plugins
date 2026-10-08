@@ -99,47 +99,44 @@ load fake_gh
   done
 }
 
-# --check の valid と、dw_parse_branch が type と番号を取り出せるかが、同じ名前で一致することを確かめる
-# 使い方: assert_check_matches_parse <ブランチ名> <期待する valid（true か false）>
+# --check の valid と、dw_parse_branch が取り出す「<type>|<番号>」が、同じ名前で一致することを確かめる
+# 受け入れる名前は期待する「<type>|<番号>」を、拒否する名前は「|」を渡す
+# 使い方: assert_check_matches_parse <ブランチ名> <期待する type|番号>
 assert_check_matches_parse() {
-  local config parsed
+  local config parsed valid=true
+  [ "$2" = "|" ] && valid=false
   run_script branch-name.sh --check "$1"
-  assert_equal "$(jq -r .valid <<<"$output")" "$2"
-  config="$("$BASH" "$SCRIPTS/config.sh")"
+  assert_equal "$(jq -r .valid <<<"$output")" "$valid"
+  config="$("${TEST_BASH:-bash}" "$SCRIPTS/config.sh")"
   # shellcheck disable=SC2016 # $1〜$3 は bash -c の中で展開する
   parsed="$("${TEST_BASH:-bash}" -c '. "$1/common.sh"; dw_parse_branch "$2" "$3"' _ "$SCRIPTS/lib" "$config" "$1")"
-  if [ "$2" = true ]; then
-    [[ "$parsed" != "|"* ]]
-    [[ "$parsed" != *"|" ]]
-  else
-    assert_equal "$parsed" "|"
-  fi
+  assert_equal "$parsed" "$2"
 }
 
 @test "--check と dw_parse_branch は、既定の branch.pattern で同じ名前を受け入れ・拒否する" {
-  assert_check_matches_parse feat/17-add-login true
-  assert_check_matches_parse fix/3-a true
+  assert_check_matches_parse feat/17-add-login "feat|17"
+  assert_check_matches_parse fix/3-a "fix|3"
   # 設定に無い type
-  assert_check_matches_parse wip/17-add-login false
+  assert_check_matches_parse wip/17-add-login "|"
   # 番号が数字でない
-  assert_check_matches_parse feat/x-add-login false
+  assert_check_matches_parse feat/x-add-login "|"
   # 末尾がハイフンの slug
-  assert_check_matches_parse feat/17-add- false
-  assert_check_matches_parse feat/17-add-login- false
+  assert_check_matches_parse feat/17-add- "|"
+  assert_check_matches_parse feat/17-add-login- "|"
 }
 
 @test "--check と dw_parse_branch は、独自の branch.pattern と labels.types でも同じ名前を受け入れ・拒否する" {
   echo '{"branch": {"pattern": "{type}-{issue_number}/{slug}"}, "labels": {"types": ["feat", "wip"]}}' >.claude/dev-workflow/config.json
-  assert_check_matches_parse wip-17/add-login true
-  assert_check_matches_parse feat-3/a true
+  assert_check_matches_parse wip-17/add-login "wip|17"
+  assert_check_matches_parse feat-3/a "feat|3"
   # 設定に無い type（既定の type でも、設定に無ければ拒否する）
-  assert_check_matches_parse fix-17/add-login false
+  assert_check_matches_parse fix-17/add-login "|"
   # 番号が数字でない
-  assert_check_matches_parse wip-x/add-login false
+  assert_check_matches_parse wip-x/add-login "|"
   # 末尾がハイフンの slug
-  assert_check_matches_parse wip-17/add-login- false
+  assert_check_matches_parse wip-17/add-login- "|"
   # 既定の pattern の形は拒否する
-  assert_check_matches_parse feat/17-add-login false
+  assert_check_matches_parse feat/17-add-login "|"
 }
 
 @test "--check は設定を読めなければ終了コード 2" {
