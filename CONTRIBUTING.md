@@ -140,9 +140,10 @@ docker run --rm -v "$PWD:/mnt" -w /mnt koalaman/shellcheck-alpine:v0.11.0 sh -c 
 macOS 以外でも、Docker の `bash:3.2` イメージで macOS 標準の bash 3.2 で動くことを確かめられます。リポジトリ・ワークツリーのどこで実行しても動きます。
 
 ```bash
-root=$(cd "$(git rev-parse --git-common-dir)/.." && pwd)   # 元のリポジトリ
+root=$(plugins/dev-workflow/scripts/main-root.sh | jq -r .main_root)   # 元のリポジトリ（サブモジュールや bare 配置でも求まる）
 top=$(git rev-parse --show-toplevel)                       # 今いるリポジトリまたはワークツリー
-docker run --rm -v "$root:$root" -v "$top:$top" -w "$top" bash:3.2 sh -c '
+gitdir=$(cd "$(git rev-parse --git-common-dir)" && pwd)    # git のデータ（サブモジュールでは上のリポジトリの .git/modules の中）
+docker run --rm -v "$root:$root" -v "$top:$top" -v "$gitdir:$gitdir" -w "$top" bash:3.2 sh -c '
   apk add --no-cache jq git bats bash parallel >/dev/null &&
   git config --global --add safe.directory "*" &&
   export PATH=/bin:/usr/bin:$PATH &&
@@ -152,7 +153,7 @@ docker run --rm -v "$root:$root" -v "$top:$top" -w "$top" bash:3.2 sh -c '
 
 - bats 本体は新しい bash（apk で入れる `/bin/bash`）で動かし、対象のスクリプトだけ bash 3.2（イメージの `/usr/local/bin/bash`）で動かします。イメージでは `/usr/local/bin` が PATH の先にあるので、`PATH` を並べ替えないと bats 本体も bash 3.2 で動き、日本語のテスト名を扱えずに失敗します。
 - コンテナの中はファイルの持ち主が違うので、`safe.directory` を設定しないと git がリポジトリを使えません。
-- ワークツリーの `.git` はファイルで、元のリポジトリの `.git/worktrees/` を指しています。ワークツリーだけをマウントすると `fatal: not a git repository` になるので、上のように元のリポジトリ全体とワークツリーを、どちらも同じパスでマウントします（ワークツリーがリポジトリの外にあっても動きます）。ワークツリーでは、先に `git submodule update --init` も実行しておきます。
+- ワークツリーの `.git` はファイルで、元のリポジトリの `.git/worktrees/` を指しています。ワークツリーだけをマウントすると `fatal: not a git repository` になるので、上のように元のリポジトリ全体とワークツリー、git のデータ（サブモジュールでは `.git/modules` の中で、元のリポジトリの外にあることがあります）を、どれも同じパスでマウントします（ワークツリーがリポジトリの外にあっても動きます）。ワークツリーでは、先に `git submodule update --init` も実行しておきます。
 
 ### スキルの振る舞いを eval で確かめる
 

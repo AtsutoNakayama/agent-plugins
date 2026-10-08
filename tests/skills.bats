@@ -679,6 +679,14 @@ has() {
   done
 }
 
+@test "task-finish・task-cancel・task-flow.md に、次のタスクの前に /clear を勧めることがある" {
+  grep -q "次のタスクに着手する前に \`/clear\` するよう勧める" "$SKILLS/task-finish/SKILL.md" || fail "task-finish にありません"
+  grep -q "次のタスクに着手する前に \`/clear\` するよう勧める" "$SKILLS/task-cancel/SKILL.md" || fail "task-cancel にありません"
+  local flow="$BATS_TEST_DIRNAME/../plugins/dev-workflow/defaults/task-flow.md"
+  [ "$(grep -c "次のタスクに着手する前に \`/clear\` するよう勧めます" "$flow")" -ge 2 ] || fail "task-flow.md の後片付けと取りやめの両方にありません"
+  grep -q "タスクの切れ目で \`/clear\` を勧める" "$BATS_TEST_DIRNAME/../docs/design.md" || fail "設計書にありません"
+}
+
 # shellcheck disable=SC2016 # バッククォートはスキルの本文の文字で、展開させない
 @test "pr-create は、PR を出した後の案内を merge_queue で切り替える（キューがあればキューに入れ、無ければ branch-update で取り込む。#178）" {
   step7="$(step "$SKILLS/pr-create/SKILL.md" 7)"
@@ -702,4 +710,17 @@ has() {
   if grep -F -- '- `false`：' <<<"$step7" | grep -q 'キュー'; then
     fail "pr-create の手順7のキューが無いときの案内に、キューのことが書かれています"
   fi
+}
+
+@test "task-finish・task-cancel は、削除するワークツリーの外へ移る先を main-root.sh で求め、git-common-dir/.. からは求めない（#233）" {
+  for s in task-finish task-cancel; do
+    grep -q 'main-root\.sh' "$SKILLS/$s/SKILL.md" || fail "$s に main-root.sh の手順がありません"
+    # shellcheck disable=SC2016 # バッククォートや $( は検索する文字で、展開させない
+    if grep -qF '$(git rev-parse --git-common-dir)/..' "$SKILLS/$s/SKILL.md"; then
+      fail "$s が git rev-parse --git-common-dir から移る先を求めています（サブモジュールや bare の配置で、cleanup.sh を実行できない場所に移る）"
+    fi
+  done
+  # 求められないときは移らずに止まる
+  grep -q '移らずに' "$SKILLS/task-finish/SKILL.md"
+  grep -q '移らずに' "$SKILLS/task-cancel/SKILL.md"
 }

@@ -320,11 +320,11 @@ dw_main_root() {
   local gd c top
   { IFS= read -r gd; IFS= read -r c; IFS= read -r top; } <<<"$(dw_repo_paths "$1" || true)" || true
   [ -n "${c:-}" ] || return 1
-  if [ "$gd" = "$c" ]; then
-    [ -n "${top:-}" ] || return 1
+  if [ "$gd" = "$c" ] && [ -n "${top:-}" ]; then
     printf '%s\n' "$top"
     return 0
   fi
+  # 作業ツリーが無い場所（bare リポジトリ＋ワークツリーの配置の、.git ファイルを置いたディレクトリなど）も、リポジトリから求める
   dw_repo_main_root "$c" bare
 }
 

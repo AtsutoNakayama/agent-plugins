@@ -59,13 +59,24 @@ while [ $# -gt 0 ]; do
   esac
 done
 
-repo_root="$(dw_repo_root)" || dw_die "リポジトリの中で実行してください" 64
-main_root="$(dw_main_root "$repo_root")" || dw_die "メインのワークツリーが分かりません"
+# bare リポジトリ＋ワークツリーの配置の、.git ファイルを置いたディレクトリ（メインのワークツリー）には作業ツリーが無い。
+# ここで実行してもよいが、今のブランチは分からない（--branch が要る）。
+# 作業ツリーの有無は、dw_repo_root の成功ではなく git で確かめる（WORKFLOW_REPO_ROOT があると、作業ツリーが無くても成功するため）
+has_toplevel=true
+repo_root="$(dw_repo_root || true)"
+if [ -n "$repo_root" ] && git -C "$repo_root" rev-parse --show-toplevel >/dev/null 2>&1; then
+  main_root="$(dw_main_root "$repo_root")" || dw_die "メインのワークツリーが分かりません"
+else
+  has_toplevel=false
+  main_root="$(dw_main_root "${repo_root:-$PWD}")" || dw_die "リポジトリの外か、メインのワークツリーが分からない配置（--separate-git-dir のワークツリーなど）です" 64
+  repo_root="$main_root"
+fi
 config="$("$BASH" "$DW_SCRIPTS_DIR/config.sh")"
 base="$(dw_base_branch "$config")"
 
 if [ -z "$branch" ]; then
-  branch="$(git -C "$repo_root" symbolic-ref --short -q HEAD || true)"
+  # 作業ツリーが無い場所の HEAD は、今のブランチではない
+  ! $has_toplevel || branch="$(git -C "$repo_root" symbolic-ref --short -q HEAD || true)"
   [ -n "$branch" ] || dw_die "ブランチの上にいません。--branch で指定してください" 64
 fi
 [ "$branch" != "$base" ] || dw_die "${base} は片付けられません。--branch で作業用のブランチを指定してください" 64
