@@ -13,16 +13,17 @@
 # 決め方（スキルが従う）:
 #   1. commands が配列（設定に checks.commands がある）なら、絞らずに全部を順に実行する（チームが決めた一覧なので、関係するものだけに絞らない）。
 #      空の配列は、実行するものが無いと決めてあること（何も実行せず、聞きもしない）。
-#      出力の team_commands_changed が true か null のときは、PR の作者が決めた任意のコマンドになりうるので、
+#      出力の commands_changed が true か null のときは、PR の作者が決めた任意のコマンドになりうるので、
 #      実行する前にコマンドを見せて確認を取り、確認が取れるまで実行しない（false なら確認は要らない）
 #   2. commands が null なら、hints（リポジトリの手がかり）から実行するコマンドを推測する
 #   3. 推測できなければ、ユーザーに聞く。聞いた答えは --save で設定に保存するかも聞く（保存すれば次からは聞かない）
 #
 # 出力:
 #   commands   設定の checks.commands（配列か null）
-#   team_commands_changed  チームの設定（.claude/dev-workflow/config.json）の checks.commands が、今のブランチで書き換わったか。
-#              origin/<base_branch> との merge-base の時点の値と比べる（個人の設定が優先されていても、チームの設定は独立に比べる）。
-#              true（書き換わった）・false（同じ。commands が null のときも false）・null（比べる基点を決められない。true と同じに扱う）
+#   commands_changed  リポジトリにコミットされた設定（チームの設定 .claude/dev-workflow/config.json と、git に追跡されている個人の設定）の
+#              checks.commands が、今のブランチで書き換わったか。origin/HEAD（リモートの既定のブランチ）との merge-base の時点の値と比べる
+#              （設定の base_branch は PR の作者が書き換えられるので使わない。追跡されていない個人の設定は自分のものなので比べない）。
+#              true（書き換わった）・false（同じ。commands が null のときも false）・null（比べる基点 origin/HEAD が無いなど、比べられない。true と同じに扱う）
 #   hints      リポジトリの手がかり（commands が null のときだけ調べる。configured のときは null）
 #     contributing       CONTRIBUTING.md のパス（無ければ null）
 #     package_scripts    package.json の scripts のうち、test・lint・check・typecheck・build・verify・ci で始まるもの（Makefile のターゲットと同じ条件）（名前 → コマンド。無ければ null）
@@ -113,27 +114,42 @@ commands="$(jq -c '.checks.commands' <<<"$config")"
 jq -e '. == null or (type == "array" and all(.[]; type == "string" and (gsub("\\s"; "") != "")))' <<<"$commands" >/dev/null \
   || dw_die "checks.commands は、空でない文字列の配列か null にしてください: ${commands}" 2
 
-# チームの設定の checks.commands が今のブランチで書き換わったか（commands が null なら、設定のコマンドを実行しないので false）
-team_changed=false
+# リポジトリにコミットされた設定（チームの設定と、追跡されている個人の設定）の checks.commands が、今のブランチで書き換わったか。
+# commands が null なら、設定のコマンドを実行しないので false。
+# 比べる基点は、origin/HEAD（リモートの既定のブランチ）との merge-base にする。設定の base_branch は PR の作者が書き換えられる
+# （自分のブランチを指すと、変更済みの設定が基点になる）ので使わない。origin/HEAD が無ければ比べられないので null
+commands_changed=false
 if [ "$commands" != null ]; then
-  team_changed=null
-  team_rel=".claude/dev-workflow/config.json"
-  base_ref="origin/$(jq -r '.base_branch' <<<"$config")"
-  if merge_base="$(git -C "$repo_root" merge-base HEAD "$base_ref" 2>/dev/null)"; then
-    now=null
-    if [ -f "$repo_root/$team_rel" ]; then
-      now="$(jq -c '.checks.commands // null' "$repo_root/$team_rel")" || dw_die "${team_rel} を読めません" 2
-    fi
-    then_value=null
-    if old="$(git -C "$repo_root" show "$merge_base:$team_rel" 2>/dev/null)"; then
-      then_value="$(jq -c '.checks.commands // null' <<<"$old" 2>/dev/null)" || then_value=unknown
-    fi
-    if [ "$then_value" = unknown ]; then
-      team_changed=null
-    elif [ "$now" = "$then_value" ]; then
-      team_changed=false
+  commands_changed=null
+  head_ref="$(git -C "$repo_root" symbolic-ref -q refs/remotes/origin/HEAD 2>/dev/null || true)"
+  if [ -n "$head_ref" ] && merge_base="$(git -C "$repo_root" merge-base HEAD "$head_ref" 2>/dev/null)"; then
+    any_changed=false any_unknown=false
+    for rel in .claude/dev-workflow/config.json .claude/dev-workflow/config.local.json; do
+      # 個人の設定は、git に追跡されている（コミットされた）ときだけ比べる。追跡されていなければ、自分の設定なので信頼する
+      if [ "$rel" = .claude/dev-workflow/config.local.json ] \
+        && ! git -C "$repo_root" ls-files --error-unmatch -- "$rel" >/dev/null 2>&1; then
+        continue
+      fi
+      now=null
+      if [ -f "$repo_root/$rel" ]; then
+        now="$(jq -c '.checks.commands // null' "$repo_root/$rel" 2>/dev/null)" || now=unknown
+      fi
+      then_value=null
+      if old="$(git -C "$repo_root" show "$merge_base:$rel" 2>/dev/null)"; then
+        then_value="$(jq -c '.checks.commands // null' <<<"$old" 2>/dev/null)" || then_value=unknown
+      fi
+      if [ "$now" = unknown ] || [ "$then_value" = unknown ]; then
+        any_unknown=true
+      elif [ "$now" != "$then_value" ]; then
+        any_changed=true
+      fi
+    done
+    if $any_changed; then
+      commands_changed=true
+    elif $any_unknown; then
+      commands_changed=null
     else
-      team_changed=true
+      commands_changed=false
     fi
   fi
 fi
@@ -178,8 +194,8 @@ if $save; then
 fi
 
 if $save; then
-  jq -nc --argjson team_changed "$team_changed" --arg warning "$warning" --argjson saved "$saved_value" --argjson commands "$commands" --argjson hints "$hints" --arg file "$target" --arg scope "$scope" --arg hint "$hint" \
-    '{commands: $commands, team_commands_changed: $team_changed, hints: $hints, saved: {file: $file, scope: $scope, commands: $saved, local_hint: (if $hint == "" then null else $hint end), warning: (if $warning == "" then null else $warning end)}}'
+  jq -nc --argjson commands_changed "$commands_changed" --arg warning "$warning" --argjson saved "$saved_value" --argjson commands "$commands" --argjson hints "$hints" --arg file "$target" --arg scope "$scope" --arg hint "$hint" \
+    '{commands: $commands, commands_changed: $commands_changed, hints: $hints, saved: {file: $file, scope: $scope, commands: $saved, local_hint: (if $hint == "" then null else $hint end), warning: (if $warning == "" then null else $warning end)}}'
 else
-  jq -nc --argjson team_changed "$team_changed" --argjson commands "$commands" --argjson hints "$hints" '{commands: $commands, team_commands_changed: $team_changed, hints: $hints}'
+  jq -nc --argjson commands_changed "$commands_changed" --argjson commands "$commands" --argjson hints "$hints" '{commands: $commands, commands_changed: $commands_changed, hints: $hints}'
 fi
