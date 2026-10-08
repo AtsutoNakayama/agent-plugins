@@ -967,7 +967,7 @@ dw_review_model_layers() {
   team_dir="$(dw_team_dir "$1")"
   # ホームのリポジトリには、チームの層も個人の層も無い（dw_team_dir）
   [ -z "$team_dir" ] || pairs+=("team:$team_dir/config.json" "local:$(dw_local_config_file "$1")")
-  for pair in "${pairs[@]}"; do
+  for pair in ${pairs[@]+"${pairs[@]}"}; do
     name="${pair%%:*}" f="${pair#*:}"
     [ -f "$f" ] || continue
     # 壊れたファイルで止めるため、$(...) の外で確かめる（中で止めても、そのサブシェルが終わるだけになる）
