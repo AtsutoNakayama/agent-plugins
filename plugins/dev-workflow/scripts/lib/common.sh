@@ -370,9 +370,10 @@ dw_user_review_dir_for() {
 # shellcheck disable=SC2034
 DW_GH_MIN_VERSION=2.88.0
 
-# 今の gh のバージョン（例: 2.96.0）。分からなければ空
+# 今の gh のバージョン（例: 2.96.0）。分からなければ空。
+# 1行目だけを読むのに head を使わない（head が先に終わると、gh が SIGPIPE で終わり、pipefail で全体が失敗するため。sed は最後まで読む）
 dw_gh_version() {
-  gh --version 2>/dev/null | head -n 1 | LC_ALL=C sed -n 's/^gh version \([0-9][0-9.]*\).*/\1/p'
+  gh --version 2>/dev/null | LC_ALL=C sed -n '1s/^gh version \([0-9][0-9.]*\).*/\1/p'
 }
 
 # バージョン <a> が <b> 以上なら成功する。数字を . で区切って、前から順に比べる

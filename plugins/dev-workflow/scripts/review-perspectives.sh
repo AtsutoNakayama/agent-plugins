@@ -187,7 +187,8 @@ body_lines() {
 
 # frontmatter から <キー> の値を取り出す。前後の空白と、囲む引用符を外す
 fm_value() {
-  printf '%s\n' "$1" | sed -n "s/^$2:[[:space:]]*//p" | head -n 1 \
+  # 最初の値だけを読むのに head を使わない（同じキーの行が多いと、head が先に終わって sed が SIGPIPE で終わり、pipefail で止まるため）
+  printf '%s\n' "$1" | sed -n "s/^$2:[[:space:]]*//p" | sed -n 1p \
     | sed -e 's/[[:space:]]*$//' -e 's/^"\(.*\)"$/\1/' -e "s/^'\(.*\)'$/\1/"
 }
 

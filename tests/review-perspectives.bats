@@ -596,3 +596,15 @@ auto_branch() {
     assert_equal "$(jq -c '[.context.issue, .context.type, .context.type_from]' <<<"$output")" '[17,"fix","issue"]'
   done
 }
+
+@test "frontmatter に同じキーの行がたくさんあっても（パイプの容量を超えても）、最初の値を読む" {
+  mkdir -p "$REPO/.claude/dev-workflow/review"
+  {
+    printf -- '---\ntitle: 最初の title\n'
+    yes 'title: 後の title' | head -n 10000
+    printf -- '---\n\n指示を書く\n'
+  } >"$REPO/.claude/dev-workflow/review/many.md"
+  run_script review-perspectives.sh
+  assert_success
+  assert_equal "$(jq -r '.perspectives[] | select(.name == "many") | .title' <<<"$output")" "最初の title"
+}

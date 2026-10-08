@@ -100,3 +100,14 @@ commit_with() {
   assert_equal "$(jq -c '[.dry_run, .sha]' <<<"$output")" '[true,null]'
   assert_equal "$(git rev-list --count HEAD)" 1
 }
+
+@test "メッセージが長くても（本文がパイプの容量を超えても）、1行目を読んでコミットする" {
+  setup_branch
+  {
+    printf 'feat: 長い本文\n\n'
+    yes 'body line' | head -n 20000
+  } >"$TMP/msg"
+  run_script commit.sh --message-file "$TMP/msg"
+  assert_success
+  assert_equal "$(git log -1 --format=%s)" "feat: 長い本文"
+}
