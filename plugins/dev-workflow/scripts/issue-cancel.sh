@@ -76,7 +76,7 @@ stripped="${reason//"$fullwidth_space"/}"
 
 if [ -n "$duplicate_of" ]; then
   state_reason=DUPLICATE
-  dw_require_gh_version "$DW_GH_MIN_VERSION" "重複として閉じる（gh issue close --duplicate-of）"
+  dw_require_gh_version "$DW_GH_MIN_VERSION" "重複として閉じる（gh issue close --duplicate-of は 2.88.0 から。プラグイン全体の最低版）"
 else
   state_reason=NOT_PLANNED
 fi

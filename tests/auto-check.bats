@@ -343,6 +343,14 @@ run_check() {
   assert_equal "$(called issue-view)" 0
 }
 
+@test "gh 2.93.0 でも（サブ Issue を読める 2.94.0 より古いので）、Issue を読まずに止まる" {
+  setup_auto
+  FAKE_GH_VERSION=2.93.0 run_check --issue 17
+  assert_failure 2
+  assert_output --partial "gh 2.94.0 以上が要ります（今は 2.93.0）"
+  assert_equal "$(called issue-view)" 0
+}
+
 @test "使い回すブランチが、Issue を閉じる今のリポジトリの PR でマージ済みなら hold（終わった作業の上に続けない）" {
   setup_auto
   git branch feat/17-old

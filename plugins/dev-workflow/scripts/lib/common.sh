@@ -367,7 +367,7 @@ dw_user_review_dir_for() {
   [ -z "$(dw_user_dir_for "${1:-}")" ] || dw_user_review_dir
 }
 
-# gh の最低限のバージョン。gh issue でサブ Issue（--json parent・subIssues・subIssuesSummary）を扱えるのが 2.94.0 から（cli/cli#13057）。issue-cancel.sh の gh issue close --duplicate-of（2.88.0 から）もこれで足りる。source した側で使う
+# gh の最低限のバージョン。gh issue でサブ Issue（--json parent・subIssues・subIssuesSummary）を扱えるのが 2.94.0 から。issue-cancel.sh の gh issue close --duplicate-of（2.88.0 から）もこれで足りる。source した側で使う
 # shellcheck disable=SC2034
 DW_GH_MIN_VERSION=2.94.0
 

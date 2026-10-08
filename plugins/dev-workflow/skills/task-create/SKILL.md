@@ -38,7 +38,7 @@ Issue の分け方・親子の構成の相談（起票はまだ頼まれてい�
 
 #### 重複と親の候補を探す
 
-下書きの前に、開いている Issue を読み（`gh issue list --state open --limit 1000 --json number,title,labels,subIssuesSummary`）、次を探す。タイトルだけで判断できないものは、`gh issue view <番号> --json number,title,body,parent` で本文も読む。
+下書きの前に、開いている Issue を読み（`gh issue list --state open --limit 1000 --json number,title,labels,subIssuesSummary`。`--json` に未知のフィールド（`subIssues`・`subIssuesSummary`・`parent`）のエラーで失敗したら、gh が古い（サブ Issue を `gh issue` で扱えるのは gh 2.94.0 から）ので、続けずに gh の更新を促して止まる。）、次を探す。タイトルだけで判断できないものは、`gh issue view <番号> --json number,title,body,parent` で本文も読む。
 
 - **親の候補**：依頼が、その一部にあたる仕様の Issue。サブ Issue を既に持つ Issue（一覧の `subIssuesSummary.total` が1以上）だけを候補にする。サブ Issue を持たない Issue は、依頼より広い内容でも、着手する作業の Issue のこともあるので、親の候補にせず、次の重なりとして扱う。仕様として親にするかは、下の質問でユーザーが決める（作業の Issue を親にすると、その Issue の Story Point が空欄になり、同じ作業を二重に数えることになるため、自動では親にしない）
 - **重複・重なり**：依頼と同じ内容の Issue や、やることの一部が重なる Issue（依頼を含む、サブ Issue を持たない広い Issue も含む）。依頼で指定された親と、上の親の候補は、重なりとして数えない（親のやることには子の作業が含まれるため）

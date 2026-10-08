@@ -224,7 +224,7 @@ run_start() {
   setup_origin
   FAKE_GH_VERSION=2.93.0 run_start --issue 17 --slug "task start"
   assert_failure 2
-  assert_output --partial "サブ Issue を読む（gh issue view --json subIssuesSummary）には gh 2.94.0 以上が要ります（今は 2.93.0）"
+  assert_output --partial "サブ Issue と Issue を閉じる PR を読む（gh issue view --json subIssuesSummary,closedByPullRequestsReferences）には gh 2.94.0 以上が要ります（今は 2.93.0）"
   FAKE_GH_VERSION=2.93.0 run_start --issue 17 --no-worktree
   assert_failure 2
   assert_output --partial "gh 2.94.0 以上が要ります"

@@ -91,7 +91,7 @@ writes() { grep -oE '^(issue-comment|issue-close|pr-comment|pr-close|api-delete)
   setup_cancel
   FAKE_GH_VERSION=2.93.0 run_script issue-cancel.sh --issue 17 --reason "重複です" --duplicate-of 20
   assert_failure 2
-  assert_output --partial "重複として閉じる（gh issue close --duplicate-of）には gh 2.94.0 以上が要ります（今は 2.93.0）。gh を更新してください"
+  assert_output --partial "重複として閉じる（gh issue close --duplicate-of は 2.88.0 から。プラグイン全体の最低版）には gh 2.94.0 以上が要ります（今は 2.93.0）。gh を更新してください"
   assert_equal "$(writes)" ""
 }
 
