@@ -19,7 +19,8 @@
 # - gh api --paginate repos/.../issues/N/sub_issues?...
 #                                   「api-sub-issues <パス（? より前）>」を $CALLS に記録し、$FIX/sub-issues-N.json（無ければ []）を返す
 # - gh api --paginate repos/.../rules/branches/<ブランチ>?...
-#                                   「api-rules <パス>」を $CALLS に記録し、$FIX/rules.json（ブランチに効いているルール。無ければ []）を返す
+#                                   「api-rules <パス>」を $CALLS に記録し、ブランチに効いているルールとして $FIX/rules-<ブランチ（パスのままの形）>.json、
+#                                   無ければ $FIX/rules.json、それも無ければ [] を返す
 # - gh api repos/...                「api-get <パス>」を $CALLS に記録する。$FIX/remote-ref があれば {} を、無ければ HTTP 404 で失敗する
 # - gh api -X DELETE <パス>          「api-delete <パス>」を $CALLS に記録する
 # - gh api graphql                  操作名ごとに $FIX/<操作名>.json を返し、「<操作名> <変数>」を $CALLS に記録する
@@ -98,7 +99,11 @@ case "$1 $2" in
       repos/*/rules/branches/*)
         echo "api-rules $3" >>"$CALLS"
         fail api-rules
-        if [ -f "$FIX/rules.json" ]; then cat "$FIX/rules.json"; else echo '[]'; fi
+        rb="${3#*/rules/branches/}"
+        rb="${rb%%\?*}"
+        if [ -f "$FIX/rules-$rb.json" ]; then cat "$FIX/rules-$rb.json"
+        elif [ -f "$FIX/rules.json" ]; then cat "$FIX/rules.json"
+        else echo '[]'; fi
         ;;
     esac
     ;;

@@ -36,8 +36,9 @@
 #      空でない行の後に、最初の項目と同じ字下げで置く（改行が \r\n なら \r\n で書く）。その行がリストの項目でなければ
 #      （項目の続きの行・HTML の塊・区切り線など）、空行を挟む。項目が無ければ本文の最後に置く
 #
-# 出力の merge_queue は、base_branch へのマージがマージキューを通すか（true・false。ブランチに効いているルールを
-# 読めなければ null）。PR を出した後の案内（キューに入れるか、base_branch が進んだら取り込むか）を切り替えるのに使う
+# 出力の merge_queue は、PR のマージ先へのマージがマージキューを通すか（true・false。ブランチに効いているルールを
+# 読めなければ null）。マージ先は、既にある PR を使うならその PR のマージ先（設定の base_branch と違うことがある）、
+# 新しく作るなら base_branch。PR を出した後の案内（キューに入れるか、マージ先が進んだら取り込むか）を切り替えるのに使う
 set -euo pipefail
 
 # shellcheck source=lib/common.sh
@@ -146,7 +147,7 @@ to_add="$(jq -c --argjson t "$tasks" "$missing_jq" <<<"$adds")"
 
 # --- 既にある PR ----------------------------------------------------------------
 # --head はブランチ名だけで探すので、fork の同じ名前のブランチからの PR を除く
-existing="$(gh pr list --head "$branch" --state open --json number,url,title,body,isCrossRepository,isDraft \
+existing="$(gh pr list --head "$branch" --state open --json number,url,title,body,isCrossRepository,isDraft,baseRefName \
   | jq -c 'map(select(.isCrossRepository | not))')" \
   || dw_die "${branch} の PR を取得できませんでした"
 pr_number="$(jq -r '.[0].number // empty' <<<"$existing")"
@@ -311,10 +312,11 @@ if ! $dry_run && [ "$(jq -n --argjson c "$to_check" --argjson a "$to_add" '$c + 
 fi
 
 # --- マージキュー ----------------------------------------------------------------
-# PR を出した後の案内を切り替えるため、base_branch へのマージがキューを通すかを読む（doctor.sh と同じく、組織の
-# ルールセットも含めてブランチに効いているルールで見る）。読むだけなので dry-run でも読む。読めなければ null にし、止めない
-merge_queue="$(dw_merge_queue_enabled '{owner}/{repo}' "$base")" || merge_queue=null
-[ -n "$merge_queue" ] || merge_queue=null
+# PR を出した後の案内を切り替えるため、PR のマージ先へのマージがキューを通すかを読む（doctor.sh と同じく、組織の
+# ルールセットも含めてブランチに効いているルールで見る）。既にある PR は、マージ先を設定の base_branch から変えて
+# いることがあるので、その PR のマージ先で見る。読むだけなので dry-run でも読む。読めなければ null にし、止めない
+pr_base="$(jq -r '.[0].baseRefName // empty' <<<"$existing")"
+merge_queue="$(dw_merge_queue_enabled '{owner}/{repo}' "${pr_base:-$base}")" || merge_queue=null
 
 # 本文は大きいことがあるので、引数ではなく標準入力で jq に渡す（引数1つの長さには上限がある）
 printf '%s' "$body" | jq -Rs --argjson i "$issue" --arg branch "$branch" --arg base "$base" --arg title "$title" \
