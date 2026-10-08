@@ -211,3 +211,146 @@ set_children() { local p="$1"; shift; printf '%s\n' "$@" | jq -s . >"$FIX/sub-is
   assert_equal "$(jq -c '.parents[0].column' <<<"$output")" null
   assert_equal "$(called ProjectView)" 0
 }
+
+# --- 追加：引数・失敗・境界 ---------------------------------------------------------
+
+@test "parent-state: 引数の誤りは 64 で止まる" {
+  setup_parents
+  run_script parent-state.sh
+  assert_failure 64
+  run_script parent-state.sh --issue
+  assert_failure 64
+  run_script parent-state.sh --issue 17 --assume-closed
+  assert_failure 64
+  run_script parent-state.sh --issue 17 --bogus
+  assert_failure 64
+}
+
+@test "parent-state: サブ Issue を読めなければ止まる" {
+  setup_parents
+  FAKE_FAIL=api-sub-issues run_script parent-state.sh --issue 17
+  assert_failure
+  assert_output --partial "#10 のサブ Issue を読めませんでした"
+}
+
+@test "parent-state: 子が 0 の親・閉じた親・開いた子が残る親には suggest を出さない（確認の対象は suggest が null でない親だけ）" {
+  setup_parents
+  set_children 10 "$(sub 17 closed completed)"
+  set_children 5 "$(sub 10 open)"
+  run_script parent-state.sh --issue 17
+  assert_equal "$(jq -c '[.parents[] | .suggest]' <<<"$output")" '["completed",null]'
+  # 子が 0
+  rm -f "$FIX/sub-issues-10.json"
+  run_script parent-state.sh --issue 17
+  assert_equal "$(jq -c '.parents[0] | [.children.total, .all_closed, .suggest]' <<<"$output")" '[0,false,null]'
+  # 閉じた親
+  set_parent 17 10 closed me/demo completed
+  set_children 10 "$(sub 17 closed completed)"
+  run_script parent-state.sh --issue 17
+  assert_equal "$(jq -c '.parents[0].suggest' <<<"$output")" null
+  # 開いた子が残る親
+  set_parent 17 10
+  set_children 10 "$(sub 17 closed completed)" "$(sub 18 open)"
+  run_script parent-state.sh --issue 17
+  assert_equal "$(jq -c '.parents[0].suggest' <<<"$output")" null
+}
+
+@test "parent-state: --assume-closed は、既に閉じた子の閉じ方を変えず、一覧に無い番号は無視し、複数の指定（繰り返しとカンマ）を受ける" {
+  setup_parents
+  set_children 10 "$(sub 17 open)" "$(sub 18 closed not_planned)" "$(sub 19 open)"
+  run_script parent-state.sh --issue 17 --assume-closed 18,99 --assume-closed 17
+  assert_success
+  assert_equal "$(jq -c '.parents[0].children | [.total, .closed, .open]' <<<"$output")" '[3,2,1]'
+  assert_equal "$(jq -c '.parents[0].children.list | map({number, state, state_reason})' <<<"$output")" \
+    '[{"number":17,"state":"closed","state_reason":"completed"},{"number":18,"state":"closed","state_reason":"not_planned"},{"number":19,"state":"open","state_reason":null}]'
+  run_script parent-state.sh --issue 17 --assume-closed 17,19
+  assert_equal "$(jq -c '.parents[0] | [.all_closed, .suggest]' <<<"$output")" '[true,"completed"]'
+  run_script parent-state.sh --issue 17 --assume-closed 17 --assume-closed '#19'
+  assert_equal "$(jq -c '.parents[0] | [.all_closed, .suggest]' <<<"$output")" '[true,"completed"]'
+}
+
+@test "parent-state: Project を読めなくても止めず、column を null にして警告する" {
+  setup_parents
+  set_children 10 "$(sub 17 open)"
+  FAKE_FAIL=ProjectView FAKE_FAIL_MSG="gh: boom" run_script parent-state.sh --issue 17
+  assert_success
+  assert_output --partial "Project（me/4）を読めなかったので"
+  assert_equal "$(json_of "$output" | jq -c '.parents[0].column')" null
+  # Project が無い（404）ときも同じ
+  FAKE_FAIL=ProjectView FAKE_FAIL_MSG="Could not resolve to a ProjectV2 (HTTP 404)" run_script parent-state.sh --issue 17
+  assert_success
+  assert_equal "$(json_of "$output" | jq -c '.parents[0].column')" null
+}
+
+@test "親をたどる層は 8 までで、途中が別のリポジトリならそこで打ち切る" {
+  setup_fake_gh
+  # 17 → 101 → 102 → … → 109（9 層上まである）
+  set_parent 17 101
+  for n in 101 102 103 104 105 106 107 108; do set_parent "$n" "$((n + 1))"; done
+  run_script parent-state.sh --issue 17
+  assert_success
+  assert_equal "$(jq -c '[.parents[].number]' <<<"$output")" '[101,102,103,104,105,106,107,108]'
+  # 連鎖の途中（5）だけ別のリポジトリ
+  rm -f "$FIX"/parent-1*.json
+  set_parent 17 10
+  set_parent 10 5 open other/repo
+  set_parent 5 3
+  run_script parent-state.sh --issue 17
+  assert_equal "$(jq -c '[.parents[].number]' <<<"$output")" '[10]'
+}
+
+@test "親のリポジトリ名は大文字小文字を区別せずに比べる" {
+  setup_parents
+  set_parent 17 10 open Me/Demo
+  run_script parent-state.sh --issue 17
+  assert_success
+  assert_equal "$(jq -c '[.parents[].number]' <<<"$output")" '[10,5]'
+}
+
+@test "--only-from に未設定の役割を渡すと skipped になり、Project に無い Issue には何もしない" {
+  setup_parents
+  run_script status-set.sh --issue 17 --to start --only-from hold
+  assert_success
+  assert_equal "$(jq -r .skipped <<<"$output")" true
+  assert_equal "$(called SetField)" 0
+  item_of 17 absent
+  jq -n '{data: {repository: {issue: {url: "https://github.com/me/demo/issues/17", projectItems: {nodes: []}}}}}' >"$FIX/IssueItem.json"
+  rm -f "$FIX/IssueItem-issue-17.json"
+  run_script status-set.sh --issue 17 --to start --only-from todo
+  assert_success
+  assert_equal "$(jq -r .skipped <<<"$output")" true
+  assert_equal "$(called AddItem)" 0
+  assert_equal "$(called SetField)" 0
+}
+
+@test "列名で pr_opened と同じ列を渡しても親は動かさず、start の役割なら動かす（pr_opened と start が同じ列のとき）" {
+  setup_parents
+  echo '{"project": {"owner": "me", "number": 4}, "status": {"pr_opened": "In Progress"}}' >"$REPO/.claude/dev-workflow/config.json"
+  run_script status-set.sh --issue 17 --to "In Progress"
+  assert_success
+  assert_equal "$(called api-parent)" 0
+  assert_equal "$(moved)" "IT17,"
+  : >"$CALLS"
+  run_script status-set.sh --issue 17 --to start
+  assert_success
+  assert_equal "$(moved)" "IT17,IT10,IT5,"
+}
+
+@test "列名で start の列を渡しても、pr_opened の列と別なら親が動く" {
+  setup_parents
+  run_script status-set.sh --issue 17 --to "In Progress"
+  assert_success
+  assert_equal "$(moved)" "IT17,IT10,IT5,"
+}
+
+@test "親の移動に失敗・親を読めなかったことは、JSON の warnings にも出る" {
+  setup_parents
+  FAKE_FAIL=SetField.2 FAKE_FAIL_MSG="gh: boom" run_script status-set.sh --issue 17 --to start
+  assert_success
+  assert_equal "$(json_of "$output" | jq -c '.warnings | length')" 1
+  assert_equal "$(json_of "$output" | jq -r '.warnings[0]')" "親の Issue #10 の列を start に移せませんでした（Issue #17 の移動は済んでいます）"
+  FAKE_FAIL=api-parent FAKE_FAIL_MSG="gh: boom" run_script status-set.sh --issue 17 --to start
+  assert_equal "$(json_of "$output" | jq -r '.warnings[0]')" "Issue #17 の親を読めなかったので、親の列は移しません"
+  run_script status-set.sh --issue 17 --to start
+  assert_equal "$(json_of "$output" | jq -c '.warnings')" "[]"
+}

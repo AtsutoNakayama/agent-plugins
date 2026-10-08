@@ -491,12 +491,21 @@ dw_issue_parents() {
     # 関数は if の中から呼ばれると set -e が効かないので、失敗は明示して返す
     p="$(dw_gh_find gh api "repos/$repo/issues/$cur/parent")" || return 1
     [ "$p" != null ] || break
-    [ "$(jq -r '.repository_url | sub("^.*/repos/"; "")' <<<"$p")" = "$repo" ] || break
+    # リポジトリ名の大文字小文字は区別しない（GitHub は区別しないので、API の応答と gh repo view で綴りが違うことがある）
+    [ "$(jq -r --arg r "$repo" '(.repository_url | sub("^.*/repos/"; "") | ascii_downcase) == ($r | ascii_downcase)' <<<"$p")" = true ] || break
     out="$(jq -c --argjson p "$p" '. + [$p | {number, title, state, state_reason: (.state_reason // null)}]' <<<"$out")"
     cur="$(jq -r .number <<<"$p")"
     i=$((i + 1))
   done
   printf '%s\n' "$out"
+}
+
+# Issue のサブ Issue（子）を全ページ読んで、JSON の配列を出力する。読めなければメッセージを出して終了する。
+# 子は GitHub の画面で別のリポジトリの Issue も紐付けられるので、パスは Issue の API の url（.../repos/OWNER/NAME/issues/N）の形で渡す。
+# 使い方: dw_sub_issues <repos/OWNER/NAME/issues/N>
+dw_sub_issues() {
+  gh api --paginate "$1/sub_issues?per_page=100" | jq -sc 'add // []' \
+    || dw_die "#${1##*/} のサブ Issue を読めませんでした"
 }
 
 # Issue の url と、Project の項目（id・project.id・今の Status の列）を GraphQL で読み、

@@ -4,7 +4,7 @@
 #
 # 使い方: parent-state.sh --issue N [--assume-closed M]...
 #   --issue N          Issue の番号（#N でもよい）。この Issue の親を、近い順にたどる
-#   --assume-closed M  Issue M を、閉じたものとして数える（複数指定できる）。PR のマージで GitHub が閉じる Issue は、
+#   --assume-closed M  Issue M を、閉じたものとして数える。繰り返して指定するか、カンマ区切り（M1,M2）で複数の番号を渡せる。PR のマージで GitHub が閉じる Issue は、
 #                      マージの直後は少し遅れて閉じるので、task-finish が片付けている Issue を渡す
 #
 # 出力: {issue, parents: [近い順の親]}。親の要素は
@@ -28,8 +28,14 @@ while [ $# -gt 0 ]; do
   case "$1" in
     --issue | --assume-closed)
       if [ $# -lt 2 ] || [ -z "$2" ]; then dw_die "$1 に値がありません" 64; fi
-      n="$(dw_issue_number "$1" "$2")"
-      if [ "$1" = --issue ]; then issue="$n"; else assumed="$(jq -c --argjson n "$n" '. + [$n]' <<<"$assumed")"; fi
+      if [ "$1" = --issue ]; then
+        issue="$(dw_issue_number "$1" "$2")"
+      else
+        for v in ${2//,/ }; do
+          n="$(dw_issue_number "$1" "$v")"
+          assumed="$(jq -c --argjson n "$n" '. + [$n]' <<<"$assumed")"
+        done
+      fi
       shift 2
       ;;
     -h | --help) usage; exit 0 ;;
@@ -45,19 +51,21 @@ number="$(jq -r '.project.number // empty' <<<"$config")"
 if [ -n "$number" ]; then
   owner="$(jq -r '.project.owner // empty' <<<"$config")"
   [ -n "$owner" ] || owner="${repo_nwo%%/*}"
-  project_id="$(dw_gh_find gh project view "$number" --owner "$owner" --format json | jq -r '.id // empty')"
-  [ -n "$project_id" ] || dw_die "Project が見つかりません: ${owner}/${number}（setup-project.sh で設定してください）"
+  # Project を読めなくても止めない。親の閉じ忘れの確認には、列は要らない（column を null にして続ける）
+  if ! project_id="$(dw_gh_find gh project view "$number" --owner "$owner" --format json | jq -r '.id // empty')" || [ -z "$project_id" ]; then
+    project_id=""
+    dw_warn "Project（${owner}/${number}）を読めなかったので、親の列（column）は null にします"
+  fi
 fi
 
 chain="$(dw_issue_parents "$repo_nwo" "$issue")"
 out='[]'
 for p in $(jq -r '.[].number' <<<"$chain"); do
   parent="$(jq -c --argjson p "$p" '.[] | select(.number == $p)' <<<"$chain")"
-  children="$(gh api --paginate "repos/$repo_nwo/issues/$p/sub_issues?per_page=100" | jq -sc 'add // []')" \
-    || dw_die "#${p} のサブ Issue を読めませんでした"
+  children="$(dw_sub_issues "repos/$repo_nwo/issues/$p")"
   column=""
   if [ -n "$project_id" ]; then
-    items="$(dw_issue_items "$repo_nwo" "$p")"
+    items="$(dw_issue_items "$repo_nwo" "$p")" || items=null
     column="$(jq -r --arg p "$project_id" '[.projectItems.nodes[]? | select(.project.id == $p)][0].fieldValueByName.name // empty' <<<"$items")"
   fi
   out="$(jq -c --argjson parent "$parent" --argjson kids "$children" --argjson assumed "$assumed" --arg column "$column" '

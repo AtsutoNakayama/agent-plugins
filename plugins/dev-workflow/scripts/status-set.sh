@@ -14,7 +14,7 @@
 # Issue が Project に入っていなければ追加してから移す。既にその列なら何もしない（--item-id のときは確かめない）。
 # start の列に移したときは、その Issue の親（とさらに上の親）のうち、開いていて todo の列にあるものも start の列に移す
 # （親は作業の単位ではなく、子の進み具合に合わせて動かす。設計書 §4）。todo より先の列にある親・閉じた親・別のリポジトリの親・
-# Project に入っていない親は動かさない。親を移せなくても、この Issue の移動は止めずに警告する。結果は parents に出し、actions にも足す。
+# Project に入っていない親は動かさない。親を移せなくても、この Issue の移動は止めずに警告する（標準エラーと、出力の warnings の両方）。結果は parents に出し、actions にも足す。
 # pr_opened の列に移したときは、親は動かさない（PR は子の作業に対して出すもので、親の作業は無い）。
 # 役割の列が設定で null（例: 既定の pr_opened）なら、何もせずに skipped: true を出力する。
 set -euo pipefail
@@ -138,9 +138,20 @@ fi
 # --- 親の Issue ----------------------------------------------------------------------
 # start の列に移したときだけ、親（とさらに上の親）のうち todo の列にあるものを start の列に移す。
 # 親の列を移せなくても、この Issue の移動は済んでいるので止めずに警告する
-parents='[]'
-# pr_opened の列が start と同じ列でも、pr_opened への移動では親を動かさない
-if ! $no_parents && [ "$to" != pr_opened ] && [ "$column" = "$(jq -r '.status.start // empty' <<<"$config")" ]; then
+parents='[]' warnings='[]'
+warn() { dw_warn "$1"; warnings="$(jq -c --arg w "$1" '. + [$w]' <<<"$warnings")"; }
+# 親を動かすのは、start の役割の列に移したときだけ。pr_opened の列が start と同じ列でも、pr_opened への移動では動かさない。
+# --to が役割の名前ならその役割で、列名なら、その列が pr_opened の列かどうかで決める（列名で渡しても pr_opened の列なら動かさない）
+move_parents=false
+case "$to" in
+  start) move_parents=true ;;
+  todo | hold | pr_opened | done) ;;
+  *)
+    pr_opened_column="$(jq -r '.status.pr_opened // empty' <<<"$config")"
+    [ -n "$pr_opened_column" ] && [ "$column" = "$pr_opened_column" ] || move_parents=true
+    ;;
+esac
+if ! $no_parents && $move_parents && [ "$column" = "$(jq -r '.status.start // empty' <<<"$config")" ]; then
   if chain="$(dw_issue_parents "$repo_nwo" "$issue" 2>/dev/null)"; then
     for p in $(jq -r '.[] | select(.state == "open") | .number' <<<"$chain"); do
       args=(--issue "$p" --to start --only-from todo --no-parents)
@@ -152,16 +163,16 @@ if ! $no_parents && [ "$to" != pr_opened ] && [ "$column" = "$(jq -r '.status.st
           [ -n "$a" ] && note "親の ${a}"
         done <<<"$(jq -r '.actions[]?' <<<"$res")"
       else
-        dw_warn "親の Issue #${p} の列を start に移せませんでした（Issue #${issue} の移動は済んでいます）"
+        warn "親の Issue #${p} の列を start に移せませんでした（Issue #${issue} の移動は済んでいます）"
       fi
     done
   else
-    dw_warn "Issue #${issue} の親を読めなかったので、親の列は移しません"
+    warn "Issue #${issue} の親を読めなかったので、親の列は移しません"
   fi
 fi
 
 jq -n --argjson i "$issue" --arg item "$item_id" --arg from "$from" --arg to "$column" \
-  --argjson changed "$changed" --argjson dry "$dry_run" --argjson actions "$actions" --argjson parents "$parents" '{
+  --argjson changed "$changed" --argjson dry "$dry_run" --argjson actions "$actions" --argjson parents "$parents" --argjson warnings "$warnings" '{
     issue: $i,
     dry_run: $dry,
     item_id: (if $item == "" then null else $item end),
@@ -169,5 +180,6 @@ jq -n --argjson i "$issue" --arg item "$item_id" --arg from "$from" --arg to "$c
     to: $to,
     changed: $changed,
     parents: $parents,
+    warnings: $warnings,
     actions: $actions
   }'

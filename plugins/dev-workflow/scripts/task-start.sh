@@ -258,6 +258,6 @@ jq -n --argjson i "$issue" --arg title "$title" --arg branch "$branch" --arg pat
     base: $base,
     created: {worktree: $wc, branch: $bc},
     assigned: $assigned,
-    status: {from: $status.from, to: ($status.to // null), skipped: ($status.skipped // false), parents: ($status.parents // [])},
+    status: {from: $status.from, to: ($status.to // null), skipped: ($status.skipped // false), parents: ($status.parents // []), warnings: ($status.warnings // [])},
     actions: $actions
   }'

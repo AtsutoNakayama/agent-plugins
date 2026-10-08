@@ -111,13 +111,8 @@ fi
 # 開いている子孫（サブ Issue とその下）。浅いものから順に読み、閉じるときは深いものから閉じる
 # （子を残したまま親が閉じた状態にしない）。子は GitHub の画面で別のリポジトリの Issue も紐付けられるので、
 # たどるパスはホストによらない API の url（.../repos/OWNER/NAME/issues/N）から、子のリポジトリは repository_url から取る
-# 使い方: sub_issues_of <repos/OWNER/NAME/issues/N> → 子の配列
-sub_issues_of() {
-  gh api --paginate "$1/sub_issues?per_page=100" | jq -sc 'add // []' \
-    || dw_die "#${1##*/} のサブ Issue を読めませんでした"
-}
 open_subs='[]'
-level="$(sub_issues_of "repos/$repo_nwo/issues/$issue")"
+level="$(dw_sub_issues "repos/$repo_nwo/issues/$issue")"
 # GitHub の親子は8層まで。循環は作れないが、念のため層の数で打ち切る
 depth=0
 while [ "$(jq length <<<"$level")" -gt 0 ] && [ "$depth" -lt 8 ]; do
@@ -127,7 +122,7 @@ while [ "$(jq length <<<"$level")" -gt 0 ] && [ "$depth" -lt 8 ]; do
   next='[]'
   # 孫の数（sub_issues_summary）が応答に無ければ、孫を見落とさないよう読みにいく
   for path in $(jq -r '.[] | select((.sub_issues_summary.total // 1) > 0) | .url | sub("^.*?/repos/"; "repos/")' <<<"$level"); do
-    children="$(sub_issues_of "$path")"
+    children="$(dw_sub_issues "$path")"
     next="$(jq -c --argjson c "$children" '. + $c' <<<"$next")"
   done
   level="$next"
