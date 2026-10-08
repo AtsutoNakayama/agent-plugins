@@ -59,7 +59,7 @@ LOCAL=.claude/dev-workflow/config.local.json
 }
 
 @test "checks.commands が配列でない・文字列でない・空の要素があれば止まる" {
-  for v in '"make test"' '[1]' '[""]' '["  "]' '{}'; do
+  for v in '"make test"' '[1]' '[""]' '["  "]' '{}' false 0; do
     echo "{\"checks\": {\"commands\": $v}}" >"$TEAM"
     run_script checks-commands.sh
     assert_failure 2
@@ -167,4 +167,14 @@ LOCAL=.claude/dev-workflow/config.local.json
   assert_success
   assert_output --partial "絞らずに全部"
   assert_output --partial "実行する前にコマンドを見せて確認を取る"
+}
+
+@test "サブディレクトリから実行しても、ルートの CI の設定ファイルと package.json などの手がかりを出す" {
+  mkdir -p .github/workflows sub/dir
+  : >.github/workflows/ci.yml
+  : >go.mod
+  cd sub/dir
+  run_script checks-commands.sh
+  assert_success
+  assert_equal "$(jq -c '[.hints.ci_workflows, .hints.project_files]' <<<"$output")" '[[".github/workflows/ci.yml"],["go.mod"]]'
 }

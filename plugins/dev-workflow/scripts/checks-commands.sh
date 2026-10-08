@@ -106,7 +106,7 @@ if $save; then
 fi
 
 config="$("$BASH" "$DW_SCRIPTS_DIR/config.sh")" || dw_die "設定を読めません（config.sh で確かめてください）" 2
-commands="$(jq -c '.checks.commands // null' <<<"$config")"
+commands="$(jq -c '.checks.commands' <<<"$config")"
 jq -e '. == null or (type == "array" and all(.[]; type == "string" and (gsub("\\s"; "") != "")))' <<<"$commands" >/dev/null \
   || dw_die "checks.commands は、空でない文字列の配列か null にしてください: ${commands}" 2
 
@@ -122,9 +122,10 @@ if [ "$commands" = null ]; then
   if [ -n "$mk" ]; then
     targets="$(LC_ALL=C sed -En 's/^((test|lint|check|typecheck|build|verify|ci)[A-Za-z0-9_.-]*):([^=]|$).*/\1/p' "$repo_root/$mk" | sort -u)"
   fi
-  for f in .github/workflows/*.yml .github/workflows/*.yaml .gitlab-ci.yml .circleci/config.yml Jenkinsfile; do
-    if [ -f "$repo_root/$f" ]; then ci="${ci}${f}"$'\n'; fi
-  done
+  # glob は呼んだディレクトリではなく、リポジトリのルートで展開する
+  ci="$(cd "$repo_root" && for f in .github/workflows/*.yml .github/workflows/*.yaml .gitlab-ci.yml .circleci/config.yml Jenkinsfile; do
+    if [ -f "$f" ]; then printf '%s\n' "$f"; fi
+  done)"
   for f in Cargo.toml go.mod pyproject.toml pytest.ini tox.ini setup.py justfile Taskfile.yml composer.json Gemfile pom.xml build.gradle build.gradle.kts mix.exs deno.json; do
     if [ -f "$repo_root/$f" ]; then proj="${proj}${f}"$'\n'; fi
   done
