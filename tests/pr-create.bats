@@ -175,6 +175,19 @@ run_pr() {
   assert_output --partial --draft
 }
 
+@test "--draft を付ければ、pr.draft が false でも下書きにする（task-auto）" {
+  setup_branch
+  run_pr --issue 17 --body-file "$TMP/body.md" --draft --dry-run
+  assert_success
+  assert_equal "$(jq .draft <<<"$json")" true
+  assert_output --partial "（下書き）"
+  run_pr --issue 17 --body-file "$TMP/body.md" --draft
+  assert_success
+  assert_equal "$(jq .draft <<<"$json")" true
+  run args pr-create
+  assert_output --partial --draft
+}
+
 # status.pr_opened を Done にする
 set_pr_opened() {
   jq '. + {status: {pr_opened: "Done"}}' .claude/dev-workflow/config.json >"$TMP/c.json" && mv "$TMP/c.json" .claude/dev-workflow/config.json
