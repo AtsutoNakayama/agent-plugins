@@ -175,7 +175,7 @@ run_pr() {
   assert_output --partial --draft
 }
 
-@test "--draft を付ければ、pr.draft が false でも下書きにする（task-auto）" {
+@test "--draft を付ければ、pr.draft が false でも下書きにする" {
   setup_branch
   run_pr --issue 17 --body-file "$TMP/body.md" --draft --dry-run
   assert_success
@@ -186,6 +186,28 @@ run_pr() {
   assert_equal "$(jq .draft <<<"$json")" true
   run args pr-create
   assert_output --partial --draft
+}
+
+@test "--no-draft を付ければ、pr.draft が true でも下書きにしない（task-auto）" {
+  setup_branch
+  jq '. + {pr: {draft: true}}' .claude/dev-workflow/config.json >"$TMP/c.json" && mv "$TMP/c.json" .claude/dev-workflow/config.json
+  git commit -q -am "chore: draft"
+  run_pr --issue 17 --body-file "$TMP/body.md" --no-draft --dry-run
+  assert_success
+  assert_equal "$(jq .draft <<<"$json")" false
+  refute_output --partial "（下書き）"
+  run_pr --issue 17 --body-file "$TMP/body.md" --no-draft
+  assert_success
+  assert_equal "$(jq .draft <<<"$json")" false
+  run args pr-create
+  refute_output --partial --draft
+}
+
+@test "--draft と --no-draft は同時に指定できない" {
+  setup_branch
+  run_pr --issue 17 --body-file "$TMP/body.md" --draft --no-draft
+  assert_failure 64
+  assert_output --partial "--draft と --no-draft は同時に指定できません"
 }
 
 # status.pr_opened を Done にする
@@ -700,6 +722,16 @@ fake_issue_tasks() {
   run_pr --issue 17 --body-file "$TMP/body.md"
   assert_success
   assert_equal "$(jq -r .draft <<<"$json")" true
+}
+
+@test "既にある下書きの PR に --no-draft を付けても、下書きのままにして gh pr ready を呼ばない" {
+  setup_branch
+  echo '[{"number": 7, "url": "https://github.com/me/demo/pull/7", "isCrossRepository": false, "isDraft": true}]' >"$FIX/pr-list.json"
+  run_pr --issue 17 --body-file "$TMP/body.md" --no-draft
+  assert_success
+  assert_equal "$(jq -c '[.created, .pr.number, .draft]' <<<"$json")" '[false,7,true]'
+  assert_equal "$(called pr-create)" 0
+  assert_equal "$(called pr-ready)" 0
 }
 
 @test "PR のマージ先（新しく作る PR では base_branch）へのマージがマージキューを通すかを merge_queue に出す（PR を出した後の案内を切り替えるため。dry-run でも読む）" {

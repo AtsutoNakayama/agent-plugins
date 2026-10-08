@@ -608,7 +608,7 @@ has() {
   f="$SKILLS/task-auto/SKILL.md"
   grep -qF '**AskUserQuestion は使わない**' "$f" || fail "AskUserQuestion を使わないことが書かれていません"
   stop="$(section "$f" '## 止まる')"
-  has "止まる条件" "$stop" 'auto.max_fix_attempts' 'review.max_rounds' 'ADR にすべき判断' 'Issue があいまい' \
+  has "止まる条件" "$stop" 'auto.max_fix_attempts' 'ADR にすべき判断' 'Issue があいまい' \
     '「確認の代わりに決めること」に無い確認' 'auto-hold.sh --issue <番号> --run-id <実行の id> --reason-file <ファイル>' \
     '止まった理由' 'それまでの判断' '残したもの' '続けるには' 'ワークツリーとブランチは消さない'
   # 実行の id の出どころは、「止まる」の節の1（作業役にコミットさせる）と取り違えないよう、task-auto の手順1と書く
@@ -629,15 +629,26 @@ has() {
 }
 
 # shellcheck disable=SC2016 # バッククォートはスキルの本文の文字で、展開させない
-@test "task-auto は、作業役に任せ、範囲外の指摘を上限まで起票し、自動で決めたことを書いた draft の PR を出す（マージしない）" {
+@test "task-auto は、作業役に任せ、範囲外の指摘を上限まで起票し、自動で決めたことを書いた、draft でない PR を出す（マージしない）" {
   f="$SKILLS/task-auto/SKILL.md"
   has "task-auto の手順3" "$(step "$f" 3)" 'subagent_type' 'AskUserQuestion は使いません' '/dev-workflow:commit' \
     'GitHub に書き込む操作をしない' 'うのみにせず' 'max_fix_attempts' 'SendMessage'
   has "task-auto の手順4" "$(step "$f" 4)" '/dev-workflow:review' '範囲内の指摘はすべて反映する' 'この差分より前からある不具合' 'review の手順9：行わない'
   has "task-auto の手順5" "$(step "$f" 5)" '同じ内容の Issue があるかを探す' 'max_new_issues' 'Story Point・親・依存は付けない' 'issue-create.sh'
   s6="$(step "$f" 6)"
-  has "task-auto の手順6" "$s6" '--draft --dry-run' '必ず `--draft` を付ける' '「自動で決めたこと」の節' '`pending` なら止まる' '`--add-task` は付けない'
+  has "task-auto の手順6" "$s6" '--no-draft --dry-run' '必ず `--no-draft` を付ける' '「自動で決めたこと」の節' '`pending` なら止まる' '`--add-task` は付けない'
   grep -qF 'マージはしない（`allow_ai_merge` にかかわらず）' "$f" || fail "マージしないことが書かれていません"
+  # draft で出さない（PR の自動レビューの多くは draft をレビューしない。ADR 000280）。--draft の語そのものを手順6に書かない（--no-draft は許す）
+  ! grep -qF -e '--draft' <<<"${s6//--no-draft/}" || fail "手順6に --draft が書かれています"
+  grep -qF 'PR は draft にせず、レビューできる状態（オープン）で出す' "$f" || fail "draft にせず出すことが書かれていません"
+  # 上限の周の指摘は、反映してコミットしたら止まらずに PR へ進み、未レビューの反映を本文に書く
+  has "task-auto の手順4" "$(step "$f" 4)" 'もう1周せずに手順5・6へ進む。止まらない' '上限の周の反映（未レビュー）'
+  has "task-auto の手順6" "$s6" '上限の周の反映（未レビュー）'
+  stopcond="$(sed -n '/^次のどれかに当たったら/,/^止まるときは/p' "$f")"
+  has "止まる条件の節" "$stopcond" 'auto-check.sh'
+  ! grep -qF 'review.max_rounds' <<<"$stopcond" || fail "止まる条件に、上限の周の指摘が残っています"
+  grep -qF '| review 手順8 | 上限の周でも指摘が出たら、もう1周するか | もう1周しない。範囲内の指摘を反映してコミットし、テストとチェックが通れば、止まらずに PR の作成（手順6）へ進む' "$f" \
+    || fail "表の review 手順8が、PR の作成へ進むことになっていません"
 }
 
 @test "スキルが直接実行するスクリプト（scripts/ と scripts/setup/ の .sh）は、git で実行権限が付いている（lib/ は読み込むだけなので除く）" {
