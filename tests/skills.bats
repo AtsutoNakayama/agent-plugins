@@ -649,3 +649,12 @@ has() {
   bad="$(awk '$1 != "100755" && $4 !~ /\/lib\// { print $4 }' <<<"$output")"
   [ -z "$bad" ] || fail "実行権限がありません（git update-index --chmod=+x で付けてください）: ${bad}"
 }
+
+@test "branch-update・pr-respond・review は、テストとチェックのコマンドを checks-commands.sh で決める（設定 checks.commands）" {
+  for name in branch-update pr-respond review; do
+    f="$SKILLS/$name/SKILL.md"
+    grep -q 'checks-commands.sh' "$f" || fail "${name} に、checks-commands.sh で実行するコマンドを決めることが書かれていません"
+    grep -q 'checks.commands' "$f" || fail "${name} に、設定 checks.commands が書かれていません"
+    grep -q -- '--save' "$f" || fail "${name} に、聞いた答えを設定に保存することが書かれていません"
+  done
+}
