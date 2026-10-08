@@ -15,7 +15,7 @@ LOCAL=.claude/dev-workflow/config.local.json
 }
 
 @test "package.json・Makefile・CI・CONTRIBUTING.md・言語の設定ファイルから手がかりを出す（CONTRIBUTING.md が無くても出る）" {
-  echo '{"scripts": {"test": "jest", "lint:fix": "eslint --fix .", "start": "node ."}}' >package.json
+  echo '{"scripts": {"test": "jest", "lint:fix": "eslint --fix .", "checkstyle": "cs", "start": "node ."}}' >package.json
   printf 'VAR=1\ntest:\n\tbats tests\nlint-all: a\nother:\ntest-x := 1\ntest:=1\n' >Makefile
   mkdir -p .github/workflows
   : >.github/workflows/ci.yml
@@ -23,7 +23,7 @@ LOCAL=.claude/dev-workflow/config.local.json
   run_script checks-commands.sh
   assert_success
   assert_equal "$(jq -c .hints <<<"$output")" \
-    '{"contributing":null,"package_scripts":{"test":"jest","lint:fix":"eslint --fix ."},"makefile_targets":["lint-all","test"],"ci_workflows":[".github/workflows/ci.yml"],"project_files":["go.mod"]}'
+    '{"contributing":null,"package_scripts":{"test":"jest","lint:fix":"eslint --fix .","checkstyle":"cs"},"makefile_targets":["lint-all","test"],"ci_workflows":[".github/workflows/ci.yml"],"project_files":["go.mod"]}'
   : >CONTRIBUTING.md
   run_script checks-commands.sh
   assert_equal "$(jq -r .hints.contributing <<<"$output")" CONTRIBUTING.md
@@ -148,4 +148,23 @@ LOCAL=.claude/dev-workflow/config.local.json
   assert_output --partial "commands が配列"
   assert_output --partial "hints"
   assert_output --partial "--save"
+}
+
+@test "--save --none も、優先される層が別の値を決めていれば warning を出し、一致すれば null にする" {
+  echo '{"checks": {"commands": ["make ci"]}}' >"$LOCAL"
+  run_script checks-commands.sh --save --scope team --none
+  assert_success
+  assert_equal "$(jq -c .saved.commands <<<"$output")" '[]'
+  jq -e '.saved.warning | test("make ci")' <<<"$output" >/dev/null
+  rm "$LOCAL"
+  run_script checks-commands.sh --save --scope team --none
+  assert_success
+  assert_equal "$(jq -c .saved.warning <<<"$output")" null
+}
+
+@test "--help に、設定のコマンドは絞らず全部実行することと、チームの設定が変わったときの確認が書かれている" {
+  run_script checks-commands.sh --help
+  assert_success
+  assert_output --partial "絞らずに全部"
+  assert_output --partial "実行する前にコマンドを見せて確認を取る"
 }

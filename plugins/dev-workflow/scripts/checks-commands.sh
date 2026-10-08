@@ -11,7 +11,10 @@
 #               team（<repo>/.claude/dev-workflow/config.json。コミットして共有する）
 #
 # 決め方（スキルが従う）:
-#   1. commands が配列（設定に checks.commands がある）なら、それを順に実行する。空の配列は、実行するものが無いと決めてあること
+#   1. commands が配列（設定に checks.commands がある）なら、絞らずに全部を順に実行する（チームが決めた一覧なので、関係するものだけに絞らない）。
+#      空の配列は、実行するものが無いと決めてあること（何も実行せず、聞きもしない）。
+#      チームの設定（.claude/dev-workflow/config.json）の checks.commands が今のブランチの変更で書き換わっているときは、
+#      PR の作者が決めた任意のコマンドになりうるので、実行する前にコマンドを見せて確認を取る
 #   2. commands が null なら、hints（リポジトリの手がかり）から実行するコマンドを推測する
 #   3. 推測できなければ、ユーザーに聞く。聞いた答えは --save で設定に保存するかも聞く（保存すれば次からは聞かない）
 #
@@ -19,7 +22,7 @@
 #   commands   設定の checks.commands（配列か null）
 #   hints      リポジトリの手がかり（commands が null のときだけ調べる。configured のときは null）
 #     contributing       CONTRIBUTING.md のパス（無ければ null）
-#     package_scripts    package.json の scripts のうち、test・lint・check・typecheck・build・verify・ci で始まるもの（名前 → コマンド。無ければ null）
+#     package_scripts    package.json の scripts のうち、test・lint・check・typecheck・build・verify・ci で始まるもの（Makefile のターゲットと同じ条件）（名前 → コマンド。無ければ null）
 #     makefile_targets   Makefile のターゲットのうち、同じ名前で始まるもの
 #     ci_workflows       CI の設定ファイルのパス
 #     project_files      ビルドやテストの手がかりになるファイル（Cargo.toml・go.mod・pyproject.toml など）のパス
@@ -27,7 +30,7 @@
 #              warning は、保存した層より優先される層が別の値を決めていて、保存した値が使われないときの知らせか null）
 #
 # 止まるとき: checks.commands が null でも配列でもない・文字列でない要素や空の要素がある（終了コード 2）、
-#             --save の引数の誤り（64）、設定を読めない・書けない（2）
+#             --save の引数の誤り（64）、設定を読めない・書けない（2）、--save で書き込み先の設定の checks がオブジェクトでない（2。設定は書き換えない）
 set -euo pipefail
 
 # shellcheck source=lib/common.sh
@@ -127,7 +130,7 @@ if [ "$commands" = null ]; then
   done
   scripts=null
   if [ -f "$repo_root/package.json" ]; then
-    scripts="$(jq -c '((.scripts // {}) | if type == "object" then . else {} end) | with_entries(select(.key | test("^(test|lint|check|typecheck|build|verify|ci)([:_.-].*)?$")))' "$repo_root/package.json" 2>/dev/null)" \
+    scripts="$(jq -c '((.scripts // {}) | if type == "object" then . else {} end) | with_entries(select(.key | test("^(test|lint|check|typecheck|build|verify|ci)")))' "$repo_root/package.json" 2>/dev/null)" \
       || dw_die "package.json を JSON として読めません" 2
   fi
   lines() { printf '%s' "$1" | jq -R . | jq -sc 'map(select(. != ""))'; }
