@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # task-auto が止まる条件に当たったときに、理由とそれまでの判断を Issue にコメントし、Issue を保留の列（status.hold）に移す。
 # ワークツリー・ブランチ・コミットには触れない（人が続きから進められるように残す）。
-# 何度実行しても同じ結果になる（Issue の最後のコメントが同じ本文なら付け直さず、既に保留の列なら移さない）ので、
+# 何度実行しても同じ結果になる（Issue に同じ本文のコメントがあれば、最後のものでなくても付け直さず、既に保留の列なら移さない）ので、
 # 途中で止まっても、もう一度実行すれば続きから進む。
 #
 # 使い方: auto-hold.sh --issue N --reason-file PATH [--dry-run]
@@ -65,7 +65,8 @@ body="$(printf '%s\n\n%s' "$MARK" "$reason")"
 # PR の番号なら止まる（dw_read_issue）
 found="$(dw_read_issue "$issue" number,comments)"
 commented=true
-if jq -e --arg b "$body" '.comments[-1].body == $b' <<<"$found" >/dev/null; then
+# 列の移動に失敗した後、誰かがコメントしてから実行し直しても二重に付けないよう、最後のコメントだけでなく全部と比べる
+if jq -e --arg b "$body" 'any(.comments[]?; .body == $b)' <<<"$found" >/dev/null; then
   commented=false
 fi
 
@@ -85,8 +86,9 @@ if ! $dry_run; then
     printf '%s' "$body" | gh issue comment "$issue" --body-file - >/dev/null \
       || dw_die "Issue #${issue} にコメントできませんでした"
   fi
+  if $commented; then done_note="Issue #${issue} にコメントしましたが、"; else done_note="Issue #${issue} を"; fi
   status="$("$BASH" "$DW_SCRIPTS_DIR/status-set.sh" --issue "$issue" --to hold)" \
-    || dw_die "Issue #${issue} にコメントしましたが、保留の列「${hold}」に移せませんでした（もう一度実行すれば、コメントは付け直さずに列だけを移します）"
+    || dw_die "${done_note}保留の列「${hold}」に移せませんでした（$($commented || echo '同じコメントは既にあります。')もう一度実行すれば、コメントは付け直さずに列だけを移します）"
 fi
 
 jq -n --argjson i "$issue" --arg c "$body" --argjson cm "$commented" --argjson s "$status" \

@@ -98,3 +98,45 @@ run_hold() {
   assert_success
   assert_equal "$(called issue-comment)" 1
 }
+
+@test "コメントが1件も無ければ、コメントして列を移す" {
+  setup_hold
+  jq '. + {comments: []}' "$FIX/issue-17.json" >"$TMP/i.json" && mv "$TMP/i.json" "$FIX/issue-17.json"
+  run_hold --issue 17 --reason-file "$TMP/reason.md"
+  assert_success
+  assert_equal "$(jq -r .commented <<<"$output")" true
+  assert_equal "$(called issue-comment)" 1
+  assert_equal "$(called SetField)" 1
+}
+
+@test "同じ本文のコメントが最後でなくても（後に誰かが書いても）、付け直さない" {
+  setup_hold
+  jq --arg b "$(printf '<!-- dev-workflow:task-auto -->\n\n## 止まった理由\n- テストが3回直しても通りません')" \
+    '. + {comments: [{body: $b}, {body: "後から書いたコメント"}]}' "$FIX/issue-17.json" >"$TMP/i.json" && mv "$TMP/i.json" "$FIX/issue-17.json"
+  run_hold --issue 17 --reason-file "$TMP/reason.md"
+  assert_success
+  assert_equal "$(jq -r .commented <<<"$output")" false
+  assert_equal "$(called issue-comment)" 0
+}
+
+@test "コメントを付け直さなかった再実行で列を移せなければ、コメントしたとは伝えない" {
+  setup_hold
+  set_comments "$(printf '<!-- dev-workflow:task-auto -->\n\n## 止まった理由\n- テストが3回直しても通りません')"
+  FAKE_FAIL=SetField run_hold --issue 17 --reason-file "$TMP/reason.md"
+  assert_failure 1
+  refute_output --partial "コメントしましたが"
+  assert_output --partial "保留の列「On Hold」に移せませんでした（同じコメントは既にあります。もう一度実行すれば"
+}
+
+@test "本文のファイルが無い・保留の列がほかの役割と同じ名前なら、何もせずに止まる" {
+  setup_hold
+  run_hold --issue 17 --reason-file "$TMP/none.md"
+  assert_failure 64
+  assert_output --partial "本文のファイルがありません"
+  echo '{"project": {"owner": "me", "number": 4}, "status": {"hold": "Todo"}}' >.claude/dev-workflow/config.json
+  run_hold --issue 17 --reason-file "$TMP/reason.md"
+  assert_failure 2
+  assert_output --partial "保留の列（status.hold）は、ほかの役割（status.todo）と別の列名にしてください"
+  assert_equal "$(called issue-view)" 0
+  assert_equal "$(called issue-comment)" 0
+}
