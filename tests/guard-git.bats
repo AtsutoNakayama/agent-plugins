@@ -400,6 +400,10 @@ silent() {
   allowed "cd - && git -C $REPO commit -m x" "cd - && git -C $REPO push" "cd - && git -C $REPO push origin HEAD"
 }
 
+@test "対象のリポジトリが分からないときも、コミット・push 以外は止めない" {
+  allowed "cd - && git switch -c feat/x" "cd - && git checkout -b feat/x" "cd - && git branch feat/x"
+}
+
 @test "規約に合わない名前でブランチを作るコマンドは、止めずに警告する" {
   warned foo \
     "git switch -c foo" \
