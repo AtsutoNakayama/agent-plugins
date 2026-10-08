@@ -762,3 +762,19 @@ fake_issue_tasks() {
   assert_equal "$(called pr-create)" 0
   assert_equal "$(args api-rules)" 'repos/{owner}/{repo}/rules/branches/release%2Fv1?per_page=100'
 }
+
+@test "既にある PR の応答にマージ先（baseRefName）が無いか空なら、pr_base とマージキューの判定は設定の base_branch にする（#178）" {
+  setup_branch
+  fake_issue 17 '["feat"]'
+  mkdir -p "$FIX/rules"
+  echo '[{"type": "merge_queue", "parameters": {"merge_method": "SQUASH"}}]' >"$FIX/rules/main.json"
+  for pr in '{"number": 7, "url": "https://github.com/me/demo/pull/7", "isCrossRepository": false}' \
+    '{"number": 7, "url": "https://github.com/me/demo/pull/7", "isCrossRepository": false, "baseRefName": ""}'; do
+    echo "[$pr]" >"$FIX/pr-list.json"
+    : >"$CALLS"
+    run_pr --issue 17 --body-file "$TMP/body.md" --dry-run
+    assert_success
+    assert_equal "$(jq -c '[.created, .base, .pr_base, .merge_queue]' <<<"$json")" '[false,"main","main",true]'
+    assert_equal "$(args api-rules)" 'repos/{owner}/{repo}/rules/branches/main?per_page=100'
+  done
+}

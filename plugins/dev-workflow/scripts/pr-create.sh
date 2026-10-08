@@ -216,10 +216,10 @@ draft="$(jq -r '.pr.draft // false' <<<"$config")"
 ! $draft_opt || draft=true
 created=false
 # PR のマージ先。新しく作る PR は base_branch に向ける。既にある PR はマージ先を変えていることがあるので、
-# その PR のマージ先にする（gh が返さないときだけ base_branch とみなす。使うのは PR を出した後の案内だけ）
+# その PR のマージ先にする（gh が返さないか空のときだけ base_branch とみなす。使うのは PR を出した後の案内だけ）
 pr_base="$base"
 if [ -n "$pr_number" ]; then
-  pr_base="$(jq -r --arg b "$base" '.[0].baseRefName // $b' <<<"$existing")"
+  pr_base="$(jq -r --arg b "$base" '(.[0].baseRefName // "") | if . == "" then $b else . end' <<<"$existing")"
   note "既にある PR #${pr_number} を使う（作り直さず、タイトル・本文・ラベル・列・下書きかどうかは変えない）"
   # 下書きかどうかは変えないので、出力にはその PR の今の状態を出す（--draft を付けても、下書きと取り違えないように）
   draft="$(jq -r '.[0].isDraft // false' <<<"$existing")"
