@@ -27,7 +27,7 @@ Issue の作業を始められる状態にする。ワークツリーを作る�
 
 ### 1. Issue を読む
 
-引数があれば Issue の番号として使う（`12` でも `#12` でもよい）。引数が無ければ、依頼の文章から番号を読む。それでも分からなければユーザーに聞く。`gh issue view <番号> --json number,title,body,labels,state,subIssues,subIssuesSummary` で Issue を読む。閉じていれば止める。親の Issue（`subIssuesSummary.total` が 1 以上）なら、ブランチ・割り当て・列の移動のどれも行わずに止め、手順2のとおり子を案内する。type ラベル（`labels.types` のどれか）が無い、または複数あるときは、どれにするかユーザーに聞いて Issue のラベルを直してから進める（ラベルの変更も確認を取ってから行う。選択肢の説明には「Issue #12 のラベルを fix だけにする」のように、選ぶと何が変わるかを書く）。
+引数があれば Issue の番号として使う（`12` でも `#12` でもよい）。引数が無ければ、依頼の文章から番号を読む。それでも分からなければユーザーに聞く。`gh issue view <番号> --json number,title,body,labels,state,subIssues,subIssuesSummary` で Issue を読む（`--json` に未知のフィールド（`subIssues`・`subIssuesSummary`・`parent`）のエラーで失敗したら、gh が古い（サブ Issue を `gh issue` で扱えるのは gh 2.94.0 から）ので、続けずに gh の更新を促して止まる。）。閉じていれば止める。親の Issue（`subIssuesSummary.total` が 1 以上）なら、ブランチ・割り当て・列の移動のどれも行わずに止め、手順2のとおり子を案内する。type ラベル（`labels.types` のどれか）が無い、または複数あるときは、どれにするかユーザーに聞いて Issue のラベルを直してから進める（ラベルの変更も確認を取ってから行う。選択肢の説明には「Issue #12 のラベルを fix だけにする」のように、選ぶと何が変わるかを書く）。
 
 ### 2. 親の Issue なら、子を案内して止まる
 

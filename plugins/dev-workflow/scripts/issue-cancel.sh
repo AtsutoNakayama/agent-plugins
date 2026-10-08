@@ -4,7 +4,7 @@
 # 使い方: issue-cancel.sh --issue N --reason TEXT [--duplicate-of M] [--branch NAME] [--sub-issues close|keep] [--dry-run]
 #   --issue N           Issue の番号（#N でもよい）
 #   --reason TEXT       閉じる理由（コメントとして残す。代わりに作業する Issue などの参照先も書く）。空白だけなら止まる
-#   --duplicate-of M    重複の元の Issue の番号（#M でもよい）。付けると duplicate で閉じ、元の Issue に紐付ける（gh 2.88.0 以上）
+#   --duplicate-of M    重複の元の Issue の番号（#M でもよい）。付けると duplicate で閉じ、元の Issue に紐付ける（gh 2.94.0 以上）
 #   --branch NAME       やめた作業のブランチ。そのブランチの開いている PR を同じ理由のコメントを付けて閉じ、
 #                       リモート（origin）のブランチを削除する。手元のワークツリーとブランチは消さない（cleanup.sh --abandon）
 #   --sub-issues MODE   親の Issue（サブ Issue を持つ Issue）を取りやめるときの、開いている子孫（子・孫）の扱い。
@@ -76,7 +76,7 @@ stripped="${reason//"$fullwidth_space"/}"
 
 if [ -n "$duplicate_of" ]; then
   state_reason=DUPLICATE
-  dw_require_gh_version "$DW_GH_MIN_VERSION" "重複として閉じる（gh issue close --duplicate-of）"
+  dw_require_gh_version "$DW_GH_MIN_VERSION" "重複として閉じる（gh issue close --duplicate-of は 2.88.0 から。プラグイン全体の最低版）"
 else
   state_reason=NOT_PLANNED
 fi

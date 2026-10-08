@@ -88,10 +88,10 @@ note() { actions="$(jq -c --arg a "$1" '. + [$a]' <<<"$actions")"; }
 
 # --- Issue ----------------------------------------------------------------------
 # PR の番号なら止まる（dw_read_issue。--no-worktree では、PR を割り当てたり列を移したりしてしまうため）。
-# --no-worktree では、Issue を閉じる PR のブランチも見るので closedByPullRequestsReferences も読む（gh 2.73.0 から読める）
+# subIssuesSummary は gh 2.94.0 から読める。--no-worktree では、Issue を閉じる PR のブランチも見るので closedByPullRequestsReferences も読む
+dw_require_gh_version "$DW_GH_MIN_VERSION" "サブ Issue と Issue を閉じる PR を読む（gh issue view --json subIssuesSummary,closedByPullRequestsReferences）"
 fields=number,title,state,assignees,subIssuesSummary
 if $no_worktree; then
-  dw_require_gh_version "$DW_GH_MIN_VERSION" "Issue を閉じる PR を読む（gh issue view --json closedByPullRequestsReferences）"
   fields="$fields,closedByPullRequestsReferences"
 fi
 issue_json="$(dw_read_issue "$issue" "$fields")"

@@ -58,8 +58,8 @@ issue="$(dw_issue_number --issue "$issue")"
 repo_root="$(dw_repo_root)" || dw_die "リポジトリの中で実行してください" 64
 main_root="$(dw_main_root "$repo_root")" || dw_die "メインのワークツリーが分かりません"
 config="$("$BASH" "$DW_SCRIPTS_DIR/config.sh")"
-# closedByPullRequestsReferences は gh 2.73.0 から読める（プラグインが求める版はそれより新しい）
-dw_require_gh_version "$DW_GH_MIN_VERSION" "Issue を閉じる PR を読む（gh issue view --json closedByPullRequestsReferences）"
+# subIssuesSummary は gh 2.94.0 から読める（closedByPullRequestsReferences はそれより前の 2.73.0 から）
+dw_require_gh_version "$DW_GH_MIN_VERSION" "サブ Issue と Issue を閉じる PR を読む（gh issue view --json subIssuesSummary,closedByPullRequestsReferences）"
 
 # PR の番号なら止まる（dw_read_issue。PR を Issue として閉じないため）
 issue_json="$(dw_read_issue "$issue" number,title,state,subIssuesSummary,closedByPullRequestsReferences)"
