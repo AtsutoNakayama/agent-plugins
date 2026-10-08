@@ -702,7 +702,7 @@ fake_issue_tasks() {
   assert_equal "$(jq -r .draft <<<"$json")" true
 }
 
-@test "base_branch へのマージがマージキューを通すかを merge_queue に出す（PR を出した後の案内を切り替えるため。dry-run でも読む）" {
+@test "PR のマージ先（新しく作る PR では base_branch）へのマージがマージキューを通すかを merge_queue に出す（PR を出した後の案内を切り替えるため。dry-run でも読む）" {
   setup_branch
   fake_issue 17 '["feat"]'
   # ページごとの配列を並べたもの（--paginate）。キューのルールは2ページ目にある
