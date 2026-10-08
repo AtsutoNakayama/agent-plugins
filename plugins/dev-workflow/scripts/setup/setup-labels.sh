@@ -78,8 +78,11 @@ if [ -z "$file" ]; then
     file_label="$repo_nwo:.claude/dev-workflow/labels.json"
   else
     repo_root="$(dw_repo_root || true)"
-    if [ -n "$repo_root" ] && [ -f "$repo_root/.claude/dev-workflow/labels.json" ]; then
-      file="$repo_root/.claude/dev-workflow/labels.json"
+    # ホームのリポジトリ（dw_team_dir が空）では、ユーザーの層の labels.json をリポジトリの定義として読まない
+    team_dir=""
+    [ -z "$repo_root" ] || team_dir="$(dw_team_dir "$repo_root")"
+    if [ -n "$team_dir" ] && [ -f "$team_dir/labels.json" ]; then
+      file="$team_dir/labels.json"
       file_label="$file"
     fi
   fi

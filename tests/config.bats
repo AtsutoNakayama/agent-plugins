@@ -199,3 +199,18 @@ load test_helper
   assert_success
   assert_output "In Progress"
 }
+
+@test "ホームのリポジトリでは、ユーザーの層のファイルをチームの設定・個人の上書き・ガイドとして読まない" {
+  make_home_repo
+  echo '{"language": "en"}' >"$WORKFLOW_USER_DIR/config.json"
+  echo '{"language": "fr"}' >"$WORKFLOW_USER_DIR/config.local.json"
+  echo user >"$WORKFLOW_USER_DIR/commit.md"
+  run_script config.sh '[.language, .guides, (.sources | length)] | tojson'
+  assert_success
+  assert_output '["ja",{},1]'
+  # 壊れていても読まないので、止まらない
+  echo '{broken' >"$WORKFLOW_USER_DIR/config.json"
+  run_script config.sh .language
+  assert_success
+  assert_output ja
+}

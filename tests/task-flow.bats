@@ -227,3 +227,12 @@ pos() {
   run grep -cE '^- スキルの外でも.*AskUserQuestion で出します' "$DEFAULT"
   assert_output 1
 }
+
+@test "ホームのリポジトリでは、ユーザーの層のファイルがあっても導入したとみなさず、何も出さない" {
+  make_home_repo
+  echo '{}' >"$WORKFLOW_USER_DIR/config.json"
+  echo "個人の追記です" >"$WORKFLOW_USER_DIR/task-flow.md"
+  run_hook
+  assert_success
+  assert_output ""
+}

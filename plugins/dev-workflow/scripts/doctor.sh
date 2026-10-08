@@ -62,10 +62,14 @@ else
 fi
 
 repo_root="$(dw_repo_root || true)"
+# チームの設定のファイル。ホームのリポジトリでは、ユーザーの層と同じ場所になるので無い（dw_team_dir）
+team_config=""
+[ -z "$repo_root" ] || team_config="$(dw_team_dir "$repo_root")"
+[ -z "$team_config" ] || team_config="$team_config/config.json"
 # チームの設定の base_branch。setup-repo.sh とマージキューの確認（下）が使う。使えない値なら空にし、理由を team_base_err に残す
 team_base="" team_base_err=""
 if [ -n "$repo_root" ]; then
-  team_base="$( (dw_team_base_branch "$repo_root/.claude/dev-workflow/config.json" .claude/dev-workflow/config.json) 2>&1)" \
+  team_base="$( (dw_team_base_branch "$team_config" .claude/dev-workflow/config.json) 2>&1)" \
     || { team_base_err="${team_base#error: }"; team_base=""; }
 fi
 
@@ -90,7 +94,7 @@ else
   check config false error "$config"
   # 合わせた設定は読めなくても、チームの設定の値の誤りは知らせる（直した後に、もう1つ誤りが出てこないように）。
   # チームの設定のファイルそのものが読めないときは、config の失敗と同じ誤りなので、二重に知らせない
-  if [ -n "$team_base_err" ] && dw_is_json_object "$repo_root/.claude/dev-workflow/config.json"; then
+  if [ -n "$team_base_err" ] && [ -n "$team_config" ] && dw_is_json_object "$team_config"; then
     check base-branch false error "チームの設定: ${team_base_err}"
   fi
 fi
@@ -114,7 +118,9 @@ old_location() {
 }
 if [ -n "$repo_root" ]; then
   # プラグインは導入したリポジトリにだけ効く（設計書 §1）。導入していないと、使う人が気づかないまま守りが外れるので知らせる
-  if dw_is_set_up "$repo_root"; then
+  if dw_is_home_repo "$repo_root"; then
+    check set-up false warn "ホームのリポジトリ（${repo_root}）には導入できません。チームの設定の置き場所 .claude/dev-workflow が、ユーザーの層（$(dw_user_dir)）と同じ場所になり、ユーザーの層の設定がチームの設定に見えてしまうためです。フックは動かず、ユーザーの層の設定・文章のガイド・レビューの観点も使いません。導入するリポジトリ（ホームの下の、ホームのリポジトリではないもの）で /dev-workflow:repo-setup を実行してください"
+  elif dw_is_set_up "$repo_root"; then
     check set-up true warn "導入済み（.claude/dev-workflow/config.json があります）"
   else
     check set-up false warn "このリポジトリにはプラグインを導入していません（.claude/dev-workflow/config.json がありません）。フック（main を守る・タスクの進め方を渡す・リンクを出す）は動かず、~/.claude/dev-workflow/ の設定・文章のガイド・レビューの観点も使いません。/dev-workflow:repo-setup で導入してください"
@@ -192,7 +198,7 @@ if $gh_auth && [ -n "$repo_root" ] && [ -n "$base_branch" ] \
   # 必須のチェックが無いと、キューを使っていても、CI が通らなくてもマージできる。CI の無いリポジトリでは
   # 毎回の警告になるので、チームの設定で求めないことにしていれば警告しない
   if [ "$required" = "[]" ]; then
-    if [ "$(dw_team_config "$repo_root/.claude/dev-workflow/config.json" require_status_checks 2>/dev/null)" = false ]; then
+    if [ "$(dw_team_config "$team_config" require_status_checks 2>/dev/null)" = false ]; then
       check required-checks true warn "${base_branch} へのマージに必須のチェックはありません（設定の require_status_checks が false）"
     else
       check required-checks false warn "${base_branch} へのマージに必須のチェックがありません。CI が通らなくてもマージできます。/dev-workflow:repo-setup で必須のチェックを設定してください。CI が無いなら、.claude/dev-workflow/config.json に \"require_status_checks\": false を書くと、この警告は出なくなります"

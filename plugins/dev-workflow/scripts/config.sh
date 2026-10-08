@@ -14,6 +14,8 @@
 # 文章のガイド（*.md）は guides.<名前> にパスの配列として入る（優先度の低い順）。
 # 導入したリポジトリ（チームの設定 2 があるリポジトリ。dw_is_set_up）でなければ、ユーザーの層（層4 と
 # ~/.claude/dev-workflow/*.md）は読まない（設計書 §1）。
+# ホームのリポジトリ（<repo>/.claude/dev-workflow が ~/.claude/dev-workflow と同じ場所）は、導入したリポジトリにならず、
+# その場所のファイルはチームの設定としても個人の上書きとしても読まない（dw_team_dir）。
 set -euo pipefail
 
 # shellcheck source=lib/common.sh
@@ -24,6 +26,9 @@ filter="${1:-.}"
 repo_root="$(dw_repo_root || true)"
 # 導入していないリポジトリでは、ユーザーの層を読まない（空になるので飛ばす）
 user_dir="$(dw_user_dir_for "$repo_root")"
+# チームの設定の置き場所。ホームのリポジトリ（ユーザーの層と同じ場所）では空で、チームの設定としては読まない
+team_dir=""
+[ -z "$repo_root" ] || team_dir="$(dw_team_dir "$repo_root")"
 
 layers=()
 sources=()
@@ -72,14 +77,14 @@ add_layer "$DW_PLUGIN_ROOT/defaults/workflow.json"
 [ -z "$user_dir" ] || add_layer "$user_dir/config.json"
 if [ -n "$repo_root" ]; then
   layers+=("$(detect_existing)")
-  add_layer "$repo_root/.claude/dev-workflow/config.json"
+  [ -z "$team_dir" ] || add_layer "$team_dir/config.json"
   # ワークツリーで作業中なら、メインのワークツリーに置いた個人の設定を使う
   add_layer "$(dw_local_config_file "$repo_root")"
 fi
 
 # 文章のガイド（優先度の低い順: ユーザー → リポジトリ）
 guides='{}'
-for dir in "$user_dir" "${repo_root:+$repo_root/.claude/dev-workflow}"; do
+for dir in "$user_dir" "$team_dir"; do
   if [ -z "$dir" ] || [ ! -d "$dir" ]; then
     continue
   fi

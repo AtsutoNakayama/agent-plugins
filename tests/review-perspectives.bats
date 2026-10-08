@@ -616,3 +616,12 @@ auto_branch() {
   assert_failure 2
   assert_output --partial "正規表現として正しくありません"
 }
+
+@test "ホームのリポジトリでは、ユーザーの層の観点を、ユーザーの層としてもリポジトリの層としても使わない" {
+  make_home_repo
+  mkdir -p "$WORKFLOW_USER_DIR/review"
+  printf -- '---\ntitle: 自分の観点\n---\n\n本文\n' >"$WORKFLOW_USER_DIR/review/mine.md"
+  run_script review-perspectives.sh
+  assert_success
+  assert_equal "$(jq -c '[.perspectives[] | select(.name == "mine")] | length' <<<"$output")" 0
+}

@@ -106,8 +106,11 @@ trap 'rm -rf "$tmp"' EXIT
 team=""
 if [ -z "$repo" ] || [ "$here_nwo" = "$repo_nwo" ]; then
   repo_root="$(dw_repo_root || true)"
-  if [ -n "$repo_root" ] && [ -f "$repo_root/.claude/dev-workflow/config.json" ]; then
-    team="$repo_root/.claude/dev-workflow/config.json"
+  # ホームのリポジトリ（dw_team_dir が空）では、ユーザーの層のファイルをチームの設定として読まない
+  team_dir=""
+  [ -z "$repo_root" ] || team_dir="$(dw_team_dir "$repo_root")"
+  if [ -n "$team_dir" ] && [ -f "$team_dir/config.json" ]; then
+    team="$team_dir/config.json"
   fi
 elif dw_fetch_repo_file "$repo_nwo" .claude/dev-workflow/config.json "$tmp/workflow.json"; then
   # 別のリポジトリでは、そのリポジトリの既定のブランチにある設定を読む

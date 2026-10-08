@@ -312,3 +312,40 @@ run_common() {
   assert_success
   assert_output "v=2.96.0"
 }
+
+@test "dw_team_dir は、ユーザーの層と同じ場所なら空で、違えばチームの設定の置き場所を出す（シンボリックリンクや、まだ無いディレクトリも実体で比べる）" {
+  team_dir() { "${TEST_BASH:-bash}" -c '. "$1"; dw_team_dir "$2"' _ "$SCRIPTS/lib/common.sh" "$1"; }
+  # 違う場所
+  assert_equal "$(team_dir "$REPO")" "$REPO/.claude/dev-workflow"
+  # 同じ場所
+  export WORKFLOW_USER_DIR="$REPO/.claude/dev-workflow"
+  assert_equal "$(team_dir "$REPO")" ""
+  # ディレクトリがまだ無くても同じ場所
+  rm -rf "$REPO/.claude"
+  assert_equal "$(team_dir "$REPO")" ""
+  # ユーザーの層が、シンボリックリンクを通した同じ場所
+  mkdir -p "$TMP/real/.claude/dev-workflow"
+  ln -s "$TMP/real" "$TMP/link"
+  export WORKFLOW_USER_DIR="$TMP/link/.claude/dev-workflow"
+  assert_equal "$(team_dir "$TMP/real")" ""
+  # チームの設定のほうがシンボリックリンク
+  export WORKFLOW_USER_DIR="$TMP/real/.claude/dev-workflow"
+  rm -rf "$REPO/.claude"
+  mkdir -p "$REPO/.claude"
+  ln -s "$TMP/real/.claude/dev-workflow" "$REPO/.claude/dev-workflow"
+  assert_equal "$(team_dir "$REPO")" ""
+}
+
+@test "ホームのリポジトリは、ユーザーの層のファイルがあっても導入したとみなさない（dw_is_set_up）" {
+  is_set_up() { "${TEST_BASH:-bash}" -c '. "$1"; dw_is_set_up "$2"' _ "$SCRIPTS/lib/common.sh" "$1"; }
+  mark_set_up
+  run is_set_up "$REPO"
+  assert_success
+  make_home_repo
+  run is_set_up "$REPO"
+  assert_failure
+  # ワークツリーも、メインのワークツリーがホームのリポジトリなら導入したとみなさない
+  git worktree add -q "$TMP/wt" -b feature
+  run is_set_up "$TMP/wt"
+  assert_failure
+}

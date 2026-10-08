@@ -288,3 +288,13 @@ branch_off_main() {
   run_script checks-commands.sh
   assert_equal "$(jq -c '[.action, .commands_changed]' <<<"$output")" '["confirm",null]'
 }
+
+@test "ホームのリポジトリでは、--save はユーザーの層のファイルに書かずに止まる" {
+  make_home_repo
+  for scope in team local; do
+    run_script checks-commands.sh --save --scope "$scope" --command "make lint"
+    assert_failure 2
+    assert_output --partial "ホームのリポジトリ"
+  done
+  [ ! -e "$WORKFLOW_USER_DIR/config.json" ] && [ ! -e "$WORKFLOW_USER_DIR/config.local.json" ]
+}

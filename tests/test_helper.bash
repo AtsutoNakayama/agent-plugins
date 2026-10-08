@@ -32,6 +32,14 @@ mark_set_up() {
   [ -f "${1:-$REPO}/.claude/dev-workflow/config.json" ] || echo '{}' >"${1:-$REPO}/.claude/dev-workflow/config.json"
 }
 
+# REPO をホームのリポジトリにする。ユーザーの層の置き場所（WORKFLOW_USER_DIR）を、チームの設定の置き場所
+# （$REPO/.claude/dev-workflow。dotfiles を ~/.git で管理するときの ~/.claude/dev-workflow と同じ関係）にそろえる
+# 使い方: make_home_repo
+make_home_repo() {
+  export WORKFLOW_USER_DIR="$REPO/.claude/dev-workflow"
+  mkdir -p "$WORKFLOW_USER_DIR"
+}
+
 # サブモジュール（$TMP/super/sm。中身は REPO）を作る
 make_submodule() {
   git init -q -b main "$TMP/super"

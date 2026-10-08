@@ -91,10 +91,12 @@ if $save; then
     [ -n "$cmds" ] || dw_die "--save には --command か --none が要ります" 64
   fi
 
+  # ホームのリポジトリでは、ユーザーの層のファイルに書かない
+  dw_refuse_home_repo "$repo_root"
   if [ "$scope" = local ]; then
     target="$(dw_local_config_file "$repo_root")"
   else
-    target="$repo_root/.claude/dev-workflow/config.json"
+    target="$(dw_team_dir "$repo_root")/config.json"
   fi
   value="$(printf '%s' "$cmds" | jq -R . | jq -sc .)"
   if [ -f "$target" ]; then

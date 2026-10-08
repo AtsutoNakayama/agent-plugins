@@ -38,7 +38,10 @@ if ! command -v jq >/dev/null 2>&1; then
   exit 0
 fi
 
-files=("$(dw_user_dir_for "$repo_root")/task-flow.md" "$repo_root/.claude/dev-workflow/task-flow.md")
+files=("$(dw_user_dir_for "$repo_root")/task-flow.md")
+# ホームのリポジトリでは、チームの追記の場所がユーザーの層と同じなので、個人の追記だけを読む（導入したとみなさないので、実際には出さない）
+team_dir="$(dw_team_dir "$repo_root")"
+[ -z "$team_dir" ] || files+=("$team_dir/task-flow.md")
 
 out="$(cat "$default_file")"
 added=()
