@@ -351,3 +351,10 @@ run_common() {
   run is_set_up "$TMP/wt"
   assert_failure
 }
+
+@test "dw_team_dir は、引数が無くても set -u で落ちず、何も出さない" {
+  # shellcheck disable=SC2016 # 引数は、起動した bash の中で展開させる
+  run "${TEST_BASH:-bash}" -c 'set -eu; . "$1"; dw_team_dir; echo ok' _ "$SCRIPTS/lib/common.sh"
+  assert_success
+  assert_output ok
+}

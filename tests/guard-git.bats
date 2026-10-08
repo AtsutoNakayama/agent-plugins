@@ -890,3 +890,19 @@ EOF
   git clone -q --bare "$HOME" "$TMP/cfg.git"
   silent "git --git-dir=$TMP/cfg.git --work-tree=$HOME push --force" "git --git-dir=$TMP/cfg.git --work-tree $HOME commit -m x" "GIT_DIR=$TMP/cfg.git GIT_WORK_TREE=$HOME git push --force"
 }
+
+@test "ホームのリポジトリを相対の --work-tree で指しても（git -C や CDPATH があっても）、導入したとみなさない" {
+  export HOME="$TMP/home"
+  export WORKFLOW_USER_DIR="$HOME/.claude/dev-workflow"
+  mkdir -p "$WORKFLOW_USER_DIR"
+  echo '{}' >"$WORKFLOW_USER_DIR/config.json"
+  git init -q -b main "$HOME"
+  git -C "$HOME" add .claude/dev-workflow/config.json
+  git -C "$HOME" commit -q -m dotfiles
+  git clone -q --bare "$HOME" "$TMP/cfg.git"
+  silent "cd $HOME && git --git-dir=$TMP/cfg.git --work-tree=. push --force" \
+    "git -C $HOME --git-dir=$TMP/cfg.git --work-tree=. push --force" \
+    "cd $TMP && git --git-dir=$TMP/cfg.git --work-tree=home push --force"
+  export CDPATH="$TMP"
+  silent "cd $TMP && git --git-dir=$TMP/cfg.git --work-tree=home push --force"
+}

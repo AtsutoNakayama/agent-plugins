@@ -353,8 +353,9 @@ dw_physical_path() {
 # その場合は何も出力しない（シンボリックリンクやまだ無いディレクトリも、実体で比べる）。
 # 使い方: dw_team_dir <リポジトリのルート>
 dw_team_dir() {
-  local d="$1/.claude/dev-workflow"
+  local d
   [ -n "${1:-}" ] || return 0
+  d="$1/.claude/dev-workflow"
   [ "$(dw_physical_path "$d")" != "$(dw_physical_path "$(dw_user_dir)")" ] || return 0
   printf '%s\n' "$d"
 }

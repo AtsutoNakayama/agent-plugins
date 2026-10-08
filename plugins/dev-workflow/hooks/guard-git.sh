@@ -69,8 +69,10 @@ target_set_up() {
       case "$w" in --work-tree=* | GIT_WORK_TREE=*) wt="${w#*=}" ;; esac
     fi
     prev="$w"
-    [ -n "$wt" ] && [ -d "$wt" ] || continue
-    ! dw_is_home_repo "$(cd "$wt" && pwd -P)" || return 1
+    [ -n "$wt" ] || continue
+    # 相対パスは、git が動く場所（cd・-C で移った先）からのもの
+    wt="$(dw_abs_dir "${gc_git_dir:-$dir}" "$wt")" || continue
+    ! dw_is_home_repo "$wt" || return 1
   done
   gc_git cat-file -e "HEAD:.claude/dev-workflow/config.json"
 }
