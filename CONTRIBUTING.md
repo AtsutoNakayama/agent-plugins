@@ -68,6 +68,26 @@ Claude のレビューは、上限のコメントがきっかけのときは同�
 - 直さない指摘は、理由を返信します。resolved にするのは、直したか、理由に合意できたものだけにします。resolved でないスレッドが残っていると、PR はマージできません（上の「コミットと PR の規約」のマージの条件）。
 - `@coderabbitai resolve` でまとめて resolved にしません。
 
+## Issue から自動で PR を作る
+
+Issue にラベル `auto` を付けると、GitHub Actions が `/dev-workflow:task-auto` を実行し、着手から draft の PR の作成まで自動で進めます（`.github/workflows/task-auto.yml`）。手元のセッションは要りません。マージは人が行います。
+
+- 起動するのは、Issue に `auto` が付いた瞬間だけです（GitHub が送る `issues` の `labeled` イベントで起動し、ポーリングはしません）。ほかのラベルでは何もしません。
+- ラベルを付けた人がこのリポジトリの write 以上のときだけ動きます。triage の人が付けても、動きません（ジョブは何もせずに終わります）。
+- task-auto が止まったとき（保留の列に移したとき）は、理由が Issue のコメントに付き、実行は成功で終わります。実行そのものが失敗したときは、ワークフローが Issue にコメントします。もう一度動かすには、ラベルを外して付け直します。
+- push と PR の作成は GitHub App のトークンで行います。`GITHUB_TOKEN` が作った PR や push では、lint・test が起動しないためです（[ADR 000057](docs/adr/000057-github-app-token-for-release.md)）。release-please とは別の App にして、権限を分けます。
+- 実行のたびに、プランの使用量を消費します。Issue の本文は Claude が読むので、`auto` を付ける前に、本文に不審な指示が無いかを確かめてください。許可するツールは、リポジトリの編集・git・gh・テストの実行に絞っています。
+
+### 設定の手順
+
+1. Organization の Settings → Developer settings → GitHub Apps で、App を作ります。Webhook は無効、インストール先は自分のアカウント（Organization）だけにします。権限は次のとおりです。
+   - Repository permissions：Contents・Issues・Pull requests を Read and write（Metadata は自動で Read-only）
+   - Organization permissions：Projects を Read and write（列の移動に要ります。リポジトリの権限だけでは Project を操作できません）
+2. App の ID と秘密鍵（.pem）を控え、App をこのリポジトリだけにインストールします。
+3. リポジトリの Variables に `AUTO_APP_ID`（App の ID）を、Secrets に `AUTO_APP_PRIVATE_KEY`（秘密鍵の中身）を登録します。`CLAUDE_CODE_OAUTH_TOKEN` は、上の「PR の自動レビュー」の設定と共通です。
+4. ラベルを作ります。`gh label create auto --description "Claude が自動で PR まで進める" --color 5319e7`。プラグインの既定のラベル（`labels.json`）には入れません（このリポジトリの運用のためのラベルです）。
+5. `.claude/dev-workflow/config.json` の `auto.enabled` を true にします（このリポジトリは設定済みです。task-auto は、有効にしたリポジトリでしか動きません）。
+
 ## 書き方のルール
 
 - **macOS 標準の bash 3.2 で動くように書きます**。連想配列（`declare -A`）、`mapfile` / `readarray`、`${var,,}` などの bash 4 以降の機能は使いません。スクリプトの先頭には `set -euo pipefail` を書きます。
