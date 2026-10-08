@@ -19,6 +19,7 @@ Project からは外さず、Story Point も変えない。後からボードで
 - `${CLAUDE_PLUGIN_ROOT}/scripts/issue-cancel.sh`：理由のコメント、not planned か duplicate で閉じる操作、PR を閉じてリモートのブランチを削除する操作、親を閉じるときに開いている子孫を閉じる（`--sub-issues close`）か残す（`--sub-issues keep`）操作（`--help` で使い方）
 - `${CLAUDE_PLUGIN_ROOT}/scripts/issue-branches.sh`：Issue の作業のブランチを、確かなブランチ（`branches`）と候補（`candidates`。名前が似ている・Issue を閉じる PR のブランチ）に分けて探し、Issue を閉じる開いている PR を出す。何も変えない（`--help` で使い方）
 - `${CLAUDE_PLUGIN_ROOT}/scripts/main-root.sh`：メインのワークツリーの場所（`main_root`）を出力する。何も変えない
+- `${CLAUDE_PLUGIN_ROOT}/scripts/parent-state.sh`：Issue の親（とさらに上の親）の状態（子の数・閉じた子の数・閉じているか・列・閉じ方の案）を出す。何も変えない（`--help` で使い方）
 - `${CLAUDE_PLUGIN_ROOT}/scripts/cleanup.sh`：`--abandon` で、手元のワークツリーとブランチを削除する。失うものを `lost` に出す（`--help` で使い方）
 
 ## 手順
@@ -88,7 +89,17 @@ Project からは外さず、Story Point も変えない。後からボードで
 
 閉じた Issue の番号とタイトル、閉じ方、付けたコメント、閉じた PR、削除したブランチとワークツリーを伝える。親の Issue なら、一緒に閉じた子孫か、残した子孫（`sub_issues.open`）も伝える。Project の自動化（Item closed）が有効なら、閉じた Issue は Done の列に移る。「Issue だけ閉じる」を選んだときは、残したブランチとワークツリーを伝える。
 
-### 8. 次のタスクの前に /clear を勧める
+### 8. 子がすべて閉じた親を閉じるか確認する
+
+GitHub は、子がすべて閉じても親を自動では閉じない（設計書 §4）。取りやめで最後の開いている子を閉じると、親が閉じ忘れのまま残るので、親を閉じるかを確認する。手順6で Issue を実際に閉じたときは行う（手順5で「Issue だけ閉じる」を選んだときも含む）。閉じなかったとき（手順5で「やめる」を選んだ・途中で止まった）だけ飛ばす。
+
+1. `parent-state.sh --issue <番号> --assume-closed <番号>:<理由>` を実行する（取りやめた Issue を閉じたものとして数える。`<理由>` は取りやめの閉じ方で、not planned なら `not_planned`、重複なら `duplicate`。付けないと completed として数え、子がすべて取りやめでも `suggest` が `completed` になる。閉じた直後は GitHub の読み取りが遅れて、閉じたばかりの子が開いて見え、確認が飛ばされることがあるため。子孫も一緒に取りやめたときは、その番号にも同じ理由を付けてカンマで足す）。止まったら、標準エラーの1行のメッセージを伝えるだけにする（取りやめは済んでいる）
+2. `parents`（近い順）のうち、`suggest` が null でないものがあれば、一番近い親から確認する（`suggest` は、親が開いていて子がすべて閉じているときだけ入る）。無ければ（親が無い・開いている子がまだある・親が既に閉じている）、何も言わずに終える
+3. AskUserQuestion で、「親を閉じる」か「閉じない」を選んでもらう。質問の中に、親の番号とタイトル、閉じた子の一覧（`children.list` の番号・タイトル・閉じ方）、閉じ方の案（`suggest`）を入れる（設計書 §8）。子がすべて取りやめ（not planned・duplicate）なら `suggest` は `not_planned` で、親も取りやめ（not planned）で閉じる案にする。それ以外は `completed` で、完了として閉じる案にする。案に合う方を先頭に置いて (Recommended) を付ける。選択肢の説明には、選ぶと実際に何が起きるかを書き、コマンドやスクリプト名といった内部の手順は書かない
+4. 「閉じる」が選ばれたら、`suggest` の閉じ方で閉じる。`completed` なら `gh issue close <親の番号> --reason completed`、`not_planned` なら、理由（子がすべて取りやめになったことと、子の番号）を添えて `issue-cancel.sh --issue <親の番号> --reason "<理由>" --sub-issues keep` を実行する（親には開いている子が無いので `--sub-issues keep` で子に触れない）。親の URL を添えて伝える。選ばれなかったら、何も変えない
+5. 閉じたら、その親を `--issue` にして `parent-state.sh` をもう一度実行し、さらに上の親があれば、同じように確認する（下の親から順に）。閉じなかったときは、上の親もまだ閉じられないので、確認を終える
+
+### 9. 次のタスクの前に /clear を勧める
 
 全経路の最後に、ここで1回だけ行う。次のタスクに着手する前に `/clear` するよう勧める（`/clear` の後も、タスクの進め方は SessionStart のフックが読み込み直す）。`/clear` は組み込みのコマンドで、スキルから実行できないので、勧めるだけにする。
 
