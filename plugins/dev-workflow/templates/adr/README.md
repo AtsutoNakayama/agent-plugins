@@ -21,6 +21,9 @@ MADR の版が上がったときは、上の出典のタグどうしの差分（
 
 - front matter に `issue`（判断をした Issue の番号）を足しました。ADR のファイル名の先頭の番号と同じです
 - minimal の2つには、元の MADR には無い front matter（`status`・`date`・`issue`）を足しました。置き換えた ADR の `status` を `superseded by ...` に書き換えるのに、`status` が要るためです
+- 採択した ADR の本文は書き換えません（置き換えたときの `status` の行を除く）。MADR は、採択した ADR を編集してよいかを決めていません
+- `date` は、MADR では「判断を最後に更新した日」ですが、書き換えないので、判断をした日にします
+- 過去の判断を一部だけ変える・覆す ADR は、「補足」にその ADR へのリンクと、何を変えるかを書きます（MADR の判断 0009 が、ADR どうしの関係を More Information に書くと決めています）。全部を覆すときは、置き換え（`superseded`）にします
 
 ## MADR のライセンス（MIT）
 
