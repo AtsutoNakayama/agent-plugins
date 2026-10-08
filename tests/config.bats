@@ -199,3 +199,45 @@ load test_helper
   assert_success
   assert_output "In Progress"
 }
+
+@test "set_up は、導入したか（dw_is_set_up）を真偽値で出す。チームの設定が無ければ false（#244）" {
+  rm -f .claude/dev-workflow/config.json
+  run_script config.sh .set_up
+  assert_output "false"
+  # ディレクトリと config.local.json だけでは導入したとみなさない
+  echo '{"language": "en"}' >.claude/dev-workflow/config.local.json
+  run_script config.sh .set_up
+  assert_output "false"
+  mark_set_up
+  run_script config.sh .set_up
+  assert_output "true"
+}
+
+@test "set_up は、ワークツリーにチームの設定が無くても、メインのワークツリーにあれば true。どちらにも無ければ false（#244）" {
+  git worktree add -q "$TMP/wt" -b feat/1-x
+  cd "$TMP/wt"
+  run_script config.sh .set_up
+  assert_output "false"
+  mark_set_up "$REPO"
+  [ ! -f .claude/dev-workflow/config.json ]
+  run_script config.sh .set_up
+  assert_output "true"
+}
+
+@test "set_up は、リポジトリの外では false（#244）" {
+  mkdir "$TMP/outside"
+  cd "$TMP/outside"
+  WORKFLOW_REPO_ROOT="" run_script config.sh .set_up
+  assert_output "false"
+}
+
+@test "set_up は、どの層の設定に同じ名前のキーがあっても変わらない（#244）" {
+  echo '{"set_up": true}' >"$WORKFLOW_USER_DIR/config.json"
+  echo '{"set_up": true}' >.claude/dev-workflow/config.local.json
+  run_script config.sh .set_up
+  assert_output "false"
+  echo '{"set_up": false}' >.claude/dev-workflow/config.json
+  echo '{"set_up": false}' >.claude/dev-workflow/config.local.json
+  run_script config.sh .set_up
+  assert_output "true"
+}

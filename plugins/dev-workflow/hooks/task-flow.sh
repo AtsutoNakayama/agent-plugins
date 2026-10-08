@@ -16,7 +16,7 @@
 set -euo pipefail
 
 # shellcheck source=../scripts/lib/common.sh
-. "$(cd "$(dirname "$0")" && pwd)/../scripts/lib/common.sh"
+. "$(CDPATH='' cd "$(dirname "$0")" && pwd)/../scripts/lib/common.sh"
 
 # Claude Code がフックの出力をそのまま渡す上限（文字数）
 limit=10000
@@ -28,7 +28,7 @@ cwd=""
 if command -v jq >/dev/null 2>&1; then
   cwd="$(jq -r '.cwd // empty' <<<"$input" 2>/dev/null || true)"
 fi
-repo_root="$( (cd "${cwd:-.}" 2>/dev/null && dw_repo_root) || true)"
+repo_root="$( (CDPATH='' cd "${cwd:-.}" 2>/dev/null && dw_repo_root) || true)"
 # 導入していないリポジトリでは何もしない
 dw_is_set_up "$repo_root" || exit 0
 
@@ -38,7 +38,8 @@ if ! command -v jq >/dev/null 2>&1; then
   exit 0
 fi
 
-files=("$(dw_user_dir_for "$repo_root")/task-flow.md" "$repo_root/.claude/dev-workflow/task-flow.md")
+# 上で導入したと確かめてあるので、置き場所は dw_user_dir で求める（dw_user_dir_for で判定をやり直さない）
+files=("$(dw_user_dir)/task-flow.md" "$repo_root/.claude/dev-workflow/task-flow.md")
 
 out="$(cat "$default_file")"
 added=()

@@ -227,3 +227,12 @@ pos() {
   run grep -cE '^- スキルの外でも.*AskUserQuestion で出します' "$DEFAULT"
   assert_output 1
 }
+
+@test "導入していないリポジトリ（config.local.json とディレクトリだけ）では、何も出さない（#244）" {
+  rm -f .claude/dev-workflow/config.json
+  echo '{}' >.claude/dev-workflow/config.local.json
+  echo user >"$WORKFLOW_USER_DIR/task-flow.md"
+  run_hook
+  assert_success
+  assert_output ""
+}

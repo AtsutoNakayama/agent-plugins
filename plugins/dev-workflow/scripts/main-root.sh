@@ -10,7 +10,7 @@
 set -euo pipefail
 
 # shellcheck source=lib/common.sh
-. "$(cd "$(dirname "$0")" && pwd)/lib/common.sh"
+. "$(CDPATH='' cd "$(dirname "$0")" && pwd)/lib/common.sh"
 dw_require git jq
 
 case "${1:-}" in
