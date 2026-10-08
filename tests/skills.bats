@@ -599,7 +599,7 @@ has() {
   # 無効なら、今のスキルで代わりに進めない（確認を取る今の振る舞いを変えない）
   grep -qF 'task-start など、ほかのスキルを代わりに始めない' <<<"$s1" || fail "無効のときに、ほかのスキルを始めないことが書かれていません"
   # 書き込まずに止まる action と、Issue に書いて止まる action を分ける
-  grep -qF '`disabled`・`no_hold`・`not_startable` のとき（手順1）は、この手順では止まらない（何も書き込まない）' "$f" \
+  grep -qF '`disabled`・`no_hold`・`not_startable` のとき（task-auto の手順1）は、この手順では止まらない（何も書き込まない）' "$f" \
     || fail "書き込まずに止まる action が書かれていません"
 }
 
@@ -631,7 +631,7 @@ has() {
   f="$SKILLS/task-auto/SKILL.md"
   has "task-auto の手順3" "$(step "$f" 3)" 'subagent_type' 'AskUserQuestion は使いません' '/dev-workflow:commit' \
     'GitHub に書き込む操作をしない' 'うのみにせず' 'max_fix_attempts' 'SendMessage'
-  has "task-auto の手順4" "$(step "$f" 4)" '/dev-workflow:review' '範囲内の指摘はすべて反映する' 'この差分より前からある不具合' '手順9：行わない'
+  has "task-auto の手順4" "$(step "$f" 4)" '/dev-workflow:review' '範囲内の指摘はすべて反映する' 'この差分より前からある不具合' 'review の手順9：行わない'
   has "task-auto の手順5" "$(step "$f" 5)" '同じ内容の Issue があるかを探す' 'max_new_issues' 'Story Point・親・依存は付けない' 'issue-create.sh'
   s6="$(step "$f" 6)"
   has "task-auto の手順6" "$s6" '--draft --dry-run' '必ず `--draft` を付ける' '「自動で決めたこと」の節' '`pending` なら止まる' '`--add-task` は付けない'
