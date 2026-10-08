@@ -21,7 +21,7 @@ jobs:
   auto:
     if: github.event.label.name == 'auto'
     runs-on: ubuntu-latest
-    # App のトークンは1時間で失効する。task-auto の実行は下の step の timeout-minutes で55分に区切り、その後の失敗の通知にはトークンを発行し直す
+    # App のトークンは1時間で失効する。task-auto の実行の直前にトークンを発行して下の step の timeout-minutes で55分に区切り、その後の失敗の通知にはトークンを発行し直す
     timeout-minutes: 70
     # 同じ Issue を同時に2つ進めない（ラベルを外して付け直したときなど）
     concurrency:
@@ -93,6 +93,14 @@ jobs:
         # チームの設定（config.json）には auto.enabled を書かない。手元のセッションで常に有効にならないよう、この実行だけ個人の層（gitignore 済み）で有効にする
         run: |
           echo '{"auto": {"enabled": true}}' > .claude/dev-workflow/config.local.json
+      - name: task-auto 用の GitHub App token
+        id: run-token
+        if: steps.perm.outputs.ok == 'true'
+        # 準備（checkout・道具の導入）に時間がかかっても、実行の55分の間はトークンが切れないよう、実行の直前に発行する
+        uses: actions/create-github-app-token@v3
+        with:
+          app-id: ${{ vars.AUTO_APP_ID }}
+          private-key: ${{ secrets.AUTO_APP_PRIVATE_KEY }}
       - name: task-auto を実行する
         if: steps.perm.outputs.ok == 'true'
         # 最初のトークン（1時間で失効）が切れる前に区切る。切れると push や PR の作成が認証エラーになる
@@ -100,10 +108,10 @@ jobs:
         uses: anthropics/claude-code-action@v1
         env:
           # スキルのスクリプトが使う gh も App のトークンで動かす
-          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          GH_TOKEN: ${{ steps.run-token.outputs.token }}
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
-          github_token: ${{ steps.app-token.outputs.token }}
+          github_token: ${{ steps.run-token.outputs.token }}
           # プラグインのスキルとフック（guard-git など）は、チェックアウトした plugins/dev-workflow から読み込む。
           # 許可するツールは、リポジトリの編集・git・gh・テストの実行に絞る（AskUserQuestion は入れない。確認は task-auto が代わりに決める）
           claude_args: >-
