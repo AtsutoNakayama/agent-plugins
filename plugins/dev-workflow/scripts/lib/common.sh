@@ -162,14 +162,13 @@ dw_issue_work() {
     pr="$(gh pr view "$url" --json number,url,state,headRefName,isCrossRepository)" || dw_die "PR ${url} を読めませんでした"
     # 別のリポジトリの PR かは、参照の repository で見る。参照に repository が無ければ（gh が返さないとき）、
     # 今のリポジトリの PR とみなし、フォークかだけで決める（無いことを別のリポジトリとみなすと、どの PR もフォーク扱いになる）
-    cross="$(jq -r --arg r "$pr_repo" --arg nwo "$nwo" "$DW_JQ_SAME_REPO"'($r != "" and (same_repo($r; $nwo) | not)) or (.isCrossRepository // false)' <<<"$pr")"
+    cross="$(jq -r --arg r "$pr_repo" --arg nwo "$nwo" '($r != "" and $r != $nwo) or (.isCrossRepository // false)' <<<"$pr")"
     open_prs="$(jq -c --argjson p "$pr" --argjson x "$cross" \
       'if $p.state == "OPEN" then . + [{number: $p.number, url: $p.url, branch: $p.headRefName, cross: $x}] else . end' <<<"$open_prs")"
     merged_prs="$(jq -c --argjson p "$pr" --argjson x "$cross" \
       'if $p.state == "MERGED" and ($x | not) then . + [{number: $p.number, url: $p.url, branch: $p.headRefName}] else . end' <<<"$merged_prs")"
     head="$(jq -r 'select((.state == "OPEN" or .state == "MERGED") and (.isCrossRepository | not)) | .headRefName' <<<"$pr")"
-    [ -n "$head" ] || continue
-    dw_same_repo "$pr_repo" "$nwo" || continue
+    [ -n "$head" ] && [ "$pr_repo" = "$nwo" ] || continue
     if jq -e --arg h "$head" 'any(.[]; .name == $h)' <<<"$branches" >/dev/null \
       || jq -e --arg h "$head" 'any(.[]; .name == $h)' <<<"$candidates" >/dev/null; then
       continue
@@ -483,9 +482,9 @@ dw_gh_find() {
 }
 
 # リポジトリ（OWNER/NAME）が同じかを、大文字小文字を区別せずに比べる。GitHub はリポジトリ名の大文字小文字を区別せず、
-# API の repository_url と gh repo view の nameWithOwner で綴りが違うことがあるため、比べる箇所はすべてこれを使う。
+# API の repository_url と gh repo view の nameWithOwner で綴りが違うことがあるため、親子をたどる処理（dw_issue_parents・issue-cancel.sh の子孫の判定）で使う。
 # jq の中では、プログラムの先頭に "$DW_JQ_SAME_REPO" を足して same_repo(<a>; <b>) を使う。bash では dw_same_repo <a> <b>。
-# shellcheck disable=SC2016 # $a・$b は jq の変数で、bash に展開させない
+# shellcheck disable=SC2016,SC2034 # $a・$b は jq の変数で、bash に展開させない。source した側（issue-cancel.sh）で使う
 DW_JQ_SAME_REPO='def same_repo($a; $b): (($a // "") | ascii_downcase) == (($b // "") | ascii_downcase);'
 dw_same_repo() { [ "$(printf '%s' "$1" | tr '[:upper:]' '[:lower:]')" = "$(printf '%s' "$2" | tr '[:upper:]' '[:lower:]')" ]; }
 
@@ -1091,8 +1090,8 @@ dw_project_item() {
   args=(-f q="repo:$2 is:issue" -f per_page=100)
   [ -z "${4:-}" ] || args+=(-f fields="$4")
   gh api --paginate "$1/items" -X GET "${args[@]}" \
-    | jq -sc --arg r "$2" --argjson n "$3" "$DW_JQ_SAME_REPO"'
-        [add // [] | .[] | select(.content.number == $n and same_repo(.content.repository_url | sub("^.*/repos/"; ""); $r))][0]'
+    | jq -sc --arg r "$2" --argjson n "$3" '
+        [add // [] | .[] | select(.content.number == $n and (.content.repository_url | endswith("/repos/" + $r)))][0]'
 }
 
 # Project の項目から、<Issue の URL> の項目の id（node id）を探して出力する。無ければ何も出さずに失敗する。
