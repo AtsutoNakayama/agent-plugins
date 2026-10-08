@@ -674,6 +674,14 @@ has() {
   done
 }
 
+@test "task-finish・task-cancel・task-flow.md に、次のタスクの前に /clear を勧めることがある" {
+  grep -q "次のタスクに着手する前に \`/clear\` するよう勧める" "$SKILLS/task-finish/SKILL.md" || fail "task-finish にありません"
+  grep -q "次のタスクに着手する前に \`/clear\` するよう勧める" "$SKILLS/task-cancel/SKILL.md" || fail "task-cancel にありません"
+  local flow="$BATS_TEST_DIRNAME/../plugins/dev-workflow/defaults/task-flow.md"
+  [ "$(grep -c "次のタスクに着手する前に \`/clear\` するよう勧めます" "$flow")" -ge 2 ] || fail "task-flow.md の後片付けと取りやめの両方にありません"
+  grep -q "タスクの切れ目で \`/clear\` を勧める" "$BATS_TEST_DIRNAME/../docs/design.md" || fail "設計書にありません"
+}
+
 # shellcheck disable=SC2016 # バッククォートはスキルの本文の文字で、展開させない
 @test "pr-create は、PR を出した後の案内を merge_queue で切り替える（キューがあればキューに入れ、無ければ branch-update で取り込む。#178）" {
   step7="$(step "$SKILLS/pr-create/SKILL.md" 7)"
