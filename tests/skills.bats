@@ -81,7 +81,7 @@ has() {
 }
 
 @test "Issue の番号を取るスキルは、引数で番号を受け取れる（設計書 §8）" {
-  for name in task-start task-status task-finish task-cancel; do
+  for name in task-start task-status task-finish task-cancel task-auto; do
     f="$SKILLS/$name/SKILL.md"
     frontmatter "$f" | grep -q '^argument-hint: .*Issue番号' \
       || fail "${name} の frontmatter に argument-hint（Issue番号）がありません"
@@ -581,4 +581,54 @@ has() {
     grep -q "| \`$v\` |" "$SKILLS/adr-create/SKILL.md" || fail "adr-create に proposal の $v がありません"
   done
   grep -q '出力の `proposal` に従う' "$SKILLS/pr-create/SKILL.md" || fail "pr-create が proposal に従いません"
+}
+
+# shellcheck disable=SC2016 # バッククォートはスキルの本文の文字で、展開させない
+@test "task-auto は、auto-check.sh の action ごとにすることを書き、無効なら何もしない（設計書 §8・ADR 000267）" {
+  f="$SKILLS/task-auto/SKILL.md"
+  s1="$(step "$f" 1)"
+  has "task-auto の手順1" "$s1" 'auto-check.sh --issue <番号>'
+  for v in disabled no_hold not_startable hold proceed; do
+    grep -qF -- "- \`$v\`：" <<<"$s1" || fail "task-auto の手順1に action の $v の扱いがありません"
+  done
+  # 無効なら、今のスキルで代わりに進めない（確認を取る今の振る舞いを変えない）
+  grep -qF 'task-start など、ほかのスキルを代わりに始めない' <<<"$s1" || fail "無効のときに、ほかのスキルを始めないことが書かれていません"
+  # 書き込まずに止まる action と、Issue に書いて止まる action を分ける
+  grep -qF '`disabled`・`no_hold`・`not_startable` のとき（手順1）は、この手順では止まらない（何も書き込まない）' "$f" \
+    || fail "書き込まずに止まる action が書かれていません"
+}
+
+# shellcheck disable=SC2016 # バッククォートはスキルの本文の文字で、展開させない
+@test "task-auto は、確認を取らずに止まる条件で止まり、理由を Issue にコメントして保留の列に移す（設計書 §8）" {
+  f="$SKILLS/task-auto/SKILL.md"
+  grep -qF '**AskUserQuestion は使わない**' "$f" || fail "AskUserQuestion を使わないことが書かれていません"
+  stop="$(section "$f" '## 止まる')"
+  has "止まる条件" "$stop" 'auto.max_fix_attempts' 'review.max_rounds' 'ADR にすべき判断' 'Issue があいまい' \
+    '「確認の代わりに決めること」に無い確認' 'auto-hold.sh --issue <番号> --reason-file <ファイル>' \
+    '止まった理由' 'それまでの判断' '残したもの' '続けるには' 'ワークツリーとブランチは消さない'
+  # breaking ラベルなど、スクリプトが決める条件は auto-check.sh に任せる
+  has "止まる条件" "$stop" '`auto-check.sh` の `action` が `hold`'
+}
+
+# shellcheck disable=SC2016 # バッククォートはスキルの本文の文字で、展開させない
+@test "task-auto は、今のスキルの確認に代わりに答える表を持ち、どのスキルの確認も扱う" {
+  f="$SKILLS/task-auto/SKILL.md"
+  table="$(section "$f" '## 確認の代わりに決めること')"
+  for row in 'task-start 手順4' 'task-start 手順5' 'commit 手順2' 'review 手順5' 'review 手順6' 'review 手順8' 'review 手順9' \
+    'task-create 手順2・3' 'pr-create 手順2・5' 'pr-create 手順5' '| どの場面でも |'; do
+    grep -qF -- "$row" <<<"$table" || fail "確認の代わりに決めることの表に「${row}」がありません"
+  done
+  grep -qF 'この表に無い確認は、止まる' <<<"$table" || fail "表に無い確認で止まることが書かれていません"
+}
+
+# shellcheck disable=SC2016 # バッククォートはスキルの本文の文字で、展開させない
+@test "task-auto は、作業役に任せ、範囲外の指摘を上限まで起票し、自動で決めたことを書いた draft の PR を出す（マージしない）" {
+  f="$SKILLS/task-auto/SKILL.md"
+  has "task-auto の手順3" "$(step "$f" 3)" 'subagent_type' 'AskUserQuestion は使いません' '/dev-workflow:commit' \
+    'GitHub に書き込む操作をしない' 'うのみにせず' 'max_fix_attempts' 'SendMessage'
+  has "task-auto の手順4" "$(step "$f" 4)" '/dev-workflow:review' '範囲内の指摘はすべて反映する' 'この差分より前からある不具合' '手順9：行わない'
+  has "task-auto の手順5" "$(step "$f" 5)" '同じ内容の Issue があるかを探す' 'max_new_issues' 'Story Point・親・依存は付けない' 'issue-create.sh'
+  s6="$(step "$f" 6)"
+  has "task-auto の手順6" "$s6" '--draft --dry-run' '必ず `--draft` を付ける' '「自動で決めたこと」の節' '`pending` なら止まる' '`--add-task` は付けない'
+  grep -qF 'マージはしない（`allow_ai_merge` にかかわらず）' "$f" || fail "マージしないことが書かれていません"
 }
