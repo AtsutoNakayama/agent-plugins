@@ -1,0 +1,42 @@
+# bats のシャード分け（shard-bats.sh）が使う、ファイルごとの所要時間（秒）の目安。
+# 書式: <ファイル名><タブ><秒>。ここに無い・古いファイルがあっても、shard-bats.sh は全ファイルを必ずどれかのシャードに入れる（所要時間は平均で見積もる）。
+# 測り方: ファイルごとに bats --jobs 4 tests/<ファイル> を動かした実時間。偏りが目立つようになったら測り直す。
+adr-create.bats	8
+adr-list.bats	11
+auto-check.bats	11
+auto-hold.bats	5
+branch-name.bats	5
+branch-plan.bats	6
+branch-status.bats	15
+checks-commands.bats	9
+cleanup.bats	14
+commit.bats	3
+common.bats	7
+config.bats	7
+docs-only.bats	3
+doctor.bats	16
+eval-fake-gh.bats	5
+eval-scaffold.bats	6
+git-command.bats	2
+guard-git.bats	34
+issue-branches.bats	9
+issue-cancel.bats	14
+issue-create.bats	18
+issue-depend.bats	7
+issue-number-arg.bats	7
+merge-group-check.bats	7
+next-tasks.bats	23
+pr-create.bats	31
+pr-feedback.bats	7
+pr-link.bats	24
+review-perspective-add.bats	9
+review-perspectives.bats	17
+setup-all.bats	10
+setup-labels.bats	5
+setup-models.bats	4
+setup-project.bats	11
+setup-repo.bats	14
+skills.bats	9
+status-set.bats	4
+task-flow.bats	5
+task-start.bats	15

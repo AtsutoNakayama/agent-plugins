@@ -5,6 +5,8 @@ name: Test
 # 「待ち」のまま残ってマージできないため。必須のチェックは、最後に必ず動く test-result ジョブ。
 # 何をドキュメントとするかは、.github/scripts/docs-only.sh にある。
 # マージキューに入れた PR は、merge_group のイベントでも動かす（キューの結果で必須のチェックが決まる）。
+# test ジョブは、.bats のファイルを OS ごとに複数のシャードに分けて並列に動かす（shard-bats.sh が所要時間の偏らない
+# 分け方を決め、changes ジョブが matrix として渡す）。シャードの数は下の changes ジョブにある。
 on:
   pull_request:
   push:
@@ -26,6 +28,7 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       docs_only: ${{ steps.docs-only.outputs.docs_only }}
+      matrix: ${{ steps.shards.outputs.matrix }}
     steps:
       - uses: actions/checkout@v5
         with:
@@ -36,19 +39,27 @@ jobs:
           MERGE_GROUP_BASE_SHA: ${{ github.event.merge_group.base_sha }}
         run: |
           echo "docs_only=$(.github/scripts/docs-only.sh | jq -r .docs_only)" >> "$GITHUB_OUTPUT"
+      - name: shards
+        id: shards
+        # test ジョブの matrix を作る。シャードの数は、1つのシャードの固定費（準備に ubuntu で約20秒、macOS で約10秒）と、
+        # 待ち時間を縮める効果の釣り合いで決める。macOS は bash 3.2 で遅く、全体の待ち時間を決めるので多めにする
+        run: |
+          ubuntu=$(.github/scripts/shard-bats.sh 3)
+          macos=$(.github/scripts/shard-bats.sh 4)
+          matrix=$(jq -cn --argjson u "$ubuntu" --argjson m "$macos" '{include: (
+            [$u[] | {os: "ubuntu-latest", bash: "bash", shard: .shard, files: .files}]
+            # macOS 標準の bash 3.2 で動くことを確かめる
+            + [$m[] | {os: "macos-latest", bash: "/bin/bash", shard: .shard, files: .files}]
+          )}')
+          echo "matrix=$matrix" >> "$GITHUB_OUTPUT"
 
   test:
     needs: changes
     if: needs.changes.outputs.docs_only != 'true'
+    name: test (${{ matrix.os }}, シャード ${{ matrix.shard }})
     strategy:
       fail-fast: false
-      matrix:
-        include:
-          - os: ubuntu-latest
-            bash: bash
-          # macOS 標準の bash 3.2 で動くことを確かめる
-          - os: macos-latest
-            bash: /bin/bash
+      matrix: ${{ fromJSON(needs.changes.outputs.matrix) }}
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v5
@@ -66,16 +77,20 @@ jobs:
       - name: bats
         env:
           TEST_BASH: ${{ matrix.bash }}
+          SHARD_FILES: ${{ matrix.files }}
         run: |
           "$TEST_BASH" --version | head -n 1
           # テストは git や jq の起動を待つ時間が長いので、コア数の2倍で並列に実行する
           jobs=$(( $(getconf _NPROCESSORS_ONLN) * 2 ))
           echo "jobs: $jobs"
-          bats --jobs "$jobs" tests/
+          read -r -a files <<<"$SHARD_FILES"
+          echo "files: ${#files[@]}"
+          bats --jobs "$jobs" "${files[@]}"
 
   test-result:
     # ルールセットの必須のチェック。ドキュメントだけで test を飛ばしたときも成功にし、
-    # changes か test が失敗・取り消しになったときは失敗にする
+    # changes か test が失敗・取り消しになったときは失敗にする。test は matrix のシャードの結果をまとめた値で、
+    # すべてのシャードが成功のときだけ success になる（1つでも失敗なら failure、取り消しなら cancelled）
     if: always()
     needs: [changes, test]
     runs-on: ubuntu-latest
