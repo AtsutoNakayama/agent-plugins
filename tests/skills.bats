@@ -440,6 +440,14 @@ has() {
   grep -q 'models.actions' "$f" || fail "手順3の予定に、レビューのモデルの変更が入っていません"
 }
 
+@test "task-start は、ワークツリーを作って着手したら結果を伝えた後に止まらず実装に続け、決まらないときは AskUserQuestion で聞く（#239）" {
+  s7="$(step "$SKILLS/task-start/SKILL.md" 7)"
+  # shellcheck disable=SC2016 # バッククォートはスキルの本文の文字で、展開させない
+  has "手順7" "$s7" '止まらず、そのまま同じワークツリーで Issue の「やること」の作業（実装）に取りかかる' 'AskUserQuestion で聞いてから進める' 'ワークツリーを作らずに着手したとき（`worktree` が `null`）'
+  # task-auto は手順7の続行をしない（実装は作業役に任せる）
+  grep -qF 'task-start 手順7の「結果を伝えた後に実装へ続ける」は、ここでは行わない' "$SKILLS/task-auto/SKILL.md" || fail "task-auto が手順7の続行を行わないと書かれていません"
+}
+
 @test "task-start は、既にブランチがあって --no-worktree が止まったら、そのワークツリーで作業するよう案内する" {
   grep -q '「Issue #N には既にブランチ … があります」で止まったら' "$SKILLS/task-start/SKILL.md"
 }
