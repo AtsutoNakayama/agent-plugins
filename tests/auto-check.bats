@@ -186,3 +186,57 @@ run_check() {
     assert_equal "$(jq -c '[.action, .issue.type]' <<<"$output")" '["proceed","fix"]'
   done
 }
+
+@test "本文の節は md_scan と同じ決まりで読む（コードブロックの閉じ方・行内の \`\`\`・行の途中の <!--・節の中の小見出し）" {
+  setup_auto
+  # ```` の囲みの中の ``` では閉じない。```x``` は囲みではない。行の途中の <!-- はコメントの始まりではない。
+  # 節の中の ### の小見出しの下の項目も、その節の項目として数える
+  fake_issue_body 17 '## やること
+````
+```
+## 完了条件
+````
+```bash run.sh```
+### スクリプト
+- [ ] a.sh を足す <!-- 補足
+
+## 完了条件
+- a.sh が動く'
+  run_check --issue 17
+  assert_success
+  assert_equal "$(jq -c '[.action, .reasons]' <<<"$output")" '["proceed",[]]'
+}
+
+@test "小見出しの節は、同じかより上の段の見出しで終わる（別の節の項目を数えない）" {
+  setup_auto
+  fake_issue_body 17 '### やること
+## 背景
+- 項目に見えるが背景の行
+## 完了条件
+- a.sh が動く'
+  run_check --issue 17
+  assert_equal "$(jq -c .reasons <<<"$output")" '["本文の「やること」に項目がありません（何をするかが決まっていません）"]'
+}
+
+@test "無効なら、auto の値が誤っていても disabled を返す（Issue も読まない）" {
+  setup_fake_gh
+  set_config '. + {auto: {enabled: false, max_fix_attempts: 0, max_new_issues: "x"}}'
+  run_check --issue 17
+  assert_success
+  assert_equal "$(jq -c '[.action, .settings]' <<<"$output")" '["disabled",null]'
+  assert_equal "$(called issue-view)" 0
+}
+
+@test "閉じた Issue は、止まる条件（breaking・type ラベル・本文）にも当たっても not_startable（hold にしない）" {
+  setup_auto
+  fake_issue 17 '["feat", "breaking"]' CLOSED
+  run_check --issue 17
+  assert_success
+  assert_equal "$(jq -c '[.action, .reasons]' <<<"$output")" '["not_startable",["Issue #17 は閉じています"]]'
+}
+
+@test "issue に本文（body）も出す（task-auto が Issue を読み直さずに、あいまいかを判断できるように）" {
+  setup_auto
+  run_check --issue 17
+  assert_equal "$(jq -r .issue.body <<<"$output")" "$BODY"
+}

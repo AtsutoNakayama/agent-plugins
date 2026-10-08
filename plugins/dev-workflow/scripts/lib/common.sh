@@ -599,7 +599,8 @@ DW_JQ_ISSUE_TYPES='
 '
 
 # Markdown の本文（文字列）を読む jq の関数 md_scan を定義する。上から順に、チェックリストの項目（items。
-# {line（0 からの行番号）, checked, text}）と、見出しの行番号（headings）を出す。
+# {line（0 からの行番号）, checked, text}）と、見出しの行番号（headings）と、GitHub に表示される行（lines。{line, text}。
+# コードブロックの囲みと中の行、複数行の HTML のコメントの行を除いた、項目・見出しを含む行。行末の \r は外す）を出す。
 # GitHub と同じく、コードブロック（3つ以上の ` か ~ で囲む）の中の行は、項目とも見出しともみなさない。
 # 閉じるのは、開いたときと同じ文字が同じ数以上並び、後ろが空白だけの行（中の短い囲みや ```js では閉じない）。
 # ` の囲みの後ろに ` がある行（```x``` のようなインラインのコード）は囲みとみなさない。
@@ -612,7 +613,7 @@ DW_JQ_ISSUE_TYPES='
 DW_JQ_MD_SCAN='
   def md_scan:
     def item: "^\\s*(?:[-*+]|[0-9]+[.)])\\s+\\[(?<c>[ xX])\\](?:\\s+(?<t>.*))?$";
-    reduce (split("\n") | to_entries[]) as $e ({fence: null, comment: false, items: [], headings: []};
+    reduce (split("\n") | to_entries[]) as $e ({fence: null, comment: false, items: [], headings: [], lines: []};
       ($e.value | sub("\r$"; "")) as $l | .fence as $f
       | if .comment then
           (if $l | test("-->") then .comment = false else . end)
@@ -620,12 +621,15 @@ DW_JQ_MD_SCAN='
           (if $l | test("^\\s*" + $f + "+\\s*$") then .fence = null else . end)
         elif $l | test("^\\s*(`{3,}[^`]*|~{3,}.*)$") then .fence = ($l | capture("^\\s*(?<f>`{3,}|~{3,})").f)
         elif $l | test("^\\s*<!--(?!.*-->)") then .comment = true
-        elif $l | test(item) then
-          ($l | capture(item)) as $m
-          | .items += [{line: $e.key, checked: ($m.c != " "), text: ($m.t // "" | sub("\\s+$"; ""))}]
-        elif $l | test("^ {0,3}#{1,6}(\\s|$)") then .headings += [$e.key]
-        else . end)
-    | {items, headings};
+        else
+          .lines += [{line: $e.key, text: $l}]
+          | if $l | test(item) then
+              ($l | capture(item)) as $m
+              | .items += [{line: $e.key, checked: ($m.c != " "), text: ($m.t // "" | sub("\\s+$"; ""))}]
+            elif $l | test("^ {0,3}#{1,6}(\\s|$)") then .headings += [$e.key]
+            else . end
+        end)
+    | {items, headings, lines};
 '
 
 # Issue の本文の節（「## <見出し>」の行から、次の「## 」の行の前まで）を読む jq の関数。依存を読む next-tasks.sh と、
