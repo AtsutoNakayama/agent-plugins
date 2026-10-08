@@ -667,9 +667,12 @@ has() {
 @test "pr-create は、PR を出した後の案内を merge_queue で切り替える（キューがあればキューに入れ、無ければ branch-update で取り込む。#178）" {
   step7="$(step "$SKILLS/pr-create/SKILL.md" 7)"
   has "pr-create の手順7" "$step7" '出力の `merge_queue`' '- `true`：' '- `false`：' '- `null`'
+  # 判定するのは、設定の base_branch ではなく PR のマージ先（既にある PR は、マージ先を変えていることがある）
+  has "pr-create の手順7" "$step7" 'PR のマージ先'
   # キューがあるときは、キューに入れることと、取り込むのはコンフリクトしたときだけであることを案内する
   has "pr-create の手順7のキューがあるときの案内" "$(grep -F -- '- `true`：' <<<"$step7")" \
-    'キューに入れる' 'Merge when ready' 'コンフリクトしたときだけ' 'branch-update'
+    'キューに入れる' 'Merge when ready' 'コンフリクトしたときだけ' 'branch-update' \
+    'ルールセットが求めるもの' 'リポジトリによって違う' 'gh pr ready'
   # キューが無いときは、base_branch が進んだら branch-update で取り込むことを案内する
   has "pr-create の手順7のキューが無いときの案内" "$(grep -F -- '- `false`：' <<<"$step7")" 'branch-update'
   if grep -F -- '- `false`：' <<<"$step7" | grep -q 'キュー'; then
