@@ -21,6 +21,9 @@
     "max_rounds": 3,
     "model": null
   },
+  "checks": {
+    "commands": null
+  },
   "sub_issues": {
     "max_depth": 3
   },
