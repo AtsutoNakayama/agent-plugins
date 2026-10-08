@@ -152,23 +152,27 @@ case "$to" in
     ;;
 esac
 if ! $no_parents && $move_parents && [ "$column" = "$(jq -r '.status.start // empty' <<<"$config")" ]; then
-  if chain="$(dw_issue_parents "$repo_nwo" "$issue" 2>/dev/null)"; then
+  err="$(mktemp)"
+  # 失敗の原因は、標準エラーの最後の1行を警告に添える
+  reason_of() { local l; l="$(grep -v '^[[:space:]]*$' "$err" | tail -n 1 || true)"; [ -z "$l" ] || printf '（原因: %s）' "$l"; }
+  if chain="$(dw_issue_parents "$repo_nwo" "$issue" 2>"$err")"; then
     for p in $(jq -r '.[] | select(.state == "open") | .number' <<<"$chain"); do
       args=(--issue "$p" --to start --only-from todo --no-parents)
       $dry_run && args+=(--dry-run)
-      if res="$("$BASH" "$DW_SCRIPTS_DIR/status-set.sh" "${args[@]}")"; then
+      if res="$("$BASH" "$DW_SCRIPTS_DIR/status-set.sh" "${args[@]}" 2>"$err")"; then
         [ "$(jq -r '.changed // false' <<<"$res")" = true ] || continue
         parents="$(jq -c --argjson r "$res" '. + [$r | {issue, from, to, changed, dry_run}]' <<<"$parents")"
         while IFS= read -r a; do
           [ -n "$a" ] && note "親の ${a}"
         done <<<"$(jq -r '.actions[]?' <<<"$res")"
       else
-        warn "親の Issue #${p} の列を start に移せませんでした（Issue #${issue} の移動は済んでいます）"
+        warn "親の Issue #${p} の列を start に移せませんでした（Issue #${issue} の移動は済んでいます）$(reason_of)"
       fi
     done
   else
-    warn "Issue #${issue} の親を読めなかったので、親の列は移しません"
+    warn "Issue #${issue} の親を読めなかったので、親の列は移しません$(reason_of)"
   fi
+  rm -f "$err"
 fi
 
 jq -n --argjson i "$issue" --arg item "$item_id" --arg from "$from" --arg to "$column" \

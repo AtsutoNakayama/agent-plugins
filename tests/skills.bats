@@ -749,5 +749,6 @@ has() {
   done
   grep -q '二重に聞かない' "$SKILLS/task-finish/SKILL.md" || fail "task-finish に、同じ親を二重に聞かないことがありません"
   grep -q '<番号1>,<番号2>' "$SKILLS/task-finish/SKILL.md" || fail "task-finish に、閉じる Issue をまとめて渡すことがありません"
+  grep -qF 'parent-state.sh --issue <番号> --assume-closed <番号>' "$SKILLS/task-cancel/SKILL.md" || fail "task-cancel が取りやめた Issue を --assume-closed で渡していません"
   grep -q '「Issue だけ閉じる」を選んだときも含む' "$SKILLS/task-cancel/SKILL.md" || fail "task-cancel の手順8の実行条件がありません"
 }

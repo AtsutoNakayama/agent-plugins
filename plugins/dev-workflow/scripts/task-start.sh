@@ -29,7 +29,8 @@
 #      失敗しても（通信できないなど）止めずに警告する。既にあるワークツリーでも、未初期化なら初期化し直す
 #   3. Issue を自分に割り当てる
 #   4. Project の Status を start の列に移す（status-set.sh）。project.number が未設定なら警告して飛ばす。
-#      親の Issue（とさらに上の親）が todo の列にあれば、親も start の列に移す（status.parents に出す。移せなくても警告するだけ）
+#      親の Issue（とさらに上の親）が todo の列にあれば、親も start の列に移す（status.parents に出す。移せなくても止めず、
+#      警告は標準エラーと status.warnings に出す）
 set -euo pipefail
 
 # shellcheck source=lib/common.sh

@@ -307,6 +307,21 @@ set_children() { local p="$1"; shift; printf '%s\n' "$@" | jq -s . >"$FIX/sub-is
   assert_equal "$(jq -c '[.parents[].number]' <<<"$output")" '[10,5]'
 }
 
+@test "parent-state: --assume-closed の値は glob 展開せず、空の要素は無視し、番号でないものは 64 で止まる" {
+  setup_parents
+  set_children 10 "$(sub 17 open)" "$(sub 19 open)"
+  touch "$TMP/17" "$TMP/19"
+  cd "$TMP"
+  run_script parent-state.sh --issue 17 --assume-closed '*'
+  assert_failure 64
+  run_script parent-state.sh --issue 17 --assume-closed '17,,19'
+  assert_success
+  assert_equal "$(jq -c '.parents[0] | [.all_closed, .suggest]' <<<"$output")" '[true,"completed"]'
+  run_script parent-state.sh --issue 17 --assume-closed ','
+  assert_success
+  assert_equal "$(jq -c '.parents[0].all_closed' <<<"$output")" false
+}
+
 @test "--only-from に未設定の役割を渡すと skipped になり、Project に無い Issue には何もしない" {
   setup_parents
   run_script status-set.sh --issue 17 --to start --only-from hold
@@ -348,9 +363,16 @@ set_children() { local p="$1"; shift; printf '%s\n' "$@" | jq -s . >"$FIX/sub-is
   FAKE_FAIL=SetField.2 FAKE_FAIL_MSG="gh: boom" run_script status-set.sh --issue 17 --to start
   assert_success
   assert_equal "$(json_of "$output" | jq -c '.warnings | length')" 1
-  assert_equal "$(json_of "$output" | jq -r '.warnings[0]')" "親の Issue #10 の列を start に移せませんでした（Issue #17 の移動は済んでいます）"
+  assert_equal "$(json_of "$output" | jq -r '.warnings[0]')" "親の Issue #10 の列を start に移せませんでした（Issue #17 の移動は済んでいます）（原因: error: Issue #10 の Status を「In Progress」にできませんでした）"
   FAKE_FAIL=api-parent FAKE_FAIL_MSG="gh: boom" run_script status-set.sh --issue 17 --to start
-  assert_equal "$(json_of "$output" | jq -r '.warnings[0]')" "Issue #17 の親を読めなかったので、親の列は移しません"
+  assert_equal "$(json_of "$output" | jq -r '.warnings[0]')" "Issue #17 の親を読めなかったので、親の列は移しません（原因: error: GitHub の API に失敗しました: gh: boom）"
   run_script status-set.sh --issue 17 --to start
   assert_equal "$(json_of "$output" | jq -c '.warnings')" "[]"
+}
+
+@test "親の移動に失敗した原因（標準エラーの1行）を警告に添える" {
+  setup_parents
+  FAKE_FAIL=SetField.2 FAKE_FAIL_MSG="gh: boom" run_script status-set.sh --issue 17 --to start
+  assert_success
+  assert_equal "$(json_of "$output" | jq -r '.warnings[0]')" "親の Issue #10 の列を start に移せませんでした（Issue #17 の移動は済んでいます）（原因: error: Issue #10 の Status を「In Progress」にできませんでした）"
 }

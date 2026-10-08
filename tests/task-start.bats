@@ -560,3 +560,23 @@ run_start() {
   assert_output --partial "正規表現として正しくありません"
   refute_output --partial "作業のブランチ（branch.pattern に合い"
 }
+
+@test "親の列を移せなかったときは、警告を status.warnings に出す。警告が無ければ空の配列" {
+  setup_fake_gh
+  setup_origin
+  jq -nc '{number: 10, title: "親 10", state: "open", state_reason: null, url: "https://api.github.com/repos/me/demo/issues/10", repository_url: "https://api.github.com/repos/me/demo"}' >"$FIX/parent-17.json"
+  jq -n '{data: {repository: {issue: {url: "https://github.com/me/demo/issues/10", projectItems: {nodes: [{id: "IT10", project: {id: "P4"}, fieldValueByName: {name: "Todo"}}]}}}}}' >"$FIX/IssueItem-issue-10.json"
+  FAKE_FAIL=SetField.2 FAKE_FAIL_MSG="gh: boom" run_start --issue 17 --slug "task start"
+  assert_success
+  assert_equal "$(jq -c '.status.warnings | length' <<<"$json")" 1
+  assert_equal "$(jq -r '.status.warnings[0]' <<<"$json")" "親の Issue #10 の列を start に移せませんでした（Issue #17 の移動は済んでいます）（原因: error: Issue #10 の Status を「In Progress」にできませんでした）"
+  assert_equal "$(jq -c '.status.parents' <<<"$json")" "[]"
+}
+
+@test "親が無いとき、status.warnings は空の配列" {
+  setup_fake_gh
+  setup_origin
+  run_start --issue 17 --slug "task start"
+  assert_success
+  assert_equal "$(jq -c '.status.warnings' <<<"$json")" "[]"
+}

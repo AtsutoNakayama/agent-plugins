@@ -31,7 +31,10 @@ while [ $# -gt 0 ]; do
       if [ "$1" = --issue ]; then
         issue="$(dw_issue_number "$1" "$2")"
       else
-        for v in ${2//,/ }; do
+        # カンマで分ける（IFS で分けるだけで、glob 展開はしない）。空の要素（1,,2 の真ん中など）は無視し、番号でないもの（* など）は 64 で止まる
+        IFS=, read -r -a parts <<<"$2"
+        for v in ${parts[@]+"${parts[@]}"}; do
+          [ -n "$v" ] || continue
           n="$(dw_issue_number "$1" "$v")"
           assumed="$(jq -c --argjson n "$n" '. + [$n]' <<<"$assumed")"
         done
