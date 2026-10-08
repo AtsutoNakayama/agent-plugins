@@ -38,6 +38,7 @@ issue: 231
 * 書く側（`setup-all.sh`・`setup-project.sh --write-config`・`setup-models.sh`・`checks-commands.sh --save`・`review-perspective-add.sh --layer repo`）は、ホームのリポジトリでは何も書かず、理由を伝えて終了コード 2 で止まる。`setup-all.sh`・`setup-project.sh` は、GitHub に何かを作る前に止まる。`review-perspective-add.sh --layer user` はユーザーの層に作れるが、ここでは使われないことを警告する。
 * guard-git は、ルートが分からず HEAD にコミットされたチームの設定で判断する経路でも、作業ツリーを `--work-tree`・`GIT_WORK_TREE` で指していて、それがホームのリポジトリなら、導入したとみなさない（bare の dotfiles を `--work-tree=~` で指したとき）。HEAD にあるのは、ユーザーの層のファイルをコミットしたものだからである。
 * `doctor.sh` は、ホームのリポジトリで、導入できないことを知らせ、repo-setup を案内しない。
+* ホームのリポジトリのワークツリー（メインのワークツリーがホームのリポジトリ）は、コミットされたユーザーの層のファイルの写しがユーザーの層とは別の場所にあるが、`dw_is_set_up` は導入したとみなさない（メインのワークツリーで判定する）。
 
 ### 結果として起きること
 

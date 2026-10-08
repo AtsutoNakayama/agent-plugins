@@ -352,6 +352,22 @@ run_common() {
   assert_failure
 }
 
+@test "ホームのリポジトリのワークツリーは、ユーザーの層のファイルをコミットしてあっても、導入したとみなさない（dw_is_set_up）" {
+  # shellcheck disable=SC2016 # $1・$2 は bash -c の中で展開する
+  wt_is_set_up() { "${TEST_BASH:-bash}" -c '. "$1"; dw_is_set_up "$2"' _ "$SCRIPTS/lib/common.sh" "$1"; }
+  make_home_repo
+  echo '{}' >"$REPO/.claude/dev-workflow/config.json"
+  git add -f .claude/dev-workflow/config.json
+  git commit -q -m "user layer"
+  git worktree add -q "$TMP/wt" -b feature
+  # ワークツリーには、コミットされたファイルの写しがある（ユーザーの層とは別の場所）
+  [ -f "$TMP/wt/.claude/dev-workflow/config.json" ]
+  run wt_is_set_up "$TMP/wt"
+  assert_failure
+  run wt_is_set_up "$REPO"
+  assert_failure
+}
+
 @test "dw_team_dir は、引数が無くても set -u で落ちず、何も出さない" {
   # shellcheck disable=SC2016 # 引数は、起動した bash の中で展開させる
   run "${TEST_BASH:-bash}" -c 'set -eu; . "$1"; dw_team_dir; echo ok' _ "$SCRIPTS/lib/common.sh"
