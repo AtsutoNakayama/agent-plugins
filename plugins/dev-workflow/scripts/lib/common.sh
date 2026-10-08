@@ -133,7 +133,7 @@ dw_issue_branches() {
 #   open_prs    Issue を閉じる PR のうち開いているもの（フォークや別のリポジトリの PR も含む）。[{number, url, branch,
 #               cross（フォークか別のリポジトリの PR なら true。branch は、今のリポジトリのブランチとは限らない）}]
 #   merged_prs  Issue を閉じる PR のうちマージ済みの、今のリポジトリのもの。[{number, url, branch}]
-# origin・PR を読めなければ止まる。
+# origin・PR を読めなければ止まる。branch.pattern が正規表現として正しくなければ、設定の誤りとして終了コード 2 で止まる（dw_issue_branches）。
 # 使い方: dw_issue_work <メインのワークツリー> <Issue の番号> <設定の JSON> <Issue の JSON（closedByPullRequestsReferences を含む）>
 dw_issue_work() {
   local found branches='[]' candidates='[]' open_prs='[]' merged_prs='[]' cross b is_local is_remote confirmed wt nwo="" url pr_repo pr head

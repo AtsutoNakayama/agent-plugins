@@ -30,7 +30,7 @@
 # 解釈が分かれるかや、差分に ADR にすべき判断があるかは、AI が判断する（このスクリプトでは決めない）
 #
 # 止まるとき（有効なときだけ。無効なら設定の値は検査しない）: auto.max_fix_attempts が1以上の整数でない・auto.max_new_issues が0以上の整数でない・
-#             保留の列がほかの役割と同じ名前（終了コード 2）、PR の番号・無い番号（2）、Issue・origin・PR を読めない（1）、gh が古い（2）
+#             保留の列がほかの役割と同じ名前（終了コード 2）、PR の番号・無い番号（2）、branch.pattern が正規表現として正しくない（2）、Issue・origin・PR を読めない（1）、gh が古い（2）
 #
 # 出力:
 #   issue      {number, title, url, state, body, type（type ラベルが1つなら、その名前。ほかは null）, breaking}。
@@ -186,8 +186,7 @@ if [ "$(jq length <<<"$reasons")" = 0 ]; then
   if [ "$(jq length <<<"$reasons")" = 0 ] && [ "$(jq '.branches | length' <<<"$work")" = 1 ]; then
     resume="$(jq -c '.branches[0] | {branch: .name, worktree}' <<<"$work")"
     # type ラベル・ブランチ名・PR のタイトルの type は同じにする（設計書 §5）ので、ブランチの type が Issue と違えば使い回さない
-    bparsed="$(dw_parse_branch "$config" "$(jq -r .branch <<<"$resume")")" || exit $?
-    btype="${bparsed%%|*}"
+    btype="$(dw_parse_branch "$config" "$(jq -r .branch <<<"$resume")" | cut -d'|' -f1)"
     itype="$(jq -r '.type // ""' <<<"$summary")"
     if [ -n "$btype" ] && [ "$btype" != "$itype" ]; then
       add_reason "Issue #${issue} の作業のブランチ $(jq -r .branch <<<"$resume") の type（${btype}）が、Issue の type（${itype}）と違います。どれで続けるかは人が決めます"
