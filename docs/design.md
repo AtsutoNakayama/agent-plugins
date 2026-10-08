@@ -35,6 +35,7 @@ agent-plugins/
 - **導入したリポジトリ**は、チームの設定 `.claude/dev-workflow/config.json` があるリポジトリ（`lib/common.sh` の `dw_is_set_up`）。初期設定（repo-setup）が作るファイルで、中身は空（`{}`）でもよい。ワークツリーに無くても、メインのワークツリー（`dw_main_root`）にあれば導入したとみなす。`.claude/dev-workflow/` のディレクトリや `config.local.json` だけでは、導入したとみなさない。
 - 導入していないリポジトリ（リポジトリの外を含む）では、次のものが効かない。
   - フック（§9）：`guard-git.sh`・`task-flow.sh`・`pr-link.sh` は何もしない。`guard-git.sh` は、操作の対象のリポジトリで判断する。対象は、コマンドと同じオプション・環境変数（`--git-dir`・`GIT_DIR` など。値の先頭の `~`・`$HOME` はシェルと同じく展開する）で `git rev-parse --git-common-dir` を実行して求め、ルートの候補を、その場所で git が同じリポジトリを見つけるかで確かめる。設定（`base_branch`・`branch.pattern`）も同じ対象から読む。ルートの候補は git のディレクトリが同じかで確かめ、ワークツリーの git のディレクトリを指したときは、その gitdir ファイルが記録するワークツリーを使う。ルートが分からなければ（bare リポジトリなど）、HEAD にコミットされたチームの設定で導入したかを判断し、`base_branch` はそのチームの設定、ユーザーの層の順に読み（チームの設定が JSON のオブジェクト1つとして読めなければ main を守り、`base_branch` が無いときだけユーザーの層を読む。§10）、作るブランチの名前が規約（`branch.pattern`）に合うかは確かめない。git がリポジトリを見つけられなければ、導入したものとみなし、ユーザーの層の設定（無ければ既定）で調べる（[ADR 000219](adr/000219-resolve-guard-git-target-repo.md)）。
+  - task-create の、起票を頼まれていない相談（Issue の分け方・親子の構成。#169）での呼び出し：`config.sh .set_up`（導入したかの真偽値。`dw_user_dir_for` と同じ1回の判定から決め、層を合わせた後に足すので設定では変えられない）が `false` なら使わずに止まる。起票を頼まれたときは確かめない。
   - ユーザーの層（`~/.claude/dev-workflow/`）：設定（`config.json`）・文章のガイド（`*.md`）・レビューの観点（`review/*.md`）・タスクの進め方の追記（`task-flow.md`）を読まない。スキルはプラグインの既定とリポジトリの層だけで動く。
 - 導入したリポジトリの中では、ユーザーの層も効く。
 - 初期設定（repo-setup）は、`.claude/dev-workflow/config.json` を作るまでは導入していないリポジトリで動くので、それまでの手順ではユーザーの層の設定を読まない。
