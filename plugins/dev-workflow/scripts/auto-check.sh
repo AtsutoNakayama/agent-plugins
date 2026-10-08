@@ -18,13 +18,14 @@
 #   - 前の作業のブランチ（実行し直したとき）を1つに決められない：Issue の確かなブランチ（issue-branches.sh の branches）が
 #     複数ある、確かなブランチの type が今の Issue の type と違う、確かなブランチが無いのに候補（名前が似ている・Issue を閉じる
 #     PR のブランチ）がある、Issue を閉じる開いている PR が確かなブランチとは別のブランチにある。新しいブランチを作ると、
-#     前の作業のコミットを置き去りにするため。確かなブランチが1つなら、それを使い回す（resume）
+#     前の作業のコミットを置き去りにするため。確かなブランチが1つなら、それを名前のまま使い回す（resume）。
+#     origin と PR を読むので、ほかの理由で止まるときは探さない
 #   - 「やること」の節（見出しが やること・Tasks・To do）に項目が無い
 #   - 「完了条件」の節（見出しが 完了条件・Acceptance criteria・Definition of done）に項目が無い
 #   本文は、ほかのスクリプトと同じく md_scan（lib/common.sh）の決まりで読む（コードブロックと複数行の HTML のコメントの中は見ない）。
 #   節は、見出しから、同じかより上の段の次の見出しの前まで（節の中の小見出しの下も含む）。見出しの # の数は問わず、
 #   英語は大文字と小文字を区別しない。節の中身は、見出しでない空でない行（リストの印・チェックボックスだけの行と、
-#   1行の HTML のコメントだけの行は空とみなす）
+#   行の中の <!-- … -->（1行で閉じるもの）は外してから見る。見出しの文字も同じ）
 # 解釈が分かれるかや、差分に ADR にすべき判断があるかは、AI が判断する（このスクリプトでは決めない）
 #
 # 止まるとき（有効なときだけ。無効なら設定の値は検査しない）: auto.max_fix_attempts が1以上の整数でない・auto.max_new_issues が0以上の整数でない・
@@ -35,8 +36,8 @@
 #              disabled・no_hold では null。task-auto は、この body で Issue があいまいかを判断する（読み直さない）
 #   action     上の値
 #   reasons    action の理由（文の配列。proceed では空）
-#   resume     前の作業の確かなブランチを使い回すとき {branch, slug（task-start.sh の --slug に渡す短い説明）, worktree（無ければ null）}。
-#              無ければ null（新しいブランチを作る）。not_startable・disabled・no_hold では null
+#   resume     前の作業の確かなブランチを使い回すとき {branch（task-start.sh の --branch にそのまま渡す）, worktree（無ければ null）}。
+#              無ければ null（新しいブランチを作る）。proceed のときだけ入る
 #   settings   {max_fix_attempts, max_new_issues, hold（保留の列の名前か null）}。disabled では null
 set -euo pipefail
 
@@ -138,37 +139,13 @@ case "$(jq length <<<"$types")" in
   *) add_reason "type ラベルが1つではありません（今は $(jq -r 'join(", ")' <<<"$types")）" ;;
 esac
 
-# 前の作業のブランチ（止まった後に実行し直したとき）。issue-branches.sh と同じ判定（dw_issue_work）で探し、1つに決める
-work="$(dw_issue_work "$main_root" "$issue" "$config" "$issue_json")"
-type="$(jq -r '.type // ""' <<<"$summary")"
-while IFS= read -r r; do
-  [ -n "$r" ] && add_reason "$r"
-done < <(jq -r --arg n "$issue" --arg t "$type" '
-  (.branches | map(.name)) as $b | (.candidates | map(.name)) as $c
-  | if ($b | length) > 1 then "Issue #\($n) の作業のブランチが複数あります（\($b | join(", "))）。どれで続けるかは人が決めます"
-    elif ($b | length) == 0 and ($c | length) > 0 then
-      "Issue #\($n) の作業かもしれないブランチがあります（\($c | join(", "))）。前の作業を置き去りにしないよう、どれで続けるかは人が決めます"
-    else empty end,
-  (.open_prs[] | select(.branch != ($b[0] // null))
-    | "Issue #\($n) を閉じる PR #\(.number) が、別のブランチ（\(.branch)）で開いています。どれで続けるかは人が決めます")' <<<"$work")
-if [ "$(jq '.branches | length' <<<"$work")" = 1 ]; then
-  resume="$(jq -c --argjson c "$config" "$DW_JQ_BRANCH_RE"'
-    .branches[0] as $w | ($c | branch_re) as $re | ($w.name | capture($re)) as $m
-    | {branch: $w.name, slug: ($m.slug // "work"), worktree: $w.worktree, type: ($m.type // null)}' <<<"$work")"
-  btype="$(jq -r '.type // ""' <<<"$resume")"
-  if [ -n "$btype" ] && [ -n "$type" ] && [ "$btype" != "$type" ]; then
-    add_reason "Issue #${issue} の作業のブランチ $(jq -r .branch <<<"$resume") の type（${btype}）が、Issue の type（${type}）と違います。どれで続けるかは人が決めます"
-  fi
-  resume="$(jq -c 'del(.type)' <<<"$resume")"
-fi
-
 # 本文の「やること」（tasks）と「完了条件」（criteria）の節のうち、中身のあるものの名前を1行ずつ出す（上の説明の決まり）
 filled="$(jq -r "$DW_JQ_MD_SCAN"'
   (.body // "") as $b | ($b | md_scan) as $m
   | ($b | split("\n") | map(sub("\r$"; ""))) as $l
   | [$m.headings[] as $i | ($l[$i] | capture("^ {0,3}(?<h>#{1,6})\\s*(?<t>.*)$")) as $c
       | {line: $i, level: ($c.h | length),
-         kind: ($c.t | sub("\\s+#+\\s*$"; "") | sub("\\s+$"; "") | ascii_downcase
+         kind: ($c.t | gsub("<!--.*?-->"; "") | sub("\\s+#+\\s*$"; "") | sub("\\s+$"; "") | ascii_downcase
            | if IN("やること", "tasks", "to do", "todo") then "tasks"
              elif IN("完了条件", "acceptance criteria", "definition of done") then "criteria"
              else null end)}] as $hs
@@ -176,11 +153,32 @@ filled="$(jq -r "$DW_JQ_MD_SCAN"'
       | ([$hs[$k + 1:][] | select(.level <= $h.level) | .line] | first // ($l | length)) as $end
       | select(any($m.lines[]; .line > $h.line and .line < $end
           and (.line as $x | $hs | any(.line == $x) | not)
-          and (.text | sub("^\\s*<!--.*-->\\s*$"; "") | sub("^\\s*(?:[-*+]|[0-9]+[.)])(?:\\s+|$)"; "")
+          and (.text | gsub("<!--.*?-->"; "") | sub("^\\s*(?:[-*+]|[0-9]+[.)])(?:\\s+|$)"; "")
                | sub("^\\[[ xX]\\]"; "") | test("\\S"))))
       | .kind] | unique[]' <<<"$issue_json")"
 grep -qx tasks <<<"$filled" || add_reason "本文の「やること」に項目がありません（何をするかが決まっていません）"
 grep -qx criteria <<<"$filled" || add_reason "本文の「完了条件」に項目がありません（どこまでやれば終わりかが決まっていません）"
+
+# 前の作業のブランチ（止まった後に実行し直したとき）。issue-branches.sh と同じ判定（dw_issue_work）で探し、1つに決める。
+# origin と PR を読むので、ほかの理由で止まるときは探さない
+if [ "$(jq length <<<"$reasons")" = 0 ]; then
+  work="$(dw_issue_work "$main_root" "$issue" "$config" "$issue_json")"
+  while IFS= read -r r; do
+    [ -n "$r" ] && add_reason "$r"
+  done < <(jq -r --arg n "$issue" '
+    (.branches | map(.name)) as $b | (.candidates | map(.name)) as $c
+    | if ($b | length) > 1 then "Issue #\($n) の作業のブランチが複数あります（\($b | join(", "))）。どれで続けるかは人が決めます"
+      elif ($b | length) == 0 and ($c | length) > 0 then
+        "Issue #\($n) の作業かもしれないブランチがあります（\($c | join(", "))）。前の作業を置き去りにしないよう、どれで続けるかは人が決めます"
+      else empty end,
+    # 候補に出したブランチの PR は、上の理由と重ねて出さない
+    (.open_prs[] | select(.branch != ($b[0] // null) and (.branch as $x | $c | index([$x]) | not))
+      | "Issue #\($n) を閉じる PR #\(.number) が、別のブランチ（\(.branch)）で開いています。どれで続けるかは人が決めます")' <<<"$work")
+  # 名前を短い説明から作り直さず、そのまま task-start.sh --branch に渡す（作り直すと、番号の先頭の 0 などで別の名前になりうる）
+  if [ "$(jq length <<<"$reasons")" = 0 ] && [ "$(jq '.branches | length' <<<"$work")" = 1 ]; then
+    resume="$(jq -c '.branches[0] | {branch: .name, worktree}' <<<"$work")"
+  fi
+fi
 
 if [ "$(jq length <<<"$reasons")" -gt 0 ]; then
   out hold "$summary" "$reasons"

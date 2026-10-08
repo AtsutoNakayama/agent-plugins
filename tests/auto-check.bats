@@ -247,18 +247,23 @@ run_check() {
   assert_equal "$(jq -r .issue.body <<<"$output")" "$BODY"
 }
 
-@test "前の作業の確かなブランチが1つあれば、それを使い回す（resume。手元に無く origin だけにあっても）" {
+@test "前の作業の確かなブランチが1つあれば、名前のまま使い回す（resume。ワークツリーがあればその場所も。origin だけにあっても）" {
   setup_auto
   run_check --issue 17
   assert_equal "$(jq -c .resume <<<"$output")" null
   git branch feat/17-old-work
   run_check --issue 17
   assert_success
-  assert_equal "$(jq -c '[.action, .resume]' <<<"$output")" '["proceed",{"branch":"feat/17-old-work","slug":"old-work","worktree":null}]'
+  assert_equal "$(jq -c '[.action, .resume]' <<<"$output")" '["proceed",{"branch":"feat/17-old-work","worktree":null}]'
+  git worktree add -q "$TMP/wt" feat/17-old-work
+  run_check --issue 17
+  assert_equal "$(jq -c .resume <<<"$output")" "{\"branch\":\"feat/17-old-work\",\"worktree\":\"$TMP/wt\"}"
+  git worktree remove "$TMP/wt"
   git branch -D -q feat/17-old-work
+  # 番号の先頭が 0 のブランチも、名前を作り直さずにそのまま返す（作り直すと feat/17-… になり、別のブランチになる）
   git push -q origin main:refs/heads/feat/017-remote-only
   run_check --issue 17
-  assert_equal "$(jq -c '.resume | [.branch, .slug]' <<<"$output")" '["feat/017-remote-only","remote-only"]'
+  assert_equal "$(jq -c .resume <<<"$output")" '{"branch":"feat/017-remote-only","worktree":null}'
 }
 
 @test "前の作業のブランチを1つに決められなければ hold（複数・type が違う・候補だけ・別のブランチの開いた PR）" {
@@ -268,16 +273,18 @@ run_check() {
   run_check --issue 17
   assert_equal "$(jq -r .action <<<"$output")" hold
   assert_output --partial "Issue #17 の作業のブランチが複数あります（feat/17-a, feat/17-b）"
-  git branch -D -q feat/17-b
-  fake_issue 17 '["fix"]'
-  fake_issue_body 17 "$BODY"
-  run_check --issue 17
-  assert_output --partial "Issue #17 の作業のブランチ feat/17-a の type（feat）が、Issue の type（fix）と違います"
-  git branch -D -q feat/17-a
+  assert_equal "$(jq -c .resume <<<"$output")" null
+  git branch -D -q feat/17-a feat/17-b
   git branch wip/17-try
   run_check --issue 17
   assert_equal "$(jq -c '[.action, .resume]' <<<"$output")" '["hold",null]'
   assert_output --partial "Issue #17 の作業かもしれないブランチがあります（wip/17-try）"
+  # 候補のブランチを head に持つ開いている PR は、同じ理由を重ねて出さない
+  jq '. + {closedByPullRequestsReferences: [{number: 5, url: "https://github.com/me/demo/pull/5", repository: {name: "demo", owner: {login: "me"}}}]}' \
+    "$FIX/issue-17.json" >"$TMP/i.json" && mv "$TMP/i.json" "$FIX/issue-17.json"
+  echo '{"number": 5, "url": "https://github.com/me/demo/pull/5", "state": "OPEN", "headRefName": "wip/17-try", "isCrossRepository": false}' >"$FIX/pr-5.json"
+  run_check --issue 17
+  assert_equal "$(jq -r '.reasons | length' <<<"$output")" 1
   git branch -D -q wip/17-try
   git branch fix/17-a
   jq '. + {closedByPullRequestsReferences: [{number: 5, url: "https://github.com/me/demo/pull/5", repository: {name: "demo", owner: {login: "me"}}}]}' \
@@ -289,4 +296,42 @@ run_check() {
   echo '{"number": 5, "url": "https://github.com/me/demo/pull/5", "state": "OPEN", "headRefName": "fix/17-a", "isCrossRepository": false}' >"$FIX/pr-5.json"
   run_check --issue 17
   assert_equal "$(jq -c '[.action, .resume.branch]' <<<"$output")" '["proceed","fix/17-a"]'
+}
+
+@test "行の中の <!-- … --> は外してから見る（コメントだけの項目は空、見出しの後ろのコメントは見出しの一部にしない）" {
+  setup_auto
+  fake_issue_body 17 '## やること <!-- 必須 -->
+<!-- 何をするか書く -->
+- [ ] <!-- 例: ここに書く -->
+
+## 完了条件
+- a.sh が動く'
+  run_check --issue 17
+  assert_equal "$(jq -c '[.action, .reasons]' <<<"$output")" '["hold",["本文の「やること」に項目がありません（何をするかが決まっていません）"]]'
+  # コメントの外に文字があれば項目として数える（間の文字を消すほど広くは外さない）
+  fake_issue_body 17 '## やること <!-- 必須 -->
+- [ ] <!-- a --> a.sh を足す <!-- b -->
+
+## 完了条件
+- a.sh が動く'
+  run_check --issue 17
+  assert_equal "$(jq -r .action <<<"$output")" proceed
+}
+
+@test "ほかの理由で止まるときは、前の作業のブランチを探さない（origin も PR も読まない）" {
+  setup_auto
+  fake_issue 17 '["feat", "breaking"]'
+  fake_issue_body 17 "$BODY"
+  git remote set-url origin "$TMP/none.git"
+  run_check --issue 17
+  assert_success
+  assert_equal "$(jq -c '[.action, .resume]' <<<"$output")" '["hold",null]'
+}
+
+@test "gh が古ければ、Issue を読まずに止まる" {
+  setup_auto
+  FAKE_GH_VERSION=2.72.0 run_check --issue 17
+  assert_failure 2
+  assert_output --partial "gh"
+  assert_equal "$(called issue-view)" 0
 }

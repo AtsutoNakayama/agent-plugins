@@ -123,7 +123,7 @@ dw_issue_branches() {
 }
 
 # Issue の作業のブランチと、Issue を閉じる開いている PR を、JSON の {branches, candidates, open_prs} で出力する
-# （issue-branches.sh と task-start.sh --no-worktree が使う。何も変えない）。
+# （issue-branches.sh・task-start.sh --no-worktree・auto-check.sh が使う。何も変えない）。
 #   branches    確かなブランチ（dw_issue_branches）。[{name, local, remote, worktree（無ければ null）}]。
 #               マージ済みかは見ない（マージの確かめは、厳密に確かめる cleanup.sh に任せる）
 #   candidates  名前が似ているだけのブランチ（from: name）と、Issue を閉じる PR（開いている・マージ済み。今のリポジトリのもの）の
@@ -407,14 +407,13 @@ dw_is_json_object() {
   jq -se "$DW_JQ_ONE_OBJECT" "$1" >/dev/null 2>&1
 }
 
-# 設定（入力）の branch.pattern を、type と Issue の番号と短い説明（slug。pattern に {slug} が無ければ無い）を取り出す
-# 正規表現にする jq の定義（dw_parse_branch・dw_issue_branches・auto-check.sh）
+# 設定（入力）の branch.pattern を、type と Issue の番号を取り出す正規表現にする jq の定義（dw_parse_branch・dw_issue_branches）
 # jq の変数（$t）を bash に展開させないため、シングルクォートで書く
 # shellcheck disable=SC2016
 DW_JQ_BRANCH_RE='def branch_re: .labels.types as $t | .branch.pattern
   | gsub("\\{type\\}"; "(?<type>" + ($t | join("|")) + ")")
   | gsub("\\{issue_number\\}"; "(?<issue>[0-9]+)")
-  | gsub("\\{slug\\}"; "(?<slug>[a-z0-9]+(?:-[a-z0-9]+)*)")
+  | gsub("\\{slug\\}"; "[a-z0-9]+(?:-[a-z0-9]+)*")
   | "^" + . + "$";'
 
 # ブランチ名を branch.pattern に当て、type と Issue の番号を「<type>|<番号>」で出力する（無いものは空）

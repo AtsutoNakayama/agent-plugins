@@ -258,7 +258,7 @@ Issue を指定したら、ユーザーの承認や入力なしで、着手・�
 - **PR**：必ず draft で出し（`pr-create.sh --draft`）、マージはしない（`allow_ai_merge` にかかわらず）。本文の `Closes #N` の前に「自動で決めたこと」の節を足し、ブランチ名・着手中の Issue との重なり・作業役が決めたこと・直させた回数・反映した指摘と反映しなかった指摘とその理由・起票した Issue を書く（無かった項目も「なし」と書く）。
 - **止まる条件**：次に当たったら、それ以上進めず、止まった理由・それまでの判断・残したもの（ブランチ・ワークツリー・コミット）・人が続けるには何をするかを Issue にコメントし、保留の列に移す（`auto-hold.sh`。何度実行しても同じコメントを付け直さない）。ワークツリーとコミットは残す。
   - breaking ラベルがある・type ラベルが1つでない・本文の「やること」や「完了条件」に項目が無い（`auto-check.sh` が決める。本文は `md_scan` の決まりで読み、見出しは「やること」「Tasks」「To do」と「完了条件」「Acceptance criteria」「Definition of done」を、同じかより上の段の次の見出しまで読む）
-  - 前の作業のブランチを1つに決められない（`auto-check.sh` が `issue-branches.sh` と同じ判定で決める。確かなブランチが複数ある・その type が Issue と違う・確かなブランチが無いのに候補がある・Issue を閉じる PR が別のブランチで開いている）。止まった後に実行し直したときに、新しいブランチを作って前のコミットを置き去りにしないため。確かなブランチが1つなら、その短い説明（`resume`）で task-start し、前の作業から続ける
+  - 前の作業のブランチを1つに決められない（`auto-check.sh` が `issue-branches.sh` と同じ判定で決める。確かなブランチが複数ある・確かなブランチが無いのに候補がある・Issue を閉じる PR が別のブランチで開いている。ほかの理由で止まるときは、origin と PR を読まないよう探さない）。止まった後に実行し直したときに、新しいブランチを作って前のコミットを置き去りにしないため。確かなブランチが1つなら、その名前（`resume`）のまま `task-start.sh --branch` で着手し、前の作業から続ける（短い説明から名前を作り直すと、番号の先頭の 0 や短い説明の長さの違いで、別の名前になりうるため）
   - Issue があいまい（食い違い・解釈が複数ある・人が決めることが残っている。AI が判断し、迷うときは止まる）
   - 「変更するファイル・領域」が「なし」（ファイルを変えないタスクは PR を出せない）
   - テストや lint が `auto.max_fix_attempts`（既定 3）回直させても通らない
@@ -397,7 +397,7 @@ Todo が増えたとき、どれから着手するか、同時に進めてよい
 | `status-set.sh` | 列を移す |
 | `next-tasks.sh` | Todo の Issue を Project の並び順で読み、依存（blocked by と本文の「依存」）・本文の「変更するファイル・領域」・着手中の PR のファイルを添えて JSON で返す。待ち・親の Issue・保留の Issue（`status.hold` が設定されていれば）と、領域の重なりも判定する。`--issue N` では、Issue N と着手中の Issue との重なりと、その判断（`overlap`・`can_defer`）だけを返す（`task-start` が使う）。何も変えない |
 | `branch-name.sh` | ブランチ名を作り、検証する |
-| `task-start.sh` | ワークツリーの作成（サブモジュールの初期化を含む）、割り当て、In Progress への移動。`--no-worktree` では割り当てと移動だけ（Issue に確かなブランチがあれば、マージ済みでも止まる）。親の Issue では何もせずに止まる |
+| `task-start.sh` | ワークツリーの作成（サブモジュールの初期化を含む）、割り当て、In Progress への移動。`--no-worktree` では割り当てと移動だけ（Issue に確かなブランチがあれば、マージ済みでも止まる）。`--branch` では、既にあるブランチ（手元か origin のもの）を名前のまま使い、無ければ何も作らずに止まる（task-auto が前の作業から続けるのに使う）。親の Issue では何もせずに止まる |
 | `review-perspectives.sh` | 観点ファイルを集める。`--auto`（または `--base` と `--target`）を渡すと、観点ごとの実行する条件（`types`・`paths`・`issue`・`base_ahead`）に当てはまらない観点を外し、理由つきで `skipped` に出す |
 | `review-perspective-add.sh` | 観点ファイルを作る。同じ層に同じ名前のファイルがあれば上書きせずに止まり、ほかの層にあれば `--override` が無いかぎり止まる（上位の層にあり、作っても使われないときは、下位の層にあるときと別の終了コードで知らせる）。リポジトリの層に作ったときは、そのブランチと、作業用のブランチの上か（`work_branch`）も出力する。`--builtin code-review` を付けると、同梱の観点 `code-review` を置き換える builtin の観点（本文は「## 指摘しないこと」の節）を作る（名前が `code-review` のときだけ） |
 | `adr-create.sh` | ADR をテンプレートから作る（ファイル名の決定、`date` と `issue` の記入。`date` は既定で今日、過去の判断は `--date` で判断をした日にする）。`--supersedes` で置き換える ADR の `status` の行だけを書き換える。同じファイル名があれば上書きせずに止まる |
@@ -409,8 +409,8 @@ Todo が増えたとき、どれから着手するか、同時に進めてよい
 | `branch-plan.sh` | `branch-status.sh` の出力（JSON）を標準入力で受け取り、branch-update が次にすること（`action`・`reason`・`queue`・`fallback`）を判断の表で決める。git も GitHub も使わないので、表の行と境目を、JSON を入力にした bats の表で確かめられる。`branch-status.sh` が中で使い、出力の `plan` にする |
 | `merge-group-check.sh` | 必須のチェックを出すワークフローが、マージキューの merge_group のイベントでも動くかを確かめる（base_branch のワークフローを API で読み、チェックの名前とジョブを突き合わせ、ジョブの `if:` で `merge_group` を除いていないかも見る）。何も変えない。`setup-repo.sh` と `doctor.sh` が使う |
 | `auto-check.sh` | task-auto が始める前に、設定（`auto.*`・`status.hold`）と Issue から、進めるか・止まるか（`action`：`disabled`・`no_hold`・`not_startable`・`hold`・`proceed`）と理由を決め、前の作業のブランチを使い回すか（`resume`）も決める。無効なら設定の値を検査しない。何も変えない |
-| `auto-hold.sh` | task-auto が止まるときに、理由とそれまでの判断を Issue にコメントし（印 `<!-- dev-workflow:task-auto -->` を付ける。最後のコメントが同じなら付け直さない）、保留の列に移す |
-| `issue-branches.sh` | Issue の作業のブランチを、確かなブランチ（`branch.pattern` に合い番号が一致する）と候補（名前が似ている・Issue を閉じる PR のブランチのうち、手元か origin に残っているもの）に分けて探し、Issue の状態と、Issue を閉じる開いている PR を出す。何も変えない。`task-finish`・`task-cancel` が使う（`task-start.sh --no-worktree` も、同じ判定の `dw_issue_work` を使う） |
+| `auto-hold.sh` | task-auto が止まるときに、理由とそれまでの判断を Issue にコメントし（印 `<!-- dev-workflow:task-auto -->` を付ける。task-auto のコメントのうち一番新しいものが同じ本文なら、その後に人のコメントがあっても付け直さない）、保留の列に移す |
+| `issue-branches.sh` | Issue の作業のブランチを、確かなブランチ（`branch.pattern` に合い番号が一致する）と候補（名前が似ている・Issue を閉じる PR のブランチのうち、手元か origin に残っているもの）に分けて探し、Issue の状態と、Issue を閉じる開いている PR を出す。何も変えない。`task-finish`・`task-cancel` が使う（`task-start.sh --no-worktree` と `auto-check.sh` も、同じ判定の `dw_issue_work` を使う） |
 | `cleanup.sh` | マージを確認し、ワークツリーとブランチを削除し、main を最新にし、PR が閉じる Issue の状態（`issues`）を出す。未コミットの変更や git が無視するファイルがあれば、何も消さずに止まる（無視するファイルは `--remove-ignored` で消せる）。`--abandon` では、マージの確認・main の更新・Issue の状態の確認を飛ばし、失うものを一覧にして削除する |
 
 | 初期設定用（`plugins/dev-workflow/scripts/setup/`） | 役割 |

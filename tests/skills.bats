@@ -595,7 +595,7 @@ has() {
   grep -qF 'Issue を読み直さない' <<<"$s1" || fail "手順1に、auto-check.sh の issue を使うことが書かれていません"
   if grep -qF 'gh issue view' <<<"$s1"; then fail "手順1で Issue を読み直しています"; fi
   # 実行し直したときは、前の作業のブランチ（resume）を使い回す
-  has "task-auto の手順2" "$(step "$f" 2)" '`resume` があれば' 'その `slug` をそのまま使う'
+  has "task-auto の手順2" "$(step "$f" 2)" '`resume` があれば' '--branch "<resume の branch>"' '名前を作り直さずに'
   # 無効なら、今のスキルで代わりに進めない（確認を取る今の振る舞いを変えない）
   grep -qF 'task-start など、ほかのスキルを代わりに始めない' <<<"$s1" || fail "無効のときに、ほかのスキルを始めないことが書かれていません"
   # 書き込まずに止まる action と、Issue に書いて止まる action を分ける
