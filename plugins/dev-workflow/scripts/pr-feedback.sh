@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # PR の状態（CI・レビュー・マージできるか）と、付いた指摘・質問（未解決のスレッド・レビュー本文・PR のコメント）を、
-# 投稿者ごとにまとめて JSON で出力する。何も変えない（読むだけ）。pr-respond スキルと、それが呼ぶ担当の skill
+# 投稿者ごとにまとめて JSON で出力する。何も変えない（読むだけ）。gh-pr-check スキルと、それが呼ぶ担当の skill
 # （このリポジトリの coderabbit-respond など）が使う。出力の形を変えるときは、担当の skill の手順も確かめる。
 #
 # 使い方: pr-feedback.sh [--pr N]
@@ -10,7 +10,7 @@
 #   pr         number・url・title・state・draft・author・head（ブランチ名）・head_sha・base・mergeable・merge_state・review_decision
 #              （merge_state は GitHub の mergeStateStatus。review_decision は無ければ null）
 #   checks     state（failure・pending・success・none）と、failed・pending（name・workflow・url の配列）、total
-#   handlers   設定の pr_respond.handlers（投稿者 → 担当する skill の名前）
+#   handlers   設定の pr_check.handlers（投稿者 → 担当する skill の名前）
 #   feedback   投稿者ごとの配列。author・handler（担当する skill。無ければ null）・threads・reviews・comments
 #     threads   resolved でないスレッド。id（先頭のコメントの ID。返信に使う）・path・line・outdated・url・
 #               comments（author・body・created_at・url）・replied（スレッドの持ち主の最後のコメントの後に、
@@ -53,9 +53,9 @@ done
 # スキルの引数の #5 も受け、先頭の 0 をそろえる（dw_number。Issue の番号と同じ受け取り方）
 [ -z "$pr" ] || pr="$(dw_number --pr "$pr" PR)"
 
-handlers="$("$BASH" "$DW_SCRIPTS_DIR/config.sh" '.pr_respond.handlers // {}' | jq -c .)"
+handlers="$("$BASH" "$DW_SCRIPTS_DIR/config.sh" '.pr_check.handlers // {}' | jq -c .)"
 jq -e 'type == "object" and all(.[]; type == "string" and . != "")' >/dev/null <<<"$handlers" \
-  || dw_die "設定の pr_respond.handlers は、投稿者を担当する skill の名前に対応させるオブジェクトにしてください"
+  || dw_die "設定の pr_check.handlers は、投稿者を担当する skill の名前に対応させるオブジェクトにしてください"
 
 fields=number,url,title,state,isDraft,author,headRefName,headRefOid,baseRefName,mergeable,mergeStateStatus,reviewDecision,reviews,comments,statusCheckRollup
 if [ -n "$pr" ]; then

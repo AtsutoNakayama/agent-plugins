@@ -95,6 +95,12 @@ else
   fi
 fi
 
+# 改名前の設定のキー pr_respond は使われない（pr_check に改めた。別名は残さない）ので、残っていれば知らせる
+if [ -n "$repo_root" ] && config_all="$("$BASH" "$DW_SCRIPTS_DIR/config.sh" 2>/dev/null)" \
+  && jq -e 'has("pr_respond")' >/dev/null 2>&1 <<<"$config_all"; then
+  check old-pr-respond-key false warn "設定のキー pr_respond は使われません。pr_check に改めてください（.claude/dev-workflow/config.json など。例：pr_respond.handlers → pr_check.handlers）"
+fi
+
 # 古い置き場所（.claude/dev-workflow/ にまとめる前）のファイルは使われないので、移すよう促す
 moves=""
 # 使い方: old_location <古いパス> <新しいパス>。古いパスがディレクトリなら、*.md があるときだけ数える

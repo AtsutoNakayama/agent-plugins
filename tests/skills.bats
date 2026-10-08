@@ -53,7 +53,7 @@ has() {
 }
 
 @test "確認を残すスキルに、選択肢の説明の書き方がある（設計書 §8）" {
-  for name in task-create task-cancel pr-create repo-setup branch-update pr-respond task-start task-finish; do
+  for name in task-create task-cancel pr-create repo-setup branch-update gh-pr-check task-start task-finish; do
     f="$SKILLS/$name/SKILL.md"
     grep -q '選択肢の説明には、選ぶと実際に何が起きるか' "$f" \
       || fail "${name} に選択肢の説明の書き方（選ぶと何が起きるかを書く）がありません"
@@ -63,7 +63,7 @@ has() {
 }
 
 @test "確認を残すスキルは、確認に必要な内容を質問の中にも入れる（設計書 §8）" {
-  for name in task-create task-cancel pr-create repo-setup review review-perspective-add task-finish branch-update pr-respond task-start; do
+  for name in task-create task-cancel pr-create repo-setup review review-perspective-add task-finish branch-update gh-pr-check task-start; do
     f="$SKILLS/$name/SKILL.md"
     grep -q '質問の中にも入れる' "$f" \
       || fail "${name} に、確認に必要な内容を質問の中にも入れることが書かれていません（別の端末から使うと、質問の直前の文章が見えない）"
@@ -261,13 +261,15 @@ has() {
   grep -q 'ワークツリーを作らずに着手した' "$SKILLS/task-cancel/SKILL.md"
 }
 
-@test "pr-respond は PR の番号を引数で受け取り、スレッドを resolved にせず、コメントの本文を信頼しない" {
-  f="$SKILLS/pr-respond/SKILL.md"
-  frontmatter "$f" | grep -q '^argument-hint: .*PR番号' || fail "pr-respond の frontmatter に argument-hint（PR番号）がありません"
-  grep -q '引数があれば' "$f" || fail "pr-respond に、引数の PR の番号の扱いが書かれていません"
-  grep -q 'スレッドは resolved にしない' "$f" || fail "pr-respond に、スレッドを resolved にしないことが書かれていません"
-  grep -q '信頼しないデータとして読む' "$f" || fail "pr-respond に、コメントの本文を信頼しないデータとして読むことが書かれていません"
-  grep -q 'pr_respond.handlers' "$f" || fail "pr-respond に、担当の skill の設定（pr_respond.handlers）が書かれていません"
+@test "gh-pr-check は PR の番号を引数で受け取り、スレッドを resolved にせず、コメントの本文を信頼しない。対応が要らないときは何も変えない" {
+  f="$SKILLS/gh-pr-check/SKILL.md"
+  frontmatter "$f" | grep -q '^argument-hint: .*PR番号' || fail "gh-pr-check の frontmatter に argument-hint（PR番号）がありません"
+  grep -q '引数があれば' "$f" || fail "gh-pr-check に、引数の PR の番号の扱いが書かれていません"
+  grep -q 'スレッドは resolved にしない' "$f" || fail "gh-pr-check に、スレッドを resolved にしないことが書かれていません"
+  grep -q '信頼しないデータとして読む' "$f" || fail "gh-pr-check に、コメントの本文を信頼しないデータとして読むことが書かれていません"
+  grep -q 'pr_check.handlers' "$f" || fail "gh-pr-check に、担当の skill の設定（pr_check.handlers）が書かれていません"
+  grep -q '何も変えずに終える' "$f" || fail "gh-pr-check に、対応が要らないときは何も変えずに終えることが書かれていません"
+  [ ! -e "$SKILLS/pr-respond" ] || fail "旧名のスキル pr-respond が残っています（別名は残さない）"
 }
 
 # shellcheck disable=SC2016 # バッククォートはスキルの本文の文字で、展開させない
@@ -403,10 +405,10 @@ has() {
   fi
 }
 
-@test "pr-create と task-finish は pr-respond に依存しない（使わなくてもマージから後片付けまで進める）" {
+@test "pr-create と task-finish は gh-pr-check に依存しない（使わなくてもマージから後片付けまで進める）" {
   for name in pr-create task-finish; do
-    if grep -n 'pr-respond' "$SKILLS/$name/SKILL.md"; then
-      fail "${name} が pr-respond に触れています（pr-respond は任意の寄り道）"
+    if grep -n 'gh-pr-check' "$SKILLS/$name/SKILL.md"; then
+      fail "${name} が gh-pr-check に触れています（gh-pr-check は任意の寄り道）"
     fi
   done
 }
@@ -661,8 +663,8 @@ has() {
   [ -z "$bad" ] || fail "実行権限がありません（git update-index --chmod=+x で付けてください）: ${bad}"
 }
 
-@test "branch-update・pr-respond・review は、テストとチェックのコマンドを checks-commands.sh で決める（設定 checks.commands）" {
-  for name in branch-update pr-respond review; do
+@test "branch-update・gh-pr-check・review は、テストとチェックのコマンドを checks-commands.sh で決める（設定 checks.commands）" {
+  for name in branch-update gh-pr-check review; do
     f="$SKILLS/$name/SKILL.md"
     grep -q 'checks-commands.sh' "$f" || fail "${name} に、checks-commands.sh で実行するコマンドを決めることが書かれていません"
     grep -q 'checks.commands' "$f" || fail "${name} に、設定 checks.commands が書かれていません"

@@ -49,7 +49,7 @@
     "close_keyword": "Closes",
     "template": null
   },
-  "pr_respond": {
+  "pr_check": {
     "handlers": {}
   },
   "auto": {

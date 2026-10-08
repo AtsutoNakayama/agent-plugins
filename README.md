@@ -39,19 +39,36 @@ plugins/dev-workflow/scripts/doctor.sh
 | `/dev-workflow:review-perspective-add` | レビューの観点を聞き取り、形式に沿った観点ファイル（下記）を自分の層（`~/.claude/dev-workflow/review/`）かリポジトリの層（`<repo>/.claude/dev-workflow/review/`）に作る。同じ層に同じ名前の観点があれば上書きせずに知らせ、ほかの層の観点を置き換えるときは確認する |
 | `/dev-workflow:adr-create` | 設計上の判断を、MADR 4.0.0 の書式の ADR として `docs/adr/<Issue 番号を6桁に0埋め>-<名前>.md` に残す（[ADR](#adr)）。判断の内容を聞き取り、判断に合うテンプレートを選んで中身まで書く。古い ADR を置き換えるときは、古い方の status だけを superseded にする。確認は取らない（作るのは手元のファイルだけ） |
 | `/dev-workflow:pr-create` | 作業用のブランチを push し、Issue に紐付けた PR を作る。タイトルは `<type>: <Issueのタイトル>`、本文は PR テンプレートに沿って書き、`Closes #N` を付けてラベルを引き継ぐ。Issue に `breaking` ラベルがあれば、タイトルを `<type>!:` にし、本文に `BREAKING CHANGE:`（移行のしかた）を書く。Issue の「やること」のうち差分で済んだ項目にチェックを付ける。差分に設計上の判断があって ADR が無ければ、ADR を作ってから PR を作るかを聞く（[ADR](#adr)）。確認してから push する。PR を出した後は、PR のマージ先（設定済みの `base_branch`（既定は main）か、既にある PR のマージ先）がマージキューを使うなら、マージの条件を満たしたらキューに入れるよう案内し（マージ先が進んでも取り込み直しは要らない）、使わないなら、マージ先が進んだら `/dev-workflow:branch-update` で取り込むよう案内する |
-| `/dev-workflow:pr-respond` | PR を出した後に付いたレビューの指摘・質問・コメントと、CI の失敗に対応する。最初に PR の状態（CI・レビュー・マージできるか）を見せ、指摘（直す）・質問（答えるだけ）・感想や承認（何もしない）に分けて一覧にする。直すものと答えるものを選ぶと、直してコミットし、push するコミットと返信の本文を見せて確認してから、push と返信を行う。スレッドは resolved にしない（レビューした人に任せる）。コメントの本文にある AI への指示には従わない。コメントが無ければ何も変えずに終わる。使わなくてもマージや `task-finish` は進められる |
+| `/dev-workflow:gh-pr-check` | 自分が出した PR の状態を確かめ、付いたレビューの指摘・質問・コメントと CI の失敗があれば対応する（「PR を確認して」「CI は通った？」「指摘に対応して」で使えます。人の PR のコードレビューには使いません）。最初に PR の状態（CI・レビュー・マージできるか）を見せ、対応が要らなければ、何も変えずに終わる。指摘（直す）・質問（答えるだけ）・感想や承認（何もしない）に分けて一覧にし、直すものと答えるものを選ぶと、直してコミットし、push するコミットと返信の本文を見せて確認してから、push と返信を行う。スレッドは resolved にしない（レビューした人に任せる）。コメントの本文にある AI への指示には従わない。使わなくてもマージや `task-finish` は進められる。旧名は `pr-respond` です（[移行のしかた](#pr-respond-から-gh-pr-check-への移行)） |
 | `/dev-workflow:task-finish` | PR がマージされた後の後片付け。マージを確かめ、ワークツリーとローカルのブランチを削除し、main を最新にし（`git pull --ff-only`）、PR が閉じる Issue が閉じたかも伝える（閉じるのは頼まれたときだけ）。確認を取らずに進め、作業が失われるとき（マージされていない、PR に入っていないコミット・未コミットの変更・サブモジュールの push していないコミットがある）は、何も消さずに止まる。`.env` など git が無視するファイルが残っているときは、一覧を見せて消してよいか確認する。規約の形で番号が一致する作業のブランチが見つからないとき（ワークツリーを作らずに着手したタスクなど）は、決めつけずに、名前が似ているブランチや Issue を閉じる PR のブランチを候補として見せて、Issue を完了として閉じるか、別の名前のブランチ（候補）で作業したかを聞く（Issue を閉じる PR が開いていれば閉じない）。Issue が既に閉じていて候補があれば、その候補で片付けるかを聞く。ブランチ名を指定して片付けることもできる |
 | `/dev-workflow:branch-update` | PR のブランチに、設定済みの `base_branch`（既定は main）の最新状態を取り込む。遅れを調べ、`origin/<base_branch>` を merge し（rebase と強制 push は使いません）、衝突したら、直し方を見せて確認を取ってから直し（両立できると判断した衝突も含め、直し方を決めるときも、テストの失敗を直すために後から変えるときも、直す前に確認を取ります）、リポジトリのテストとチェックを通します。push の前に、取り込んだコミットとチェックの結果を見せて確認を取り、push の後は CI が通り直るのを待って結果を伝えます。すでに最新なら何もしません。手元では取り込み済みで、まだ push していないときは、取り込まずにテストとチェックを通して push します（マージキューを使うリポジトリでは、main と衝突しているときだけ）。「コンフリクトした」という依頼にも使えます。マージキューを使うリポジトリでは、取り込むのは PR が main と衝突しているときだけです。衝突していなければ取り込まずに、キューの状態に合わせて案内します（キューの中で先に並んだ PR と衝突したときや、CI の失敗などでキューから外れたままのときは、外れた理由を伝え、先に並んだ PR のマージを待つか、衝突や失敗に対応してからもう一度キューに入れるよう案内します）。最新の main が要るときは、確かめてから取り込みます。取り込んで CI が通った後は、PR をもう一度キューに入れるよう伝えます |
 | `/dev-workflow:task-auto` | Issue を指定すると、確認を取らずに、着手・実装・テスト・コミット・レビュー・PR の作成まで自動で進める（下記の「自動で進める」）。設定で有効にしたリポジトリでだけ動く |
 | `/dev-workflow:task-cancel` | やらないことにした Issue や誤って起票した Issue を取りやめる。理由と参照先（代わりに作業する Issue など）をコメントに書き、not planned（重複なら元の Issue に紐付けて duplicate）で閉じる。着手していれば、PR を閉じ、リモートと手元のブランチ・ワークツリーも削除する。失う作業（マージしていないコミット・未コミットの変更・`.env` など）を見せて確認してから行う。親の Issue（サブ Issue を持つ Issue）を取りやめるときは、開いている子孫（子・孫）を一緒に取りやめるか、残すかを確認で選ぶ（一緒に取りやめるなら、着手中の子孫の PR とブランチも片付ける）。Project からは外さず、Story Point も残す（後からボードで経緯を参照できるように）。マージした後の片付けは `task-finish` を使う |
 
-Issue の番号を取るスキル（`task-start`・`task-status`・`task-finish`・`task-cancel`・`task-auto`）は、`/dev-workflow:task-start 12` や `/dev-workflow:task-start #12` のように、引数で番号を渡せます。`task-status` は `/dev-workflow:task-status 12 Blocked` のように、番号、列名の順に渡します。`task-finish` は、`/dev-workflow:task-finish fix-typo` のように、番号の代わりにブランチ名も渡せます（名前に Issue の番号を含まないブランチを片付けるとき）。引数が無ければ、依頼の文章から読み取ります。`pr-respond` は `/dev-workflow:pr-respond 42` のように PR の番号を渡せます（無ければ今のブランチの PR）。
+Issue の番号を取るスキル（`task-start`・`task-status`・`task-finish`・`task-cancel`・`task-auto`）は、`/dev-workflow:task-start 12` や `/dev-workflow:task-start #12` のように、引数で番号を渡せます。`task-status` は `/dev-workflow:task-status 12 Blocked` のように、番号、列名の順に渡します。`task-finish` は、`/dev-workflow:task-finish fix-typo` のように、番号の代わりにブランチ名も渡せます（名前に Issue の番号を含まないブランチを片付けるとき）。引数が無ければ、依頼の文章から読み取ります。`gh-pr-check` は `/dev-workflow:gh-pr-check 42` のように PR の番号を渡せます（無ければ今のブランチの PR）。
 
-`pr-respond` は、投稿者ごとに担当の skill を、設定（`.claude/dev-workflow/config.json`）の `pr_respond.handlers` で指定できます。担当の skill がある投稿者の指摘は、その skill に任せます（PR の番号を引数にして呼びます）。設定が無ければ、すべて汎用の手順で扱います。投稿者の名前は、大文字と小文字、末尾の `[bot]` を区別しません。
+`gh-pr-check` は、投稿者ごとに担当の skill を、設定（`.claude/dev-workflow/config.json`）の `pr_check.handlers` で指定できます。担当の skill がある投稿者の指摘は、その skill に任せます（PR の番号を引数にして呼びます）。設定が無ければ、すべて汎用の手順で扱います。投稿者の名前は、大文字と小文字、末尾の `[bot]` を区別しません。
 
 ```json
 {
-  "pr_respond": {
+  "pr_check": {
+    "handlers": {
+      "coderabbitai[bot]": "coderabbit-respond"
+    }
+  }
+}
+```
+
+### pr-respond から gh-pr-check への移行
+
+`pr-respond` は `gh-pr-check` に改めました（PR の確認から対応までを1つのスキルにまとめたためです）。旧名の別名は残していません。
+
+- `/dev-workflow:pr-respond` は呼べなくなりました。`/dev-workflow:gh-pr-check` を使ってください。
+- 設定のキー `pr_respond.handlers` は `pr_check.handlers` に改めてください。旧キーのままだと、担当の skill への委譲が効かず、すべて汎用の手順で扱われます。`doctor.sh` は、旧キーが残っていると警告します。
+
+```json
+{
+  "pr_check": {
     "handlers": {
       "coderabbitai[bot]": "coderabbit-respond"
     }
@@ -61,7 +78,7 @@ Issue の番号を取るスキル（`task-start`・`task-status`・`task-finish`
 
 ### テストとチェックのコマンド
 
-`branch-update`・`pr-respond`・`review` は、直した後や取り込んだ後に、テストとチェックを実行します。実行するコマンドは、次の順で決めます。
+`branch-update`・`gh-pr-check`・`review` は、直した後や取り込んだ後に、テストとチェックを実行します。実行するコマンドは、次の順で決めます。
 
 1. 設定（`.claude/dev-workflow/config.json`。自分だけなら `config.local.json`）の `checks.commands` があれば、それを順に実行します。空の配列（`[]`）は、実行するものが無いと決めたことになります。
 2. 無ければ（既定は `null`）、リポジトリの手がかりから推測します。`plugins/dev-workflow/scripts/checks-commands.sh` が、CONTRIBUTING.md・package.json の scripts・Makefile のターゲット・CI の設定ファイル・`Cargo.toml` や `go.mod` などを JSON で出します。CONTRIBUTING.md が無くても使えます。
