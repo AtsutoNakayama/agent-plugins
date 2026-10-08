@@ -130,7 +130,7 @@ if [ "$auto" = true ]; then
       dw_warn "gh が無いので Issue #${issue} を読めません。type はブランチ名から決めます"
     elif labels="$(dw_try_read_issue "$issue" labels 2>"$err")"; then
       type="$(jq -r --argjson t "$(jq -c .labels.types <<<"$config")" \
-        '[.labels[].name | select(. as $n | $t | index($n))] | if length == 1 then .[0] else "" end' <<<"$labels")"
+        "$DW_JQ_ISSUE_TYPES"' [.labels[].name] | issue_types($t) | if length == 1 then .[0] else "" end' <<<"$labels")"
       [ -z "$type" ] || type_from=issue
     else
       # PR の番号・無い番号なら Issue は無いものとし、読めなければ番号は使う（dw_try_read_issue の終了コード）
@@ -187,7 +187,8 @@ body_lines() {
 
 # frontmatter から <キー> の値を取り出す。前後の空白と、囲む引用符を外す
 fm_value() {
-  printf '%s\n' "$1" | sed -n "s/^$2:[[:space:]]*//p" | head -n 1 \
+  # 最初の値だけを読むのに head を使わない（同じキーの行が多いと、head が先に終わって sed が SIGPIPE で終わり、pipefail で止まるため）
+  printf '%s\n' "$1" | sed -n "s/^$2:[[:space:]]*//p" | sed -n 1p \
     | sed -e 's/[[:space:]]*$//' -e 's/^"\(.*\)"$/\1/' -e "s/^'\(.*\)'$/\1/"
 }
 

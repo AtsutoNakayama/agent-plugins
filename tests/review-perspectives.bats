@@ -585,3 +585,26 @@ auto_branch() {
   assert_success
   assert_equal "$(jq -c '[.context.issue, .context.type, .context.type_from]' <<<"$output")" '[17,"feat","issue"]'
 }
+
+@test "--auto は、Issue の type ラベルを大文字と小文字を区別せずに照合し、設定の書き方の type にする" {
+  auto_branch 17-bug
+  echo '{"branch": {"pattern": "{issue_number}-{slug}"}}' >"$REPO/.claude/dev-workflow/config.json"
+  for labels in '["FIX"]' '["FIX", "fix"]'; do
+    fake_issue 17 "$labels"
+    run_script review-perspectives.sh --auto
+    assert_success
+    assert_equal "$(jq -c '[.context.issue, .context.type, .context.type_from]' <<<"$output")" '[17,"fix","issue"]'
+  done
+}
+
+@test "frontmatter に同じキーの行がたくさんあっても（パイプの容量を超えても）、最初の値を読む" {
+  mkdir -p "$REPO/.claude/dev-workflow/review"
+  {
+    printf -- '---\ntitle: 最初の title\n'
+    yes 'title: 後の title' | head -n 10000
+    printf -- '---\n\n指示を書く\n'
+  } >"$REPO/.claude/dev-workflow/review/many.md"
+  run_script review-perspectives.sh
+  assert_success
+  assert_equal "$(jq -r '.perspectives[] | select(.name == "many") | .title' <<<"$output")" "最初の title"
+}

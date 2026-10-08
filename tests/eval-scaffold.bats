@@ -146,3 +146,32 @@ scaffold() {
   done
   assert_equal "$(git worktree list | wc -l | tr -d ' ')" 1
 }
+
+# 使い方: grader_pattern <ケース> <grader の名前> → grader の pattern（シングルクォートで囲んだ値）
+grader_pattern() { sed -n "s/^pattern: '\\(.*\\)'\$/\\1/p" "$EVALS/$1/graders/$2.md"; }
+
+@test "task-auto の無効のケースの準備の後、auto-check.sh は disabled を返し、何も書き込まない" {
+  run "${TEST_BASH:-bash}" "$EVALS/task-auto-disabled-does-nothing/fixture.sh"
+  assert_success
+  run "${TEST_BASH:-bash}" "$SCRIPTS/auto-check.sh" --issue 2
+  assert_success
+  assert_equal "$(jq -r .action <<<"$output")" disabled
+  [ ! -s .fake-gh/writes ] || fail "書き込みが記録されました: $(cat .fake-gh/writes)"
+}
+
+@test "task-auto の止まるケースの準備の後、auto-check.sh は hold を返し、auto-hold.sh の書き込みが grader に当たる" {
+  run "${TEST_BASH:-bash}" "$EVALS/task-auto-stops-on-breaking/fixture.sh"
+  assert_success
+  run "${TEST_BASH:-bash}" "$SCRIPTS/auto-check.sh" --issue '#2'
+  assert_success
+  assert_equal "$(jq -c '[.action, .reasons]' <<<"$output")" '["hold",["breaking ラベルが付いています（破壊的変更と移行のしかたは、人が決めます）"]]'
+  [ ! -s .fake-gh/writes ] || fail "auto-check.sh が書き込みました: $(cat .fake-gh/writes)"
+  printf '止まった理由\n' >"$TMP/reason.md"
+  run "${TEST_BASH:-bash}" "$SCRIPTS/auto-hold.sh" --issue 2 --run-id eval1 --reason-file "$TMP/reason.md"
+  assert_success
+  assert_equal "$(jq -c '[.commented, .status.from, .status.to]' <<<"$output")" '[true,"Todo","On Hold"]'
+  local c=task-auto-stops-on-breaking
+  grep -qE "$(grader_pattern $c comments-on-issue)" .fake-gh/writes || fail "comments-on-issue に当たりません: $(cat .fake-gh/writes)"
+  grep -qE "$(grader_pattern $c moves-to-hold)" .fake-gh/writes || fail "moves-to-hold に当たりません: $(cat .fake-gh/writes)"
+  if grep -qE "$(grader_pattern $c no-other-writes)" .fake-gh/writes; then fail "no-other-writes に当たります: $(cat .fake-gh/writes)"; fi
+}

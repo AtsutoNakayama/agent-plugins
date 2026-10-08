@@ -48,5 +48,10 @@
   },
   "pr_respond": {
     "handlers": {}
+  },
+  "auto": {
+    "enabled": false,
+    "max_fix_attempts": 3,
+    "max_new_issues": 3
   }
 }

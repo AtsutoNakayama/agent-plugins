@@ -3,7 +3,7 @@
 # 何度実行しても同じ結果になる（そのブランチの開いた PR が既にあれば、push と（--check・--add-task があれば）Issue のチェックと項目の追加だけを行い、
 # その PR のタイトル・本文・ラベル・Project の列は変えない）。
 #
-# 使い方: pr-create.sh --issue N --body-file PATH [--title TEXT] [--check TEXT]... [--add-task TEXT]... [--dry-run]
+# 使い方: pr-create.sh --issue N --body-file PATH [--title TEXT] [--check TEXT]... [--add-task TEXT]... [--draft] [--dry-run]
 #   --issue N         紐付ける Issue の番号（#N でもよい）
 #   --body-file PATH  PR の本文のファイル。- なら標準入力
 #   --title TEXT      PR のタイトル。省略すると <Issue の type ラベル>: <Issue のタイトル>
@@ -14,6 +14,8 @@
 #   --add-task TEXT   Issue の本文の最初の項目がある節の最後に、チェックの無い項目「- [ ] TEXT」を足す（前後の空白は外す）。繰り返し指定できる。
 #                     文が TEXT の項目が既にあれば足さない（もう一度実行しても重ならない）。ADR の作成の提案を断ったことを、
 #                     取り消し線の項目（~~…~~）として残すのに使う
+#   --draft           設定の pr.draft にかかわらず、PR を下書きにする（task-auto が、自動で作った PR を必ず下書きで出すのに使う）。
+#                     既にある PR では、下書きかどうかを変えない（出力の draft は、その PR の今の状態）
 #   --dry-run         push も PR の作成も Issue のチェックと項目の追加もせず、行う予定の操作と PR のタイトル・本文、
 #                     Issue のチェックリストの項目（tasks）・チェックを付ける項目（checked）・足す項目（added）を出力する
 #
@@ -25,7 +27,7 @@
 #      本文に <pr.close_keyword> #N（既定: Closes #N）が無ければ末尾に足す。
 #      テンプレートの番号が空のままの行（Closes #）は消す
 #   3. origin に push する（-u で追跡させる）。未コミットの変更や、PR にするコミットが無ければ止まる
-#   4. base_branch に向けた PR を作り、Issue のラベルを引き継ぐ。pr.draft が true なら下書きにする
+#   4. base_branch に向けた PR を作り、Issue のラベルを引き継ぐ。pr.draft が true か --draft を付けたら下書きにする
 #   5. PR を新しく作ったときだけ、status.pr_opened が設定されていれば Issue をその列に移す（status-set.sh）。
 #      既にある PR では移さない（手で先の列に移した Issue を戻さないため）
 #   6. --check・--add-task があれば、Issue の本文を読み直し、指定した文の項目だけにチェックを付け、項目を足す
@@ -49,7 +51,7 @@ need_value() {
   fi
 }
 
-issue="" body_file="" title="" dry_run=false checks='[]' adds='[]'
+issue="" body_file="" title="" dry_run=false draft_opt=false checks='[]' adds='[]'
 while [ $# -gt 0 ]; do
   case "$1" in
     --issue | --body-file | --title | --check | --add-task)
@@ -70,6 +72,7 @@ while [ $# -gt 0 ]; do
       esac
       shift 2
       ;;
+    --draft) draft_opt=true; shift ;;
     --dry-run) dry_run=true; shift ;;
     -h | --help) usage; exit 0 ;;
     *) dw_die "不明な引数です: $1" 64 ;;
@@ -106,7 +109,7 @@ changes="$(git -C "$repo_root" status --porcelain --untracked-files=no)" \
 # PR の番号なら止まる（dw_read_issue）
 issue_json="$(dw_read_issue "$issue" number,title,state,labels,body)"
 labels="$(jq -c '[.labels[].name]' <<<"$issue_json")"
-types="$(jq -c --argjson t "$(jq -c '.labels.types' <<<"$config")" 'map(select(. as $n | $t | index($n)))' <<<"$labels")"
+types="$(jq -c --argjson t "$(jq -c '.labels.types' <<<"$config")" "$DW_JQ_ISSUE_TYPES"' issue_types($t)' <<<"$labels")"
 [ "$(jq length <<<"$types")" = 1 ] \
   || dw_die "Issue #${issue} の type ラベルを1つにしてください（今は $(jq -r 'if length == 0 then "なし" else join(", ") end' <<<"$types")）" 2
 type="$(jq -r '.[0]' <<<"$types")"
@@ -140,7 +143,7 @@ to_add="$(jq -c --argjson t "$tasks" "$missing_jq" <<<"$adds")"
 
 # --- 既にある PR ----------------------------------------------------------------
 # --head はブランチ名だけで探すので、fork の同じ名前のブランチからの PR を除く
-existing="$(gh pr list --head "$branch" --state open --json number,url,title,body,isCrossRepository \
+existing="$(gh pr list --head "$branch" --state open --json number,url,title,body,isCrossRepository,isDraft \
   | jq -c 'map(select(.isCrossRepository | not))')" \
   || dw_die "${branch} の PR を取得できませんでした"
 pr_number="$(jq -r '.[0].number // empty' <<<"$existing")"
@@ -205,9 +208,12 @@ fi
 
 # --- 4. PR ----------------------------------------------------------------------
 draft="$(jq -r '.pr.draft // false' <<<"$config")"
+! $draft_opt || draft=true
 created=false
 if [ -n "$pr_number" ]; then
-  note "既にある PR #${pr_number} を使う（作り直さず、タイトル・本文・ラベル・列は変えない）"
+  note "既にある PR #${pr_number} を使う（作り直さず、タイトル・本文・ラベル・列・下書きかどうかは変えない）"
+  # 下書きかどうかは変えないので、出力にはその PR の今の状態を出す（--draft を付けても、下書きと取り違えないように）
+  draft="$(jq -r '.[0].isDraft // false' <<<"$existing")"
 else
   created=true
   note "${base} に向けた PR「${title}」を作る$($draft && echo '（下書き）')"

@@ -122,17 +122,19 @@ dw_issue_branches() {
       | .[] | "\(.name)\t\(.l)\t\(.r)\t\(.confirmed)"'
 }
 
-# Issue の作業のブランチと、Issue を閉じる開いている PR を、JSON の {branches, candidates, open_prs} で出力する
-# （issue-branches.sh と task-start.sh --no-worktree が使う。何も変えない）。
+# Issue の作業のブランチと、Issue を閉じる PR（開いているものとマージ済みのもの）を、JSON の {branches, candidates, open_prs, merged_prs} で出力する
+# （issue-branches.sh・task-start.sh --no-worktree・auto-check.sh が使う。何も変えない）。
 #   branches    確かなブランチ（dw_issue_branches）。[{name, local, remote, worktree（無ければ null）}]。
 #               マージ済みかは見ない（マージの確かめは、厳密に確かめる cleanup.sh に任せる）
 #   candidates  名前が似ているだけのブランチ（from: name）と、Issue を閉じる PR（開いている・マージ済み。今のリポジトリのもの）の
 #               ブランチのうち、手元か origin に残っているもの（from: pr）。[{name, local, remote, worktree, from, pr}]
-#   open_prs    Issue を閉じる PR のうち開いているもの（フォークや別のリポジトリの PR も含む）。[{number, url, branch}]
+#   open_prs    Issue を閉じる PR のうち開いているもの（フォークや別のリポジトリの PR も含む）。[{number, url, branch,
+#               cross（フォークか別のリポジトリの PR なら true。branch は、今のリポジトリのブランチとは限らない）}]
+#   merged_prs  Issue を閉じる PR のうちマージ済みの、今のリポジトリのもの。[{number, url, branch}]
 # origin・PR を読めなければ止まる。
 # 使い方: dw_issue_work <メインのワークツリー> <Issue の番号> <設定の JSON> <Issue の JSON（closedByPullRequestsReferences を含む）>
 dw_issue_work() {
-  local found branches='[]' candidates='[]' open_prs='[]' b is_local is_remote confirmed wt nwo="" url pr_repo pr head
+  local found branches='[]' candidates='[]' open_prs='[]' merged_prs='[]' cross b is_local is_remote confirmed wt nwo="" url pr_repo pr head
   # $(...) の中で呼ばれると set -e は効かないので、止まったときは明示的に抜ける
   found="$(dw_issue_branches "$1" "$2" "$3")" || exit $?
   while IFS="$(printf '\t')" read -r b is_local is_remote confirmed; do
@@ -156,8 +158,13 @@ dw_issue_work() {
   while IFS="$(printf '\t')" read -r url pr_repo; do
     [ -n "$url" ] || continue
     pr="$(gh pr view "$url" --json number,url,state,headRefName,isCrossRepository)" || dw_die "PR ${url} を読めませんでした"
-    open_prs="$(jq -c --argjson p "$pr" \
-      'if $p.state == "OPEN" then . + [{number: $p.number, url: $p.url, branch: $p.headRefName}] else . end' <<<"$open_prs")"
+    # 別のリポジトリの PR かは、参照の repository で見る。参照に repository が無ければ（gh が返さないとき）、
+    # 今のリポジトリの PR とみなし、フォークかだけで決める（無いことを別のリポジトリとみなすと、どの PR もフォーク扱いになる）
+    cross="$(jq -r --arg r "$pr_repo" --arg nwo "$nwo" '($r != "" and $r != $nwo) or (.isCrossRepository // false)' <<<"$pr")"
+    open_prs="$(jq -c --argjson p "$pr" --argjson x "$cross" \
+      'if $p.state == "OPEN" then . + [{number: $p.number, url: $p.url, branch: $p.headRefName, cross: $x}] else . end' <<<"$open_prs")"
+    merged_prs="$(jq -c --argjson p "$pr" --argjson x "$cross" \
+      'if $p.state == "MERGED" and ($x | not) then . + [{number: $p.number, url: $p.url, branch: $p.headRefName}] else . end' <<<"$merged_prs")"
     head="$(jq -r 'select((.state == "OPEN" or .state == "MERGED") and (.isCrossRepository | not)) | .headRefName' <<<"$pr")"
     [ -n "$head" ] && [ "$pr_repo" = "$nwo" ] || continue
     if jq -e --arg h "$head" 'any(.[]; .name == $h)' <<<"$branches" >/dev/null \
@@ -176,7 +183,8 @@ dw_issue_work() {
       '. + [{name: $b, local: $l, remote: $r, worktree: (if $w == "" then null else $w end), from: "pr", pr: $n}]' <<<"$candidates")"
   done < <(jq -r '.closedByPullRequestsReferences // [] | .[]
     | [.url, (if .repository then "\(.repository.owner.login)/\(.repository.name)" else "" end)] | @tsv' <<<"$4")
-  jq -n --argjson b "$branches" --argjson c "$candidates" --argjson o "$open_prs" '{branches: $b, candidates: $c, open_prs: $o}'
+  jq -n --argjson b "$branches" --argjson c "$candidates" --argjson o "$open_prs" --argjson m "$merged_prs" \
+    '{branches: $b, candidates: $c, open_prs: $o, merged_prs: $m}'
 }
 
 # ブランチを使っているワークツリーの場所。ディレクトリが無い（手で消して記録だけが残った）ものは、無いものとして空を返す。
@@ -363,9 +371,10 @@ dw_user_review_dir_for() {
 # shellcheck disable=SC2034
 DW_GH_MIN_VERSION=2.88.0
 
-# 今の gh のバージョン（例: 2.96.0）。分からなければ空
+# 今の gh のバージョン（例: 2.96.0）。分からなければ空。
+# 1行目だけを読むのに head を使わない（head が先に終わると、gh が SIGPIPE で終わり、pipefail で全体が失敗するため。sed は最後まで読む）
 dw_gh_version() {
-  gh --version 2>/dev/null | head -n 1 | LC_ALL=C sed -n 's/^gh version \([0-9][0-9.]*\).*/\1/p'
+  gh --version 2>/dev/null | LC_ALL=C sed -n '1s/^gh version \([0-9][0-9.]*\).*/\1/p'
 }
 
 # バージョン <a> が <b> 以上なら成功する。数字を . で区切って、前から順に比べる
@@ -473,19 +482,23 @@ dw_fetch_repo_file() {
   esac
 }
 
-# 設定の base_branch が、git のブランチ名として使える値なら 0 を返す（設計書 §10）。
+# 値が、git のブランチ名として使える値なら 0 を返す（設計書 §10。設定の base_branch と、task-start.sh の --branch で使う）。
 # ダッシュで始まる値（-foo）は、git fetch origin <base_branch> などでオプションとして扱われ、失敗すべきところで先へ
 # 進んでしまうので、使う側ごとに -- を付けるのではなく、読む時点で拒否する。git check-ref-format --branch は
 # @{-1} などを今のリポジトリで展開してしまうので、refs/heads/ を付けて書式だけを検査し、ダッシュは別に拒否する。
 # HEAD と @ は書式には合うが、git が今の位置として扱う（git fetch origin HEAD は相手の既定のブランチを取る）ので拒否する。
 # + で始まる値も書式には合うが、git fetch が refspec の強制更新の印と読む（+develop は develop を取る）ので拒否する。
-# 使い方: dw_valid_base_branch <base_branch>
-dw_valid_base_branch() {
+# 使い方: dw_valid_branch_name <ブランチ名>
+dw_valid_branch_name() {
   case "$1" in
     -* | +* | HEAD | @) return 1 ;;
   esac
   git check-ref-format "refs/heads/$1" 2>/dev/null
 }
+
+# 設定の base_branch が、git のブランチ名として使える値なら 0 を返す（dw_valid_branch_name）
+# 使い方: dw_valid_base_branch <base_branch>
+dw_valid_base_branch() { dw_valid_branch_name "$1"; }
 
 # 設定（JSON のオブジェクト）の base_branch を出力する。文字列でない値や、git のブランチ名として使えない値
 # （dw_valid_base_branch）なら、終了コード 2 で終了する。base_branch を使うスクリプトは、設定から直接読まずに、
@@ -587,8 +600,20 @@ DW_SUB_ISSUE_DEPTH_GUIDE=2
 # shellcheck disable=SC2034
 DW_BREAKING_LABEL=breaking
 
+# Issue のラベルの名前の配列から、type ラベル（設定の labels.types のどれか）を、設定の書き方で出す jq の関数 issue_types。
+# GitHub と同じく、ラベルの名前は大文字と小文字を区別せずに照合する（Fix のラベルも fix として読み、Fix と fix は1つと数える）。
+# 順はラベルの順。type ラベルを読むスクリプト（pr-create.sh・branch-name.sh・review-perspectives.sh・auto-check.sh）で、照合をそろえる。
+# source した側で使う
+# 使い方: jq --argjson t "$(jq -c .labels.types <<<"$config")" "$DW_JQ_ISSUE_TYPES"' [.labels[].name] | issue_types($t)'
+# shellcheck disable=SC2016,SC2034 # jq のプログラムなので、$ は展開しない
+DW_JQ_ISSUE_TYPES='
+  def issue_types($t):
+    reduce (.[] | ascii_downcase as $n | $t[] | select(ascii_downcase == $n)) as $x ([]; if index([$x]) then . else . + [$x] end);
+'
+
 # Markdown の本文（文字列）を読む jq の関数 md_scan を定義する。上から順に、チェックリストの項目（items。
-# {line（0 からの行番号）, checked, text}）と、見出しの行番号（headings）を出す。
+# {line（0 からの行番号）, checked, text}）と、見出しの行番号（headings）と、GitHub に表示される行（lines。{line, text}。
+# コードブロックの囲みと中の行、複数行の HTML のコメントの行を除いた、項目・見出しを含む行。行末の \r は外す）を出す。
 # GitHub と同じく、コードブロック（3つ以上の ` か ~ で囲む）の中の行は、項目とも見出しともみなさない。
 # 閉じるのは、開いたときと同じ文字が同じ数以上並び、後ろが空白だけの行（中の短い囲みや ```js では閉じない）。
 # ` の囲みの後ろに ` がある行（```x``` のようなインラインのコード）は囲みとみなさない。
@@ -601,7 +626,7 @@ DW_BREAKING_LABEL=breaking
 DW_JQ_MD_SCAN='
   def md_scan:
     def item: "^\\s*(?:[-*+]|[0-9]+[.)])\\s+\\[(?<c>[ xX])\\](?:\\s+(?<t>.*))?$";
-    reduce (split("\n") | to_entries[]) as $e ({fence: null, comment: false, items: [], headings: []};
+    reduce (split("\n") | to_entries[]) as $e ({fence: null, comment: false, items: [], headings: [], lines: []};
       ($e.value | sub("\r$"; "")) as $l | .fence as $f
       | if .comment then
           (if $l | test("-->") then .comment = false else . end)
@@ -609,12 +634,15 @@ DW_JQ_MD_SCAN='
           (if $l | test("^\\s*" + $f + "+\\s*$") then .fence = null else . end)
         elif $l | test("^\\s*(`{3,}[^`]*|~{3,}.*)$") then .fence = ($l | capture("^\\s*(?<f>`{3,}|~{3,})").f)
         elif $l | test("^\\s*<!--(?!.*-->)") then .comment = true
-        elif $l | test(item) then
-          ($l | capture(item)) as $m
-          | .items += [{line: $e.key, checked: ($m.c != " "), text: ($m.t // "" | sub("\\s+$"; ""))}]
-        elif $l | test("^ {0,3}#{1,6}(\\s|$)") then .headings += [$e.key]
-        else . end)
-    | {items, headings};
+        else
+          .lines += [{line: $e.key, text: $l}]
+          | if $l | test(item) then
+              ($l | capture(item)) as $m
+              | .items += [{line: $e.key, checked: ($m.c != " "), text: ($m.t // "" | sub("\\s+$"; ""))}]
+            elif $l | test("^ {0,3}#{1,6}(\\s|$)") then .headings += [$e.key]
+            else . end
+        end)
+    | {items, headings, lines};
 '
 
 # Issue の本文の節（「## <見出し>」の行から、次の「## 」の行の前まで）を読む jq の関数。依存を読む next-tasks.sh と、

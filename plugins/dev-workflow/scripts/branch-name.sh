@@ -98,7 +98,7 @@ if [ -z "$type" ]; then
   dw_require gh
   # PR の番号なら止まる（dw_read_issue）
   issue_json="$(dw_read_issue "$issue" labels)"
-  types="$(jq -c --argjson t "$(jq -c '.labels.types' <<<"$config")" '[.labels[].name | select(. as $n | $t | index($n))]' <<<"$issue_json")"
+  types="$(jq -c --argjson t "$(jq -c '.labels.types' <<<"$config")" "$DW_JQ_ISSUE_TYPES"' [.labels[].name] | issue_types($t)' <<<"$issue_json")"
   case "$(jq length <<<"$types")" in
     1) type="$(jq -r '.[0]' <<<"$types")" ;;
     0) dw_die "Issue #${issue} に type ラベルがありません（$(jq -r '.labels.types | join(" / ")' <<<"$config") のどれか1つを付けてください）" 2 ;;

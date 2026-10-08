@@ -289,3 +289,14 @@ run_common() {
     | grep -v -e '/lib/common\.sh:' -e '/guard-git\.sh:' | grep -vE '^[^:]+:[0-9]+:[[:space:]]*#([[:space:]]|$)' || true)"
   assert_equal "$found" ""
 }
+
+@test "dw_gh_version は、gh --version が1行目の後にたくさん出しても、パイプを途中で閉じて失敗しない（set -e・pipefail でも）" {
+  mkdir -p "$TMP/bin"
+  # 1行目の後に、パイプの容量（64 KiB）を大きく超える出力を続ける。読む側が1行で読むのをやめると、gh は SIGPIPE で終わる
+  printf '#!/bin/sh\necho "gh version 2.96.0 (2026-07-02)"\nyes https://github.com/cli/cli/releases | head -n 100000\n' >"$TMP/bin/gh"
+  chmod +x "$TMP/bin/gh"
+  # shellcheck disable=SC2016 # 引数は、起動した bash の中で展開させる
+  PATH="$TMP/bin:$PATH" run "${TEST_BASH:-bash}" -c 'set -euo pipefail; . "$1"; v="$(dw_gh_version)"; echo "v=$v"' _ "$SCRIPTS/lib/common.sh"
+  assert_success
+  assert_output "v=2.96.0"
+}

@@ -104,7 +104,7 @@ agent-plugins/
 
 - **保留の列（`hold`）**：外の条件を待っていて今は着手できない Issue（例：試用期間が終わるまで着手できない）を置く列。この列の Issue は task-next の候補から外れる（[ADR 000195](adr/000195-hold-status-column.md)）。
   - 任意の役割で、既定は null（使わない）。null なら、どのスキルの動きも変わらない。repo-setup で作るかを聞き、作るなら列名を `.claude/dev-workflow/config.json` に書き（`setup-project.sh --hold-column`）、Status 列に足す。
-  - スキルが自動でこの列へ移すことは無い。移すのも Todo に戻すのも、利用者が `task-status` で行う（役割の名前 `hold`・`todo` でも、列名でも指定できる）。task-next は、この列の Issue の件数と番号を伝え、条件がそろったものを Todo に戻すよう案内する（戻し忘れを防ぐ）。
+  - スキルが自動でこの列へ移すのは、`task-auto` が止まるときだけ（理由を Issue にコメントしてから移す。§8 の task-auto、[ADR 000267](adr/000267-opt-in-auto-mode.md)）。それ以外は、移すのも Todo に戻すのも、利用者が `task-status` で行う（役割の名前 `hold`・`todo` でも、列名でも指定できる）。task-next は、この列の Issue の件数と番号を伝え、条件がそろったものを Todo に戻すよう案内する（戻し忘れを防ぐ）。
   - ほかの役割の列と同じ名前にはできない（同じだと、保留の Issue が Todo や着手中にも数えられる）。`setup-project.sh` と `next-tasks.sh` は、同じ名前なら止まる。
   - `setup-project.sh --hold-column --write-config` で保留の列を別の列に変えるとき、今の列にこのリポジトリの開いている Issue が残っていれば、Project も設定も変えずに止まる（残ったまま設定だけを変えると、その Issue は Todo でも保留でもなくなり、task-next のどこにも出なくなる）。先に `task-status` で新しい列へ移すか、列の名前を変えるだけなら、Project の画面で列の名前を変えて、設定の `status.hold` も同じ名前にする。
   - Iteration とは独立に使える。
@@ -146,6 +146,7 @@ agent-plugins/
 
 - `ci` は CI/CD パイプラインの変更、`build` はビルドの設定・依存関係・Dockerfile の変更に使う。
 - type ラベル・ブランチ名・PR のタイトル・コミットの type は、同じ type で1対1に対応させる（読み替えはしない）。
+- Issue の type ラベルは、GitHub と同じく大文字と小文字を区別せずに `labels.types` と照合し、設定の書き方の type として使う（`Fix` のラベルも `fix` として読み、`Fix` と `fix` は1つと数える）。照合は `lib/common.sh` の `DW_JQ_ISSUE_TYPES` にまとめ、type ラベルを読むスクリプト（`pr-create.sh`・`branch-name.sh`・`review-perspectives.sh`・`auto-check.sh`）で同じにする。`breaking` ラベルも大文字と小文字を区別しない。
 - 緊急の修正も `fix` にする（緊急の修正のための type は設けない）。GitHub Flow には緊急の修正のための別の手順が無く、違いは緊急度だけなので、type では区別しない。緊急度が必要なら type とは別のラベル（`priority: high` など）で表す（[ADR 000026](adr/000026-unify-hotfix-into-fix.md)）。
 - 破壊的変更は、type とは別の `breaking` ラベルで表す（`labels.types` には入れない。type ラベルは1つだけという決まりはそのまま）。破壊的変更はどの type にも起こりうるので、`feat!` のような type ごとのラベルは作らない。ラベル → PR のタイトル（`<type>!: …`）→ スカッシュのコミットと情報が流れるので、Issue の段階で付けておけば `!` の付け忘れがなくなる（[ADR 000052](adr/000052-breaking-label.md)）。
   - 破壊的変更とは、既存の利用者が設定やコマンドを直さないと動かなくなる変更（設定キーやプレースホルダの名前の変更、スクリプトの引数の変更・削除、スキル名の変更など）。
@@ -156,7 +157,7 @@ agent-plugins/
 ## 6. コミットと PR の書き方
 
 - コミット：Conventional Commits（`<type>(<scope>): <要約>`）。各コミットには `Refs` を付けない。
-- PR：タイトルは `<type>: <Issueのタイトル>`、本文は概要・変更点・確認方法・`Closes #N`。Issue に `breaking` ラベルがあれば、タイトルを `<type>!: <Issueのタイトル>` にし、本文の最後に `BREAKING CHANGE: <移行のしかた>` を書く（スカッシュマージでは PR の本文がコミットの本文になる）。タイトルに `!` が無い、または本文に `BREAKING CHANGE:` が無いと、スクリプトが止める（タイトルを指定しなければ、スクリプトが `!` を付けたタイトルを作る。PR が既にあるときは、その PR のタイトルと本文を確かめる）。ラベルは Issue から引き継ぐ。通常の PR として作る（下書きにしない）。
+- PR：タイトルは `<type>: <Issueのタイトル>`、本文は概要・変更点・確認方法・`Closes #N`。Issue に `breaking` ラベルがあれば、タイトルを `<type>!: <Issueのタイトル>` にし、本文の最後に `BREAKING CHANGE: <移行のしかた>` を書く（スカッシュマージでは PR の本文がコミットの本文になる）。タイトルに `!` が無い、または本文に `BREAKING CHANGE:` が無いと、スクリプトが止める（タイトルを指定しなければ、スクリプトが `!` を付けたタイトルを作る。PR が既にあるときは、その PR のタイトルと本文を確かめる）。ラベルは Issue から引き継ぐ。通常の PR として作る（下書きにしない。設定 `pr.draft` を true にしたときと、`task-auto` が自動で作る PR（`pr-create.sh --draft`）だけは下書きにする）。
 - 言語：日本語が既定。
 - スカッシュマージするので、コミットの規約は緩め、PR タイトルの規約は厳しくする。
 
@@ -232,10 +233,11 @@ agent-plugins/
 | `task-cancel` | やらない Issue を、理由と参照先をコメントして not planned か duplicate で閉じる。着手していれば、PR を閉じ、リモートと手元のブランチ・ワークツリーを削除する。親の Issue なら、開いている子孫を一緒に取りやめるか残すかを選ばせる | 閉じる・削除する（理由のコメントと、失う作業を含めて1回で確認する） |
 | `task-finish` | ワークツリーとローカルブランチを削除し、main を最新にして（`git pull --ff-only`）、PR が閉じる Issue が閉じたかを伝える。作業のブランチ（確かなブランチ）が見つからないときは、Issue を完了として閉じるか、別の名前のブランチ（候補）で作業したかを聞いて、閉じると選ばれたら completed で閉じる（Issue を閉じる PR が開いているときと、開いている子がある親の Issue では閉じない） | なし（作業が失われるときは `cleanup.sh` が何も消さずに止まる。git が無視するファイルを消すときと、ワークツリーの無いタスクの Issue を閉じるときだけ確認を取る） |
 | `repo-setup` | 初期設定を対話的に実行し、設定ファイルを作る | ラベル・Project・リポジトリの設定の変更 |
+| `task-auto` | 設定 `auto.enabled` で有効にしたリポジトリでだけ、Issue から draft の PR まで、今のスキルの手順をたどって自動で進める。決めきれないときは、理由を Issue にコメントして保留の列に移して止まる（下の「Issue から draft の PR まで自動で進める（task-auto）」） | なし（今のスキルの確認に、決まった表のとおりに代わりに答える。表に無い確認に当たったら止まる。[ADR 000267](adr/000267-opt-in-auto-mode.md)） |
 
 - 不具合の修正（type が `fix`）では、直す前に、同じ原因の他の箇所を、同じ書き方・同じ前提でリポジトリを検索して探し、見つかった分も同じ変更で直してテストを足す。この手順は CONTRIBUTING.md の「テストのルール」と、SessionStart フックが渡す流れ（`defaults/task-flow.md`）に書き、review の水平展開（§7）と同じ考え方を、レビューの前の実装の段階にも持ち込む。
-- どのスキルも、依頼の内容から自動で呼ばれてよい（`disable-model-invocation` は付けない）。確認を取る操作の線引きの経緯は [ADR 000064](adr/000064-confirmation-policy.md)。`task-start` がワークツリーを作るかを聞くことと、`task-finish` が PR の無いタスクの Issue を閉じる前に聞くことは、その例外（[ADR 000162](adr/000162-start-without-worktree.md)）。`branch-update` が衝突を直す前に直し方の方針を聞くことも、例外（手元の作業だが、両立できるかは AI の解釈で、push の前の確認では直したコミットが既にできている。[ADR 000237](adr/000237-confirm-conflict-resolution-plan.md)）。
-- Issue の番号を取るスキル（`task-start`・`task-status`・`task-finish`・`task-cancel`）は、`/dev-workflow:task-start 12` のように引数で番号を受け取れる。`12` でも `#12` でもよい。frontmatter の `argument-hint` に書く。`task-finish` は、規約に合わない名前のブランチも片付けられるよう、番号でない値をブランチ名として受け取る（`argument-hint` は `[Issue番号|ブランチ名]`）。引数が無ければ依頼の文章から読み、それでも分からなければ聞く。PR の番号を取るスキル（`pr-respond` と、担当の skill として呼ばれるリポジトリの skill）も同じく、引数で番号を受け取る（無ければ今のブランチの PR）。スクリプトの `--issue`（`issue-cancel.sh` の `--duplicate-of`、`issue-create.sh` の `--blocked-by`・`--parent` も）は、先頭の `#` を1つだけ外して受け取り、先頭の 0 をそろえる（`017` と `17` は同じ Issue として扱い、ブランチ名も `17` になる）。`#` だけの値と、0（Issue #0 は無い）は、番号が無いものとして拒否する。この受け取り方は `lib/common.sh` の `dw_number`（Issue の番号は `dw_issue_number`）にまとめ、スクリプトごとに書かない（書き方が食い違って、0 をそろえないスクリプトが残ったため）。PR の番号（`pr-feedback.sh` の `--pr`）も同じ受け取り方にする。
+- どのスキルも、依頼の内容から自動で呼ばれてよい（`disable-model-invocation` は付けない）。確認を取る操作の線引きの経緯は [ADR 000064](adr/000064-confirmation-policy.md)。`task-start` がワークツリーを作るかを聞くことと、`task-finish` が PR の無いタスクの Issue を閉じる前に聞くことは、その例外（[ADR 000162](adr/000162-start-without-worktree.md)）。設定 `auto.enabled` で有効にしたリポジトリの `task-auto` は、確認を取らずに進める例外（[ADR 000267](adr/000267-opt-in-auto-mode.md)。ADR 000064 は書き換えず、その例外として決めた）。`branch-update` が衝突を直す前に直し方の方針を聞くことも、例外（手元の作業だが、両立できるかは AI の解釈で、push の前の確認では直したコミットが既にできている。[ADR 000237](adr/000237-confirm-conflict-resolution-plan.md)）。
+- Issue の番号を取るスキル（`task-start`・`task-status`・`task-finish`・`task-cancel`・`task-auto`）は、`/dev-workflow:task-start 12` のように引数で番号を受け取れる。`12` でも `#12` でもよい。frontmatter の `argument-hint` に書く。`task-finish` は、規約に合わない名前のブランチも片付けられるよう、番号でない値をブランチ名として受け取る（`argument-hint` は `[Issue番号|ブランチ名]`）。引数が無ければ依頼の文章から読み、それでも分からなければ聞く（`task-auto` は聞かずに、番号を付けて頼み直すよう伝えて終える。ユーザーの入力なしで進めるスキルなので）。PR の番号を取るスキル（`pr-respond` と、担当の skill として呼ばれるリポジトリの skill）も同じく、引数で番号を受け取る（無ければ今のブランチの PR）。スクリプトの `--issue`（`issue-cancel.sh` の `--duplicate-of`、`issue-create.sh` の `--blocked-by`・`--parent` も）は、先頭の `#` を1つだけ外して受け取り、先頭の 0 をそろえる（`017` と `17` は同じ Issue として扱い、ブランチ名も `17` になる）。`#` だけの値と、0（Issue #0 は無い）は、番号が無いものとして拒否する。この受け取り方は `lib/common.sh` の `dw_number`（Issue の番号は `dw_issue_number`）にまとめ、スクリプトごとに書かない（書き方が食い違って、0 をそろえないスクリプトが残ったため）。PR の番号（`pr-feedback.sh` の `--pr`）も同じ受け取り方にする。
 - その代わり、次の操作の前には、必ず AskUserQuestion で使用者の確認を取る。確認の前に、何が起きるか（下書きや dry-run の結果）を見せる。
   - AI が決めた内容（Issue や PR の文章、Story Point の見積もり）を GitHub に残す操作
   - 取り消しにくく、スクリプトが安全を確かめていない操作（push、リポジトリの設定の変更など）
@@ -243,6 +245,28 @@ agent-plugins/
 - 確認の選択肢の説明には、選ぶと実際に何が起きるか（作るもの・削除するもの・GitHub に書き込むもの）を使用者の言葉で書く。`--dry-run` などのフラグやスクリプト名といった内部の手順は書かない。例：「`--dry-run` を外して実行する」ではなく「Issue #12 を起票し、Project の Todo に追加する」。
 - 確認に必要な内容（下書き・dry-run の結果・指摘の一覧）は、AskUserQuestion の前に文章で見せるだけでなく、質問の中（選択肢の preview や質問の文）にも入れる。`/remote-control` で別の端末から使うと、質問の直前の文章が画面に出ないことがあり、何を承認するのか分からないまま選ばせることになるので。preview は単一選択の質問でだけ使えるので、複数選択の質問では選択肢の説明に入れる。
 - スキルの外の質問（作業の途中で、どう進めるか・どの方法で確かめるかを聞くなど）も、ファイルを変えない依頼（質問への回答・調査）の中の質問も、開発者に答えを選んでもらうものは AskUserQuestion で出し、上の2項（選択肢の説明・質問の中に入れる内容）を同じように当てはめる（#188）。対象は、選択肢から選んで答えられるものすべてで、はい・いいえの確認（「push してよいですか」）も含む。確認を取るかどうかの線引き（上の項）は変えず、聞くと決めた確認の出し方だけを決める。選択肢の無い問い（新しい名前を何にするか、など）は平文で聞いてよい。AskUserQuestion を使えない実行（`claude -p` など）には当てはめない（答える人がいないので、平文で聞いても答えは来ない）。選択肢がコマンドや確かめ方そのもの（どのコマンドで確かめるか、など）のときは、上の項の「フラグやスクリプト名といった内部の手順は書かない」の例外として、それを書いてよい（何が起きるかを伝えるのに要るため）。スキルの手順に書いた確認だけでは、スキルの外の場面で、選択肢を文章に並べた平文の質問になり、TUI では選んで答えられず、`/remote-control` で別の端末から使うと答えにくいので。スキルの外には手順が無いので、この決まりは SessionStart フックが渡す流れ（`defaults/task-flow.md`）に、ファイルを変える作業の流れ（番号の付いた段階）の外の項目として書く。流れの中に書くと、ファイルを変えない依頼には当てはまらないと読まれるため、流れが要らない依頼についての項も「番号の付いた段階は要らない」と書き、下の項目は当てはまると読めるようにする。対象・除くもの・選択肢の説明・内容の入れ場所は、1つの文に詰めると条件が抜けたり広がったりするので、小項目に分けて書く。
+
+### Issue から draft の PR まで自動で進める（task-auto）
+
+Issue を指定したら、ユーザーの承認や入力なしで、着手・実装・テスト・コミット・レビュー・draft の PR の作成まで進める（#266・#267、[ADR 000267](adr/000267-opt-in-auto-mode.md)）。今のスキルは変えず、task-auto が今のスキルの手順をたどりながら、各スキルの確認に代わりに答える。
+
+- **任意で有効にする**：設定 `auto.enabled`（既定 false）。false なら、task-auto は何もせずに止まり、今のスキルで代わりに進めることもしない。有効にしたリポジトリでも、人が手でスキルを使うときは、今までどおり確認を取る。
+- **保留の列が要る**：保留の列（`status.hold`。§4）が無ければ、始めずに止まり、repo-setup で作るよう案内する。止まったときに Issue を移す先にするため。
+- **役割**：指示役はメインのセッションで、今のスキルの手順をたどり、確認に代わりに答える。実装・テスト・コミットは作業役のサブエージェントに任せ、指示役は報告をうのみにせず、コミットとテストを自分でも確かめて、直させるか進めるかを決める。レビューは `/dev-workflow:review` を使う。
+- **確認の代わりに決めること**：スキルと手順ごとの答えを、task-auto の SKILL.md の表にまとめる（ワークツリーは作る・着手中の Issue と重なっても着手して記録する・Issue の範囲内の指摘はすべて反映する・範囲外の指摘と前からある不具合は起票する・観点に残すかは聞かない、など）。表に無い確認に当たったら止まる（今のスキルに確認が増えたときに、黙って答えないため）。
+- **範囲外の指摘の起票**：開いている Issue で重複を確かめ、無ければ起票する。Story Point・親・依存は付けない（人が決める）。1回の実行で起票する数は `auto.max_new_issues`（既定 3）まで。超えた分と重複していた分は、PR の本文に書く。
+- **PR**：必ず draft で出し（`pr-create.sh --draft`）、マージはしない（`allow_ai_merge` にかかわらず）。本文の `Closes #N` の前に「自動で決めたこと」の節を足し、ブランチ名・着手中の Issue との重なり・作業役が決めたこと・直させた回数・反映した指摘と反映しなかった指摘とその理由・起票した Issue を書く（無かった項目も「なし」と書く）。
+- **止まる条件**：次に当たったら、それ以上進めず、止まった理由・それまでの判断・残したもの（ブランチ・ワークツリー・コミット）・人が続けるには何をするかを Issue にコメントし、保留の列に移す（`auto-hold.sh`。task-auto が実行ごとに決める id（`--run-id`）を印に入れ、同じ実行の中の再試行ではコメントを付け直さない。別の実行で止まったときは、理由が前と同じでもコメントする。コメントの中身だけでは、同じ実行の再試行と新しく止まったことを区別できないため）。ワークツリーとコミットは残す。
+  - breaking ラベルがある・type ラベルが1つでない・本文の「やること」や「完了条件」に項目が無い（`auto-check.sh` が決める。本文は `md_scan` の決まりで読み、見出しは「やること」「Tasks」「To do」と「完了条件」「Acceptance criteria」「Definition of done」を、同じかより上の段の次の見出しまで読む）
+  - 前の作業のブランチを1つに決められない（`auto-check.sh` が `issue-branches.sh` と同じ判定で決める。確かなブランチが複数ある・確かなブランチが無いのに候補がある・Issue を閉じる PR が別のブランチかフォークで開いている・確かなブランチが Issue を閉じる PR でマージ済み（終わった作業の上に続けない）。ほかの理由で止まるときは、origin と PR を読まないよう探さない）。止まった後に実行し直したときに、新しいブランチを作って前のコミットを置き去りにしないため。確かなブランチが1つなら、その名前（`resume`）のまま `task-start.sh --branch` で着手し、前の作業から続ける（短い説明から名前を作り直すと、番号の先頭の 0 や短い説明の長さの違いで、別の名前になりうるため）
+  - Issue があいまい（食い違い・解釈が複数ある・人が決めることが残っている。AI が判断し、迷うときは止まる）
+  - 「変更するファイル・領域」が「なし」（ファイルを変えないタスクは PR を出せない）
+  - テストや lint が `auto.max_fix_attempts`（既定 3）回直させても通らない
+  - レビューが `review.max_rounds` の周でも範囲内の指摘を出す（反映してコミットしてから止まる）
+  - 差分に ADR にすべき判断がある、または Issue の ADR の項目が残っているのに ADR が無い（`adr-list.sh` の `proposal` が `pending`）
+  - 作業役が、Issue と周りのコードから決められない問いを返した・表に無い確認に当たった・手順に直し方の無いスクリプトのエラー
+- **書き込まずに止まる**：無効（`disabled`）・保留の列が無い（`no_hold`）・閉じた Issue や親の Issue（`not_startable`）は、Issue に何も書かずに止まる。どれに当たるか（と止まる条件のうちスクリプトで決めるもの）は `auto-check.sh` が `action` で決め、SKILL.md には値ごとにすることだけを書く。
+- GitHub Actions から task-auto を動かす形と、自動で作った PR の指摘への CI での対応は、#266 の別の子の Issue で扱う。
 
 ### PR の指摘・質問への対応（pr-respond）
 
@@ -373,7 +397,7 @@ Todo が増えたとき、どれから着手するか、同時に進めてよい
 | `status-set.sh` | 列を移す |
 | `next-tasks.sh` | Todo の Issue を Project の並び順で読み、依存（blocked by と本文の「依存」）・本文の「変更するファイル・領域」・着手中の PR のファイルを添えて JSON で返す。待ち・親の Issue・保留の Issue（`status.hold` が設定されていれば）と、領域の重なりも判定する。`--issue N` では、Issue N と着手中の Issue との重なりと、その判断（`overlap`・`can_defer`）だけを返す（`task-start` が使う）。何も変えない |
 | `branch-name.sh` | ブランチ名を作り、検証する |
-| `task-start.sh` | ワークツリーの作成（サブモジュールの初期化を含む）、割り当て、In Progress への移動。`--no-worktree` では割り当てと移動だけ（Issue に確かなブランチがあれば、マージ済みでも止まる）。親の Issue では何もせずに止まる |
+| `task-start.sh` | ワークツリーの作成（サブモジュールの初期化を含む）、割り当て、In Progress への移動。`--no-worktree` では割り当てと移動だけ（Issue に確かなブランチがあれば、マージ済みでも止まる）。`--branch` では、既にあるブランチ（手元か origin のもの）を名前のまま使い、無ければ何も作らずに止まる（task-auto が前の作業から続けるのに使う）。親の Issue では何もせずに止まる |
 | `review-perspectives.sh` | 観点ファイルを集める。`--auto`（または `--base` と `--target`）を渡すと、観点ごとの実行する条件（`types`・`paths`・`issue`・`base_ahead`）に当てはまらない観点を外し、理由つきで `skipped` に出す |
 | `review-perspective-add.sh` | 観点ファイルを作る。同じ層に同じ名前のファイルがあれば上書きせずに止まり、ほかの層にあれば `--override` が無いかぎり止まる（上位の層にあり、作っても使われないときは、下位の層にあるときと別の終了コードで知らせる）。リポジトリの層に作ったときは、そのブランチと、作業用のブランチの上か（`work_branch`）も出力する。`--builtin code-review` を付けると、同梱の観点 `code-review` を置き換える builtin の観点（本文は「## 指摘しないこと」の節）を作る（名前が `code-review` のときだけ） |
 | `adr-create.sh` | ADR をテンプレートから作る（ファイル名の決定、`date` と `issue` の記入。`date` は既定で今日、過去の判断は `--date` で判断をした日にする）。`--supersedes` で置き換える ADR の `status` の行だけを書き換える。同じファイル名があれば上書きせずに止まる |
@@ -384,7 +408,9 @@ Todo が増えたとき、どれから着手するか、同時に進めてよい
 | `branch-status.sh` | 作業用のブランチの、base_branch に対する遅れ・先行と、取り込むと衝突するか（`conflicts`。`git merge-tree` で手元で確かめる）、追跡しているファイルの未コミットの変更（未追跡のファイルは除く）、origin のブランチとのずれ、push 済みのブランチの遅れ（`pushed_behind`）と衝突（`pushed_conflicts`）、開いている PR のマージ状態（`merge_state`）とマージキューの状態（`merge_queue`。キューが有効か・並んでいるときの状態と順番・キューから外れたままのときの理由。GraphQL で読む）、push で origin に入るコミット（`push_commits`。取り込む前に控えた sha を渡すと、main の取り込み・pull の取り込み・自分のコミットに分ける。どれも origin に既にあるコミットは数えない）を調べ、次にすること（`plan`。`branch-plan.sh` が決める）を出す。変更はしない（origin からの取得だけ行う） |
 | `branch-plan.sh` | `branch-status.sh` の出力（JSON）を標準入力で受け取り、branch-update が次にすること（`action`・`reason`・`queue`・`fallback`）を判断の表で決める。git も GitHub も使わないので、表の行と境目を、JSON を入力にした bats の表で確かめられる。`branch-status.sh` が中で使い、出力の `plan` にする |
 | `merge-group-check.sh` | 必須のチェックを出すワークフローが、マージキューの merge_group のイベントでも動くかを確かめる（base_branch のワークフローを API で読み、チェックの名前とジョブを突き合わせ、ジョブの `if:` で `merge_group` を除いていないかも見る）。何も変えない。`setup-repo.sh` と `doctor.sh` が使う |
-| `issue-branches.sh` | Issue の作業のブランチを、確かなブランチ（`branch.pattern` に合い番号が一致する）と候補（名前が似ている・Issue を閉じる PR のブランチのうち、手元か origin に残っているもの）に分けて探し、Issue の状態と、Issue を閉じる開いている PR を出す。何も変えない。`task-finish`・`task-cancel` が使う（`task-start.sh --no-worktree` も、同じ判定の `dw_issue_work` を使う） |
+| `auto-check.sh` | task-auto が始める前に、設定（`auto.*`・`status.hold`）と Issue から、進めるか・止まるか（`action`：`disabled`・`no_hold`・`not_startable`・`hold`・`proceed`）と理由を決め、前の作業のブランチを使い回すか（`resume`）も決める。無効なら設定の値を検査しない。何も変えない |
+| `auto-hold.sh` | task-auto が止まるときに、理由とそれまでの判断を Issue にコメントし（実行ごとの id を入れた印 `<!-- dev-workflow:task-auto run=<id> -->` を付ける。同じ実行の印のコメントがあれば、その後に人のコメントがあっても付け直さない）、保留の列に移す |
+| `issue-branches.sh` | Issue の作業のブランチを、確かなブランチ（`branch.pattern` に合い番号が一致する）と候補（名前が似ている・Issue を閉じる PR のブランチのうち、手元か origin に残っているもの）に分けて探し、Issue の状態と、Issue を閉じる開いている PR を出す。何も変えない。`task-finish`・`task-cancel` が使う（`task-start.sh --no-worktree` と `auto-check.sh` も、同じ判定の `dw_issue_work` を使う） |
 | `cleanup.sh` | マージを確認し、ワークツリーとブランチを削除し、main を最新にし、PR が閉じる Issue の状態（`issues`）を出す。未コミットの変更や git が無視するファイルがあれば、何も消さずに止まる（無視するファイルは `--remove-ignored` で消せる）。`--abandon` では、マージの確認・main の更新・Issue の状態の確認を飛ばし、失うものを一覧にして削除する |
 
 | 初期設定用（`plugins/dev-workflow/scripts/setup/`） | 役割 |

@@ -175,6 +175,19 @@ run_pr() {
   assert_output --partial --draft
 }
 
+@test "--draft を付ければ、pr.draft が false でも下書きにする（task-auto）" {
+  setup_branch
+  run_pr --issue 17 --body-file "$TMP/body.md" --draft --dry-run
+  assert_success
+  assert_equal "$(jq .draft <<<"$json")" true
+  assert_output --partial "（下書き）"
+  run_pr --issue 17 --body-file "$TMP/body.md" --draft
+  assert_success
+  assert_equal "$(jq .draft <<<"$json")" true
+  run args pr-create
+  assert_output --partial --draft
+}
+
 # status.pr_opened を Done にする
 set_pr_opened() {
   jq '. + {status: {pr_opened: "Done"}}' .claude/dev-workflow/config.json >"$TMP/c.json" && mv "$TMP/c.json" .claude/dev-workflow/config.json
@@ -191,7 +204,7 @@ set_pr_opened() {
   assert_equal "$(called pr-create)" 0
   assert_equal "$(called SetField)" 0
   assert_equal "$(git rev-parse origin/feat/17-x)" "$(git rev-parse HEAD)"
-  assert_equal "$(args pr-list)" "--head feat/17-x --state open --json number,url,title,body,isCrossRepository"
+  assert_equal "$(args pr-list)" "--head feat/17-x --state open --json number,url,title,body,isCrossRepository,isDraft"
 }
 
 @test "PR を出した後に breaking ラベルを付けたら、既にある PR に ! と BREAKING CHANGE が無いと push せずに止まる" {
@@ -664,4 +677,27 @@ fake_issue_tasks() {
   assert_output --partial "未コミットの変更を調べられませんでした"
   run git rev-parse -q --verify refs/remotes/origin/feat/17-x
   assert_failure
+}
+
+@test "type ラベルは大文字と小文字を区別せずに照合し、タイトルの type は設定の書き方にする（Feat と feat は1つと数える）" {
+  setup_branch
+  for labels in '["Feat"]' '["Feat", "feat"]'; do
+    fake_issue 17 "$labels"
+    run_pr --issue 17 --body-file "$TMP/body.md" --dry-run
+    assert_success
+    assert_equal "$(jq -r .title <<<"$json")" "feat: 作業 17"
+  done
+}
+
+@test "既にある PR を使うときは、--draft や pr.draft があっても下書きかどうかを変えず、出力の draft はその PR の今の状態にする" {
+  setup_branch
+  echo '[{"number": 7, "url": "https://github.com/me/demo/pull/7", "isCrossRepository": false, "isDraft": false}]' >"$FIX/pr-list.json"
+  run_pr --issue 17 --body-file "$TMP/body.md" --draft
+  assert_success
+  assert_equal "$(jq -c '[.created, .pr.number, .draft]' <<<"$json")" '[false,7,false]'
+  assert_equal "$(called pr-create)" 0
+  echo '[{"number": 7, "url": "https://github.com/me/demo/pull/7", "isCrossRepository": false, "isDraft": true}]' >"$FIX/pr-list.json"
+  run_pr --issue 17 --body-file "$TMP/body.md"
+  assert_success
+  assert_equal "$(jq -r .draft <<<"$json")" true
 }

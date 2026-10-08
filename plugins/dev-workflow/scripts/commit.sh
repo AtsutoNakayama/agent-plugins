@@ -51,7 +51,8 @@ dw_repo_root >/dev/null || dw_die "リポジトリの中で実行してくださ
 config="$("$BASH" "$DW_SCRIPTS_DIR/config.sh")"
 
 # --- メッセージの検証 -----------------------------------------------------------
-subject="$(printf '%s\n' "$message" | head -n 1)"
+# 1行目だけを読むのに head を使わない（長いメッセージで、head が先に終わると printf が SIGPIPE で終わり、pipefail で止まるため）
+subject="$(printf '%s\n' "$message" | sed -n 1p)"
 [ -n "$subject" ] || dw_die "コミットメッセージの1行目（要約）が空です" 2
 # 2行目は空行（1行目が要約、3行目から本文）
 second="$(printf '%s\n' "$message" | sed -n 2p)"

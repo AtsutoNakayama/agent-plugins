@@ -176,3 +176,20 @@ args() { grep "^$1 " "$CALLS" | sed -n "${2:-1}p" | cut -d' ' -f2-; }
 # 標準エラーの警告の後ろに出る JSON だけを取り出す
 # macOS の BSD sed は日本語を含む入力で失敗することがあるので、バイト列として扱わせる
 json_of() { printf '%s\n' "$1" | LC_ALL=C sed -n '/^{/,$p'; }
+
+# Issue 17 を閉じる PR（closedByPullRequestsReferences）を決め、PR ごとの中身を作る（issue-branches・auto-check のテストで使う）。
+# PR のリポジトリを none にすると、参照に repository を入れない（gh が返さないとき）。PR の URL は me/demo のものにする
+# 使い方: link_prs [<番号>:<状態>:<ブランチ>[:<PR のリポジトリ>[:<フォークか>]]]...
+link_prs() {
+  local refs='[]' spec n state branch pr_repo fork
+  for spec in "$@"; do
+    IFS=: read -r n state branch pr_repo fork <<<"$spec"
+    pr_repo="${pr_repo:-me/demo}"
+    refs="$(jq -c --argjson n "$n" --arg r "$pr_repo" \
+      '. + [{number: $n, url: "https://github.com/\(if $r == "none" then "me/demo" else $r end)/pull/\($n)"}
+        + (if $r == "none" then {} else {repository: {name: ($r | split("/")[1]), owner: {login: ($r | split("/")[0])}}} end)]' <<<"$refs")"
+    jq -n --argjson n "$n" --arg s "$state" --arg b "$branch" --arg r "$pr_repo" --argjson f "${fork:-false}" \
+      '{number: $n, url: "https://github.com/\(if $r == "none" then "me/demo" else $r end)/pull/\($n)", state: $s, headRefName: $b, isCrossRepository: $f}' >"$FIX/pr-$n.json"
+  done
+  jq --argjson refs "$refs" '. + {closedByPullRequestsReferences: $refs}' "$FIX/issue-17.json" >"$FIX/i" && mv "$FIX/i" "$FIX/issue-17.json"
+}

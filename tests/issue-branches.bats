@@ -15,21 +15,6 @@ setup() {
   link_prs
 }
 
-# Issue 17 を閉じる PR（closedByPullRequestsReferences）を決め、PR ごとの中身を作る
-# 使い方: link_prs [<番号>:<状態>:<ブランチ>[:<PR のリポジトリ>[:<フォークか>]]]...
-link_prs() {
-  local refs='[]' spec n state branch repo fork
-  for spec in "$@"; do
-    IFS=: read -r n state branch repo fork <<<"$spec"
-    repo="${repo:-me/demo}"
-    refs="$(jq -c --argjson n "$n" --arg r "$repo" \
-      '. + [{number: $n, url: "https://github.com/\($r)/pull/\($n)", repository: {name: ($r | split("/")[1]), owner: {login: ($r | split("/")[0])}}}]' <<<"$refs")"
-    jq -n --argjson n "$n" --arg s "$state" --arg b "$branch" --arg r "$repo" --argjson f "${fork:-false}" \
-      '{number: $n, url: "https://github.com/\($r)/pull/\($n)", state: $s, headRefName: $b, isCrossRepository: $f}' >"$FIX/pr-$n.json"
-  done
-  jq --argjson refs "$refs" '. + {closedByPullRequestsReferences: $refs}' "$FIX/issue-17.json" >"$FIX/i" && mv "$FIX/i" "$FIX/issue-17.json"
-}
-
 run_branches() {
   run_script issue-branches.sh "$@"
   printf '%s\n' "$output"
@@ -139,6 +124,15 @@ names() { jq -c --arg k "${1:-branches}" '[.[$k][] | [.name, .local, .remote]]' 
   # old-work は手元にも origin にも無い（片付け終えた）ので、候補に出さない
   assert_equal "$(jq -c '[.candidates[] | [.name, .local, .from, .pr]]' <<<"$json")" '[["fix-foo",true,"pr",5]]'
   assert_equal "$(jq -c '[.open_prs[] | [.number, .branch]]' <<<"$json")" '[[5,"fix-foo"],[7,"patch-1"],[9,"patch-2"]]'
+}
+
+@test "open_prs の cross は、別のリポジトリかフォークの PR なら true にし、merged_prs には今のリポジトリのマージ済みの PR だけを出す" {
+  link_prs 5:OPEN:a 6:MERGED:b 7:OPEN:c:other/lib 8:MERGED:d:other/lib 9:OPEN:e:me/demo:true 10:MERGED:f:me/demo:true \
+    11:OPEN:g:none 12:MERGED:h:none
+  run_branches --issue 17
+  assert_success
+  assert_equal "$(jq -c '[.open_prs[] | [.number, .cross]]' <<<"$json")" '[[5,false],[7,true],[9,true],[11,false]]'
+  assert_equal "$(jq -c '[.merged_prs[] | [.number, .branch]]' <<<"$json")" '[[6,"b"],[12,"h"]]'
 }
 
 @test "Closes #17, #18 の PR のブランチ（別の Issue の作業）を、#17 の確かなブランチにしない" {
