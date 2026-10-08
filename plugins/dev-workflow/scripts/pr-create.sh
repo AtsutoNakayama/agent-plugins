@@ -15,7 +15,7 @@
 #                     文が TEXT の項目が既にあれば足さない（もう一度実行しても重ならない）。ADR の作成の提案を断ったことを、
 #                     取り消し線の項目（~~…~~）として残すのに使う
 #   --draft           設定の pr.draft にかかわらず、PR を下書きにする（task-auto が、自動で作った PR を必ず下書きで出すのに使う）。
-#                     既にある PR では使わない（下書きかどうかを変えない）
+#                     既にある PR では、下書きかどうかを変えない（出力の draft は、その PR の今の状態）
 #   --dry-run         push も PR の作成も Issue のチェックと項目の追加もせず、行う予定の操作と PR のタイトル・本文、
 #                     Issue のチェックリストの項目（tasks）・チェックを付ける項目（checked）・足す項目（added）を出力する
 #
@@ -143,7 +143,7 @@ to_add="$(jq -c --argjson t "$tasks" "$missing_jq" <<<"$adds")"
 
 # --- 既にある PR ----------------------------------------------------------------
 # --head はブランチ名だけで探すので、fork の同じ名前のブランチからの PR を除く
-existing="$(gh pr list --head "$branch" --state open --json number,url,title,body,isCrossRepository \
+existing="$(gh pr list --head "$branch" --state open --json number,url,title,body,isCrossRepository,isDraft \
   | jq -c 'map(select(.isCrossRepository | not))')" \
   || dw_die "${branch} の PR を取得できませんでした"
 pr_number="$(jq -r '.[0].number // empty' <<<"$existing")"
@@ -211,7 +211,9 @@ draft="$(jq -r '.pr.draft // false' <<<"$config")"
 ! $draft_opt || draft=true
 created=false
 if [ -n "$pr_number" ]; then
-  note "既にある PR #${pr_number} を使う（作り直さず、タイトル・本文・ラベル・列は変えない）"
+  note "既にある PR #${pr_number} を使う（作り直さず、タイトル・本文・ラベル・列・下書きかどうかは変えない）"
+  # 下書きかどうかは変えないので、出力にはその PR の今の状態を出す（--draft を付けても、下書きと取り違えないように）
+  draft="$(jq -r '.[0].isDraft // false' <<<"$existing")"
 else
   created=true
   note "${base} に向けた PR「${title}」を作る$($draft && echo '（下書き）')"

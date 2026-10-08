@@ -204,7 +204,7 @@ set_pr_opened() {
   assert_equal "$(called pr-create)" 0
   assert_equal "$(called SetField)" 0
   assert_equal "$(git rev-parse origin/feat/17-x)" "$(git rev-parse HEAD)"
-  assert_equal "$(args pr-list)" "--head feat/17-x --state open --json number,url,title,body,isCrossRepository"
+  assert_equal "$(args pr-list)" "--head feat/17-x --state open --json number,url,title,body,isCrossRepository,isDraft"
 }
 
 @test "PR を出した後に breaking ラベルを付けたら、既にある PR に ! と BREAKING CHANGE が無いと push せずに止まる" {
@@ -687,4 +687,17 @@ fake_issue_tasks() {
     assert_success
     assert_equal "$(jq -r .title <<<"$json")" "feat: 作業 17"
   done
+}
+
+@test "既にある PR を使うときは、--draft や pr.draft があっても下書きかどうかを変えず、出力の draft はその PR の今の状態にする" {
+  setup_branch
+  echo '[{"number": 7, "url": "https://github.com/me/demo/pull/7", "isCrossRepository": false, "isDraft": false}]' >"$FIX/pr-list.json"
+  run_pr --issue 17 --body-file "$TMP/body.md" --draft
+  assert_success
+  assert_equal "$(jq -c '[.created, .pr.number, .draft]' <<<"$json")" '[false,7,false]'
+  assert_equal "$(called pr-create)" 0
+  echo '[{"number": 7, "url": "https://github.com/me/demo/pull/7", "isCrossRepository": false, "isDraft": true}]' >"$FIX/pr-list.json"
+  run_pr --issue 17 --body-file "$TMP/body.md"
+  assert_success
+  assert_equal "$(jq -r .draft <<<"$json")" true
 }
