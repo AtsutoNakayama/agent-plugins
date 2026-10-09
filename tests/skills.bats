@@ -831,6 +831,22 @@ has() {
 }
 
 # shellcheck disable=SC2016 # バッククォートはスキルの本文の文字で、展開させない
+@test "task-finish は、マージ前に呼ばれたとき pr-merge-status.sh でマージキューの CI を待つか選んでもらい、外れていれば失敗を伝えて止まる" {
+  f="$SKILLS/task-finish/SKILL.md"
+  grep -q 'scripts/pr-merge-status.sh`' "$f"
+  grep -q 'pr-merge-status.sh --branch <ブランチ> --wait' "$f"
+  grep -q 'run_in_background' "$f"
+  grep -q 'キューの CI を待ってから後片付けする' "$f"
+  grep -q '`removed`' "$f"
+  grep -q '失敗したチェック' "$f"
+  # ブランチが決まっていないときは、2-1 を飛ばして 2-2 に進む
+  grep -q 'ブランチが決まっていないとき.*この手順を飛ばして2-2に進む' "$f"
+  # バックグラウンドの --wait が JSON を出さずに終わったときは、止まらずに2-2に進む
+  grep -q 'JSON が出ずに異常終了したとき.*止まらずに.*2-2に進む' "$f"
+  [ -x "$SCRIPTS/pr-merge-status.sh" ]
+}
+
+# shellcheck disable=SC2016 # バッククォートはスキルの本文の文字で、展開させない
 @test "task-create は、着手まで頼まれていなければ、起票の後に着手するかを聞いてから task-start に進む（task-create・task-flow・設計書）" {
   local f="$SKILLS/task-create/SKILL.md"
   grep -q '^### 6. 着手するかを聞く' "$f" || fail "task-create に、着手するかを聞く手順がありません"
