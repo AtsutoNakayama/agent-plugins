@@ -66,39 +66,51 @@ $ROOT/plugins/dev-workflow"
 # CDPATH='' の無い cd を探す範囲（プラグインのスクリプトとフック、CI と eval のスクリプト、テストの共通の準備）
 CD_PATHS=(plugins .github/scripts tests/eval tests/test_helper.bash ':!*.md' ':!*.json')
 
-# CDPATH='' の無い cd の行を「<ファイル>:<行の中身（前の空白を除く）>」で出力する。コメントの行は除く。
-# cd はコマンドの位置（行頭、( $( { ; & | ! の後、if・elif・then・else・while・until・do・time の後）にあるものだけを見る（case のパターンの cd | や、文の中の cd は見ない）。
-# CDPATH='' cd は、cd の前が CDPATH='' なので当たらない。単語の境界は、macOS の git の ERE で働かない \b を使わずに書く
+# CDPATH='' の無い cd の行を「<ファイル>:<行の中身（前の空白を除く）>」で出力する。コメントの行（行頭の空白の後の #）は除く。
+# シェルのコマンドの位置を正規表現で列挙すると見逃しが残る（case の a) cd・builtin cd・FOO=1 cd など）ので、位置は問わず、
+# 語としての cd（前が行頭か英数字・_・- 以外、後が空白か行末）をすべて見つけ、CDPATH='' cd のものだけを除く。
+# 文字列やメッセージの中に cd が語として現れるだけの行は、テストの許可の一覧に理由を添えて書く。
+# 単語の境界は、macOS の git の ERE で働かない \b を使わずに書く
 # 使い方: bare_cd <git grep の pathspec>...
 bare_cd() {
-  # shellcheck disable=SC2016 # 正規表現の $ をそのまま渡す
-  git grep -nE --full-name -e '(^|[;&|({!]|\$\(|(^|[^[:alnum:]_])(if|elif|then|else|while|until|do|time))[[:space:]]*cd([[:space:]]+[^|[:space:]]|$)' -- "$@" \
-    | awk -F: '{ f = $1; sub(/^[^:]*:[0-9]+:[[:space:]]*/, ""); if ($0 !~ /^#/) print f ":" $0 }'
+  git grep -nE --full-name -e '(^|[^[:alnum:]_-])cd([[:space:]]|$)' -- "$@" \
+    | awk -F: '{
+        f = $1; sub(/^[^:]*:[0-9]+:[[:space:]]*/, "")
+        if ($0 ~ /^#/) next
+        l = $0; gsub(/CDPATH='"''"'[[:space:]]+cd([[:space:]]|$)/, "", l)
+        if (l ~ /(^|[^[:alnum:]_-])cd([[:space:]]|$)/) print f ":" $0
+      }'
 }
 
-@test "cd は CDPATH を空にして実行する（絶対パスだと保証した cd だけを、一覧で許す）" {
+@test "cd は CDPATH を空にして実行する（許可の一覧の行だけを、理由を添えて許す）" {
   cd "$ROOT"
-  # 許す cd。どれも、cd の前で絶対パスにしている
+  # 許す行と理由
   #   dw_abs_dir：相対パスなら基準のディレクトリ（絶対パス）を前に付けてから cd する
   #   dw_physical_path：相対パスなら $PWD を前に付けてから cd する
   #   test_helper_setup：REPO は mktemp -d の実体の絶対パス（pwd -P）の下
+  #   git-command.sh：cd を実行せず、解析するコマンドの名前として case のパターンに書いている
+  #   guard-git.sh・task-start.sh：cd を実行せず、利用者に伝えるメッセージの中に書いている
   # shellcheck disable=SC2016 # 行の中身をそのまま書く
   allowed='plugins/dev-workflow/scripts/lib/common.sh:(cd "$p" 2>/dev/null && pwd -P)
 plugins/dev-workflow/scripts/lib/common.sh:d="$(cd -P "$p" 2>/dev/null && pwd -P)" || d="$p"
-tests/test_helper.bash:cd "$REPO" || return 1'
+tests/test_helper.bash:cd "$REPO" || return 1
+plugins/dev-workflow/scripts/lib/git-command.sh:cd | pushd | popd | dirs)
+plugins/dev-workflow/hooks/guard-git.sh:echo "操作の対象のリポジトリが分からないので、${1}は止めます（今のブランチが分からず、base_branch の上かを確かめられません）。cd -- <絶対パス> && git ...、または git -C <絶対パス> ... で対象を書き直してください"
+plugins/dev-workflow/scripts/task-start.sh:dw_warn "サブモジュールを初期化できませんでした。ワークツリーで git submodule update --init --recursive を実行してください（cd ${path}）"'
   found="$(bare_cd "${CD_PATHS[@]}")"
   # 一覧に無い cd が残っていないこと
   run grep -vxF -e "$allowed" <<<"$found"
   assert_output ""
-  # 一覧の cd が、どれもまだあること（消えた・書き換えた cd を、一覧に残さない）
+  # 一覧の行が、どれもまだあること（消えた・書き換えた行を、一覧に残さない）
   run grep -vxF -e "$found" <<<"$allowed"
   assert_output ""
 }
 
-@test "CDPATH='' の無い cd を足すと、検査で見つかる（コマンドの位置の cd だけを見る）" {
+@test "CDPATH='' の無い cd を足すと、どの位置でも検査で見つかる（語の一部の cd は見ない）" {
   cd "$TMP"
   git init -q -b main probe
   cd probe
+  # 見つかるもの
   # shellcheck disable=SC2016 # 試す行をそのまま書く
   printf '%s\n' \
     'cd "$dir"' \
@@ -114,29 +126,27 @@ tests/test_helper.bash:cd "$REPO" || return 1'
     'until cd "$dir"; do :; done' \
     '! cd "$dir"' \
     'time cd "$dir"' \
-    'undo cd "$dir"' \
-    'notif cd "$dir"' \
-    'runtime cd "$dir"' \
-    'x != cd' \
+    'time -p cd "$dir"' \
+    'case x in a) cd "$rel" ;; esac' \
+    'builtin cd "$dir"' \
+    'command cd "$dir"' \
+    'x=`cd "$dir" && pwd`' \
+    'FOO=1 cd "$dir"' \
+    'x="$(CDPATH='"''"' cd "$a" && cd "$b")"' >probe.sh
+  cp probe.sh expected
+  # 見つからないもの
+  # shellcheck disable=SC2016 # 試す行をそのまま書く
+  printf '%s\n' \
     'x="$(CDPATH='"''"' cd "$dir" && pwd)"' \
-    '  # cd "$dir" はコメント' \
-    '  cd | pushd) ;;' \
-    'echo "（cd ${p} で移る）"' >probe.sh
+    'CDPATH='"''"' cd' \
+    'ifcd x' \
+    'docd x' \
+    'abcd x' \
+    'cd-foo x' \
+    'x_cd y' \
+    '  # cd "$dir" はコメント' >>probe.sh
   git add probe.sh
   run bare_cd probe.sh
   assert_success
-  # shellcheck disable=SC2016 # 期待する行をそのまま書く
-  assert_output 'probe.sh:cd "$dir"
-probe.sh:x="$(cd "$dir" && pwd)"
-probe.sh:( cd "$dir" ) && { cd "$dir"; }
-probe.sh:if true; then cd -P "$dir"; fi
-probe.sh:true && cd "$dir"
-probe.sh:for d in a; do cd "$d"; done
-probe.sh:if false; then :; else cd "$dir"; fi
-probe.sh:if cd "$dir"; then :; fi
-probe.sh:if false; then :; elif cd "$dir"; then :; fi
-probe.sh:while cd "$dir"; do break; done
-probe.sh:until cd "$dir"; do :; done
-probe.sh:! cd "$dir"
-probe.sh:time cd "$dir"'
+  assert_output "$(sed 's/^/probe.sh:/' expected)"
 }
