@@ -200,10 +200,9 @@ body="$(printf '%s' "$body" | jq -Rrs --arg k "$keyword" --arg n "$issue" '
     else "\($body)\n\n\($k) #\($n)" end')"
 [ "$body" != "$keyword #$issue" ] || dw_die "本文が空です（概要・変更点・確認方法を書いてください）" 64
 # 本文は一時ファイルに1回だけ書き、PR を作るときの --body-file と、最後の出力の --rawfile の両方で使う
-# （$( ) で受けた本文は改行で終わらないので、末尾に足した改行は、出力では1つだけ外せば元に戻る）
 body_tmp="$(mktemp)"
 trap 'rm -f "$body_tmp"' EXIT
-printf '%s\n' "$body" >"$body_tmp"
+printf '%s' "$body" >"$body_tmp"
 
 # --- 3. push --------------------------------------------------------------------
 if ! $dry_run; then
@@ -333,11 +332,11 @@ merge_queue="$(dw_merge_queue_enabled '{owner}/{repo}' "$pr_base")" || merge_que
 # 本文と Issue のチェックリストの項目（tasks）は大きいことがあるので、引数では渡さない（引数1つの長さには上限がある）。
 # 本文は一時ファイル（body_tmp）から --rawfile で、tasks は標準入力の JSON で渡す（標準入力の -R では、4096 バイトを超える1行の
 # BMP の外の文字が読み込みの区切りで割れることがある）
-printf '%s\n' "$tasks" | jq --rawfile body_text "$body_tmp" --argjson i "$issue" --arg branch "$branch" --arg base "$base" --arg pr_base "$pr_base" --arg title "$title" \
+printf '%s\n' "$tasks" | jq --rawfile body "$body_tmp" --argjson i "$issue" --arg branch "$branch" --arg base "$base" --arg pr_base "$pr_base" --arg title "$title" \
   --argjson labels "$labels" --argjson breaking "$breaking" --argjson draft "$draft" --argjson created "$created" \
   --arg number "$pr_number" --arg url "$pr_url" --argjson status "$status" \
   --argjson checked "$to_check" --argjson added "$to_add" \
-  --argjson dry "$dry_run" --argjson actions "$actions" --argjson merge_queue "$merge_queue" '. as $tasks | ($body_text | rtrimstr("\n")) as $body | {
+  --argjson dry "$dry_run" --argjson actions "$actions" --argjson merge_queue "$merge_queue" '. as $tasks | {
     issue: $i,
     dry_run: $dry,
     branch: $branch,

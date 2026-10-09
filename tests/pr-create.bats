@@ -59,6 +59,8 @@ run_pr() {
   assert_success
   assert_equal "$(cat "$TMP/pr-body")" "$(printf '## 概要\n作業した\n\n## 変更点\n- work.txt\n\n## 確認方法\n- 見た\n\nCloses #17')"
   assert_equal "$(jq -r .body <<<"$json")" "$(cat "$TMP/pr-body")"
+  # 出力の本文は、末尾に改行を足さない（$( ) では末尾の改行の違いが見えないので、JSON のまま比べる）
+  assert_equal "$(jq -c .body <<<"$json")" '"## 概要\n作業した\n\n## 変更点\n- work.txt\n\n## 確認方法\n- 見た\n\nCloses #17"'
 }
 
 @test "本文に Closes #N があれば足さない（#170 は別の Issue とみなす）" {
