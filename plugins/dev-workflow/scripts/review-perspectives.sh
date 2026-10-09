@@ -9,7 +9,7 @@
 #                                          渡した値で絞り込む（--auto が決める値を自分で渡す）
 #
 #   --auto    次を決めて絞り込み、決めた値を context に出す
-#             - マージ先: origin/<base_branch>（git fetch origin <base_branch> で最新にする。できなければ警告して
+#             - マージ先: origin/<base_branch>（開いた PR があれば、その PR のマージ先。git fetch origin <マージ先> で最新にする。できなければ警告して
 #               手元の origin/<base_branch> を使う。それも無ければ終了コード 2。branch.pattern が正規表現として正しくないときも、設定の誤りとして終了コード 2）
 #             - 基点: git merge-base <マージ先> HEAD
 #             - Issue の番号: ブランチ名（branch.pattern の {issue_number}。先頭の 0 はそろえる）。番号として使えない値（0 など）なら
@@ -110,13 +110,20 @@ if [ "$auto" = true ]; then
   model="$(jq -c '.review.model' <<<"$config")"
   dw_review_model_ok "$model" || dw_die "review.model は null か $(dw_review_model_names) のどれかにしてください: ${model}" 2
   base_branch="$(dw_base_branch "$config")"
+  branch="$(git symbolic-ref --short -q HEAD || true)"
+  # 開いた PR があれば、そのマージ先（設定の base_branch と違うことがある。例：release/v1 に向いた PR）をマージ先にする。
+  # --head はブランチ名だけで探すので、fork の同じ名前のブランチからの PR を除く。gh が無いか読めなければ、設定の base_branch を使う
+  if [ -n "$branch" ] && command -v gh >/dev/null 2>&1 \
+    && prs="$(gh pr list --head "$branch" --state open --json baseRefName,isCrossRepository 2>/dev/null)"; then
+    pr_base="$(jq -r 'map(select(.isCrossRepository | not)) | first // null | .baseRefName // ""' <<<"$prs" 2>/dev/null || true)"
+    [ -z "$pr_base" ] || base_branch="$pr_base"
+  fi
   target="origin/$base_branch"
-  git fetch -q origin "$base_branch" 2>/dev/null \
+  git fetch -q origin -- "$base_branch" 2>/dev/null \
     || dw_warn "${target} を最新にできませんでした。手元の ${target} で判断します"
   git rev-parse --verify --quiet "$target^{commit}" >/dev/null \
     || dw_die "マージ先が見つかりません: ${target}（git fetch origin ${base_branch} で取得してください）" 2
   base="$(git merge-base "$target" HEAD)" || dw_die "${target} と HEAD の基点が見つかりません" 2
-  branch="$(git symbolic-ref --short -q HEAD || true)"
   parsed="$(dw_parse_branch "$config" "$branch")" || exit $?
   IFS='|' read -r branch_type branch_issue <<<"$parsed"
   # ブランチ名の番号は、先頭の 0 をそろえる（017 は 17）。Issue の番号として使えない（0 など）ときは、止まらずに Issue は無いものとする

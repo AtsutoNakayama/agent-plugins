@@ -429,6 +429,26 @@ auto_branch() {
   used main-drift || fail "$output"
 }
 
+@test "--auto は、開いた PR のマージ先が設定の base_branch と違えば、PR のマージ先をマージ先にする（#284）" {
+  auto_branch feat/17-add-thing
+  fake_issue 17 '["feat"]'
+  # origin の release/v1 を、ブランチを作った後の main より1つ進んだ位置に作る
+  git clone -q "$TMP/origin.git" "$TMP/other"
+  git -C "$TMP/other" switch -q -c release/v1
+  git -C "$TMP/other" commit -q --allow-empty -m release
+  git -C "$TMP/other" push -q origin release/v1
+  echo '[{"baseRefName": "release/v1", "isCrossRepository": false}]' >"$FIX/pr-list.json"
+  run_script review-perspectives.sh --auto
+  assert_success
+  assert_equal "$(jq -c '[.context.target, .context.base, .context.ahead]' <<<"$output")" "[\"origin/release/v1\",\"$BASE\",1]"
+  assert_equal "$(args pr-list)" "--head feat/17-add-thing --state open --json baseRefName,isCrossRepository"
+  # fork の PR のマージ先は使わない
+  echo '[{"baseRefName": "release/v1", "isCrossRepository": true}]' >"$FIX/pr-list.json"
+  run_script review-perspectives.sh --auto
+  assert_success
+  assert_equal "$(jq -c '[.context.target, .context.ahead]' <<<"$output")" '["origin/main",0]'
+}
+
 @test "--auto は、base_branch がダッシュで始まれば、取得せずに止まる（git fetch のオプションとして扱わせない）" {
   auto_branch feat/17-add-thing
   fake_issue 17 '["feat"]'
