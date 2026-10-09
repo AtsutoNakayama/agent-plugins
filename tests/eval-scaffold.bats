@@ -227,3 +227,36 @@ grader_pattern() { sed -n "s/^pattern: '\\(.*\\)'\$/\\1/p" "$EVALS/$1/graders/$2
   grep -qE "$(grader_pattern $c opens-pr)" "$TMP/writes" || fail "opens-pr に当たりません"
 }
 
+@test "task-auto の範囲外の指摘のケースの files-issue は、Issue を作る REST の書き方（メソッドや本文の位置・書き方）によらず当たり、一覧の読み取りや番号付きのパスには当たらない" {
+  local c=task-auto-files-out-of-scope pat
+  pat="$(grader_pattern $c files-issue)"
+  scaffold "eval_repo && fake_gh_defaults"
+  assert_success
+  printf '{"title": "t"}' >"$TMP/issue.json"
+  # 偽の gh に実際に記録させ、その行に当てる（記録の形は fake-gh.sh が決める）
+  local args
+  for args in "api -X POST repos/me/demo/issues --input $TMP/issue.json" \
+    "api --method POST repos/me/demo/issues --input $TMP/issue.json" \
+    "api --method=post repos/me/demo/issues -f title=t" \
+    "api -XPOST repos/me/demo/issues -f title=t" \
+    "api repos/me/demo/issues -X POST --input $TMP/issue.json" \
+    "api repos/me/demo/issues --method POST -f title=t" \
+    "api /repos/me/demo/issues -f title=t" \
+    "api repos/me/demo/issues -F title=t" \
+    "issue create --title t --body b"; do
+    : >.fake-gh/writes
+    # shellcheck disable=SC2086 # 引数に分けるため、クォートしない
+    gh $args >/dev/null
+    grep -qE "$pat" .fake-gh/writes || fail "「gh ${args}」の記録に files-issue が当たりません: $(cat .fake-gh/writes)"
+  done
+  for args in "api repos/me/demo/issues" \
+    "api -X POST repos/me/demo/issues/99/sub_issues -F sub_issue_id=1" \
+    "api repos/me/demo/issues/2/parent" \
+    "api -X POST repos/me/demo/issues/99/dependencies/blocked_by -F issue_id=1" \
+    "issue edit 2 --add-assignee @me"; do
+    : >.fake-gh/writes
+    # shellcheck disable=SC2086 # 引数に分けるため、クォートしない
+    gh $args >/dev/null 2>&1 || true
+    if grep -qE "$pat" .fake-gh/writes; then fail "「gh ${args}」の記録に files-issue が当たります: $(cat .fake-gh/writes)"; fi
+  done
+}
