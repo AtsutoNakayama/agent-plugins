@@ -560,7 +560,7 @@ dw_issue_parents() {
     # 関数は if の中から呼ばれると set -e が効かないので、失敗は明示して返す
     p="$(dw_gh_find gh api "repos/$repo/issues/$cur/parent")" || return 1
     [ "$p" != null ] || break
-    dw_same_repo "$(jq -r '.repository_url | sub("^.*/repos/"; "")' <<<"$p")" "$repo" || break
+    dw_same_repo "$(jq -r '.repository_url | sub("^.*?/repos/"; "")' <<<"$p")" "$repo" || break
     # 親の JSON は本文を含んで長くなりうるので、引数ではなく標準入力で jq に渡す（引数1つの長さには上限がある）
     out="$(printf '%s\n' "$out" "$p" | jq -sc '.[0] + [.[1] | {number, title, state, state_reason: (.state_reason // null)}]')" || return 1
     cur="$(jq -r .number <<<"$p")"
@@ -1204,7 +1204,7 @@ dw_project_item() {
   [ -z "${4:-}" ] || args+=(-f fields="$4")
   gh api --paginate "$1/items" -X GET "${args[@]}" \
     | jq -sc --arg r "$2" --argjson n "$3" "$DW_JQ_SAME_REPO"'
-        [add // [] | .[] | select(.content.number == $n and same_repo((.content.repository_url // "") | sub("^.*/repos/"; ""); $r))][0]'
+        [add // [] | .[] | select(.content.number == $n and same_repo((.content.repository_url // "") | sub("^.*?/repos/"; ""); $r))][0]'
 }
 
 # Project の項目から、<Issue の URL> の項目の id（node id）を探して出力する。無ければ何も出さずに失敗する。

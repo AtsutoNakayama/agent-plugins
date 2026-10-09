@@ -411,6 +411,24 @@ SH
   export PATH="$TMP/bin:$PATH" FIX="$TMP/fix"
 }
 
+@test "dw_issue_parents・dw_count_parents・dw_project_item は、所有者の名前が repos でもリポジトリを正しく読む" {
+  fake_gh_repos_owner
+  for n in 10 5; do
+    jq -n --argjson n "$n" '{number: $n, title: "親 \($n)", state: "open", url: "https://api.github.com/repos/repos/demo/issues/\($n)",
+      repository_url: "https://api.github.com/repos/repos/demo"}' >"$FIX/parent-$((n == 10 ? 17 : 10)).json"
+  done
+  run_common dw_issue_parents repos/demo 17
+  assert_success
+  assert_equal "$(jq -c 'map(.number)' <<<"$output")" '[10,5]'
+  run_common dw_count_parents '{"url": "https://api.github.com/repos/repos/demo/issues/17"}' 3
+  assert_success
+  assert_equal "$output" '{"count":2,"first":{"number":10,"repo":"repos/demo"}}'
+  jq -n '[{node_id: "IT12", content: {number: 12, repository_url: "https://api.github.com/repos/repos/demo"}}]' >"$FIX/items.json"
+  run_common dw_project_item users/me/projectsV2/4 repos/demo 12
+  assert_success
+  assert_equal "$(jq -r .node_id <<<"$output")" IT12
+}
+
 @test "dw_count_parents は、上限まで数えたらそれより上の親をたどらない" {
   fake_gh_repos_owner
   for c in 17:10 10:5 5:2; do

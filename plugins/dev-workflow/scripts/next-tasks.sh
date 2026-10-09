@@ -200,7 +200,7 @@ for n in $(jq -r '.[].number' <<<"$todo"); do
   deps="$(printf '%s\n' "$deps" "$api_all" "$body_deps" | jq -sc --argjson n "$n" --arg repo "$repo_nwo" "$DW_JQ_SAME_REPO"'
     .[1] as $a | .[2] as $b
     | .[0] + [{number: $n, blockers: (
-      (($a | map({repo: ((.repository_url // "") | sub("^.*/repos/"; "") | if . == "" or same_repo(.; $repo) then $repo else . end),
+      (($a | map({repo: ((.repository_url // "") | sub("^.*?/repos/"; "") | if . == "" or same_repo(.; $repo) then $repo else . end),
                   number, source: "dependency", state: (.state | ascii_downcase)}))
        + ($b | map({repo: $repo, number: ., source: "body", state: null})))
       | group_by([(.repo | ascii_downcase), .number])
