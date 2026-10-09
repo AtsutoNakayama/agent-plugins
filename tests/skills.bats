@@ -779,3 +779,15 @@ has() {
   grep -qF 'parent-state.sh --issue <番号> --assume-closed <番号>:<理由>' "$SKILLS/task-cancel/SKILL.md" || fail "task-cancel が取りやめた Issue を --assume-closed で渡していません"
   grep -q '「Issue だけ閉じる」を選んだときも含む' "$SKILLS/task-cancel/SKILL.md" || fail "task-cancel の手順8の実行条件がありません"
 }
+
+# shellcheck disable=SC2016 # バッククォートはスキルの本文の文字で、展開させない
+@test "task-finish は、マージ前に呼ばれたとき pr-merge-status.sh でマージキューの CI を待つか選んでもらい、外れていれば失敗を伝えて止まる" {
+  f="$SKILLS/task-finish/SKILL.md"
+  grep -q 'scripts/pr-merge-status.sh`' "$f"
+  grep -q 'pr-merge-status.sh --branch <ブランチ> --wait' "$f"
+  grep -q 'run_in_background' "$f"
+  grep -q 'キューの CI を待ってから後片付けする' "$f"
+  grep -q '`removed`' "$f"
+  grep -q '失敗したチェック' "$f"
+  [ -x "$SCRIPTS/pr-merge-status.sh" ]
+}
