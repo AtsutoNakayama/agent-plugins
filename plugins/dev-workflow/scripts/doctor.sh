@@ -105,6 +105,25 @@ if jq -e 'type == "object" and has("pr_respond")' >/dev/null 2>&1 <<<"$config"; 
   check old-pr-respond-key false warn "設定のキー pr_respond は使われません。pr_check に改めてください（例：pr_respond.handlers → pr_check.handlers）。どの層の設定にあっても同じです（.claude/dev-workflow/config.json・config.local.json・~/.claude/dev-workflow/config.json）"
 fi
 
+# pr_check.handlers に書いた担当の skill が、リポジトリ（.claude/skills/）かユーザー（~/.claude/skills/）にあるかを確かめる。
+# 書き間違えた名前は、gh-pr-check を実行して担当の skill を呼ぶときまで分からないため。
+# プラグインの skill（<プラグイン>:<名前>）は置き場所が違うので検査しない
+if [ -n "$repo_root" ]; then
+  missing_handlers=""
+  while IFS= read -r handler_skill; do
+    # <プラグイン>:<名前>（両側が1文字以上）の形だけを除く。「:」「a:」「:b」は壊れた名前なので除かない
+    case "$handler_skill" in ?*:?*) continue ;; esac
+    # パスに組み立てるのは、安全な名前（英数字・.・_・-）だけ。../x や a/b のような名前は「無い」ものとして扱う
+    if ! [[ "$handler_skill" =~ ^[A-Za-z0-9._-]+$ ]] || [ "$handler_skill" = . ] || [ "$handler_skill" = .. ] \
+      || { [ ! -f "$repo_root/.claude/skills/$handler_skill/SKILL.md" ] && { [ -z "${HOME:-}" ] || [ ! -f "$HOME/.claude/skills/$handler_skill/SKILL.md" ]; }; }; then
+      missing_handlers="$missing_handlers${missing_handlers:+、}${handler_skill:-（空）}"
+    fi
+  done < <(jq -r '(.pr_check.handlers // {}) | if type == "object" then .[] | strings else empty end' 2>/dev/null <<<"$config" || true)
+  if [ -n "$missing_handlers" ]; then
+    check pr-check-handlers false warn "pr_check.handlers の担当の skill が見つかりません: ${missing_handlers}（$repo_root/.claude/skills/<名前>/SKILL.md か ~/.claude/skills/<名前>/SKILL.md に置いてください。名前の書き間違いなら直してください）。見つからないと、gh-pr-check が担当の skill を呼べません"
+  fi
+fi
+
 # 古い置き場所（.claude/dev-workflow/ にまとめる前）のファイルは使われないので、移すよう促す
 moves=""
 # 使い方: old_location <古いパス> <新しいパス>。古いパスがディレクトリなら、*.md があるときだけ数える

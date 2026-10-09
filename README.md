@@ -50,15 +50,37 @@ Issue の番号を取るスキル（`task-start`・`task-status`・`task-finish`
 
 `gh-pr-check` は、投稿者ごとに担当の skill を、設定（`.claude/dev-workflow/config.json`）の `pr_check.handlers` で指定できます。担当の skill がある投稿者の指摘は、その skill に任せます（PR の番号を引数にして呼びます）。設定が無ければ、すべて汎用の手順で扱います。投稿者の名前は、大文字と小文字、末尾の `[bot]` を区別しません。
 
+次は、レビューの bot `some-reviewer[bot]` の担当を、リポジトリの skill `review-respond` にする例です。担当の skill の作り方は、下の「担当の skill を作る」を参照してください。
+
 ```json
 {
   "pr_check": {
     "handlers": {
-      "coderabbitai[bot]": "coderabbit-respond"
+      "some-reviewer[bot]": "review-respond"
     }
   }
 }
 ```
+
+### 担当の skill を作る
+
+担当の skill は、`.claude/skills/<名前>/SKILL.md`（リポジトリ。チームで共有できます）か `~/.claude/skills/<名前>/SKILL.md`（自分だけ）に置く普通の skill です。`<プラグイン>:<名前>` の形でプラグインの skill も指定できます。
+
+1. **受け取るもの**：`gh-pr-check` が、Skill ツールで PR の番号だけを引数にして呼びます。それ以外は渡されないので、skill の中で PR の状態を読みます。
+2. **自分の担当の分を読む**：`pr-feedback.sh --pr <PR番号>` を実行します（プラグインの `scripts/` にあり、読むだけで何も変えません）。出力の `feedback` は投稿者ごとの配列で、`author` が担当の投稿者のものだけを `jq` で取り出します。
+   ```bash
+   "${CLAUDE_PLUGIN_ROOT}/scripts/pr-feedback.sh" --pr 12 \
+     | jq '.feedback[] | select((.author | ascii_downcase | sub("\\[bot\\]$"; "")) == "some-reviewer")'
+   ```
+   比べる名前は小文字で書きます。`pr-feedback.sh` は、作者名を小文字にして末尾の `[bot]` を取り除いたもの（`ascii_downcase` と `sub("\\[bot\\]$"; "")`）で照らすので、例の `jq` も作者名を同じように正規化してから、小文字の名前と比べています。
+   各要素には、返信待ちのスレッド（`threads`）、レビュー本文（`reviews`）、PR のコメント（`comments`）が入っています。出力の全項目は、スクリプト冒頭のコメントにあります。
+3. **投稿者の名前の調べ方**：PR に付いた指摘の投稿者は、`gh pr view <PR番号> --json comments,reviews --jq '[.comments[].author.login, .reviews[].author.login] | unique'` で分かります。設定のキーと `feedback[].author` は、大文字と小文字、末尾の `[bot]` を区別せずに照らされます（`gh` は bot の名前を `[bot]` なしで返します）。
+4. **守る決まり**
+   - 自分の担当の投稿者の分だけを扱います。ほかの投稿者の指摘や、人のコメントは、触らずに `gh-pr-check` の汎用の手順に任せます。
+   - 直すものは、一覧にしてユーザーに選んでもらいます。勝手にすべてを直しません。
+   - push と、スレッドへの返信は、内容を見せて承認を得てから行います。
+
+書いたら `doctor.sh` を実行してください。`pr_check.handlers` の skill が、リポジトリにもユーザーにも見つからないと警告します（プラグインの skill は検査しません）。
 
 ### pr-respond から gh-pr-check への移行
 
@@ -71,7 +93,7 @@ Issue の番号を取るスキル（`task-start`・`task-status`・`task-finish`
 {
   "pr_check": {
     "handlers": {
-      "coderabbitai[bot]": "coderabbit-respond"
+      "some-reviewer[bot]": "review-respond"
     }
   }
 }

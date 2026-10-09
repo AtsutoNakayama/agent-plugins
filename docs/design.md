@@ -293,7 +293,7 @@ PR を出した後のコメント・指摘・質問・CI の失敗を確かめ�
 
 - **状態を先に見せる**：CI・レビューの判定・マージできるか（`mergeStateStatus`）を最初に見せる。コメントが無く CI も失敗していなければ、何も変えずに終える。
 - **分類**：指摘（直す）・質問（答えるだけで、コードは変えない）・感想や承認（何もしない）に分けて一覧にする。CI の失敗も指摘に入れる。スレッドの持ち主（下の「スクリプト」）の最後のコメントの後に PR の作者が書いたスレッドは、返事待ちとして選ばせない（スレッドの最後のコメントで判断すると、人に答えた後に bot が書いたスレッドが、答えていないものとして残る）。
-- **担当の skill**：レビュアーごとに決まった流れがある（CodeRabbit は `@coderabbitai` を付けて返信し、CodeRabbit が直ったかを確かめて resolved にする、など）ので、投稿者ごとに担当の skill を設定で指定できる。設定はチームの規約として `.claude/dev-workflow/config.json` の `pr_check.handlers` に、投稿者 → skill の名前で書く（例：`{"coderabbitai[bot]": "coderabbit-respond"}`）。既定は空で、設定が無ければ、すべて汎用の手順で扱う。投稿者は、大文字と小文字、末尾の `[bot]` を区別せずに照らす（gh は bot の login を `[bot]` なしで返し、REST は付けて返すため）。担当の skill はリポジトリに置く（このリポジトリの `coderabbit-respond` はプラグインに同梱しない）。
+- **担当の skill**：レビュアーごとに決まった流れがある（レビューの bot ごとに、返信のしかたや、直ったかの確かめ方・resolved にする手順が違う、など）ので、投稿者ごとに担当の skill を設定で指定できる。設定はチームの規約として `.claude/dev-workflow/config.json` の `pr_check.handlers` に、投稿者 → skill の名前で書く（このリポジトリの設定の例：`{"coderabbitai[bot]": "coderabbit-respond"}`。プラグインは特定の bot に対応しておらず、既定の担当は無い）。既定は空で、設定が無ければ、すべて汎用の手順で扱う。投稿者は、大文字と小文字、末尾の `[bot]` を区別せずに照らす（gh は bot の login を `[bot]` なしで返し、REST は付けて返すため）。担当の skill はリポジトリ（`.claude/skills/`）かユーザー（`~/.claude/skills/`）に置く（このリポジトリの `coderabbit-respond` はプラグインに同梱しない）。書き方は README の「担当の skill を作る」。`doctor.sh` が、書いた skill が見つからなければ警告する（プラグインの skill `<プラグイン>:<名前>` は検査しない）。
   - 担当の skill がある投稿者の分は、PR の番号を引数にしてその skill を呼んで任せ、中身は読まない。担当の skill は自分の担当の分だけを扱い、直すものの選択・返信と push の承認を自分で取る。汎用の手順の分の push を先に済ませてから呼ぶ（担当の skill が見せる push するコミットに、汎用の分が混ざらないようにする）。
   - 担当の skill がセッションに無ければ、そのことを伝えて汎用の手順で扱う。
 - **確認**：直すもの・答えるものはユーザーが選ぶ。返信と push は、push するコミットと返信の本文を見せて承認を得てから行う。
@@ -413,7 +413,7 @@ Todo が増えたとき、どれから着手するか、同時に進めてよい
 
 | プラグイン側（`plugins/dev-workflow/scripts/`） | 役割 |
 |---|---|
-| `doctor.sh` | 認証とスコープ、gh・`jq`・bash のバージョン、設定ファイルと、設定の base_branch が使える値かを確認する（導入していないリポジトリ（`.claude/dev-workflow/config.json` が無い）なら、フックとユーザーの層が効かないことを警告して repo-setup を案内し、gh が古ければ更新を促し、古い置き場所の設定・ガイド・観点・ラベルの定義があれば移すよう促し、個人の設定が git に無視されていなければ .gitignore に足すよう促し、既にコミットしてあれば git rm --cached で追跡を外すよう促し、ラベルの定義にあってリポジトリに無いラベルがあれば repo-setup を案内し、base_branch にマージキューと strict のどちらが効いているかを示し、必須のチェックが無ければ警告し（チームの設定の `require_status_checks` が false なら警告しない）、キューを使っていれば必須のチェックのワークフローが merge_group で動くかを示す） |
+| `doctor.sh` | 認証とスコープ、gh・`jq`・bash のバージョン、設定ファイルと、設定の base_branch が使える値かを確認する（導入していないリポジトリ（`.claude/dev-workflow/config.json` が無い）なら、フックとユーザーの層が効かないことを警告して repo-setup を案内し、gh が古ければ更新を促し、古い置き場所の設定・ガイド・観点・ラベルの定義があれば移すよう促し、個人の設定が git に無視されていなければ .gitignore に足すよう促し、既にコミットしてあれば git rm --cached で追跡を外すよう促し、ラベルの定義にあってリポジトリに無いラベルがあれば repo-setup を案内し、base_branch にマージキューと strict のどちらが効いているかを示し、必須のチェックが無ければ警告し（チームの設定の `require_status_checks` が false なら警告しない）、キューを使っていれば必須のチェックのワークフローが merge_group で動くかを示し、`pr_check.handlers` の担当の skill が `.claude/skills/` にも `~/.claude/skills/` にも無ければ警告する） |
 | `config.sh` | 5つの層を合わせた設定を出力する |
 | `issue-create.sh` | 起票、ラベルの付与、Project への追加、列と Story Point の設定、依存関係（blocked by）の登録、親の Issue への紐付け（サブ Issue） |
 | `issue-depend.sh` | 既にある Issue に、依存する Issue を足す（GitHub の依存関係（blocked by）と本文の「依存」。既にある依存は足さない。Issue が閉じていれば止まり、閉じた依存先は飛ばす）。`task-start` で今は着手しないことにしたときに使う |
