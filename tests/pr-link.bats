@@ -157,16 +157,21 @@ remote_branch() {
 @test "リモートにだけあるブランチを追跡ブランチとして作る git switch・checkout では、実行した後に、そのブランチの Issue を出す" {
   fake_issue 23 '["feat"]'
   remote_branch feat/23-x
-  local c
+  local c before after
   for c in "git checkout -t origin/feat/23-x" "git switch -t origin/feat/23-x" "git switch --track origin/feat/23-x" \
     "git checkout --track=direct origin/feat/23-x" "git switch feat/23-x" "git checkout feat/23-x" "git checkout -q feat/23-x"; do
     git switch -q feat/17-demo
     git branch -q -D feat/23-x 2>/dev/null || true
+    before="$(called issue-view)"
     # フックは、コマンドを実行した後に動く
     eval "$c" >/dev/null 2>&1
     git rev-parse -q --verify refs/heads/feat/23-x >/dev/null
     shows "$c" "Issue #23: https://github.com/me/demo/issues/23"
     [[ "$output" != *"issues/17"* ]]
+    # gh issue view が、Issue #23 に対して呼ばれた
+    after="$(called issue-view)"
+    [ "$after" -gt "$before" ]
+    [ "$(args issue-view "$after" | cut -d' ' -f1)" = 23 ]
   done
 }
 
