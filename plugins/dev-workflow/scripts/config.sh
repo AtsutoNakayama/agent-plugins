@@ -14,6 +14,8 @@
 # 文章のガイド（*.md）は guides.<名前> にパスの配列として入る（優先度の低い順）。
 # 導入したリポジトリ（チームの設定 2 があるリポジトリ。dw_is_set_up）でなければ、ユーザーの層（層4 と
 # ~/.claude/dev-workflow/*.md）は読まない（設計書 §1）。
+# ホームのリポジトリ（<repo>/.claude/dev-workflow が ~/.claude/dev-workflow と同じ場所）は、導入したリポジトリにならず、
+# その場所のファイルはチームの設定としても個人の上書きとしても読まない（dw_team_dir）。
 # 導入したかは、出力のトップレベルの set_up（真偽値）でも分かる。スキルが設定ファイルを自分で探さずに読むための値で、
 # ユーザーの層の判定（user_dir）と同じ1回の判定から決め、層を合わせた後に足すので、どの層の設定でも変えられない。
 set -euo pipefail
@@ -26,6 +28,9 @@ filter="${1:-.}"
 repo_root="$(dw_repo_root || true)"
 # 導入していないリポジトリでは、ユーザーの層を読まない（空になるので飛ばす）
 user_dir="$(dw_user_dir_for "$repo_root")"
+# チームの設定の置き場所。ホームのリポジトリ（ユーザーの層と同じ場所）では空で、チームの設定としては読まない
+team_dir=""
+[ -z "$repo_root" ] || team_dir="$(dw_team_dir "$repo_root")"
 # 導入したか（user_dir は導入したときだけ空でなくなる。判定は dw_is_set_up の1回だけ）
 set_up=false
 [ -z "$user_dir" ] || set_up=true
@@ -77,14 +82,14 @@ add_layer "$DW_PLUGIN_ROOT/defaults/workflow.json"
 [ -z "$user_dir" ] || add_layer "$user_dir/config.json"
 if [ -n "$repo_root" ]; then
   layers+=("$(detect_existing)")
-  add_layer "$repo_root/.claude/dev-workflow/config.json"
+  [ -z "$team_dir" ] || add_layer "$team_dir/config.json"
   # ワークツリーで作業中なら、メインのワークツリーに置いた個人の設定を使う
   add_layer "$(dw_local_config_file "$repo_root")"
 fi
 
 # 文章のガイド（優先度の低い順: ユーザー → リポジトリ）
 guides='{}'
-for dir in "$user_dir" "${repo_root:+$repo_root/.claude/dev-workflow}"; do
+for dir in "$user_dir" "$team_dir"; do
   if [ -z "$dir" ] || [ ! -d "$dir" ]; then
     continue
   fi

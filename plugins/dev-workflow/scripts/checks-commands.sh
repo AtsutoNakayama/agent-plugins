@@ -36,7 +36,8 @@
 #              warning は、保存した層より優先される層が別の値を決めていて、保存した値が使われないときの知らせか null）
 #
 # 止まるとき: checks.commands が null でも配列でもない・文字列でない要素や空の要素がある（終了コード 2）、
-#             --save の引数の誤り（64）、設定を読めない・書けない（2）、--save で書き込み先の設定の checks がオブジェクトでない（2。設定は書き換えない）
+#             --save の引数の誤り（64）、--save がホームのリポジトリ（.claude/dev-workflow がユーザーの層と同じ場所）で、何も書かずに止まる（2）、
+#             設定を読めない・書けない（2）、--save で書き込み先の設定の checks がオブジェクトでない（2。設定は書き換えない）
 set -euo pipefail
 
 # shellcheck source=lib/common.sh
@@ -91,10 +92,12 @@ if $save; then
     [ -n "$cmds" ] || dw_die "--save には --command か --none が要ります" 64
   fi
 
+  # ホームのリポジトリでは、ユーザーの層のファイルに書かない
+  dw_refuse_home_repo "$repo_root"
   if [ "$scope" = local ]; then
     target="$(dw_local_config_file "$repo_root")"
   else
-    target="$repo_root/.claude/dev-workflow/config.json"
+    target="$(dw_team_dir "$repo_root")/config.json"
   fi
   value="$(printf '%s' "$cmds" | jq -R . | jq -sc .)"
   if [ -f "$target" ]; then

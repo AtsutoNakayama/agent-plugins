@@ -325,3 +325,15 @@ echo "{\"base_branch\": \"main\"}"'
   refute_output --partial "warn:"
   [ -f "$WORKFLOW_USER_DIR/review/mine.md" ]
 }
+
+@test "ホームのリポジトリでは、repo の層には作らずに止まり、user の層には作って、導入できないことを警告する" {
+  make_home_repo
+  add "本文" --name mine --layer repo --title "自分の観点"
+  assert_failure 2
+  assert_output --partial "ホームのリポジトリ"
+  [ ! -e "$WORKFLOW_USER_DIR/review/mine.md" ]
+  add "本文" --name mine --layer user --title "自分の観点"
+  assert_success
+  assert_output --partial "ホームのリポジトリで、導入できない"
+  [ -f "$WORKFLOW_USER_DIR/review/mine.md" ]
+}

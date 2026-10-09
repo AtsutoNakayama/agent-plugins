@@ -510,3 +510,23 @@ QUEUE_RULES='[{"type": "required_status_checks", "parameters": {"strict_required
   run_script doctor.sh
   jq -e '.checks[] | select(.name == "set-up") | .ok' <<<"$output" >/dev/null || fail "$output"
 }
+
+@test "ホームのリポジトリでは、導入できないことを知らせ、repo-setup を案内しない" {
+  make_home_repo
+  echo '{"base_branch": "develop"}' >"$WORKFLOW_USER_DIR/config.json"
+  run_script doctor.sh
+  jq -e '.checks[] | select(.name == "set-up") | (.ok == false and .level == "warn" and (.detail | contains("ホームのリポジトリ") and (contains("導入するリポジトリ"))))' <<<"$output" >/dev/null || fail "$output"
+  jq -e '.checks[] | select(.name == "set-up") | (.detail | contains("導入できません"))' <<<"$output" >/dev/null || fail "$output"
+  jq -e '[.checks[] | select(.name == "set-up")][0].detail | test("^ホームのリポジトリ")' <<<"$output" >/dev/null || fail "$output"
+  # ユーザーの層の base_branch を、チームの設定として読まない
+  jq -e '.checks[] | select(.name == "base-branch") | .detail == "main"' <<<"$output" >/dev/null || fail "$output"
+}
+
+@test "ホームのリポジトリでは、古い置き場所のファイルを、チームの設定の置き場所（ユーザーの層）へ移すよう案内しない" {
+  make_home_repo
+  echo '{}' >.claude/workflow.json
+  echo '{}' >.claude/workflow.local.json
+  run_script doctor.sh
+  jq -e '.checks[] | select(.name == "old-locations") | .ok' <<<"$output" >/dev/null || fail "$output"
+  jq -e '[.checks[] | select(.name == "local-ignored")] | length == 0' <<<"$output" >/dev/null || fail "$output"
+}

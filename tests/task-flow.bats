@@ -228,6 +228,15 @@ pos() {
   assert_output 1
 }
 
+@test "ホームのリポジトリでは、ユーザーの層のファイルがあっても導入したとみなさず、何も出さない" {
+  make_home_repo
+  echo '{}' >"$WORKFLOW_USER_DIR/config.json"
+  echo "個人の追記です" >"$WORKFLOW_USER_DIR/task-flow.md"
+  run_hook
+  assert_success
+  assert_output ""
+}
+
 @test "導入していないリポジトリ（config.local.json とディレクトリだけ）では、何も出さない（#244）" {
   rm -f .claude/dev-workflow/config.json
   echo '{}' >.claude/dev-workflow/config.local.json

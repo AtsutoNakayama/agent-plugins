@@ -691,3 +691,12 @@ workflow() {
   assert_equal "$(jq -c .merge_queue.merge_group <<<"$json")" null
   assert_equal "$(called PUT)" 1
 }
+
+@test "ホームのリポジトリでは、ユーザーの層の base_branch を、守るブランチを決めるチームの設定として読まない" {
+  setup_fake_gh
+  make_home_repo
+  echo '{"base_branch": "develop"}' >"$WORKFLOW_USER_DIR/config.json"
+  run_setup
+  assert_success
+  assert_equal "$(body POST | jq -c .conditions.ref_name.include)" '["refs/heads/main"]'
+}

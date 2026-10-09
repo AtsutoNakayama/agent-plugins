@@ -312,3 +312,79 @@ run_common() {
   assert_success
   assert_output "v=2.96.0"
 }
+
+@test "dw_team_dir は、ユーザーの層と同じ場所なら空で、違えばチームの設定の置き場所を出す（シンボリックリンクや、まだ無いディレクトリも実体で比べる）" {
+  # shellcheck disable=SC2016 # $1・$2 は bash -c の中で展開する
+  team_dir() { "${TEST_BASH:-bash}" -c '. "$1"; dw_team_dir "$2"' _ "$SCRIPTS/lib/common.sh" "$1"; }
+  # 違う場所
+  assert_equal "$(team_dir "$REPO")" "$REPO/.claude/dev-workflow"
+  # 同じ場所
+  export WORKFLOW_USER_DIR="$REPO/.claude/dev-workflow"
+  assert_equal "$(team_dir "$REPO")" ""
+  # ディレクトリがまだ無くても同じ場所
+  rm -rf "$REPO/.claude"
+  assert_equal "$(team_dir "$REPO")" ""
+  # ユーザーの層が、シンボリックリンクを通した同じ場所
+  mkdir -p "$TMP/real/.claude/dev-workflow"
+  ln -s "$TMP/real" "$TMP/link"
+  export WORKFLOW_USER_DIR="$TMP/link/.claude/dev-workflow"
+  assert_equal "$(team_dir "$TMP/real")" ""
+  # チームの設定のほうがシンボリックリンク
+  export WORKFLOW_USER_DIR="$TMP/real/.claude/dev-workflow"
+  rm -rf "$REPO/.claude"
+  mkdir -p "$REPO/.claude"
+  ln -s "$TMP/real/.claude/dev-workflow" "$REPO/.claude/dev-workflow"
+  assert_equal "$(team_dir "$REPO")" ""
+}
+
+@test "ホームのリポジトリは、ユーザーの層のファイルがあっても導入したとみなさない（dw_is_set_up）" {
+  # shellcheck disable=SC2016 # $1・$2 は bash -c の中で展開する
+  is_set_up() { "${TEST_BASH:-bash}" -c '. "$1"; dw_is_set_up "$2"' _ "$SCRIPTS/lib/common.sh" "$1"; }
+  mark_set_up
+  run is_set_up "$REPO"
+  assert_success
+  make_home_repo
+  run is_set_up "$REPO"
+  assert_failure
+  # ワークツリーも、メインのワークツリーがホームのリポジトリなら導入したとみなさない
+  git worktree add -q "$TMP/wt" -b feature
+  run is_set_up "$TMP/wt"
+  assert_failure
+}
+
+@test "ホームのリポジトリのワークツリーは、ユーザーの層のファイルをコミットしてあっても、導入したとみなさない（dw_is_set_up）" {
+  # shellcheck disable=SC2016 # $1・$2 は bash -c の中で展開する
+  wt_is_set_up() { "${TEST_BASH:-bash}" -c '. "$1"; dw_is_set_up "$2"' _ "$SCRIPTS/lib/common.sh" "$1"; }
+  make_home_repo
+  echo '{}' >"$REPO/.claude/dev-workflow/config.json"
+  git add -f .claude/dev-workflow/config.json
+  git commit -q -m "user layer"
+  git worktree add -q "$TMP/wt" -b feature
+  # ワークツリーには、コミットされたファイルの写しがある（ユーザーの層とは別の場所）
+  [ -f "$TMP/wt/.claude/dev-workflow/config.json" ]
+  run wt_is_set_up "$TMP/wt"
+  assert_failure
+  run wt_is_set_up "$REPO"
+  assert_failure
+}
+
+@test "dw_team_dir は、メインのワークツリーがホームのリポジトリなら、リンクされたワークツリーでも何も出さない" {
+  # shellcheck disable=SC2016 # $1・$2 は bash -c の中で展開する
+  wt_team_dir() { "${TEST_BASH:-bash}" -c '. "$1"; dw_team_dir "$2"' _ "$SCRIPTS/lib/common.sh" "$1"; }
+  git worktree add -q "$TMP/wt" -b feature
+  # ホームのリポジトリでなければ、ワークツリーでも出す
+  run wt_team_dir "$TMP/wt"
+  assert_output "$TMP/wt/.claude/dev-workflow"
+  make_home_repo
+  run wt_team_dir "$TMP/wt"
+  assert_output ""
+  run wt_team_dir "$REPO"
+  assert_output ""
+}
+
+@test "dw_team_dir は、引数が無くても set -u で落ちず、何も出さない" {
+  # shellcheck disable=SC2016 # 引数は、起動した bash の中で展開させる
+  run "${TEST_BASH:-bash}" -c 'set -eu; . "$1"; dw_team_dir; echo ok' _ "$SCRIPTS/lib/common.sh"
+  assert_success
+  assert_output ok
+}

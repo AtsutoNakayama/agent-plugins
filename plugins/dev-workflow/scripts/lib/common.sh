@@ -330,18 +330,79 @@ dw_main_root() {
   dw_repo_main_root "$c" bare
 }
 
+# パスの実体（シンボリックリンクを解いた絶対パス）を出力する。まだ無いパスは、あるところまでを解いて、残りをそのまま付ける
+# （ディレクトリがまだ無くても、ユーザーの層と同じ場所かを比べられるように）
+# 使い方: dw_physical_path <パス>
+dw_physical_path() {
+  local p="$1" rest="" base d
+  case "$p" in /*) ;; *) p="$PWD/$p" ;; esac
+  while [ ! -d "$p" ] && [ "$p" != / ]; do
+    base="${p##*/}"
+    rest="/$base$rest"
+    p="${p%/*}"
+    [ -n "$p" ] || p=/
+  done
+  d="$(cd -P "$p" 2>/dev/null && pwd -P)" || d="$p"
+  [ "$d" != / ] || [ -z "$rest" ] || d=""
+  printf '%s%s\n' "$d" "$rest"
+}
+
+# リポジトリのチームの設定の置き場所（<ルート>/.claude/dev-workflow）を出力する。
+# ホームをリポジトリにしている（dotfiles を ~/.git などで管理している）と、この場所がユーザーの層の置き場所
+# （dw_user_dir。~/.claude/dev-workflow）と同じになる。ユーザーの層のファイルをチームの設定として読み書きしないよう、
+# その場合は、メインのワークツリーがその場所のリンクされたワークツリーでも、何も出力しない（シンボリックリンクやまだ無いディレクトリも、実体で比べる）。
+# 使い方: dw_team_dir <リポジトリのルート>
+dw_team_dir() {
+  local d user main
+  [ -n "${1:-}" ] || return 0
+  d="$1/.claude/dev-workflow"
+  user="$(dw_physical_path "$(dw_user_dir)")"
+  [ "$(dw_physical_path "$d")" != "$user" ] || return 0
+  # ホームのリポジトリのワークツリー（.git がファイル）には、コミットされたユーザーの層のファイルの写しがあるが、
+  # チームの設定ではないので、メインのワークツリーがホームのリポジトリなら出力しない。
+  # 普通のリポジトリ（.git がディレクトリ）では git を起動しない（フックが毎回呼ぶため）
+  if [ -f "$1/.git" ]; then
+    main="$(dw_main_root "$1" || true)"
+    [ -z "$main" ] || [ "$main" = "$1" ] || [ "$(dw_physical_path "$main/.claude/dev-workflow")" != "$user" ] || return 0
+  fi
+  printf '%s\n' "$d"
+}
+
+# ホームのリポジトリ（チームの設定の置き場所がユーザーの層と同じ場所になるリポジトリ）なら成功する。
+# 使い方: dw_is_home_repo <リポジトリのルート（空ならリポジトリの外で、失敗する）>
+dw_is_home_repo() {
+  [ -n "${1:-}" ] && [ -z "$(dw_team_dir "$1")" ]
+}
+
+# ホームのリポジトリなら、チームの設定を書く操作を止める（終了コード 2）。ユーザーの層のファイルに書くと、
+# 導入したリポジトリのすべてに効いてしまうため。
+# 使い方: dw_refuse_home_repo <リポジトリのルート>
+dw_refuse_home_repo() {
+  if dw_is_home_repo "${1:-}"; then
+    dw_die "ホームのリポジトリ（${1}）には導入できません。チームの設定の置き場所 .claude/dev-workflow が、ユーザーの層（$(dw_user_dir)）と同じ場所になるためです。導入するリポジトリの中で実行してください" 2
+  fi
+}
+
 # このプラグインを導入したリポジトリ（チームの設定 .claude/dev-workflow/config.json があるリポジトリ）なら成功する。
 # プラグインが効く範囲を、Claude Code で有効にした範囲（ユーザー単位なら全リポジトリ）ではなく、導入したリポジトリに限るため、
 # 導入していないリポジトリでは、フックは何もせず、ユーザーの層（~/.claude/dev-workflow/）も読まない（設計書 §1）。
 # ワークツリーに無くても、メインのワークツリー（dw_main_root）にあれば導入したとみなす（初期設定をまだコミットしていないときや、
-# 初期設定より前に作ったブランチのワークツリーで、守りが外れないようにする）
+# 初期設定より前に作ったブランチのワークツリーで、守りが外れないようにする）。
+# ホームのリポジトリ（dw_team_dir が空）と、そのワークツリー（メインのワークツリーがホームのリポジトリ）は、ユーザーの層のファイルが
+# チームの設定に見えるだけなので、導入したとみなさない
 # 使い方: dw_is_set_up <リポジトリのルート（空なら導入していない）>
 dw_is_set_up() {
-  local main
+  local main d
   [ -n "${1:-}" ] || return 1
-  [ -f "$1/.claude/dev-workflow/config.json" ] && return 0
   main="$(dw_main_root "$1" || true)"
-  [ -n "$main" ] && [ -f "$main/.claude/dev-workflow/config.json" ]
+  # メインのワークツリーがホームのリポジトリなら、そのワークツリーにも、コミットされたユーザーの層のファイルの写しが
+  # あるが（ユーザーの層とは別の場所）、チームの設定ではないので、導入したとみなさない
+  ! dw_is_home_repo "$main" || return 1
+  d="$(dw_team_dir "$1")"
+  [ -z "$d" ] || [ ! -f "$d/config.json" ] || return 0
+  [ -n "$main" ] || return 1
+  d="$(dw_team_dir "$main")"
+  [ -n "$d" ] && [ -f "$d/config.json" ]
 }
 
 # ユーザーごとの設定の置き場所。
@@ -868,11 +929,18 @@ dw_review_model_names() {
 # config.sh が読む場所と、setup-models.sh が書く場所を、ここで1つに決める
 # 使い方: dw_local_config_file <リポジトリのルート>
 dw_local_config_file() {
-  local f="$1/.claude/dev-workflow/config.local.json" main
+  local d f main
+  d="$(dw_team_dir "$1")"
+  # ホームのリポジトリでは、ユーザーの層の config.local.json を個人の上書きにしない（何も出力しない）
+  [ -n "$d" ] || return 0
+  f="$d/config.local.json"
   if [ ! -f "$f" ]; then
     # ワークツリーで作業中なら、メインのワークツリーに置いた個人の設定を使う
     main="$(dw_main_root "$1" || true)"
-    [ -n "$main" ] && f="$main/.claude/dev-workflow/config.local.json"
+    if [ -n "$main" ]; then
+      d="$(dw_team_dir "$main")"
+      [ -z "$d" ] || f="$d/config.local.json"
+    fi
   fi
   printf '%s\n' "$f"
 }
@@ -915,6 +983,8 @@ dw_write_config() {
 dw_local_config_state() {
   local f wt
   f="$(dw_local_config_file "$1")"
+  # 個人の上書きが無い（ホームのリポジトリ）ので、コミットされる心配も無い
+  if [ -z "$f" ]; then echo ignored; return 0; fi
   wt="${f%/.claude/dev-workflow/config.local.json}"
   if git -C "$wt" ls-files --error-unmatch -- .claude/dev-workflow/config.local.json >/dev/null 2>&1; then
     echo tracked
@@ -949,12 +1019,14 @@ dw_review_model_of() {
 # どれかの層のファイルが JSON のオブジェクトとして読めなければ、書く層でなくても止まる。
 # 使い方: dw_review_model_layers <リポジトリのルート>
 dw_review_model_layers() {
-  local pairs pair name f v user_dir
+  local pairs pair name f v user_dir team_dir
   pairs=()
   user_dir="$(dw_user_dir_for "$1")"
   [ -z "$user_dir" ] || pairs+=("user:$user_dir/config.json")
-  pairs+=("team:$1/.claude/dev-workflow/config.json" "local:$(dw_local_config_file "$1")")
-  for pair in "${pairs[@]}"; do
+  team_dir="$(dw_team_dir "$1")"
+  # ホームのリポジトリには、チームの層も個人の層も無い（dw_team_dir）
+  [ -z "$team_dir" ] || pairs+=("team:$team_dir/config.json" "local:$(dw_local_config_file "$1")")
+  for pair in ${pairs[@]+"${pairs[@]}"}; do
     name="${pair%%:*}" f="${pair#*:}"
     [ -f "$f" ] || continue
     # 壊れたファイルで止めるため、$(...) の外で確かめる（中で止めても、そのサブシェルが終わるだけになる）

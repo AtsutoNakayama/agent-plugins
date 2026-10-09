@@ -312,7 +312,8 @@ collect plugin "$DW_PLUGIN_ROOT/review"
 # 導入していないリポジトリでは、ユーザーの層を使わない（設計書 §1）
 user_review_dir="$(dw_user_review_dir_for "$repo_root")"
 [ -z "$user_review_dir" ] || collect user "$user_review_dir"
-[ -z "$repo_root" ] || collect repo "$repo_root/.claude/dev-workflow/review"
+# ホームのリポジトリでは、リポジトリの層がユーザーの層と同じ場所になるので、リポジトリの観点としては使わない
+[ -z "$repo_root" ] || [ -z "$(dw_team_dir "$repo_root")" ] || collect repo "$(dw_team_dir "$repo_root")/review"
 
 # 優先度の低い層から順に入れ、同じ名前は後の層で置き換える
 result="$(jq -n --argjson r "$records" --argjson inv "$invalid" '
