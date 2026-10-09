@@ -56,6 +56,12 @@ check() {
   check "$START" '.status.plan = {"action":"push","reason":"merged_not_pushed"}' "checks merged_not_pushed"
 }
 
+@test "start 8：plan.action が未知の値なら止まる。ただし unpulled が 1 以上なら pull が先" {
+  check "$START" '.status.plan = {"action":"bogus","reason":"x"}' "stop unknown_plan"
+  check "$START" '.status.plan = {"action":"bogus","reason":"x"} | .status.unpulled = 1' "pull unpulled"
+  check "$START" '.status.plan = {"action":"bogus","reason":"x"} | .status.dirty = true' "stop dirty"
+}
+
 @test "start：dirty が false でも null でも、unpulled が無ければ進む" {
   check "$START" 'del(.status.dirty) | del(.status.unpulled)' "merge conflict"
 }
@@ -111,4 +117,25 @@ check() {
   run_script repair-next.sh <<<"$START"
   assert_success
   assert_equal "$(jq -c 'keys' <<<"$output")" '["action","reason"]'
+}
+
+@test "verify 5：pass でも dirty が true なら push_check に進まず止まる（fail・unpulled・unconfirmed より後）" {
+  check "$VERIFY" '.status.dirty = true' "stop dirty"
+  check "$VERIFY" '.status.dirty = true | .push_check_ok = null' "stop dirty"
+  check "$VERIFY" '.status.dirty = true | .checks = "fail"' "fix checks_failed"
+  check "$VERIFY" '.status.dirty = true | .status.unpulled = 1' "pull unpulled"
+  check "$VERIFY" '.status.dirty = false' "push ready"
+}
+
+@test "入力の型が違うと 64 で止まる（null と省略は既定の値）" {
+  local f
+  for f in '.rechecks = "1"' '.rechecks = true' '.status.dirty = "false"' '.status.dirty = 0' '.status.unpulled = "1"'; do
+    run_script repair-next.sh <<<"$(jq -c "$f" <<<"$START")"
+    assert_failure 64
+  done
+  for f in '.fix_attempts = "1"' '.max_fix_attempts = "3"' '.push_check_ok = "true"' '.push_check_ok = 1' '.status.dirty = "true"' '.status.unpulled = [1]'; do
+    run_script repair-next.sh <<<"$(jq -c "$f" <<<"$VERIFY")"
+    assert_failure 64
+  done
+  check "$VERIFY" '.fix_attempts = null | .max_fix_attempts = null | .status.dirty = null' "push ready"
 }

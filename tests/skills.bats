@@ -344,7 +344,7 @@ has() {
   done
   has "衝突の直し方" "$(sed -n '/^### 衝突の直し方/,/^### PR のコメント/p' <<<"$un")" \
     '指示役が次のとおりに決める' '止まる衝突' '.github/workflows/' '.claude/'
-  has "PR のコメント" "$(sed -n '/^### PR のコメント/,/^### 止まる/p' <<<"$un")" '<!-- dev-workflow:repair-run -->' '代わりに決めたこと' '--edit-last' '追記する'
+  has "PR のコメント" "$(sed -n '/^### PR のコメント/,/^### 止まる/p' <<<"$un")" '<!-- dev-workflow:repair-run -->' '代わりに決めたこと' 'issues/comments/<ID>' '-X PATCH' '`--edit-last` は使わない' '追記する'
   has "止まる" "$(sed -n '/^### 止まる$/,/^### 結果を返す/p' <<<"$un")" \
     'git merge --abort' 'auto-hold.sh --issue <番号> --run-id <実行の id> --reason-file <ファイル>' 'repair-stopped reason=other' 'push はしない'
   # 無人で GitHub に書き込まない／resolve しない
