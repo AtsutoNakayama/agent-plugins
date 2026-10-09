@@ -268,11 +268,13 @@ while IFS= read -r a; do
 done <<<"$(jq -r '.actions[]?' <<<"$status")"
 
 # --- 6. Issue のチェックリストにチェックを付け、項目を足す ----------------------
-[ "$(jq length <<<"$to_check")" -gt 0 ] \
-  && note "Issue #${issue} のチェックリストの項目「$(jq -r 'join("」「")' <<<"$to_check")」にチェックを付ける"
-[ "$(jq length <<<"$to_add")" -gt 0 ] \
-  && note "Issue #${issue} のチェックリストに項目「$(jq -r 'join("」「")' <<<"$to_add")」を足す"
-if ! $dry_run && [ "$(jq -n --argjson c "$to_check" --argjson a "$to_add" '$c + $a | length')" -gt 0 ]; then
+# 項目（to_check・to_add）は --check・--add-task の数だけ長くなるので、引数ではなく標準入力で jq に渡す
+# （引数1つの長さには上限がある）。項目を並べた知らせも、note（引数で渡す）を通さずに jq の中で作る
+actions="$(printf '%s\n' "$actions" "$to_check" "$to_add" | jq -sc --arg i "$issue" '
+  .[0]
+  + (if (.[1] | length) > 0 then ["Issue #\($i) のチェックリストの項目「\(.[1] | join("」「"))」にチェックを付ける"] else [] end)
+  + (if (.[2] | length) > 0 then ["Issue #\($i) のチェックリストに項目「\(.[2] | join("」「"))」を足す"] else [] end)')"
+if ! $dry_run && [ "$(printf '%s\n' "$to_check" "$to_add" | jq -s 'add | length')" -gt 0 ]; then
   # 確かめた後に本文が変わっていてもよいよう、読み直した本文で、文が同じ項目を探して付ける
   # $( ) は末尾の改行を落とすので、本文は JSON のまま扱う
   now_json="$(gh issue view "$issue" --json body)" \
@@ -290,8 +292,8 @@ if ! $dry_run && [ "$(jq -n --argjson c "$to_check" --argjson a "$to_add" '$c + 
   # 足す項目は、最初の項目がある節（次の見出しの手前まで。コードブロックの中の見出しの形の行は見出しとみなさない）の
   # 最後の空でない行の後に、最初の項目と同じ字下げで置く。改行は本文に合わせる（DW_JQ_LINES。CRLF の本文の改行の無い最後の行の
   # 後に足しても、LF を混ぜない）
-  printf '%s\n' "$now_json" "$now_scan" | jq -sj --argjson c "$to_check" --argjson a "$now_add" "$DW_JQ_LINES"'
-    .[1] as $scan | .[0]
+  printf '%s\n' "$now_json" "$now_scan" "$to_check" "$now_add" | jq -sj "$DW_JQ_LINES"'
+    .[1] as $scan | .[2] as $c | .[3] as $a | .[0]
     | $scan.items as $t | $scan.headings as $headings
     | ($t | map(select(.text as $s | $c | index($s))) | map(.line)) as $lines
     | .body // "" | split("\n")
@@ -329,14 +331,13 @@ fi
 # 組織のルールセットも含めてブランチに効いているルールで見る）。読むだけなので dry-run でも読む。読めなければ null にし、止めない
 merge_queue="$(dw_merge_queue_enabled '{owner}/{repo}' "$pr_base")" || merge_queue=null
 
-# 本文と Issue のチェックリストの項目（tasks）は大きいことがあるので、引数では渡さない（引数1つの長さには上限がある）。
-# 本文は一時ファイル（body_tmp）から --rawfile で、tasks は標準入力の JSON で渡す（標準入力の -R では、4096 バイトを超える1行の
-# BMP の外の文字が読み込みの区切りで割れることがある）
-printf '%s\n' "$tasks" | jq --rawfile body "$body_tmp" --argjson i "$issue" --arg branch "$branch" --arg base "$base" --arg pr_base "$pr_base" --arg title "$title" \
+# 本文、Issue のチェックリストの項目（tasks）、指定した項目（to_check・to_add）と、それを並べた知らせを含む actions は
+# 大きいことがあるので、引数では渡さない（引数1つの長さには上限がある）。本文は一時ファイル（body_tmp）から --rawfile で、
+# ほかは標準入力の JSON で渡す（標準入力の -R では、4096 バイトを超える1行の BMP の外の文字が読み込みの区切りで割れることがある）
+printf '%s\n' "$tasks" "$to_check" "$to_add" "$actions" | jq -s --rawfile body "$body_tmp" --argjson i "$issue" --arg branch "$branch" --arg base "$base" --arg pr_base "$pr_base" --arg title "$title" \
   --argjson labels "$labels" --argjson breaking "$breaking" --argjson draft "$draft" --argjson created "$created" \
   --arg number "$pr_number" --arg url "$pr_url" --argjson status "$status" \
-  --argjson checked "$to_check" --argjson added "$to_add" \
-  --argjson dry "$dry_run" --argjson actions "$actions" --argjson merge_queue "$merge_queue" '. as $tasks | {
+  --argjson dry "$dry_run" --argjson merge_queue "$merge_queue" '.[0] as $tasks | .[1] as $checked | .[2] as $added | .[3] as $actions | {
     issue: $i,
     dry_run: $dry,
     branch: $branch,

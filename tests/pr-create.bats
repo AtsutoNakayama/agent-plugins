@@ -846,3 +846,22 @@ fake_issue_tasks() {
   assert_success
   assert_equal "$(jq -r .body <<<"$json")" "$(cat "$TMP/pr-body")"
 }
+
+@test "--check と --add-task を多く指定しても（項目の合計が引数の長さの上限の 128 KiB を超えても）、本文を直して PR を作る" {
+  setup_branch
+  pad="$(printf 'x%.0s' $(seq 1 240))"
+  args=()
+  body='## やること'
+  for i in $(seq 1 600); do
+    body="${body}
+- [ ] c${i}-${pad}"
+    args+=(--check "c${i}-${pad}" --add-task "a${i}-${pad}")
+  done
+  set_issue_body "$body"
+  run_pr --issue 17 --body-file "$TMP/body.md" "${args[@]}"
+  assert_success
+  assert_equal "$(jq -c '[(.checked | length), (.added | length), .added[0], (.actions | map(select(test("チェックリスト"))) | length)]' <<<"$json")" \
+    "[600,600,\"a1-${pad}\",2]"
+  assert_equal "$(grep -c '^- \[x\] c' "$TMP/issue-edit-body")" 600
+  assert_equal "$(grep -c '^- \[ \] a' "$TMP/issue-edit-body")" 600
+}
