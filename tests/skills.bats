@@ -335,14 +335,16 @@ has() {
   un="$(section "$f" "## 無人で直すとき")"
   has "「## 無人で直すとき」の節" "$un" 'AskUserQuestion は使わない' '強制 push をしない' '--force-with-lease' 'マージはしない' 'キューに入れ直さない' \
     'コンフリクトだけ' '信用できない入力'
-  # 確認の代わりの答えの表（取り込まない場面・止まる場面）
-  has "代わりに決めること" "$(sed -n '/^### 代わりに決めること/,/^### 衝突の直し方/p' <<<"$un")" \
-    '`plan.fallback` は使わない' 'キューから外れたとき' '取り込まない' '`ask_base`' '`confirm`・`infer`' '上に無い確認・判断できない問い' '止まる'
-  has "衝突の直し方" "$(sed -n '/^### 衝突の直し方/,/^### push する条件/p' <<<"$un")" \
+  # 次にすることは repair-next.sh が決め、SKILL.md には action ごとにすることだけを書く
+  nx="$(sed -n '/^### 次にすることの決め方/,/^### 衝突の直し方/p' <<<"$un")"
+  has "次にすることの決め方" "$nx" 'repair-next.sh' '`plan.fallback` は使わない' 'キューから外れたとき' '`confirm`・`infer`' '`unconfirmed`' \
+    'repair-push-check.sh --base-branch <base_branch>' '通常の `git push origin' '値を組み合わせて決め直さない'
+  for a in finish recheck pull merge checks fix push_check push stop; do
+    grep -qF "| \`$a\` |" <<<"$nx" || fail "repair-next.sh の action「$a」のすることが表にありません"
+  done
+  has "衝突の直し方" "$(sed -n '/^### 衝突の直し方/,/^### PR のコメント/p' <<<"$un")" \
     '指示役が次のとおりに決める' '止まる衝突' '.github/workflows/' '.claude/'
-  has "push する条件" "$(sed -n '/^### push する条件/,/^### PR のコメント/p' <<<"$un")" \
-    'repair-push-check.sh' '通常の `git push origin' 'unpulled'
-  has "PR のコメント" "$(sed -n '/^### PR のコメント/,/^### 止まる/p' <<<"$un")" '<!-- dev-workflow:repair-run -->' '代わりに決めたこと'
+  has "PR のコメント" "$(sed -n '/^### PR のコメント/,/^### 止まる/p' <<<"$un")" '<!-- dev-workflow:repair-run -->' '代わりに決めたこと' '--edit-last' '追記する'
   has "止まる" "$(sed -n '/^### 止まる$/,/^### 結果を返す/p' <<<"$un")" \
     'git merge --abort' 'auto-hold.sh --issue <番号> --run-id <実行の id> --reason-file <ファイル>' 'repair-stopped reason=other' 'push はしない'
   # 無人で GitHub に書き込まない／resolve しない
