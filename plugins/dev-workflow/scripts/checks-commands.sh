@@ -182,7 +182,7 @@ if [ "$commands" = null ]; then
     targets="$(LC_ALL=C sed -En 's/^((test|lint|check|typecheck|build|verify|ci)[A-Za-z0-9_.-]*):([^=]|$).*/\1/p' "$repo_root/$mk" | sort -u)"
   fi
   # glob は呼んだディレクトリではなく、リポジトリのルートで展開する
-  ci="$(cd "$repo_root" && for f in .github/workflows/*.yml .github/workflows/*.yaml .gitlab-ci.yml .circleci/config.yml Jenkinsfile; do
+  ci="$(CDPATH='' cd "$repo_root" && for f in .github/workflows/*.yml .github/workflows/*.yaml .gitlab-ci.yml .circleci/config.yml Jenkinsfile; do
     if [ -f "$f" ]; then printf '%s\n' "$f"; fi
   done)"
   for f in Cargo.toml go.mod pyproject.toml pytest.ini tox.ini setup.py justfile Taskfile.yml composer.json Gemfile pom.xml build.gradle build.gradle.kts mix.exs deno.json; do

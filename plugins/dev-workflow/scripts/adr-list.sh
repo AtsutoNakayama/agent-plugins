@@ -82,7 +82,7 @@ if [ -d "$repo_root/$adr_dir" ]; then
   done
   if [ $# -gt 0 ]; then
     files="$(printf '%s\n' "$@")"
-    rows="$(cd "$repo_root" && awk "$DW_AWK_STRIP_CR_BOM$DW_AWK_YAML"'
+    rows="$(CDPATH='' cd "$repo_root" && awk "$DW_AWK_STRIP_CR_BOM$DW_AWK_YAML"'
       # YAML の1行の値を読む（strip・unquote は DW_AWK_YAML。merge-group-check.sh と同じ読み方）
       function clean(v) {
         sub(/^[^:]*:/, "", v)

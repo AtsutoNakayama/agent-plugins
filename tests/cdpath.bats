@@ -63,12 +63,60 @@ $ROOT/plugins/dev-workflow"
   assert_output --partial "MARKER_FROM_REPO"
 }
 
-@test "スクリプトとフックの置き場所を求める cd は、CDPATH を空にして実行する" {
-  cd "$ROOT"
-  # $(cd ... のように、CDPATH='' を付けずに dirname の結果へ cd する書き方が残っていないこと
-  # 相対パスになりうる cwd・CLAUDE_PROJECT_DIR・gc_git_dir・here への cd も同じ
+# CDPATH='' の無い cd を探す範囲（プラグインのスクリプトとフック、CI と eval のスクリプト、テストの共通の準備）
+CD_PATHS=(plugins .github/scripts tests/eval tests/test_helper.bash ':!*.md' ':!*.json')
+
+# CDPATH='' の無い cd の行を「<ファイル>:<行の中身（前の空白を除く）>」で出力する。コメントの行は除く。
+# cd はコマンドの位置（行頭、( $( { ; & | の後、then・do・else の後）にあるものだけを見る（case のパターンの cd | や、文の中の cd は見ない）。
+# CDPATH='' cd は、cd の前が CDPATH='' なので当たらない
+# 使い方: bare_cd <git grep の pathspec>...
+bare_cd() {
   # shellcheck disable=SC2016 # 正規表現の $ をそのまま渡す
-  run git grep -nE '(\$\(|\( ?)cd "(\$\(dirname|\$DW_SCRIPTS_DIR|\$\{cwd|\$CLAUDE_PROJECT_DIR|\$gc_git_dir|\$here)' -- plugins .github/scripts tests/eval tests/test_helper.bash
-  assert_failure 1
+  git grep -nE --full-name -e '(^|[;&|({]|\$\(|\b(then|do|else))[[:space:]]*cd([[:space:]]+[^|[:space:]]|$)' -- "$@" \
+    | awk -F: '{ f = $1; sub(/^[^:]*:[0-9]+:[[:space:]]*/, ""); if ($0 !~ /^#/) print f ":" $0 }'
+}
+
+@test "cd は CDPATH を空にして実行する（絶対パスだと保証した cd だけを、一覧で許す）" {
+  cd "$ROOT"
+  # 許す cd。どれも、cd の前で絶対パスにしている
+  #   dw_abs_dir：相対パスなら基準のディレクトリ（絶対パス）を前に付けてから cd する
+  #   dw_physical_path：相対パスなら $PWD を前に付けてから cd する
+  #   test_helper_setup：REPO は mktemp -d の実体の絶対パス（pwd -P）の下
+  # shellcheck disable=SC2016 # 行の中身をそのまま書く
+  allowed='plugins/dev-workflow/scripts/lib/common.sh:(cd "$p" 2>/dev/null && pwd -P)
+plugins/dev-workflow/scripts/lib/common.sh:d="$(cd -P "$p" 2>/dev/null && pwd -P)" || d="$p"
+tests/test_helper.bash:cd "$REPO" || return 1'
+  found="$(bare_cd "${CD_PATHS[@]}")"
+  # 一覧に無い cd が残っていないこと
+  run grep -vxF -e "$allowed" <<<"$found"
   assert_output ""
+  # 一覧の cd が、どれもまだあること（消えた・書き換えた cd を、一覧に残さない）
+  run grep -vxF -e "$found" <<<"$allowed"
+  assert_output ""
+}
+
+@test "CDPATH='' の無い cd を足すと、検査で見つかる（コマンドの位置の cd だけを見る）" {
+  cd "$TMP"
+  git init -q -b main probe
+  cd probe
+  # shellcheck disable=SC2016 # 試す行をそのまま書く
+  printf '%s\n' \
+    'cd "$dir"' \
+    'x="$(cd "$dir" && pwd)"' \
+    '( cd "$dir" ) && { cd "$dir"; }' \
+    'if true; then cd -P "$dir"; fi' \
+    'true && cd "$dir"' \
+    'x="$(CDPATH='"''"' cd "$dir" && pwd)"' \
+    '  # cd "$dir" はコメント' \
+    '  cd | pushd) ;;' \
+    'echo "（cd ${p} で移る）"' >probe.sh
+  git add probe.sh
+  run bare_cd probe.sh
+  assert_success
+  # shellcheck disable=SC2016 # 期待する行をそのまま書く
+  assert_output 'probe.sh:cd "$dir"
+probe.sh:x="$(cd "$dir" && pwd)"
+probe.sh:( cd "$dir" ) && { cd "$dir"; }
+probe.sh:if true; then cd -P "$dir"; fi
+probe.sh:true && cd "$dir"'
 }

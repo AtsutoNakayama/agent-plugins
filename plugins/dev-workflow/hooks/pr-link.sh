@@ -203,7 +203,7 @@ config_root="" config=""
 load_config() {
   [ "$1" != "$config_root" ] || return 0
   config_root="$1"
-  config="$( (cd "$1" && WORKFLOW_REPO_ROOT="$1" "$BASH" "$DW_SCRIPTS_DIR/config.sh") 2>/dev/null || true)"
+  config="$( (CDPATH='' cd "$1" && WORKFLOW_REPO_ROOT="$1" "$BASH" "$DW_SCRIPTS_DIR/config.sh") 2>/dev/null || true)"
 }
 # ブランチ名を、そのリポジトリの branch.pattern に当てて、Issue の番号を issue に入れる（無ければ空）。
 # 設定の読み込みを使い回すため、$( ) の中では呼ばない。使い方: issue_of <ルート> <ブランチ名>
@@ -229,7 +229,7 @@ add_issue() {
     [ "$s" != "$1|$3" ] || return 0
   done
   seen_issues+=("$1|$3")
-  url="$( (cd "$2" && gh issue view "$3" --json url -q .url) 2>/dev/null || true)"
+  url="$( (CDPATH='' cd "$2" && gh issue view "$3" --json url -q .url) 2>/dev/null || true)"
   [ -z "$url" ] || add_link "$url" "Issue #${3}"
 }
 
@@ -272,13 +272,13 @@ for ((k = 0; k < ${#ev_kind[@]}; k++)); do
   # Issue のリンクを足すときに求めた番号を使う（導入していないリポジトリでは空）
   [ -n "${ev_issue[k]}" ] || continue
   # gh pr list が失敗したときは、PR が無いのか分からないので、PR・CI のリンクは出さない（Issue のリンクは出す）
-  if pr="$( (cd "$root" && gh pr list --head "$branch" --state open --json url,isCrossRepository \
+  if pr="$( (CDPATH='' cd "$root" && gh pr list --head "$branch" --state open --json url,isCrossRepository \
     -q 'map(select(.isCrossRepository | not)) | .[0].url // empty') 2>/dev/null)"; then
     if [ -n "$pr" ]; then
       add_link "$pr" "PR"
       add_link "$pr/checks" "CI"
     else
-      repo="$( (cd "$root" && gh repo view --json url -q .url) 2>/dev/null || true)"
+      repo="$( (CDPATH='' cd "$root" && gh repo view --json url -q .url) 2>/dev/null || true)"
       if [ -n "$repo" ]; then
         add_link "$repo/pull/new/$branch" "PR を作る"
         add_link "$repo/actions?query=branch%3A$(printf '%s' "$branch" | sed 's|/|%2F|g')" "CI"

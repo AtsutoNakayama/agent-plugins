@@ -92,7 +92,7 @@ fi
 repo_root="$(dw_repo_root)" || dw_die "リポジトリの中で実行してください" 64
 # ホームのリポジトリには導入できない。GitHub に何かを作る前に止まる
 dw_refuse_home_repo "$repo_root"
-cd "$repo_root"
+CDPATH='' cd "$repo_root"
 setup_dir="$DW_SCRIPTS_DIR/setup"
 
 # 4つを順に実行し、それぞれの出力を labels・project・repo・models に入れる。引数は dry-run のときに足すもの
