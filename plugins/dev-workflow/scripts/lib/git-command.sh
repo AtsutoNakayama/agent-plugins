@@ -61,21 +61,51 @@ gc_expand_home() {
 }
 
 # 基準のディレクトリからの相対パスを絶対パスにする（先頭の ~・$HOME は gc_expand_home で展開する）。分からなければ空を出力する。
+# まだ無いディレクトリ（同じコマンドの中で git init・git clone・mkdir で作るもの）は、あるところまでを実体にし、
+# 残りを文字のまま（. と .. は、シェルの cd と同じく文字の上で）つないだパスにする（gc_lexical_dir）。
+# そのパスでは git がリポジトリを見つけられないので、対象が分からないときと同じに扱われる（gc_new_repo で見分けるときを除く）
 # 使い方: gc_resolve_dir <基準のディレクトリ（空なら不明）> <パス> [no-tilde]
 gc_resolve_dir() {
   local p
   p="$(gc_expand_home "$2" "${3:-}")"
   case "$p" in
-    /*) dw_abs_dir / "$p" || true ;;
-    *) [ -z "$1" ] || dw_abs_dir "$1" "$p" || true ;;
+    /*) ;;
+    *)
+      [ -n "$1" ] || return 0
+      p="$1/$p"
+      ;;
   esac
+  dw_abs_dir / "$p" || gc_lexical_dir "$p" || true
+}
+
+# 絶対パスの . と .. を文字の上で解き、あるディレクトリまでを実体にして、残り（まだ無いところ）をつないで出力する
+# 使い方: gc_lexical_dir <絶対パス>
+gc_lexical_dir() {
+  local rest="${1#/}" out="" c head tail=""
+  while [ -n "$rest" ]; do
+    c="${rest%%/*}"
+    if [ "$c" = "$rest" ]; then rest=""; else rest="${rest#*/}"; fi
+    case "$c" in
+      '' | .) ;;
+      ..) out="${out%/*}" ;;
+      *) out="$out/$c" ;;
+    esac
+  done
+  head="$out"
+  while [ -n "$head" ] && [ ! -d "$head" ]; do
+    tail="/${head##*/}$tail"
+    head="${head%/*}"
+  done
+  head="$(dw_abs_dir / "${head:-/}")" || return 1
+  printf '%s\n' "${head%/}$tail"
 }
 
 # git の操作の対象（ディレクトリと、git のグローバルオプション・対象を変える環境変数）で git を実行する。
 # 使い方: gc_git <コマンド>...   （gc_git_dir と gc_gopts と gc_genv を参照する）
 gc_git() {
   [ -n "$gc_git_dir" ] || return 1
-  (CDPATH='' cd "$gc_git_dir" && env ${gc_genv[@]+"${gc_genv[@]}"} git ${gc_gopts[@]+"${gc_gopts[@]}"} "$@" 2>/dev/null)
+  # まだ無いディレクトリ（gc_resolve_dir）では、cd が失敗する。そのエラーは出さない
+  (CDPATH='' cd "$gc_git_dir" 2>/dev/null && env ${gc_genv[@]+"${gc_genv[@]}"} git ${gc_gopts[@]+"${gc_gopts[@]}"} "$@" 2>/dev/null)
 }
 
 # 操作の対象（gc_git_dir・gc_gopts・gc_genv）のリポジトリを求めて、gc_repo と gc_root に入れる。コールバックの中で呼ぶ。
@@ -1060,7 +1090,97 @@ gc_command() {
     esac
   done
   [ $# -gt 0 ] || return 0
+  # 同じコマンドの中で作るリポジトリを覚える（gc_new_repo）。--git-dir・GIT_DIR などがあると、作る場所が変わるので覚えない。
+  # after（コマンドの後）では、作ったリポジトリは既にあり、git が見つけられるので要らない
+  if ! $after && [ "${#gc_gopts[@]}" -eq 0 ] && [ "${#gc_genv[@]}" -eq 0 ]; then
+    case "$1" in
+      init | clone) gc_note_new_repo "$@" ;;
+    esac
+  fi
   "$callback" "$@"
+}
+
+# --- 同じコマンドの中で作るリポジトリ ------------------------------------------------------
+# フック（PreToolUse）はコマンドを実行する前に動くので、同じコマンドの中で git init・git clone で作るリポジトリは、まだ無く、
+# git が見つけられない。そこで、作る場所を gc_scan の作業用の変数 new_repos に、1行ずつ「<種類><場所>」（i は init、c は clone）で覚え、
+# その場所（とその下）で動く git を gc_new_repo で見分ける。
+
+# git init・git clone の引数から、作るリポジトリの場所を覚える。gc_command から呼ぶ。
+# git init [<ディレクトリ>] は、ディレクトリ（無ければ git を実行する場所）に作る。ただし、既にリポジトリのルート（bare なら
+# git のディレクトリ）なら、作り直すだけで中身は変わらないので覚えない（今までどおり、そのリポジトリで判断する）。
+# git clone <リポジトリ> [<ディレクトリ>] は、ディレクトリ（無ければ、リポジトリの名前の最後の部分。--bare・--mirror なら .git を足す）に作る
+# 使い方: gc_note_new_repo <init か clone> <引数>...
+gc_note_new_repo() {
+  local sub="$1" npos=0 first="" second="" bare=false d gd c top
+  shift
+  case "$sub" in
+    init) gc_args gc_note_new_repo_on b "--template= --separate-git-dir= --object-format= --ref-format= --initial-branch= --bare --quiet --shared" "$@" ;;
+    clone) gc_args gc_note_new_repo_on objuc "--origin= --branch= --upload-pack= --reference= --reference-if-able= --separate-git-dir= --depth= --shallow-since= --shallow-exclude= --config= --template= --jobs= --filter= --server-option= --bundle-uri= --ref-format= --revision= --bare --mirror" "$@" ;;
+  esac
+  if [ "$sub" = init ]; then
+    if [ "$npos" -eq 0 ]; then d="$gc_git_dir"; else d="$(gc_resolve_dir "$gc_git_dir" "$first")"; fi
+    [ -n "$d" ] || return 0
+    if [ -d "$d" ]; then
+      { IFS= read -r gd; IFS= read -r c; IFS= read -r top; } <<<"$(dw_repo_paths "$d" || true)" || true
+      [ "${top:-}" != "$d" ] && [ "${gd:-}" != "$d" ] || return 0
+    fi
+    new_repos+="i$d$nl"
+  else
+    [ "$npos" -ge 1 ] || return 0
+    if [ "$npos" -ge 2 ]; then
+      d="$second"
+    else
+      # git と同じく、末尾の / と /.git を除き、最後の / か : の後ろから .git・.bundle を除いた名前にする
+      d="${first%"${first##*[!/]}"}"
+      d="${d%/.git}"
+      d="${d%"${d##*[!/]}"}"
+      d="${d##*/}"
+      d="${d##*:}"
+      d="${d%.git}"
+      d="${d%.bundle}"
+      [ -n "$d" ] || return 0
+      ! $bare || d="$d.git"
+    fi
+    d="$(gc_resolve_dir "$gc_git_dir" "$d")"
+    [ -z "$d" ] || new_repos+="c$d$nl"
+  fi
+}
+gc_note_new_repo_on() {
+  case "$1" in
+    opt)
+      case "$2" in --bare | --mirror) bare=true ;; esac
+      ;;
+    arg)
+      npos=$((npos + 1))
+      case "$npos" in
+        1) first="$2" ;;
+        2) second="$2" ;;
+      esac
+      ;;
+  esac
+}
+
+# 操作の対象（gc_git_dir）が、同じコマンドの中で前に作ったリポジトリ（gc_note_new_repo）の場所かその下なら、
+# gc_new_kind に、作った方法（init・clone）を入れる。違えば空にする。後で覚えたものほど優先する。コールバックの中で呼ぶ
+gc_new_kind=""
+# shellcheck disable=SC2034 # gc_new_kind は呼び出し側（フック）が読む
+gc_new_repo() {
+  local s="$new_repos" e p
+  gc_new_kind=""
+  [ -n "$gc_git_dir" ] || return 0
+  while [ -n "$s" ]; do
+    e="${s%%"$nl"*}"
+    s="${s#*"$nl"}"
+    p="${e#?}"
+    case "$gc_git_dir" in
+      "$p" | "${p%/}"/*)
+        case "$e" in
+          i*) gc_new_kind=init ;;
+          *) gc_new_kind=clone ;;
+        esac
+        ;;
+    esac
+  done
 }
 
 # --- コマンドの文字列を単語に分ける ------------------------------------------------
@@ -1485,6 +1605,8 @@ gc_scan() {
   local hd_delims=() hd_strip=() hd_n=0
   # pushd で積んだ場所（gc_pushd の前のコメント）
   local pstack="" dl=() entry="" idx=0
+  # 同じコマンドの中で作るリポジトリ（gc_note_new_repo）
+  local new_repos=""
   local arith_i=0
   # 入れ子の段と、段ごとの情報（gc_restore の前のコメント）。dn は開いている ( ) の数。&&・||・| の後ろか（joined）
   local lvl=0 dn=0 lv_kind=(top) lv_pat=(false) lv_pipe=(false) lv_sd=() lv_sp=() joined=false

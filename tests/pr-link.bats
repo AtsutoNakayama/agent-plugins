@@ -564,6 +564,25 @@ EOF"
   [ "$(called issue-view)" -eq 0 ]
 }
 
+@test "同じコマンドの中で git init・git clone したリポジトリへ移った git の操作は、実行した後のそのリポジトリで判断する" {
+  # git init で作ったリポジトリは、導入していないので何も出さない
+  git init -q -b main "$TMP/proj"
+  git -C "$TMP/proj" commit -q --allow-empty -m x
+  run_hook "git init $TMP/proj && cd $TMP/proj && git commit -m x" "" "$TMP/proj"
+  assert_success
+  assert_output ""
+  # 導入したリポジトリを clone した先では、そのブランチの Issue を出す（コマンドの後に動くので、clone した先はもうある）
+  fake_issue 23 '["feat"]'
+  mark_set_up
+  git add .claude/dev-workflow/config.json
+  git commit -q -m setup
+  git clone -q "$REPO" "$TMP/d"
+  git -C "$TMP/d" switch -q -c feat/23-x
+  shows_wt "git clone $REPO $TMP/d && cd $TMP/d && git switch -c feat/23-x && git commit -m x" "$TMP/d"
+  # まだ無いディレクトリ（コマンドが失敗したなど）への cd の後は、移った先が分からないので出さない
+  silent "mkdir $TMP/none && cd $TMP/none && git commit -m x"
+}
+
 @test "ブランチを複数作るときは、作るブランチごとに Issue を出し、今のブランチの Issue を先に並べる" {
   fake_issue 23 '["feat"]'
   fake_issue 24 '["feat"]'

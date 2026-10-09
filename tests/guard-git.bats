@@ -402,6 +402,34 @@ silent() {
   allowed "cd - && git -C $REPO commit -m x" "cd - && git -C $REPO push" "cd - && git -C $REPO push origin HEAD"
 }
 
+@test "同じコマンドの中で git init で作るリポジトリは、導入していないので、cd・-C で移った後のコミットを止めない" {
+  silent "git init proj && cd proj && git commit -m x" "git init -q -b main proj; cd proj; git commit -m x" \
+    "git init $TMP/new && cd $TMP/new && git commit -m x" "mkdir d && cd d && git init && git commit -m x" \
+    "git init proj && git -C proj commit -m x" "git init proj && cd proj/ && git push -f origin main" \
+    "git -C $TMP init --template=x new && cd $TMP/new && git commit -m x" "git init proj && cd proj && mkdir a && cd a/.. && git commit -m x"
+  # 既にあるディレクトリでも、リポジトリのルートでなければ、git init は新しいリポジトリを作る
+  mkdir sub
+  silent "git init sub && cd sub && git commit -m x" "cd sub && git init && git commit -m x"
+  # 既にあるリポジトリのルートでの git init は、作り直すだけなので、そのリポジトリで判断する
+  denied "main の上ではコミットしません" "git init && git commit -m x" "git init . && git commit -m x" "git init $REPO && cd $REPO && git commit -m x"
+  # git init で作った場所と関係のない場所は、今までどおり判断する
+  denied "main の上ではコミットしません" "git init proj && git commit -m x" "git init proj && cd proj && cd $REPO && git commit -m x"
+}
+
+@test "同じコマンドの中で git clone するリポジトリは、まだ無くて調べられないので、cd・-C で移った後のコミットを止める" {
+  denied "git clone" "git clone $REPO d && cd d && git commit -m x" "git clone https://example.com/me/demo.git && cd demo && git commit -m x" \
+    "git clone -b main --depth 1 git@example.com:me/demo && cd demo && git commit -m x" "git clone $REPO d && git -C d push" \
+    "git clone --bare $REPO && cd repo.git && git commit -m x" "git clone -- $REPO d/ && cd d && git commit -m x"
+  # push 先を書いた push は、書かれた先で判断する
+  allowed "git clone $REPO d && cd d && git push origin feat/1-x"
+  denied "main へは push しません" "git clone $REPO d && cd d && git push origin main"
+}
+
+@test "mkdir だけで git init の無いディレクトリへの cd の後は、どのリポジトリに入るか分からないので、コミットを止める" {
+  denied "対象のリポジトリが分からない" "mkdir d && cd d && git commit -m x" "mkdir -p a/b && cd a/b && git commit -m x" \
+    "git init proj && cd proj2 && git commit -m x"
+}
+
 @test "対象のリポジトリが分からないときも、コミット・push 以外は止めない" {
   allowed "cd - && git switch -c feat/x" "cd - && git checkout -b feat/x" "cd - && git branch feat/x"
 }

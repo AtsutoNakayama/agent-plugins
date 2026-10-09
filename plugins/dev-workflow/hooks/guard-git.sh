@@ -15,6 +15,7 @@
 # 操作の対象のリポジトリ（cd・pushd・popd・git -C・env -C・sudo -D で移った先、--git-dir・GIT_DIR などで指したリポジトリ）が、導入して
 # いないリポジトリなら何もしない（gc_target・target_set_up）。git がリポジトリを見つけられないときは、守りを外さないよう調べる（設計書 §1）。
 # ただし今のブランチを読めないので、コミットと、push 先を書かない push（と HEAD・@ への push）は止める（target_unknown）。
+# 同じコマンドの中で git init で作るリポジトリは、導入していないので何もせず、git clone するリポジトリは、まだ無いので対象が分からないものとする（gc_new_repo）。
 # コマンドの文字列の解析は、pr-link.sh と共有する（scripts/lib/git-command.sh）。timeout・env などの前に付くコマンドは飛ばすが、
 # sh -c・xargs などを通したコマンドや git の別名（alias）を通すと見逃す。
 # 最後の守りは GitHub のルールセット（setup-repo.sh）。
@@ -85,7 +86,13 @@ target_set_up() {
 target_unknown() { [ -z "$gc_repo" ]; }
 
 # 対象が分からないときに止める理由。使い方: unknown_target_message <止める操作>
+# 同じコマンドの中で git clone するリポジトリ（new_clone）は、まだ無いので、clone と分けるよう案内する
+new_clone=false
 unknown_target_message() {
+  if $new_clone; then
+    echo "同じコマンドの中で git clone するリポジトリは、まだ無くて調べられないので、${1}は止めます（今のブランチが分からず、base_branch の上かを確かめられません）。git clone を先に実行してから、別のコマンドで操作してください"
+    return 0
+  fi
   echo "操作の対象のリポジトリが分からないので、${1}は止めます（今のブランチが分からず、base_branch の上かを確かめられません）。cd -- <絶対パス> && git ...、または git -C <絶対パス> ... で対象を書き直してください"
 }
 
@@ -202,8 +209,19 @@ check_git() {
   shift
   case "$sub" in
     commit | push | switch | checkout | branch | worktree)
-      # 操作の対象を求め、導入していないリポジトリなら何もしない（git がリポジトリを見つけられないときは、今までどおり調べる。ただし今のブランチを読めないので、コミットと push 先を書かない push（と HEAD・@ への push）は止める。target_unknown）
-      gc_target
+      # 操作の対象を求め、導入していないリポジトリなら何もしない（git がリポジトリを見つけられないときは、今までどおり調べる。ただし今のブランチを読めないので、コミットと push 先を書かない push（と HEAD・@ への push）は止める。target_unknown）。
+      # 同じコマンドの中で git init で作るリポジトリは、まだチームの設定が無い（導入していない）ので何もしない。
+      # git clone するリポジトリは、まだ無く、導入したかもブランチも分からないので、対象が分からないときと同じに扱う（gc_new_repo）
+      gc_new_repo
+      new_clone=false
+      case "$gc_new_kind" in
+        init) return 0 ;;
+        clone)
+          gc_repo="" gc_root=""
+          new_clone=true
+          ;;
+        *) gc_target ;;
+      esac
       target_set_up || return 0
       ;;
     *) return 0 ;;
