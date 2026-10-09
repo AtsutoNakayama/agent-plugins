@@ -126,6 +126,31 @@ has() {
   grep -q '手順2で探した結果' <<<"$step3" || fail "手順3の確認に、探した結果がありません"
 }
 
+@test "task-create は、分けた Issue も手順2で読んだ一覧と照らし、重なりの問いを手順3の確認に1回にまとめる" {
+  f="$SKILLS/task-create/SKILL.md"
+  step2="$(step "$f" 2)"
+  step3="$(step "$f" 3)"
+  grep -q '分けた Issue の重複と親の候補を照らす' <<<"$step2" || fail "手順2に、分けた Issue を照らす節がありません"
+  grep -q '一覧は読み直さない' <<<"$step2" || fail "開いている Issue の一覧を読み直さないことが書かれていません"
+  grep -q '残りの分けた Issue の下書きは止めない' <<<"$step2" || fail "重なった Issue だけを対象にし、全体を止めないことが書かれていません"
+  grep -q '案の親子の木で決め' <<<"$step2" || fail "親の候補と案の親子の木がぶつかるときの扱いが書かれていません"
+  grep -q '手順3の確認の中で1回にまとめる' <<<"$step2" || fail "重なりの問いを1回にまとめることが書かれていません"
+  grep -q '分けた Issue が既にある Issue と重なるとき' <<<"$step3" || fail "手順3の確認に、分けた Issue の重なりの問いがありません"
+  for choice in '外す' '重ならない部分だけにする' 'そのまま起票する'; do
+    grep -q "\*\*${choice}\*\*" <<<"$step2" || fail "手順2に、重なった Issue の扱い「${choice}」がありません"
+    grep -q "\*\*${choice}\*\*" <<<"$step3" || fail "手順3に、手順2と同じ言葉の選択肢「${choice}」がありません"
+  done
+  grep -q '選択肢が4つを超えないように' <<<"$step3" || fail "重なりの3択が起票の選択肢の代わりであることが書かれていません"
+  grep -q '手順3で分割を提案するときに、その案を照らす' <<<"$step2" || fail "21/34 の分割を照らすタイミング（手順3の分割の提案）が手順2に書かれていません"
+  grep -q '下の Story Point 21/34 の分割の段落の、分割の案を見せる確認.*の中で同じ3つを聞く' <<<"$step3" || fail "手順3の分割の確認の中で重なりを聞くことが書かれていません"
+  grep -q '「分割する」を、重なりの3つの扱い' <<<"$step3" || fail "21/34 の分割の段落に、「分割する」を3つの扱いごとの選択肢に置き換えることが書かれていません"
+  grep -q '「このまま設定する」と合わせて4つにする' <<<"$step3" || fail "21/34 の分割の段落に、選択肢を4つに収めることが書かれていません"
+  grep -q '外した親の代わりとして使う例外' <<<"$step2" || fail "親を外すときの扱いが書かれていません"
+  grep -q '子を親なしで起票し' <<<"$step2" || fail "外した親の代わりの Issue を親にできないときの扱いが書かれていません"
+  grep -q '外した親のさらに上の親にする' <<<"$step2" || fail "木の途中の親を外すときの扱いが書かれていません"
+  grep -qF "依存先を既にある Issue の \`#N\` に付け替え" <<<"$step2" || fail "依存先の付け替えが書かれていません"
+}
+
 @test "task-next は読み取り専用（確認を取らず、Issue や列を変えるスクリプトを呼ばない。設計書 §8）" {
   f="$SKILLS/task-next/SKILL.md"
   grep -q 'next-tasks.sh' "$f" || fail "task-next が next-tasks.sh を使っていません"
@@ -819,4 +844,20 @@ has() {
   # バックグラウンドの --wait が JSON を出さずに終わったときは、止まらずに2-2に進む
   grep -q 'JSON が出ずに異常終了したとき.*止まらずに.*2-2に進む' "$f"
   [ -x "$SCRIPTS/pr-merge-status.sh" ]
+}
+
+# shellcheck disable=SC2016 # バッククォートはスキルの本文の文字で、展開させない
+@test "task-create は、着手まで頼まれていなければ、起票の後に着手するかを聞いてから task-start に進む（task-create・task-flow・設計書）" {
+  local f="$SKILLS/task-create/SKILL.md"
+  grep -q '^### 6. 着手するかを聞く' "$f" || fail "task-create に、着手するかを聞く手順がありません"
+  grep -q "候補は着手できる子の Issue だけで、新しく起票した親は除く" "$f" || fail "task-create の手順6に、候補から新しい親を除くことがありません"
+  grep -q "着手まで頼まれていて、子が特定されていないとき：着手する子を AskUserQuestion で聞き、選ばれた子の番号を渡す" "$f" || fail "task-create の手順6に、親子で子が特定されていないときに子を聞くことがありません"
+  grep -q '「起票して着手して」のように着手まで頼まれたときは、通常は聞かずに `task-start` に進む' "$f" || fail "着手まで頼まれたときは聞かないことがありません"
+  grep -q '今は着手しない' "$f" || fail "「今は着手しない」の選択肢がありません"
+  grep -q '起票した後に着手するかは使う人が決める' "$BATS_TEST_DIRNAME/../plugins/dev-workflow/defaults/task-flow.md" || fail "task-flow.md にありません"
+  grep -q '着手するかを聞いてから `task-start` に進む' "$BATS_TEST_DIRNAME/../docs/design.md" || fail "設計書にありません"
+  grep -q 'task-create 手順6 | 起票した後に着手するか | 聞かず、着手しない' "$SKILLS/task-auto/SKILL.md" || fail "task-auto の確認の代わりの表にありません"
+  grep -q '手順6（着手するかを聞く）は行わず' "$SKILLS/task-auto/SKILL.md" || fail "task-auto の手順5にありません"
+  grep -q '既存の Issue に「着手して」と言ったときは、もう一度聞きません' "$BATS_TEST_DIRNAME/../plugins/dev-workflow/defaults/task-flow.md" || fail "task-flow.md に既存の Issue の扱いがありません"
+  grep -q '起票した後に着手するか（着手まで頼まれていないとき）' "$BATS_TEST_DIRNAME/../docs/design.md" || fail "設計書の確認を取る操作の列にありません"
 }
