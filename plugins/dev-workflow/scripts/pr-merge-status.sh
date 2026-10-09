@@ -70,7 +70,7 @@ done
 
 # 1回確かめる。結果の JSON を標準出力に出す
 check_once() {
-  local view base run_json
+  local view base queue run_json
   view="$(gh pr view ${pr:+"$pr"} ${branch:+"$branch"} --json number,url,state,baseRefName,headRefName,autoMergeRequest 2>&1)" \
     || dw_die "PR を読めません: $view"
   jq -e 'type == "object" and has("number") and has("state")' >/dev/null 2>&1 <<<"$view" \
@@ -81,11 +81,15 @@ check_once() {
   if [ "$(jq -r .state <<<"$view")" = OPEN ]; then
     queue="$(dw_merge_queue_enabled '{owner}/{repo}' "$base")" || queue=false
   fi
-  # --limit は、キューに並んだ PR が多くても、この PR の実行を取りこぼさないよう大きめにする
-  run_json="$(gh run list --event merge_group --limit 200 --json headBranch,name,workflowName,status,conclusion,url,createdAt 2>&1)" \
-    || dw_die "マージキューの CI の実行を読めません: $run_json"
-  jq -e 'type == "array"' >/dev/null 2>&1 <<<"$run_json" \
-    || dw_die "マージキューの CI の実行を読めません: $run_json"
+  # キューの実行は、OPEN でキューを使うときだけ読む（MERGED・CLOSED やキューを使わないリポジトリでは、Actions が無効でも権限が無くても動きを変えない）
+  run_json='[]'
+  if [ "$queue" = true ]; then
+    # --limit は、キューに並んだ PR が多くても、この PR の実行を取りこぼさないよう大きめにする
+    run_json="$(gh run list --event merge_group --limit 200 --json headBranch,name,workflowName,status,conclusion,url,createdAt 2>&1)" \
+      || dw_die "マージキューの CI の実行を読めません: $run_json"
+    jq -e 'type == "array"' >/dev/null 2>&1 <<<"$run_json" \
+      || dw_die "マージキューの CI の実行を読めません: $run_json"
+  fi
 
   # jq の変数（$v など）を bash に展開させないため、シングルクォートで書く
   # shellcheck disable=SC2016
@@ -107,7 +111,7 @@ check_once() {
     | {pr: {number: $v.number, url: $v.url, state: $v.state, base: $v.baseRefName, branch: $v.headRefName},
        status: $s, merge_queue: ($q == true),
        queue_runs: $checks,
-       failed: (if $s == "removed" then [$latest[] | select(failed) | {name: (if (.workflowName // "") != "" then .workflowName else .name end), url}] else [] end)}'
+       failed: (if $s == "removed" then [$checks[] | select(failed) | {name, url}] else [] end)}'
 }
 
 out="$(check_once)"

@@ -38,6 +38,7 @@ pick() { # pick <名前>: 呼び出し回数に合うファイルを選ぶ
 case "$1 $2" in
   "pr view") pick pr; echo "READ pr $*" >>"$CALLS" ;;
   "run list")
+    [ ! -f "$FIX/run-fail" ] || { echo "READ runs-failed" >>"$CALLS"; echo "gh: Actions が無効です" >&2; exit 1; }
     case " $* " in *" --event merge_group "*) ;; *) echo "gh: --event merge_group が無い" >&2; exit 1 ;; esac
     pick runs; echo "READ runs $*" >>"$CALLS"
     ;;
@@ -112,6 +113,27 @@ teardown() { rm -rf "$TMP"; }
   runs_file runs.json "$(qrun $Q5 completed failure test 2026-10-01T00:00:00Z)"
   run_script pr-merge-status.sh --pr 5
   assert_equal "$(st)" not_queued
+}
+
+@test "キューの実行は、OPEN でキューを使うときだけ読む（MERGED・CLOSED・キューを使わないときは gh run list が失敗しても動きを変えない）" {
+  echo 'run list を呼んだ' >"$FIX/run-fail"
+  pr_json '{state: "MERGED"}'
+  run_script pr-merge-status.sh --pr 5
+  assert_success
+  assert_equal "$(st)" merged
+  pr_json '{state: "CLOSED"}'
+  run_script pr-merge-status.sh --pr 5
+  assert_equal "$(st)" not_queued
+  pr_json '{}'
+  echo '[]' >"$FIX/rules.json"
+  run_script pr-merge-status.sh --pr 5
+  assert_success
+  assert_equal "$(st)" not_queued
+  if grep -q '^READ runs' "$CALLS"; then fail "gh run list を呼んでいます"; fi
+  # キューを使うときは読み、読めなければ失敗する
+  echo '[{"type": "merge_queue"}]' >"$FIX/rules.json"
+  run_script pr-merge-status.sh --pr 5
+  assert_failure
 }
 
 @test "表: ルールを読めないときは、キューを使わないものとして not_queued" {
