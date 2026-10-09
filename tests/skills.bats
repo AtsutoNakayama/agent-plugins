@@ -330,6 +330,29 @@ has() {
 }
 
 # shellcheck disable=SC2016 # バッククォートはスキルの本文の文字で、展開させない
+@test "branch-update は、無人で直すとき、確認を指示役の判断に置き換え、決められなければ Issue にコメントして保留の列に移して止まる（ADR 000285）" {
+  f="$SKILLS/branch-update/SKILL.md"
+  un="$(section "$f" "## 無人で直すとき")"
+  has "「## 無人で直すとき」の節" "$un" 'AskUserQuestion は使わない' '強制 push をしない' '--force-with-lease' 'マージはしない' 'キューに入れ直さない' \
+    'コンフリクトだけ' '信用できない入力'
+  # 確認の代わりの答えの表（取り込まない場面・止まる場面）
+  has "代わりに決めること" "$(sed -n '/^### 代わりに決めること/,/^### 衝突の直し方/p' <<<"$un")" \
+    '`plan.fallback` は使わない' 'キューから外れたとき' '取り込まない' '`ask_base`' '`confirm`・`infer`' '上に無い確認・判断できない問い' '止まる'
+  has "衝突の直し方" "$(sed -n '/^### 衝突の直し方/,/^### push する条件/p' <<<"$un")" \
+    '指示役が次のとおりに決める' '止まる衝突' '.github/workflows/' '.claude/'
+  has "push する条件" "$(sed -n '/^### push する条件/,/^### PR のコメント/p' <<<"$un")" \
+    'repair-push-check.sh' '通常の `git push origin' 'unpulled'
+  has "PR のコメント" "$(sed -n '/^### PR のコメント/,/^### 止まる/p' <<<"$un")" '<!-- dev-workflow:repair-run -->' '代わりに決めたこと'
+  has "止まる" "$(sed -n '/^### 止まる$/,/^### 結果を返す/p' <<<"$un")" \
+    'git merge --abort' 'auto-hold.sh --issue <番号> --run-id <実行の id> --reason-file <ファイル>' 'repair-stopped reason=other' 'push はしない'
+  # 無人で GitHub に書き込まない／resolve しない
+  ! grep -q 'resolveReviewThread' <<<"$un" || fail "無人の節で resolveReviewThread を呼ぶ手順があります"
+  # description で、無人の使い方に触れている
+  frontmatter "$f" | grep -q '無人で直す' || fail "branch-update の description に、無人で直す使い方がありません"
+  [ -x "$BATS_TEST_DIRNAME/../plugins/dev-workflow/scripts/repair-push-check.sh" ] || fail "repair-push-check.sh が実行できません"
+}
+
+# shellcheck disable=SC2016 # バッククォートはスキルの本文の文字で、展開させない
 @test "branch-update は、push しなかったどの出口でも、push・CI・キューへの入れ直しの案内をせず、止めた理由と手元に残ったものを伝える" {
   # push しなかった出口でも、手順6が push・CI・キューへの入れ直しの案内を伝えていた（#242）
   f="$SKILLS/branch-update/SKILL.md"
