@@ -737,6 +737,45 @@ DW_STORY_POINT_SPLIT=21
 # shellcheck disable=SC2034
 DW_SUB_ISSUE_DEPTH_GUIDE=2
 
+# 設定（config.sh の出力）から sub_issues.max_depth を読み、1・2・3 のどれかなら出力する。それ以外なら終了コード 2 で止まる。
+# "2" のような文字列は認めないよう、JSON の形のまま比べる。
+# 使い方: max_depth="$(dw_max_depth "$config")"
+dw_max_depth() {
+  local v
+  v="$(jq -c '.sub_issues.max_depth' <<<"$1")" || return 1
+  case "$v" in
+    1 | 2 | 3) printf '%s\n' "$v" ;;
+    *) dw_die "sub_issues.max_depth は 1・2・3 のどれかにしてください: $v" 2 ;;
+  esac
+}
+
+# REST の Issue（repos/<所有者/名前>/issues/<番号>）を読んで出力する。無いか PR の番号なら null。
+# 使い方: json="$(dw_rest_issue <OWNER/NAME> <番号>)"
+dw_rest_issue() {
+  local out
+  out="$(dw_gh_find gh api "repos/$1/issues/$2")" || return 1
+  jq -c 'if . == null or .pull_request then null else . end' <<<"$out"
+}
+
+# REST の Issue の JSON から上へ issues/{番号}/parent をたどり、親を <上限> 個まで数えて、
+# {count（数えた親の数）, first（一番近い親の {number, repo}。repo は API の url から読む。親が無ければ null）} を出力する。
+# 上限まで数えたら、それより上はたどらない（親子の深さが上限を超えると分かった時点で止めるため。API の呼び出しは <上限> 回まで）。
+# 親の親は別のリポジトリにあることもあるので、応答の API の URL からパスを作り、別のリポジトリの親もたどる。
+# 使い方: dw_count_parents <Issue の JSON> <上限>
+dw_count_parents() {
+  local node="$1" limit="$2" count=0 first=null
+  while [ "$count" -lt "$limit" ]; do
+    # 関数は if の中から呼ばれると set -e が効かないので、失敗は明示して返す
+    node="$(dw_gh_find gh api "repos/$(jq -r '.url | sub("^.*?/repos/"; "")' <<<"$node")/parent")" || return 1
+    [ "$node" != null ] || break
+    if [ "$first" = null ]; then
+      first="$(jq -c '{number, repo: (.url | sub("^.*?/repos/"; "") | sub("/issues/[0-9]+$"; ""))}' <<<"$node")" || return 1
+    fi
+    count=$((count + 1))
+  done
+  jq -nc --argjson c "$count" --argjson f "$first" '{count: $c, first: $f}'
+}
+
 # 破壊的変更を表すラベル。type ラベルとは別に付け、PR のタイトルの type の後に ! を付ける（設計書 §5）。source した側で使う
 # shellcheck disable=SC2034
 DW_BREAKING_LABEL=breaking

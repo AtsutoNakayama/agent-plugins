@@ -388,3 +388,39 @@ run_common() {
   assert_success
   assert_output ok
 }
+
+# 所有者が repos のリポジトリ（API の URL が .../repos/repos/<名前>）を読む偽の gh を置く。
+# gh api repos/<所有者>/<名前>/issues/<番号>/parent は $TMP/fix/parent-<番号>.json を返し（無ければ 404）、
+# gh api --paginate <パス>/items ... は $TMP/fix/items.json を返す
+fake_gh_repos_owner() {
+  mkdir -p "$TMP/bin" "$TMP/fix"
+  cat >"$TMP/bin/gh" <<'SH'
+#!/usr/bin/env bash
+case "$1 $2" in
+  "api repos/"*/parent)
+    n="${2%/parent}"
+    n="${n##*/}"
+    [ -f "$FIX/parent-$n.json" ] || { echo 'gh: No parent issue found (HTTP 404)' >&2; exit 1; }
+    cat "$FIX/parent-$n.json"
+    ;;
+  "api --paginate") cat "$FIX/items.json" ;;
+  *) echo "gh: unexpected $*" >&2; exit 1 ;;
+esac
+SH
+  chmod +x "$TMP/bin/gh"
+  export PATH="$TMP/bin:$PATH" FIX="$TMP/fix"
+}
+
+@test "dw_count_parents は、上限まで数えたらそれより上の親をたどらない" {
+  fake_gh_repos_owner
+  for c in 17:10 10:5 5:2; do
+    jq -n --argjson n "${c#*:}" '{number: $n, url: "https://api.github.com/repos/me/demo/issues/\($n)"}' >"$FIX/parent-${c%%:*}.json"
+  done
+  run_common dw_count_parents '{"url": "https://api.github.com/repos/me/demo/issues/17"}' 2
+  assert_equal "$output" '{"count":2,"first":{"number":10,"repo":"me/demo"}}'
+  run_common dw_count_parents '{"url": "https://api.github.com/repos/me/demo/issues/17"}' 0
+  assert_equal "$output" '{"count":0,"first":null}'
+  rm "$FIX/parent-17.json"
+  run_common dw_count_parents '{"url": "https://api.github.com/repos/me/demo/issues/17"}' 3
+  assert_equal "$output" '{"count":0,"first":null}'
+}
