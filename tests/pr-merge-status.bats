@@ -9,16 +9,18 @@ load test_helper
 #   PR の state / 入力                                         status      その他
 #   MERGED                                                      merged
 #   CLOSED                                                      not_queued
-#   OPEN で autoMergeRequest がある                             waiting
-#   OPEN で実行が無い                                           not_queued
-#   OPEN で、一番新しいキューのブランチに動いている実行がある   waiting
-#   OPEN で、そのブランチに失敗した実行がある                   removed     failed に失敗したチェックと URL
+#   OPEN でも、マージキューを使わない（ルールに merge_queue が無い）  not_queued  autoMergeRequest や実行があっても
+#   キューを使い、一番新しいキューのブランチに失敗した実行がある  removed     failed に失敗したチェックと URL（autoMergeRequest が残っていても）
+#   キューを使い、そのブランチに動いている実行がある            waiting
+#   キューを使い、実行が無く autoMergeRequest がある            waiting
+#   キューを使い、実行も予約も無い                              not_queued
 #   OPEN で、そのブランチの実行がすべて成功                     waiting     （マージ待ち）
 #   別の PR（pr-50- と pr-5-）や別の base のキューの実行は見ない
 #
 # 偽の gh。
 # - gh pr view ... --json ...   $FIX/pr-<n>.json（n は pr view の呼び出し回数。無ければ $FIX/pr.json）を返す
 # - gh run list ...             $FIX/runs-<n>.json（無ければ $FIX/runs.json）を返す。引数に --event merge_group が無ければ失敗する
+# - gh api --paginate repos/.../rules/branches/...  $FIX/rules.json（既定は merge_queue のルールあり）を返す
 # - それ以外（書き込みを含む）は、$CALLS に「WRITE <引数>」を記録して失敗する
 setup_fake_gh() {
   FIX="$TMP/fix"
@@ -39,6 +41,7 @@ case "$1 $2" in
     case " $* " in *" --event merge_group "*) ;; *) echo "gh: --event merge_group が無い" >&2; exit 1 ;; esac
     pick runs; echo "READ runs $*" >>"$CALLS"
     ;;
+  "api --paginate") cat "$FIX/rules.json" ;;
   *) echo "WRITE $*" >>"$CALLS"; echo "gh: 想定外の呼び出し: $*" >&2; exit 1 ;;
 esac
 SH
@@ -46,6 +49,7 @@ SH
   export PATH="$TMP/bin:$PATH"
   pr_json '{}'
   echo '[]' >"$FIX/runs.json"
+  echo '[{"type": "merge_queue"}, {"type": "pull_request"}]' >"$FIX/rules.json"
 }
 
 # PR の JSON を作る。使い方: pr_json <既定の値に上書きするオブジェクト（jq の式）> [ファイル名（既定 pr.json）]
@@ -95,6 +99,41 @@ teardown() { rm -rf "$TMP"; }
   run_script pr-merge-status.sh --pr 5
   assert_success
   assert_equal "$(st)" waiting
+}
+
+@test "表: キューを使わないリポジトリでは、予約や実行があっても OPEN は not_queued" {
+  echo '[{"type": "pull_request"}]' >"$FIX/rules.json"
+  pr_json '{autoMergeRequest: {enabledAt: "2026-10-01T00:00:00Z"}}'
+  runs_file runs.json "$(qrun $Q5 in_progress null test 2026-10-01T00:00:00Z)"
+  run_script pr-merge-status.sh --pr 5
+  assert_success
+  assert_equal "$(st)" not_queued
+  assert_equal "$(jq -r .merge_queue <<<"$output")" false
+  runs_file runs.json "$(qrun $Q5 completed failure test 2026-10-01T00:00:00Z)"
+  run_script pr-merge-status.sh --pr 5
+  assert_equal "$(st)" not_queued
+}
+
+@test "表: ルールを読めないときは、キューを使わないものとして not_queued" {
+  rm "$FIX/rules.json"
+  pr_json '{autoMergeRequest: {enabledAt: "2026-10-01T00:00:00Z"}}'
+  run_script pr-merge-status.sh --pr 5
+  assert_success
+  assert_equal "$(st)" not_queued
+}
+
+@test "表: キューを使わなくても MERGED は merged" {
+  echo '[]' >"$FIX/rules.json"
+  pr_json '{state: "MERGED"}'
+  run_script pr-merge-status.sh --pr 5
+  assert_equal "$(st)" merged
+}
+
+@test "表: 失敗した実行は、自動マージの予約が残っていても removed（予約より先に見る）" {
+  pr_json '{autoMergeRequest: {enabledAt: "2026-10-01T00:00:00Z"}}'
+  runs_file runs.json "$(qrun $Q5 completed failure test 2026-10-01T00:00:00Z)" "$(qrun $Q5 in_progress null lint 2026-10-01T00:00:00Z)"
+  run_script pr-merge-status.sh --pr 5
+  assert_equal "$(st)" removed
 }
 
 @test "表: OPEN で実行も予約も無ければ not_queued" {

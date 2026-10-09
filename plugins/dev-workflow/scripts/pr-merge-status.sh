@@ -16,17 +16,21 @@
 #               removed      マージキューの CI が失敗して、キューから外れた（PR は OPEN のまま）
 #               waiting      マージキューの CI が動いている、または通ってマージを待っている
 #               not_queued   キューに入っていない（OPEN の PR で、キューの CI も自動マージの予約も無い）、または PR が閉じている
+#   merge_queue base ブランチへのマージがマージキューを通すか（true・false）
 #   queue_runs  base ブランチのキューの一番新しい実行の、チェック（name・conclusion・status・url）。実行が無ければ空
 #   failed      キューの CI で失敗したチェック（name・url）。status が removed のときだけ入る
 #   timed_out   --wait が時間切れで終わったときだけ true（status は waiting のまま）
 #
 # 判定:
 #   - PR の state が MERGED なら merged。CLOSED なら not_queued
-#   - OPEN で autoMergeRequest（gh pr view。「マージ待ち」の予約）があれば waiting
-#   - gh run list --event merge_group を、ブランチ gh-readonly-queue/<base>/pr-<番号>- に絞って読む（GraphQL は使わない）。
-#     PR ごとに実行のブランチが違うので、一番新しい実行のブランチだけを見る。動いている実行があれば waiting、
-#     失敗（failure・cancelled・timed_out・startup_failure）があれば removed、全部成功ならマージ待ちなので waiting
-#   - 実行が無く、autoMergeRequest も無ければ not_queued
+#   - base ブランチへのマージがマージキューを通さない（ブランチに効いているルールに merge_queue が無い。読めないときも同じ）なら、
+#     OPEN の PR は not_queued。キューを使わないリポジトリ（strict と branch-update の方式）の動きを変えないため
+#   - キューを使うとき、gh run list --event merge_group を、ブランチ gh-readonly-queue/<base>/pr-<番号>- に絞って読む
+#     （GraphQL は使わない）。PR ごとに実行のブランチが違うので、一番新しい実行のブランチだけを見る。
+#     失敗（failure・cancelled・timed_out・startup_failure）があれば removed（自動マージの予約が残っていても）。
+#     なければ、動いている実行があれば waiting
+#   - 失敗も動いている実行も無いとき、実行がすべて成功していれば（マージ待ち）waiting。実行が無ければ、
+#     autoMergeRequest（gh pr view。「マージ待ち」の予約）があれば waiting、無ければ not_queued
 set -euo pipefail
 
 # shellcheck source=lib/common.sh
@@ -72,6 +76,11 @@ check_once() {
   jq -e 'type == "object" and has("number") and has("state")' >/dev/null 2>&1 <<<"$view" \
     || dw_die "PR を読めません: $view"
   base="$(jq -r .baseRefName <<<"$view")"
+  # キューを使うかは、ブランチに効いているルールで決める（pr-create.sh・doctor.sh と同じ読み方）。読めなければ使わないものとして扱う
+  queue=false
+  if [ "$(jq -r .state <<<"$view")" = OPEN ]; then
+    queue="$(dw_merge_queue_enabled '{owner}/{repo}' "$base")" || queue=false
+  fi
   # --limit は、キューに並んだ PR が多くても、この PR の実行を取りこぼさないよう大きめにする
   run_json="$(gh run list --event merge_group --limit 200 --json headBranch,name,workflowName,status,conclusion,url,createdAt 2>&1)" \
     || dw_die "マージキューの CI の実行を読めません: $run_json"
@@ -80,7 +89,7 @@ check_once() {
 
   # jq の変数（$v など）を bash に展開させないため、シングルクォートで書く
   # shellcheck disable=SC2016
-  jq -n --argjson v "$view" --argjson runs "$run_json" '
+  jq -n --argjson v "$view" --argjson q "$queue" --argjson runs "$run_json" '
     def failed: . as $r | ["failure", "cancelled", "timed_out", "startup_failure"] | index($r.conclusion // "") != null;
     ("gh-readonly-queue/" + $v.baseRefName + "/pr-" + ($v.number | tostring) + "-") as $prefix
     | ([$runs[] | select(.headBranch | startswith($prefix))]) as $mine
@@ -89,16 +98,16 @@ check_once() {
     | ([$latest[] | {name: (if (.workflowName // "") != "" then .workflowName else .name end),
                      conclusion: (.conclusion // null), status, url}]) as $checks
     | (if $v.state == "MERGED" then "merged"
-       elif $v.state != "OPEN" then "not_queued"
-       elif $v.autoMergeRequest != null then "waiting"
-       elif ($latest | length) == 0 then "not_queued"
-       elif any($latest[]; .status != "completed") then "waiting"
+       elif $v.state != "OPEN" or $q != true then "not_queued"
        elif any($latest[]; failed) then "removed"
-       else "waiting" end) as $s
+       elif any($latest[]; .status != "completed") then "waiting"
+       elif ($latest | length) > 0 then "waiting"
+       elif $v.autoMergeRequest != null then "waiting"
+       else "not_queued" end) as $s
     | {pr: {number: $v.number, url: $v.url, state: $v.state, base: $v.baseRefName, branch: $v.headRefName},
-       status: $s,
+       status: $s, merge_queue: ($q == true),
        queue_runs: $checks,
-       failed: (if $s == "removed" then [$checks[] | select(.conclusion as $c | ["failure", "cancelled", "timed_out", "startup_failure"] | index($c // "") != null) | {name, url}] else [] end)}'
+       failed: (if $s == "removed" then [$latest[] | select(failed) | {name: (if (.workflowName // "") != "" then .workflowName else .name end), url}] else [] end)}'
 }
 
 out="$(check_once)"
