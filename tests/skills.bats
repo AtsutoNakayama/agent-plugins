@@ -147,6 +147,11 @@ has() {
   grep -q '「このまま設定する」と合わせて4つにする' <<<"$step3" || fail "21/34 の分割の段落に、選択肢を4つに収めることが書かれていません"
   grep -q '外した親の代わりとして使う例外' <<<"$step2" || fail "親を外すときの扱いが書かれていません"
   grep -q '子を親なしで起票し' <<<"$step2" || fail "外した親の代わりの Issue を親にできないときの扱いが書かれていません"
+  # 親にできるかは、スクリプトの出力の action で決める（SKILL.md に条件の組み合わせを書いて判断させない）
+  grep -qF 'parent-candidate.sh --issue <重なる既にある Issue の番号> --levels' <<<"$step2" || fail "外した親の代わりを parent-candidate.sh で判定することが書かれていません"
+  grep -qF "\`use_as_parent\` なら" <<<"$step2" || fail "action が use_as_parent のときにすることが書かれていません"
+  grep -qF "\`no_parent\` なら" <<<"$step2" || fail "action が no_parent のときにすることが書かれていません"
+  [ -x "$BATS_TEST_DIRNAME/../plugins/dev-workflow/scripts/parent-candidate.sh" ] || fail "parent-candidate.sh が実行できません"
   grep -q '外した親のさらに上の親にする' <<<"$step2" || fail "木の途中の親を外すときの扱いが書かれていません"
   grep -qF "依存先を既にある Issue の \`#N\` に付け替え" <<<"$step2" || fail "依存先の付け替えが書かれていません"
 }
