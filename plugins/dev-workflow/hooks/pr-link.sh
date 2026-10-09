@@ -4,7 +4,7 @@
 #
 #   - git push（pr-create.sh を含む）            開いた PR の URL（無ければ PR を作る URL）、紐付く Issue、PR の CI（checks）
 #   - git commit（commit.sh を含む）             紐付く Issue
-#   - ブランチ・ワークツリーの作成
+#   - ブランチ・ワークツリーの作成（追跡ブランチを作る git switch・checkout を含む）
 #     （git switch -c など、task-start.sh を含む）  紐付く Issue
 #   - gh pr create・gh issue create
 #     （pr-create.sh・issue-create.sh を含む）      作った PR・Issue（標準出力から拾う）
@@ -88,7 +88,9 @@ add_new_name() { new_names+=("$1"); }
 # git の呼び出しを1つ調べ、push・commit・ブランチの作成なら、対象のリポジトリとブランチを覚える（gc_scan のコールバック）。
 # git stash push や git log --grep commit は、サブコマンドが違うので当たらない。
 # ブランチを作るコマンドの名前は、guard-git.sh と同じ書き方（-cname なども）で拾う。-b・-B の無い git worktree add は、
-# 2つ目の位置引数（git worktree add <パス> <ブランチ>）を名前にする
+# 2つ目の位置引数（git worktree add <パス> <ブランチ>）を名前にする。commit-ish を書かない git worktree add <パス> は、
+# パスの最後の名前にする。git switch・checkout が作る追跡ブランチ（gc_tracking_branches）は、候補の名前が、リモートにあり、
+# 手元に無いか今作られた（reflog が「branch: Created from …」の 1 行だけ）ときに拾う
 # 使い方: on_git <サブコマンド> <引数>...
 on_git() {
   local sub="$1" k tracking=false
@@ -127,10 +129,11 @@ on_git() {
     push | commit) add_event "$sub" "$(gc_branch)" ;;
     *)
       for k in "${new_names[@]}"; do
-        # 追跡ブランチの候補は、手元に無く、リモートにあるものだけ（手元にあれば、ただの切り替え）
+        # 追跡ブランチの候補は、リモートにあり、手元に無いか、今作られたものだけ（前からある手元のブランチは、ただの切り替え）。
+        # このフックはコマンドの後に動くので、作られたブランチは手元にあり、reflog で今作ったかを見る
         if $tracking; then
-          ! gc_git show-ref --verify --quiet "refs/heads/$k" || continue
-          [ -n "$(gc_git for-each-ref --format=x "refs/remotes/*/$k" || true)" ] || continue
+          gc_remote_has "$k" || continue
+          ! gc_git show-ref --verify --quiet "refs/heads/$k" || gc_just_created "$k" || continue
         fi
         add_event create "$k"
       done

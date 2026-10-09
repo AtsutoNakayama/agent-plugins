@@ -441,6 +441,11 @@ silent() {
   warned 21-x "git worktree add ../feat/21-x"
 }
 
+@test "リモートのブランチの名前が一部しか一致しない（team/bad_name）ときは、既にあるブランチとして扱わず警告する" {
+  git update-ref refs/remotes/origin/team/bad_name HEAD
+  warned bad_name "git switch -c bad_name" "git worktree add ../bad_name"
+}
+
 @test "リモートにだけあるブランチへの switch・checkout や、-t の追跡ブランチは、これまでどおり確かめない" {
   git update-ref refs/remotes/origin/bad_name HEAD
   silent "git switch bad_name" "git checkout bad_name" "git checkout -t origin/bad_name" "git switch --track origin/bad_name" \

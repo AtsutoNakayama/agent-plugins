@@ -143,25 +143,50 @@ shows_wt() {
   silent "git worktree add ../feat/23-x" "git worktree add --detach ../feat/23-x" "git worktree add ../feat/23-x HEAD"
 }
 
-@test "リモートにだけあるブランチを追跡ブランチとして作る git switch・checkout では、そのブランチの Issue を出す" {
+# origin に、指定したブランチ（main から切る）だけがある状態にする。手元には作らない。使い方: remote_branch <ブランチ>...
+remote_branch() {
+  local b
+  git init -q --bare -b main "$TMP/origin.git"
+  git remote add origin "$TMP/origin.git"
+  for b in "$@"; do
+    git push -q origin "main:refs/heads/$b"
+  done
+  git fetch -q origin
+}
+
+@test "リモートにだけあるブランチを追跡ブランチとして作る git switch・checkout では、実行した後に、そのブランチの Issue を出す" {
   fake_issue 23 '["feat"]'
-  git update-ref refs/remotes/origin/feat/23-x HEAD
+  remote_branch feat/23-x
   local c
   for c in "git checkout -t origin/feat/23-x" "git switch -t origin/feat/23-x" "git switch --track origin/feat/23-x" \
     "git checkout --track=direct origin/feat/23-x" "git switch feat/23-x" "git checkout feat/23-x" "git checkout -q feat/23-x"; do
+    git switch -q feat/17-demo
+    git branch -q -D feat/23-x 2>/dev/null || true
+    # フックは、コマンドを実行した後に動く
+    eval "$c" >/dev/null 2>&1
+    git rev-parse -q --verify refs/heads/feat/23-x >/dev/null
     shows "$c" "Issue #23: https://github.com/me/demo/issues/23"
     [[ "$output" != *"issues/17"* ]]
   done
 }
 
-@test "手元にあるブランチ、リモートにも無い名前、ブランチを作らない書き方の switch・checkout では、Issue を出さない" {
+@test "前から手元にあるブランチへの switch・checkout、リモートに無い名前、ブランチを作らない書き方では、Issue を出さない" {
   fake_issue 23 '["feat"]'
-  git update-ref refs/remotes/origin/feat/23-x HEAD
-  git update-ref refs/heads/feat/23-x HEAD
+  remote_branch feat/23-x
+  git switch -q -c feat/23-x origin/feat/23-x
+  git commit -q --allow-empty -m more
+  git switch -q feat/17-demo
   silent "git switch feat/23-x" "git checkout feat/23-x" "git checkout -t origin/feat/23-x"
-  git update-ref -d refs/heads/feat/23-x
+  git branch -q -D feat/23-x
   silent "git switch feat/24-y" "git checkout feat/24-y" "git checkout -- feat/23-x" "git checkout feat/23-x -- file" \
     "git checkout -p feat/23-x" "git switch --detach feat/23-x" "git checkout --detach feat/23-x"
+}
+
+@test "リモート名の後ろが完全に一致しないブランチ（team/feat/23-x）は、追跡ブランチの候補にしない" {
+  fake_issue 23 '["feat"]'
+  remote_branch team/feat/23-x
+  git branch -q feat/23-x HEAD
+  silent "git switch feat/23-x" "git checkout feat/23-x"
 }
 
 @test "作るブランチの名前に Issue の番号が無い、またはブランチを作らないときは、今のブランチの Issue を出さない" {

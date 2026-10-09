@@ -225,7 +225,7 @@ base_ahead: required
 | `git commit`（`commit.sh` を含む）、ブランチ・ワークツリーの作成（`git switch -c` など。`task-start.sh` を含む） | 紐付く Issue |
 | `gh pr create`・`gh issue create`（`pr-create.sh`・`issue-create.sh` を含む） | 作った PR・Issue（標準出力から拾う） |
 
-- 紐付く Issue は、ブランチ名（`branch.pattern` の `{issue_number}`）から分かります。ブランチを作るコマンドでは、作るブランチの Issue です。リモートにだけあるブランチを追跡ブランチとして作る `git switch <名前>` / `git checkout <名前>` / `git switch -t <リモート>/<名前>` / `git checkout -t <リモート>/<名前>` も含みます（名前を拾えないときは出しません）。main など、Issue の番号が分からないブランチでは、ブランチから導くリンクは出しません。
+- 紐付く Issue は、ブランチ名（`branch.pattern` の `{issue_number}`）から分かります。ブランチを作るコマンドでは、作るブランチの Issue です。リモートにだけあるブランチを追跡ブランチとして作る `git switch <名前>` / `git checkout <名前>` / `git switch -t <リモート>/<名前>` / `git checkout -t <リモート>/<名前>` も含みます（コマンドの後に動くので、今作られたブランチ（ブランチの reflog が「Created from」の 1 行だけ）か、手元に無いブランチが対象で、前から手元にあるブランチへの切り替えでは出しません。名前を拾えないときも出しません）。main など、Issue の番号が分からないブランチでは、ブランチから導くリンクは出しません。
 - `cd`・`pushd`・`popd`・`git -C`・`env -C`・`--git-dir`・`GIT_DIR` などで別のリポジトリ・ブランチへ移った git のコマンドでは、移った先のリポジトリ・ブランチのリンクを出します。ただし、次のときは移った先を正しく追えません。
   - `cd sub && git push && cd ..`・`pushd sub && git push && popd` のように、後ろでまた移るコマンドでは、移る前のブランチで判断します。`cd -` の後の git のコマンドには、リンクを出しません。
   - プロジェクトのルートにいるときに、相対パスへ `cd` したコマンド（`cd ../other && git push`）には、リンクを出しません。プロジェクトの外へ移ると、Claude Code が今のディレクトリをプロジェクトのルートに戻すので、どこへ移ったのか分からないためです。絶対パスへの `cd` なら追えます。

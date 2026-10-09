@@ -429,6 +429,25 @@ gc_worktree_branch_on() {
   fi
 }
 
+# リモート追跡ブランチに <名前> があるか（リモート名の後ろが完全に一致するときだけ。team/foo のリモート追跡ブランチは foo に当たらない）。
+# gc_git で対象のリポジトリを調べる
+# 使い方: gc_remote_has <名前>
+gc_remote_has() {
+  gc_git for-each-ref --format='%(refname:lstrip=3)' refs/remotes 2>/dev/null | grep -Fxq -- "$1" || return 1
+}
+
+# 手元のブランチ <名前> が、今の git switch・checkout で作られたものか（reflog が「branch: Created from …」の 1 行だけ）。
+# PostToolUse のフックは、コマンドの後に動くので、追跡ブランチは、もう手元にある。前からあるブランチ（reflog が複数行）は含まない
+# 使い方: gc_just_created <名前>
+gc_just_created() {
+  local log
+  log="$(gc_git reflog show --format=%gs "refs/heads/$1" 2>/dev/null)" || return 1
+  case "$log" in
+    "branch: Created from "*) [[ "$log" != *$'\n'* ]] || return 1 ;;
+    *) return 1 ;;
+  esac
+}
+
 # git push の引数を読んで、次の変数に入れる。guard-git.sh（強制 push・push 先）と pr-link.sh（dry-run）が使う。
 #   gc_push_force   強制 push（--force・-f・--mirror・+<refspec>）なら true。--force-with-lease は含めない
 #   gc_push_dry     dry-run（--dry-run・-n）なら true
