@@ -28,7 +28,7 @@
 #      PR が既にあるときは、その PR のタイトルに ! が無い、または本文に BREAKING CHANGE が無いと、push の前に止める。
 #      本文に <pr.close_keyword> #N（既定: Closes #N）が無ければ末尾に足す。
 #      テンプレートの番号が空のままの行（Closes #）は消す
-#   3. origin に push する（-u で追跡させる）。未コミットの変更や、PR にするコミットが無ければ止まる
+#   3. origin に push する（-u で追跡させる）。未コミットの変更や、PR にするコミット（PR のマージ先（下の pr_base）に無いコミット）が無ければ止まる
 #   4. base_branch に向けた PR を作り、Issue のラベルを引き継ぐ。pr.draft が true か --draft を付けたら下書きにする（--no-draft なら、pr.draft にかかわらず下書きにしない）
 #   5. PR を新しく作ったときだけ、status.pr_opened が設定されていれば Issue をその列に移す（status-set.sh）。
 #      既にある PR では移さない（手で先の列に移した Issue を戻さないため）
@@ -158,6 +158,11 @@ existing="$(gh pr list --head "$branch" --state open --json number,url,title,bod
   || dw_die "${branch} の PR を取得できませんでした"
 pr_number="$(jq -r '.[0].number // empty' <<<"$existing")"
 pr_url="$(jq -r '.[0].url // empty' <<<"$existing")"
+# PR のマージ先。新しく作る PR は base_branch に向ける。既にある PR はマージ先を変えていることがあるので、
+# その PR のマージ先にする（gh が返さないか空のときだけ base_branch とみなす）。push の前の確認（マージ先に無いコミットが
+# あるか）も、PR を出した後の案内も、このマージ先で行う
+pr_base="$base"
+[ -z "$pr_number" ] || pr_base="$(jq -r --arg b "$base" '(.[0].baseRefName // "") | if . == "" then $b else . end' <<<"$existing")"
 # 既にある PR のタイトルと本文は変えないので、PR を出した後に breaking ラベルを付けたときは、
 # ! と BREAKING CHANGE の無いままマージされないよう、push の前に止める
 if [ -n "$pr_number" ] && $breaking; then
@@ -206,14 +211,14 @@ printf '%s' "$body" >"$body_tmp"
 
 # --- 3. push --------------------------------------------------------------------
 if ! $dry_run; then
-  git -C "$repo_root" fetch -q origin "$base" || dw_die "origin/${base} を取得できませんでした"
+  git -C "$repo_root" fetch -q origin -- "$pr_base" || dw_die "origin/${pr_base} を取得できませんでした"
 fi
-git -C "$repo_root" rev-parse -q --verify "refs/remotes/origin/$base" >/dev/null \
-  || dw_die "origin/${base} がありません（git fetch origin ${base} を実行してください）"
-ahead="$(git -C "$repo_root" rev-list --count "origin/$base..HEAD")"
-[ "$ahead" -gt 0 ] || dw_die "origin/${base} に無いコミットがありません。PR にする変更をコミットしてください" 2
+git -C "$repo_root" rev-parse -q --verify "refs/remotes/origin/$pr_base" >/dev/null \
+  || dw_die "origin/${pr_base} がありません（git fetch origin ${pr_base} を実行してください）"
+ahead="$(git -C "$repo_root" rev-list --count "refs/remotes/origin/$pr_base..HEAD")"
+[ "$ahead" -gt 0 ] || dw_die "origin/${pr_base} に無いコミットがありません。PR にする変更をコミットしてください" 2
 
-note "${branch} を origin に push する（origin/${base} より ${ahead} 個先のコミット）"
+note "${branch} を origin に push する（origin/${pr_base} より ${ahead} 個先のコミット）"
 if ! $dry_run; then
   # 出力は JSON だけにするため、git の出力は標準エラーに回す
   git -C "$repo_root" push -q -u origin "$branch" >&2 \
@@ -225,11 +230,7 @@ draft="$(jq -r '.pr.draft // false' <<<"$config")"
 ! $draft_opt || draft=true
 ! $no_draft_opt || draft=false
 created=false
-# PR のマージ先。新しく作る PR は base_branch に向ける。既にある PR はマージ先を変えていることがあるので、
-# その PR のマージ先にする（gh が返さないか空のときだけ base_branch とみなす。使うのは PR を出した後の案内だけ）
-pr_base="$base"
 if [ -n "$pr_number" ]; then
-  pr_base="$(jq -r --arg b "$base" '(.[0].baseRefName // "") | if . == "" then $b else . end' <<<"$existing")"
   note "既にある PR #${pr_number} を使う（作り直さず、タイトル・本文・ラベル・列・下書きかどうかは変えない）"
   # 下書きかどうかは変えないので、出力にはその PR の今の状態を出す（--draft・--no-draft を付けても、取り違えないように）
   draft="$(jq -r '.[0].isDraft // false' <<<"$existing")"

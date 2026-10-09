@@ -20,6 +20,12 @@ setup_branch() {
   printf '## 概要\n作業した\n\n## 変更点\n- work.txt\n\n## 確認方法\n- 見た\n\nCloses #\n' >"$TMP/body.md"
 }
 
+# origin に、手元の main と同じ位置のブランチ（PR のマージ先の役）を作り、origin/<名前> を取得しておく
+push_base() {
+  git push -q origin "main:refs/heads/$1"
+  git fetch -q origin
+}
+
 run_pr() {
   run_script pr-create.sh "$@"
   printf '%s\n' "$output"
@@ -770,6 +776,7 @@ fake_issue_tasks() {
   mkdir -p "$FIX/rules/release"
   echo '[{"type": "merge_queue", "parameters": {"merge_method": "SQUASH"}}]' >"$FIX/rules/main.json"
   echo '[{"type": "pull_request"}]' >"$FIX/rules/release/v1.json"
+  push_base release/v1
   echo '[{"number": 7, "url": "https://github.com/me/demo/pull/7", "isCrossRepository": false, "baseRefName": "release/v1"}]' >"$FIX/pr-list.json"
   run_pr --issue 17 --body-file "$TMP/body.md" --dry-run
   assert_success
@@ -788,6 +795,7 @@ fake_issue_tasks() {
   mkdir -p "$FIX/rules/release"
   echo '[{"type": "pull_request"}]' >"$FIX/rules/main.json"
   echo '[{"type": "merge_queue", "parameters": {"merge_method": "SQUASH"}}]' >"$FIX/rules/release/v1.json"
+  push_base release/v1
   echo '[{"number": 7, "url": "https://github.com/me/demo/pull/7", "isCrossRepository": false, "baseRefName": "release/v1"}]' >"$FIX/pr-list.json"
   run_pr --issue 17 --body-file "$TMP/body.md"
   assert_success
@@ -795,6 +803,34 @@ fake_issue_tasks() {
   assert_equal "$(git rev-parse origin/feat/17-x)" "$(git rev-parse HEAD)"
   assert_equal "$(called pr-create)" 0
   assert_equal "$(args api-rules)" 'repos/{owner}/{repo}/rules/branches/release%2Fv1?per_page=100'
+}
+
+@test "既にある PR のマージ先が設定の base_branch と違えば、push の前の確認は PR のマージ先で見る（バックポートで main に同じコミットがあっても push する。#284）" {
+  setup_branch
+  fake_issue 17 '["feat"]'
+  push_base release/v1
+  # ブランチのコミットが、設定の base_branch（main）には既にある（main から release/v1 へのバックポートなど）
+  git push -q origin feat/17-x:main
+  echo '[{"number": 7, "url": "https://github.com/me/demo/pull/7", "isCrossRepository": false, "baseRefName": "release/v1"}]' >"$FIX/pr-list.json"
+  run_pr --issue 17 --body-file "$TMP/body.md"
+  assert_success
+  assert_equal "$(jq -c '[.created, .pr.number, .pr_base]' <<<"$json")" '[false,7,"release/v1"]'
+  assert_equal "$(jq -r '.actions[0]' <<<"$json")" "feat/17-x を origin に push する（origin/release/v1 より 1 個先のコミット）"
+  assert_equal "$(git rev-parse origin/feat/17-x)" "$(git rev-parse HEAD)"
+}
+
+@test "既にある PR のマージ先に無いコミットが無ければ、設定の base_branch より先行していても push しない（#284）" {
+  setup_branch
+  fake_issue 17 '["feat"]'
+  # PR のマージ先（release/v1）はブランチのコミットを含み、設定の base_branch（main）は含まない
+  git push -q origin feat/17-x:refs/heads/release/v1
+  git fetch -q origin
+  echo '[{"number": 7, "url": "https://github.com/me/demo/pull/7", "isCrossRepository": false, "baseRefName": "release/v1"}]' >"$FIX/pr-list.json"
+  run_pr --issue 17 --body-file "$TMP/body.md"
+  assert_failure 2
+  assert_output --partial "origin/release/v1 に無いコミットがありません"
+  run git ls-remote --heads origin feat/17-x
+  assert_output ""
 }
 
 @test "既にある PR の応答にマージ先（baseRefName）が無いか空なら、pr_base とマージキューの判定は設定の base_branch にする（#178）" {
@@ -818,6 +854,7 @@ fake_issue_tasks() {
   fake_issue 17 '["feat"]'
   mkdir -p "$FIX/rules/feat"
   echo '[{"type": "merge_queue", "parameters": {"merge_method": "SQUASH"}}]' >"$FIX/rules/feat/日本語.json"
+  push_base feat/日本語
   echo '[{"number": 7, "url": "https://github.com/me/demo/pull/7", "isCrossRepository": false, "baseRefName": "feat/日本語"}]' >"$FIX/pr-list.json"
   run_pr --issue 17 --body-file "$TMP/body.md" --dry-run
   assert_success
