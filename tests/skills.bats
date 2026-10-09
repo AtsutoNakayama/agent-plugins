@@ -151,6 +151,9 @@ has() {
   grep -qF 'parent-candidate.sh --issue <重なる既にある Issue の番号> --levels' <<<"$step2" || fail "外した親の代わりを parent-candidate.sh で判定することが書かれていません"
   grep -qF "\`use_as_parent\` なら" <<<"$step2" || fail "action が use_as_parent のときにすることが書かれていません"
   grep -qF "\`no_parent\` なら" <<<"$step2" || fail "action が no_parent のときにすることが書かれていません"
+  # 止まったときにユーザーに親にするかを聞くと、issue-create.sh は確かめ直さないので、防ぐはずの紐付けが起きる
+  grep -qF "スクリプトが止まったら、\`no_parent\` と同じに扱い" <<<"$step2" || fail "parent-candidate.sh が止まったときに親なしで起票することが書かれていません"
+  ! grep -qF '親にするかをユーザーに聞く' <<<"$step2" || fail "parent-candidate.sh が止まったときに、親にするかをユーザーに聞くと書かれています"
   [ -x "$BATS_TEST_DIRNAME/../plugins/dev-workflow/scripts/parent-candidate.sh" ] || fail "parent-candidate.sh が実行できません"
   grep -q '外した親のさらに上の親にする' <<<"$step2" || fail "木の途中の親を外すときの扱いが書かれていません"
   grep -qF "依存先を既にある Issue の \`#N\` に付け替え" <<<"$step2" || fail "依存先の付け替えが書かれていません"
