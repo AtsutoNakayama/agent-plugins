@@ -4,22 +4,28 @@
 
 load test_helper
 
-# 判定の表（PR の state・自動マージの予約・マージキューの実行 → status）。上から順に最初に当てはまったもの。
+# 判定の表（PR の state・キューの状態（mergeQueueEntry とタイムラインの最後のキューの出入りのイベント）・外れた後の push → status）。
+# 上から順に最初に当てはまったもの。
 #
-#   PR の state / 入力                                         status      その他
-#   MERGED                                                      merged
-#   CLOSED                                                      not_queued
-#   OPEN でも、マージキューを使わない（ルールに merge_queue が無い）  not_queued  autoMergeRequest や実行があっても
-#   キューを使い、一番新しいキューのブランチに失敗した実行がある  removed     failed に失敗したチェックと URL（autoMergeRequest が残っていても）
-#   キューを使い、そのブランチに動いている実行がある            waiting
-#   キューを使い、実行が無く autoMergeRequest がある            waiting
-#   キューを使い、実行も予約も無い                              not_queued
-#   OPEN で、そのブランチの実行がすべて成功                     waiting     （マージ待ち）
-#   別の PR（pr-50- と pr-5-）や別の base のキューの実行は見ない
+#   PR の state / 入力                                             status      その他
+#   MERGED                                                          merged
+#   CLOSED                                                          not_queued
+#   OPEN でも、マージキューを使わない（ルールに merge_queue が無い）      not_queued  キューの状態を読まない
+#   キューに並んでいる（mergeQueueEntry がある）                    waiting     queue に state・position。入れた直後で実行が無くても
+#   並んでおらず、最後が外れたイベントで理由が merged               waiting     （PR が MERGED に変わる直前）
+#   並んでおらず、最後が外れたイベントで、その後に push が無い      removed     removed に reason・at。CI の失敗なら failed に
+#                                                                               失敗したチェック（外れたイベントのコミットの実行）。
+#                                                                               衝突（merge_conflict）なら failed は空
+#   並んでおらず、最後が外れたイベントで、その後に push がある      not_queued  （直して、まだ入れ直していない）
+#   並んでおらず、最後が入れたイベント                              waiting     （並んだ直後）
+#   並んでおらず、イベントも無い                                    not_queued
+#   フォークからの PR は push を読まない（外れたままなら removed）
 #
 # 偽の gh。
 # - gh pr view ... --json ...   $FIX/pr-<n>.json（n は pr view の呼び出し回数。無ければ $FIX/pr.json）を返す
-# - gh run list ...             $FIX/runs-<n>.json（無ければ $FIX/runs.json）を返す。引数に --event merge_group が無ければ失敗する
+# - gh api graphql --input -    $FIX/gql-<n>.json（無ければ $FIX/gql.json）を返す。$FIX/gql-fail があれば失敗する
+# - gh api repos/<owner>/<repo>/activity?...  $FIX/activity.json を返す。$FIX/activity-fail があれば失敗する
+# - gh run list ...             $FIX/runs.json を返す。引数に --event merge_group が無ければ失敗する
 # - gh api --paginate repos/.../rules/branches/...  $FIX/rules.json（既定は merge_queue のルールあり）を返す
 # - それ以外（書き込みを含む）は、$CALLS に「WRITE <引数>」を記録して失敗する
 setup_fake_gh() {
@@ -32,31 +38,66 @@ setup_fake_gh() {
 #!/usr/bin/env bash
 pick() { # pick <名前>: 呼び出し回数に合うファイルを選ぶ
   local n
-  n="$(grep -c "^READ $1" "$CALLS" || true)"
+  n="$(grep -c "^READ $1 " "$CALLS" || true)"
   if [ -f "$FIX/$1-$n.json" ]; then cat "$FIX/$1-$n.json"; else cat "$FIX/$1.json"; fi
 }
 case "$1 $2" in
   "pr view") pick pr; echo "READ pr $*" >>"$CALLS" ;;
+  "api graphql")
+    [ ! -f "$FIX/gql-fail" ] || { echo "READ gql-failed" >>"$CALLS"; echo "gh: GraphQL が失敗しました" >&2; exit 1; }
+    pick gql; echo "READ gql $(tr '\n' ' ')" >>"$CALLS"
+    ;;
   "run list")
-    [ ! -f "$FIX/run-fail" ] || { echo "READ runs-failed" >>"$CALLS"; echo "gh: Actions が無効です" >&2; exit 1; }
     case " $* " in *" --event merge_group "*) ;; *) echo "gh: --event merge_group が無い" >&2; exit 1 ;; esac
-    pick runs; echo "READ runs $*" >>"$CALLS"
+    cat "$FIX/runs.json"; echo "READ runs $*" >>"$CALLS"
     ;;
   "api --paginate") cat "$FIX/rules.json" ;;
+  "api repos/"*/activity\?*)
+    [ ! -f "$FIX/activity-fail" ] || { echo "READ activity-failed" >>"$CALLS"; echo "gh: 権限がありません" >&2; exit 1; }
+    cat "$FIX/activity.json"; echo "READ activity $*" >>"$CALLS"
+    ;;
   *) echo "WRITE $*" >>"$CALLS"; echo "gh: 想定外の呼び出し: $*" >&2; exit 1 ;;
 esac
 SH
   chmod +x "$TMP/bin/gh"
   export PATH="$TMP/bin:$PATH"
   pr_json '{}'
+  gql_json '{}'
   echo '[]' >"$FIX/runs.json"
+  echo '[]' >"$FIX/activity.json"
   echo '[{"type": "merge_queue"}, {"type": "pull_request"}]' >"$FIX/rules.json"
 }
 
 # PR の JSON を作る。使い方: pr_json <既定の値に上書きするオブジェクト（jq の式）> [ファイル名（既定 pr.json）]
 pr_json() {
   jq -n "$1 as \$o | "'{number: 5, url: "https://github.com/me/demo/pull/5", state: "OPEN", baseRefName: "main",
-    headRefName: "feat/5-x", autoMergeRequest: null} + $o' >"$FIX/${2:-pr.json}"
+    headRefName: "feat/5-x", isCrossRepository: false} + $o' >"$FIX/${2:-pr.json}"
+}
+
+# GraphQL の答えを作る。使い方: gql_json <PR の既定の値に上書きするオブジェクト（jq の式）> [ファイル名（既定 gql.json）]
+# 既定はキューに並んでおらず、キューの出入りのイベントも無い
+gql_json() {
+  jq -n "$1 as \$o | "'{data: {resource: ({mergeQueueEntry: null, timelineItems: {nodes: []}} + $o)}}' >"$FIX/${2:-gql.json}"
+}
+
+# キューに並んでいる。使い方: queued <state> [ファイル名]
+queued() { gql_json "{mergeQueueEntry: {state: \"$1\", position: 1}, timelineItems: {nodes: [{__typename: \"AddedToMergeQueueEvent\", createdAt: \"2026-10-01T00:00:00Z\"}]}}" "${2:-gql.json}"; }
+
+# 最後のイベントがキューから外れたイベント。使い方: removed_ev <reason> <時刻> [beforeCommit の oid] [ファイル名]
+removed_ev() {
+  jq -n --arg r "$1" --arg t "$2" --arg o "${3:-}" '{data: {resource: {mergeQueueEntry: null, timelineItems: {nodes: [
+    {__typename: "RemovedFromMergeQueueEvent", reason: $r, createdAt: $t,
+     beforeCommit: (if $o == "" then null else {oid: $o} end)}]}}}}' >"$FIX/${4:-gql.json}"
+}
+
+# PR のブランチへの push の activity を作る。使い方: activity <activity_type> <時刻>...（2つずつ）
+activity() {
+  local a=()
+  while [ $# -ge 2 ]; do
+    a+=("$(jq -nc --arg ty "$1" --arg t "$2" '{ref: "refs/heads/feat/5-x", activity_type: $ty, timestamp: $t}')")
+    shift 2
+  done
+  printf '%s\n' "${a[@]}" | jq -s . >"$FIX/activity.json"
 }
 
 # キューの実行を1つ作る。使い方: qrun <ブランチ> <status> <conclusion（null か文字列）> <名前> <作った時刻>
@@ -66,7 +107,6 @@ qrun() {
       url: "https://github.com/me/demo/actions/runs/\($n)-\($t)", createdAt: $t}'
 }
 Q5=gh-readonly-queue/main/pr-5-aaa
-Q5B=gh-readonly-queue/main/pr-5-bbb
 
 # 実行の一覧にする。使い方: runs_file <ファイル名> <qrun の出力>...
 runs_file() { local f="$1"; shift; printf '%s\n' "$@" | jq -s . >"$FIX/$f"; }
@@ -87,36 +127,25 @@ teardown() { rm -rf "$TMP"; }
   assert_equal "$(st)" merged
 }
 
-@test "表: CLOSED は not_queued（実行が残っていても）" {
+@test "表: CLOSED は not_queued（キューから外れたイベントが残っていても）" {
   pr_json '{state: "CLOSED"}'
-  runs_file runs.json "$(qrun $Q5 completed failure test 2026-10-01T00:00:00Z)"
+  removed_ev failed_checks 2026-10-01T00:00:00Z
   run_script pr-merge-status.sh --pr 5
   assert_success
   assert_equal "$(st)" not_queued
 }
 
-@test "表: OPEN で autoMergeRequest があれば waiting" {
-  pr_json '{autoMergeRequest: {enabledAt: "2026-10-01T00:00:00Z"}}'
-  run_script pr-merge-status.sh --pr 5
-  assert_success
-  assert_equal "$(st)" waiting
-}
-
-@test "表: キューを使わないリポジトリでは、予約や実行があっても OPEN は not_queued" {
+@test "表: キューを使わないリポジトリでは、キューに並んでいても OPEN は not_queued" {
   echo '[{"type": "pull_request"}]' >"$FIX/rules.json"
-  pr_json '{autoMergeRequest: {enabledAt: "2026-10-01T00:00:00Z"}}'
-  runs_file runs.json "$(qrun $Q5 in_progress null test 2026-10-01T00:00:00Z)"
+  queued AWAITING_CHECKS
   run_script pr-merge-status.sh --pr 5
   assert_success
   assert_equal "$(st)" not_queued
   assert_equal "$(jq -r .merge_queue <<<"$output")" false
-  runs_file runs.json "$(qrun $Q5 completed failure test 2026-10-01T00:00:00Z)"
-  run_script pr-merge-status.sh --pr 5
-  assert_equal "$(st)" not_queued
 }
 
-@test "キューの実行は、OPEN でキューを使うときだけ読む（MERGED・CLOSED・キューを使わないときは gh run list が失敗しても動きを変えない）" {
-  echo 'run list を呼んだ' >"$FIX/run-fail"
+@test "キューの状態は、OPEN でキューを使うときだけ読む（MERGED・CLOSED・キューを使わないときは GraphQL が失敗しても動きを変えない）" {
+  echo 'GraphQL を呼んだ' >"$FIX/gql-fail"
   pr_json '{state: "MERGED"}'
   run_script pr-merge-status.sh --pr 5
   assert_success
@@ -129,7 +158,7 @@ teardown() { rm -rf "$TMP"; }
   run_script pr-merge-status.sh --pr 5
   assert_success
   assert_equal "$(st)" not_queued
-  if grep -q '^READ runs' "$CALLS"; then fail "gh run list を呼んでいます"; fi
+  if grep -q '^READ gql' "$CALLS"; then fail "GraphQL を呼んでいます"; fi
   # キューを使うときは読み、読めなければ失敗する
   echo '[{"type": "merge_queue"}]' >"$FIX/rules.json"
   run_script pr-merge-status.sh --pr 5
@@ -138,7 +167,7 @@ teardown() { rm -rf "$TMP"; }
 
 @test "表: ルールを読めないときは、キューを使わないものとして not_queued" {
   rm "$FIX/rules.json"
-  pr_json '{autoMergeRequest: {enabledAt: "2026-10-01T00:00:00Z"}}'
+  queued AWAITING_CHECKS
   run_script pr-merge-status.sh --pr 5
   assert_success
   assert_equal "$(st)" not_queued
@@ -151,68 +180,137 @@ teardown() { rm -rf "$TMP"; }
   assert_equal "$(st)" merged
 }
 
-@test "表: 失敗した実行は、自動マージの予約が残っていても removed（予約より先に見る）" {
-  pr_json '{autoMergeRequest: {enabledAt: "2026-10-01T00:00:00Z"}}'
-  runs_file runs.json "$(qrun $Q5 completed failure test 2026-10-01T00:00:00Z)" "$(qrun $Q5 in_progress null lint 2026-10-01T00:00:00Z)"
-  run_script pr-merge-status.sh --pr 5
-  assert_equal "$(st)" removed
-}
-
-@test "表: OPEN で実行も予約も無ければ not_queued" {
+@test "表: キューに並んでいれば waiting で、キューでの状態と順番を返す" {
+  queued AWAITING_CHECKS
   run_script pr-merge-status.sh --pr 5
   assert_success
-  assert_equal "$(st)" not_queued
-  assert_equal "$(jq -c '[.queue_runs, .failed]' <<<"$output")" "[[],[]]"
+  assert_equal "$(st)" waiting
+  assert_equal "$(jq -c .queue <<<"$output")" '{"state":"AWAITING_CHECKS","position":1}'
+  assert_equal "$(jq -c '[.removed, .queue_runs, .failed]' <<<"$output")" '[null,[],[]]'
+  # GraphQL は PR の URL で引く
+  grep -q '^READ gql .*"url": *"https://github.com/me/demo/pull/5"' "$CALLS"
 }
 
-@test "表: 動いている実行があれば waiting" {
-  runs_file runs.json "$(qrun $Q5 in_progress null test 2026-10-01T00:00:00Z)" "$(qrun $Q5 completed success lint 2026-10-01T00:00:00Z)"
+@test "表: キューに入れた直後（キューの CI の実行も自動マージの予約も無い）でも、並んでいれば waiting（#323）" {
+  queued QUEUED
   run_script pr-merge-status.sh --pr 5
   assert_success
   assert_equal "$(st)" waiting
 }
 
-@test "表: 失敗した実行があれば removed で、失敗したチェックと URL を返す" {
+@test "表: CI が通ってマージを待っている（MERGEABLE）も waiting" {
+  queued MERGEABLE
+  run_script pr-merge-status.sh --pr 5
+  assert_equal "$(st)" waiting
+  assert_equal "$(jq -r .queue.state <<<"$output")" MERGEABLE
+}
+
+@test "表: 並んだ直後で mergeQueueEntry にまだ出ていなくても、最後が入れたイベントなら waiting" {
+  gql_json '{timelineItems: {nodes: [{__typename: "AddedToMergeQueueEvent", createdAt: "2026-10-01T00:00:00Z"}]}}'
+  run_script pr-merge-status.sh --pr 5
+  assert_equal "$(st)" waiting
+  assert_equal "$(jq -c .queue <<<"$output")" null
+}
+
+@test "表: 最後が merged で外れたイベントなら（PR が MERGED に変わる直前）waiting" {
+  removed_ev merged 2026-10-01T00:00:00Z sha1
+  run_script pr-merge-status.sh --pr 5
+  assert_equal "$(st)" waiting
+  if grep -q '^READ \(runs\|activity\)' "$CALLS"; then fail "外れたときだけ読むものを読んでいます"; fi
+}
+
+@test "表: OPEN で、並んでおらずイベントも無ければ not_queued" {
+  run_script pr-merge-status.sh --pr 5
+  assert_success
+  assert_equal "$(st)" not_queued
+  assert_equal "$(jq -c '[.queue, .removed, .queue_runs, .failed]' <<<"$output")" "[null,null,[],[]]"
+}
+
+@test "表: CI が失敗して外れたら removed で、外れたイベントのコミットの実行から失敗したチェックと URL を返す" {
+  removed_ev failed_checks 2026-10-01T00:10:00Z sha1
   runs_file runs.json "$(qrun $Q5 completed failure test 2026-10-01T00:00:00Z)" "$(qrun $Q5 completed success lint 2026-10-01T00:00:00Z)"
   run_script pr-merge-status.sh --pr 5
   assert_success
   assert_equal "$(st)" removed
+  assert_equal "$(jq -c .removed <<<"$output")" '{"reason":"failed_checks","at":"2026-10-01T00:10:00Z"}'
   assert_equal "$(jq -c .failed <<<"$output")" '[{"name":"test","url":"https://github.com/me/demo/actions/runs/test-2026-10-01T00:00:00Z"}]'
   assert_equal "$(jq -r '.queue_runs | length' <<<"$output")" 2
 }
 
-@test "表: 実行がすべて成功していて PR が OPEN なら、マージ待ちの waiting" {
-  runs_file runs.json "$(qrun $Q5 completed success test 2026-10-01T00:00:00Z)" "$(qrun $Q5 completed success lint 2026-10-01T00:00:00Z)"
+@test "キューの CI の実行は、外れたイベントのコミットで絞って読む（リポジトリ全体の新しい方から数えない。#323）" {
+  removed_ev failed_checks 2026-10-01T00:10:00Z sha1
+  runs_file runs.json "$(qrun $Q5 completed failure test 2026-10-01T00:00:00Z)"
+  run_script pr-merge-status.sh --pr 5
+  assert_success
+  grep -q '^READ runs .*--commit sha1' "$CALLS" || fail "コミットで絞っていません: $(cat "$CALLS")"
+}
+
+@test "表: キューの実行が取り消し（cancelled）で終わって外れたときも removed で、failed に入る" {
+  removed_ev failed_checks 2026-10-01T00:10:00Z sha1
+  runs_file runs.json "$(qrun $Q5 completed cancelled test 2026-10-01T00:00:00Z)"
+  run_script pr-merge-status.sh --pr 5
+  assert_equal "$(st)" removed
+  assert_equal "$(jq -r '.failed[0].name' <<<"$output")" test
+}
+
+@test "表: コンフリクトで外れた（CI の実行が無い）ときも removed で、failed は空（#323）" {
+  removed_ev merge_conflict 2026-10-01T00:10:00Z
+  run_script pr-merge-status.sh --pr 5
+  assert_success
+  assert_equal "$(st)" removed
+  assert_equal "$(jq -r .removed.reason <<<"$output")" merge_conflict
+  assert_equal "$(jq -c '[.queue_runs, .failed]' <<<"$output")" '[[],[]]'
+  if grep -q '^READ runs' "$CALLS"; then fail "コミットが無いのに実行を読んでいます"; fi
+}
+
+@test "表: 外れた後に修正を push して、まだ入れ直していなければ not_queued（#323）" {
+  removed_ev failed_checks 2026-10-01T00:10:00Z sha1
+  runs_file runs.json "$(qrun $Q5 completed failure test 2026-10-01T00:00:00Z)"
+  activity push 2026-10-01T00:20:00Z
+  run_script pr-merge-status.sh --pr 5
+  assert_success
+  assert_equal "$(st)" not_queued
+  assert_equal "$(jq -c '[.removed, .failed]' <<<"$output")" '[null,[]]'
+  # PR の URL のリポジトリの、PR のブランチの activity を読む
+  grep -q '^READ activity api repos/me/demo/activity?ref=refs%2Fheads%2Ffeat%2F5-x&' "$CALLS" || fail "$(cat "$CALLS")"
+  # force push も push として数える
+  activity force_push 2026-10-01T00:20:00Z
+  run_script pr-merge-status.sh --pr 5
+  assert_equal "$(st)" not_queued
+}
+
+@test "表: 外れる前の push や、push 以外の activity では removed のまま" {
+  removed_ev merge_conflict 2026-10-01T00:10:00Z
+  activity push 2026-10-01T00:00:00Z branch_creation 2026-10-01T00:20:00Z
+  run_script pr-merge-status.sh --pr 5
+  assert_equal "$(st)" removed
+}
+
+@test "表: 直して入れ直したら、古い失敗の実行が残っていても waiting（#323）" {
+  queued QUEUED
+  runs_file runs.json "$(qrun $Q5 completed failure test 2026-10-01T00:00:00Z)"
+  activity push 2026-10-01T00:20:00Z
   run_script pr-merge-status.sh --pr 5
   assert_success
   assert_equal "$(st)" waiting
 }
 
-@test "表: キューの実行が取り消し（cancelled）で終わったときも removed" {
-  runs_file runs.json "$(qrun $Q5 completed cancelled test 2026-10-01T00:00:00Z)"
+@test "フォークからの PR は、外れた後の push を読まずに removed" {
+  pr_json '{isCrossRepository: true}'
+  removed_ev merge_conflict 2026-10-01T00:10:00Z
+  echo 'activity を呼んだ' >"$FIX/activity-fail"
   run_script pr-merge-status.sh --pr 5
+  assert_success
   assert_equal "$(st)" removed
-}
-
-@test "古い失敗したキューのブランチではなく、一番新しいブランチを見る（入れ直した後は waiting）" {
-  runs_file runs.json "$(qrun $Q5 completed failure test 2026-10-01T00:00:00Z)" "$(qrun $Q5B in_progress null test 2026-10-01T01:00:00Z)"
-  run_script pr-merge-status.sh --pr 5
-  assert_equal "$(st)" waiting
-  assert_equal "$(jq -r '.queue_runs | length' <<<"$output")" 1
-}
-
-@test "別の PR（pr-50-）や別の base のキューの失敗は見ない" {
-  runs_file runs.json "$(qrun gh-readonly-queue/main/pr-50-aaa completed failure test 2026-10-01T00:00:00Z)" \
-    "$(qrun gh-readonly-queue/develop/pr-5-aaa completed failure test 2026-10-01T00:00:00Z)"
-  run_script pr-merge-status.sh --pr 5
-  assert_equal "$(st)" not_queued
+  if grep -q '^READ activity' "$CALLS"; then fail "フォークの PR で activity を読んでいます"; fi
 }
 
 @test "PR の base がマージ先になる（develop へのキュー）" {
   pr_json '{baseRefName: "develop"}'
-  runs_file runs.json "$(qrun gh-readonly-queue/develop/pr-5-aaa completed failure test 2026-10-01T00:00:00Z)"
+  queued QUEUED
   run_script pr-merge-status.sh --pr 5
-  assert_equal "$(st)" removed
+  assert_equal "$(st)" waiting
+  assert_equal "$(jq -r .pr.base <<<"$output")" develop
 }
 
 @test "--pr・--branch・省略で、gh pr view に渡す引数が変わる" {
@@ -230,7 +328,7 @@ teardown() { rm -rf "$TMP"; }
 }
 
 @test "--wait: waiting の間は繰り返し、merged になったら終わる" {
-  runs_file runs.json "$(qrun $Q5 in_progress null test 2026-10-01T00:00:00Z)"
+  queued AWAITING_CHECKS
   pr_json '{state: "MERGED"}' pr-2.json
   DW_WAIT_SLEEP=0 run_script pr-merge-status.sh --pr 5 --wait --interval 300
   assert_success
@@ -239,9 +337,10 @@ teardown() { rm -rf "$TMP"; }
   assert_equal "$(jq -r 'has("timed_out")' <<<"$output")" false
 }
 
-@test "--wait: 動いている実行が失敗に変わったら removed で終わる" {
-  runs_file runs-0.json "$(qrun $Q5 in_progress null test 2026-10-01T00:00:00Z)"
-  runs_file runs-1.json "$(qrun $Q5 completed failure test 2026-10-01T00:00:00Z)"
+@test "--wait: 並んでいた PR が CI の失敗で外れたら removed で終わる" {
+  queued AWAITING_CHECKS gql-0.json
+  removed_ev failed_checks 2026-10-01T00:10:00Z sha1 gql-1.json
+  runs_file runs.json "$(qrun $Q5 completed failure test 2026-10-01T00:00:00Z)"
   DW_WAIT_SLEEP=0 run_script pr-merge-status.sh --pr 5 --wait
   assert_success
   assert_equal "$(st)" removed
@@ -249,7 +348,7 @@ teardown() { rm -rf "$TMP"; }
 }
 
 @test "--wait: 時間切れになったら waiting のまま timed_out を付けて出力する（間隔の合計で数える）" {
-  runs_file runs.json "$(qrun $Q5 in_progress null test 2026-10-01T00:00:00Z)"
+  queued AWAITING_CHECKS
   DW_WAIT_SLEEP=0 run_script pr-merge-status.sh --pr 5 --wait --interval 300 --timeout 900
   assert_success
   assert_equal "$(st)" waiting
@@ -266,15 +365,19 @@ teardown() { rm -rf "$TMP"; }
 }
 
 @test "--wait なしは1回だけ確かめる" {
-  runs_file runs.json "$(qrun $Q5 in_progress null test 2026-10-01T00:00:00Z)"
+  queued AWAITING_CHECKS
   run_script pr-merge-status.sh --pr 5
   assert_equal "$(st)" waiting
   assert_equal "$(grep -c '^READ pr ' "$CALLS")" 1
 }
 
 @test "GitHub に書き込まない" {
-  runs_file runs.json "$(qrun $Q5 in_progress null test 2026-10-01T00:00:00Z)"
+  queued AWAITING_CHECKS
   run_script pr-merge-status.sh --pr 5 --wait --timeout 0
+  assert_success
+  removed_ev failed_checks 2026-10-01T00:10:00Z sha1
+  activity push 2026-10-01T00:20:00Z
+  run_script pr-merge-status.sh --pr 5
   assert_success
   if grep -q '^WRITE' "$CALLS"; then fail "GitHub に書き込んでいます: $(cat "$CALLS")"; fi
 }
@@ -290,14 +393,25 @@ teardown() { rm -rf "$TMP"; }
   assert_failure 64
 }
 
-@test "PR や実行を読めなければ失敗する" {
+@test "PR・キューの状態・push・実行を読めなければ失敗する" {
   rm "$FIX/pr.json"
   run_script pr-merge-status.sh --pr 5
   assert_failure
   pr_json '{}'
+  echo '{"errors": [{"message": "x"}]}' >"$FIX/gql.json"
+  run_script pr-merge-status.sh --pr 5
+  assert_failure
+  assert_output --partial "マージキューの状態を読めません"
+  removed_ev failed_checks 2026-10-01T00:10:00Z sha1
+  echo '{"message": "x"}' >"$FIX/activity.json"
+  run_script pr-merge-status.sh --pr 5
+  assert_failure
+  assert_output --partial "push を読めません"
+  echo '[]' >"$FIX/activity.json"
   echo '{"message": "x"}' >"$FIX/runs.json"
   run_script pr-merge-status.sh --pr 5
   assert_failure
+  assert_output --partial "実行を読めません"
 }
 
 @test "--help は使い方を出す" {
