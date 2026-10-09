@@ -4,6 +4,7 @@
 # SKILL.md の文章に書くと、テストできず、組み合わせの抜けが残るため（branch-plan.sh と同じ流儀）。
 #
 # 使い方: echo '<入力 JSON>' | repair-next.sh
+#         repair-next.sh --stop-reasons   stop の reason になりうる値の一覧（JSON の配列）を出力する
 #
 # 入力（JSON）:
 #   step          start（branch-status.sh の出力を見て、取り込みを始めるか決める。手順1）・
@@ -54,9 +55,14 @@ dw_require jq
 # macOS の BSD sed が日本語で失敗しないよう、バイト列として扱わせる
 usage() { LC_ALL=C sed -n '2,/^[^#]/{/^[^#]/d;s/^# \{0,1\}//;p;}' "$0"; }
 
+# stop の reason になりうる値の一覧。判断の表で stop を返すときは、この中の値だけを使う（一覧に無い値は jq のエラーで止まる）。
+# auto-hold.sh の --repair-reason にそのまま渡すので、英小文字で始め、英小文字・数字・_ だけにする（tests/auto-hold.bats で確かめる）
+stop_reasons='["base_mismatch","recheck_exhausted","dirty","unknown_plan","checks_unconfirmed","same_failure","forbidden_paths"]'
+
 while [ $# -gt 0 ]; do
   case "$1" in
     -h | --help) usage; exit 0 ;;
+    --stop-reasons) jq -c . <<<"$stop_reasons"; exit 0 ;;
     *) dw_die "不明な引数です: $1" 64 ;;
   esac
 done
@@ -79,26 +85,27 @@ jq -e '
   and ((.status // {}) | type == "object") and (.status.unpulled | num) and (.status.dirty | bool)' <<<"$input" >/dev/null 2>&1 \
   || dw_die "入力の型が違います（rechecks・fix_attempts・max_fix_attempts・status.unpulled は数値、push_check_ok・status.dirty は真偽値）" 64
 
-jq -c '
+jq -c --argjson stops "$stop_reasons" '
   def r($a; $why): {action: $a, reason: $why};
+  def stop($why): if ($why | IN($stops[])) then r("stop"; $why) else error("stop の reason が一覧にありません: \($why)") end;
   (.status.unpulled // 0) as $unpulled
   | if .step == "start" then
       .status.plan as $plan
       | if $plan.action == "none" then r("finish"; $plan.reason)
-        elif $plan.action == "ask_base" then r("stop"; "base_mismatch")
+        elif $plan.action == "ask_base" then stop("base_mismatch")
         elif $plan.action == "recheck" then
-          (if (.rechecks // 0) < 3 then r("recheck"; "merge_state_unknown") else r("stop"; "recheck_exhausted") end)
-        elif .status.dirty == true then r("stop"; "dirty")
+          (if (.rechecks // 0) < 3 then r("recheck"; "merge_state_unknown") else stop("recheck_exhausted") end)
+        elif .status.dirty == true then stop("dirty")
         elif $unpulled >= 1 then r("pull"; "unpulled")
         elif $plan.action == "merge" then r("merge"; $plan.reason)
         elif $plan.action == "push" then r("checks"; $plan.reason)
-        else r("stop"; "unknown_plan") end
-    elif .status.dirty == true then r("stop"; "dirty")
+        else stop("unknown_plan") end
+    elif .status.dirty == true then stop("dirty")
     elif $unpulled >= 1 then r("pull"; "unpulled")
-    elif .checks == "unconfirmed" then r("stop"; "checks_unconfirmed")
+    elif .checks == "unconfirmed" then stop("checks_unconfirmed")
     elif .checks == "pending" then r("checks"; "not_run")
     elif .checks == "fail" then
-      (if (.fix_attempts // 0) < (.max_fix_attempts // 3) then r("fix"; "checks_failed") else r("stop"; "same_failure") end)
+      (if (.fix_attempts // 0) < (.max_fix_attempts // 3) then r("fix"; "checks_failed") else stop("same_failure") end)
     elif .push_check_ok == null then r("push_check"; "not_checked")
-    elif .push_check_ok == false then r("stop"; "forbidden_paths")
+    elif .push_check_ok == false then stop("forbidden_paths")
     else r("push"; "ready") end' <<<"$input"

@@ -215,3 +215,20 @@ run_hold() {
   assert_equal "$(called issue-view)" 0
   assert_equal "$(called issue-comment)" 0
 }
+
+@test "repair-next.sh の stop の reason は、どれも --repair-reason にそのまま渡せる（#332）" {
+  setup_hold
+  set_comments "別の話"
+  run_script repair-next.sh --stop-reasons
+  assert_success
+  reasons="$(jq -r '.[]' <<<"$output")"
+  [ -n "$reasons" ] || fail "repair-next.sh --stop-reasons が空です"
+  while IFS= read -r r; do
+    run_hold --issue 17 --reason-file "$TMP/reason.md" --repair-reason "$r" --dry-run
+    assert_success
+    assert_equal "$(jq -r .comment <<<"$output" | sed -n 2p)" "<!-- dev-workflow:repair-stopped reason=${r} -->"
+  done <<<"$reasons"
+  # 表の外で止まるときの other も渡せる
+  run_hold --issue 17 --reason-file "$TMP/reason.md" --repair-reason other --dry-run
+  assert_success
+}

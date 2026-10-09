@@ -85,7 +85,7 @@ push の回数の数え方
 ### 確認
 
 * `tests/repair-push-check.bats` で、`.github/` 以下の workflows 以外のパス・入れ子の `.claude/`・名前が似ているだけのパス・取り込んだ main と同じ内容の入れ子の `.claude/` を確かめる。
-* `tests/auto-hold.bats` で、`--repair-reason` の印の位置・同じ実行の再試行・使えない文字を確かめる。`tests/repair-next.bats` で、stop の `reason` がどれも `--repair-reason` に渡せる形であることを確かめる。
+* `tests/auto-hold.bats` で、`--repair-reason` の印の位置・同じ実行の再試行・使えない文字を確かめ、`repair-next.sh --stop-reasons` の一覧のどれも、`auto-hold.sh --repair-reason` に通ることを確かめる。`tests/repair-next.bats` で、`--stop-reasons` の一覧が判断の表（`--help`）の stop の `reason` と一致することを確かめる（`repair-next.sh` は、一覧に無い値で stop を返そうとすると、jq のエラーで止まる）。
 * `tests/skills.bats` で、branch-update の無人の手順に、`repair-run` の `head`・数え方・`--repair-reason` の渡し方が書かれていることを確かめる。
 * `repair-run` を数える見回りのスクリプトは、見回りのワークフロー（#341）で実装し、そこで、push していない回を数えないことを bats で確かめる。
 

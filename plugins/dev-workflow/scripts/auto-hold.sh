@@ -17,7 +17,8 @@
 #                       本文の先頭は実行の印のままなので、同じ実行のコメントの見分け方は変わらない
 #   --dry-run           コメントも列の移動もせず、行う予定の操作とコメントの本文を出力する
 #
-# 止まるとき: 保留の列（status.hold）が設定されていない・本文が空（終了コード 2）、--run-id が無い・使えない文字がある（64）、PR の番号・無い番号（2）、
+# 止まるとき: 保留の列（status.hold）が設定されていない・本文が空（終了コード 2）、--run-id が無い・使えない文字がある・
+#             --repair-reason が英小文字で始まらない・英小文字・数字・_ 以外の文字がある（64）、PR の番号・無い番号（2）、
 #             Issue を読めない・コメントできない・列を移せない（1）
 #
 # 出力: {issue, comment（投稿する本文）, commented（今回コメントしたか。dry-run ではする予定か）,
@@ -63,10 +64,9 @@ if [ -n "$repair_reason" ]; then
   # 範囲（a-z）はロケールによって大文字も含むので、文字を並べて書く（bash 3.2）
   lower=abcdefghijklmnopqrstuvwxyz
   case "$repair_reason" in
-    ["$lower"]*) ;;
-    *) dw_die "--repair-reason は英小文字で始めてください: ${repair_reason}" 64 ;;
+    [!"$lower"]* | *[!"${lower}"0123456789_]*)
+      dw_die "--repair-reason は、英小文字で始め、英小文字・数字・_ だけにしてください: ${repair_reason}" 64 ;;
   esac
-  case "$repair_reason" in *[!"${lower}"0123456789_]*) dw_die "--repair-reason には英小文字・数字・_ だけを使ってください: ${repair_reason}" 64 ;; esac
   header="$(printf '%s\n%s' "$mark" "<!-- dev-workflow:repair-stopped reason=${repair_reason} -->")"
 fi
 [ -n "$reason_file" ] || dw_die "--reason-file は必須です" 64
