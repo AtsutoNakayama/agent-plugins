@@ -492,8 +492,12 @@ has() {
   step3="$(step "$f" 3)"
   grep -q '`code_review_effort` が null でなければ、引数の先頭にその段階を付ける（`<段階> <ブランチ名>`。サブエージェントに任せるときも同じ）' <<<"$step3" \
     || fail "手順3に、/code-review（サブエージェントに任せるときも）に段階を渡すことが書かれていません"
-  grep -q '`code_review_effort` が null でなければ、その前に段階を付ける' <<<"$step3" \
-    || fail "手順3の、/code-review を任せるサブエージェントへの指示の引数に、段階が入っていません"
+  # 指示役はコードブロックを「そのまま含める」ので、段階の入る場所はブロックの中に要る
+  block="$(awk '/^`\/code-review` を任せるサブエージェントへの指示/ {f = 1} f && /^```/ {n++; next} f && n == 1 {print} n >= 2 {exit}' <<<"$step3")"
+  grep -qF 'Skill ツールの code-review を、引数 [<段階> ]<引数> で実行する。' <<<"$block" \
+    || fail "/code-review を任せるサブエージェントへの指示のブロックに、段階の入る場所がありません: ${block}"
+  grep -q '`<段階>` は `context` の `code_review_effort`。null なら付けない' <<<"$step3" \
+    || fail "/code-review を任せるサブエージェントへの指示の説明に、<段階> に入れる値が書かれていません"
   step8="$(step "$f" 8)"
   grep -q '`code_review_effort` が null でなければ、手順3と同じく引数の先頭にその段階を付ける' <<<"$step8" \
     || fail "再レビュー（手順8）の /code-review に段階を渡すことが書かれていません"
