@@ -215,6 +215,21 @@ load test_helper
   assert_output ja
 }
 
+@test "ホームのリポジトリのワークツリーでは、コミットされたユーザーの層の写しを、チームの設定として読まない" {
+  make_home_repo
+  echo '{"language": "en"}' >"$WORKFLOW_USER_DIR/config.json"
+  echo user >"$WORKFLOW_USER_DIR/commit.md"
+  git add -f .claude/dev-workflow
+  git commit -q -m "user layer"
+  git worktree add -q "$TMP/wt" -b feat/1-x
+  # ワークツリーには、コミットされたファイルの写しがある（ユーザーの層とは別の場所）
+  [ -f "$TMP/wt/.claude/dev-workflow/config.json" ]
+  cd "$TMP/wt"
+  run_script config.sh '[.language, .guides, (.sources | length), .set_up] | tojson'
+  assert_success
+  assert_output '["ja",{},1,false]'
+}
+
 @test "set_up は、導入したか（dw_is_set_up）を真偽値で出す。チームの設定が無ければ false（#244）" {
   rm -f .claude/dev-workflow/config.json
   run_script config.sh .set_up

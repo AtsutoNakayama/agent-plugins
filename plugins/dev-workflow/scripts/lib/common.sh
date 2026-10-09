@@ -350,13 +350,21 @@ dw_physical_path() {
 # リポジトリのチームの設定の置き場所（<ルート>/.claude/dev-workflow）を出力する。
 # ホームをリポジトリにしている（dotfiles を ~/.git などで管理している）と、この場所がユーザーの層の置き場所
 # （dw_user_dir。~/.claude/dev-workflow）と同じになる。ユーザーの層のファイルをチームの設定として読み書きしないよう、
-# その場合は何も出力しない（シンボリックリンクやまだ無いディレクトリも、実体で比べる）。
+# その場合は、メインのワークツリーがその場所のリンクされたワークツリーでも、何も出力しない（シンボリックリンクやまだ無いディレクトリも、実体で比べる）。
 # 使い方: dw_team_dir <リポジトリのルート>
 dw_team_dir() {
-  local d
+  local d user main
   [ -n "${1:-}" ] || return 0
   d="$1/.claude/dev-workflow"
-  [ "$(dw_physical_path "$d")" != "$(dw_physical_path "$(dw_user_dir)")" ] || return 0
+  user="$(dw_physical_path "$(dw_user_dir)")"
+  [ "$(dw_physical_path "$d")" != "$user" ] || return 0
+  # ホームのリポジトリのワークツリー（.git がファイル）には、コミットされたユーザーの層のファイルの写しがあるが、
+  # チームの設定ではないので、メインのワークツリーがホームのリポジトリなら出力しない。
+  # 普通のリポジトリ（.git がディレクトリ）では git を起動しない（フックが毎回呼ぶため）
+  if [ -f "$1/.git" ]; then
+    main="$(dw_main_root "$1" || true)"
+    [ -z "$main" ] || [ "$main" = "$1" ] || [ "$(dw_physical_path "$main/.claude/dev-workflow")" != "$user" ] || return 0
+  fi
   printf '%s\n' "$d"
 }
 

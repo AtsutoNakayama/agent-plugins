@@ -368,6 +368,20 @@ run_common() {
   assert_failure
 }
 
+@test "dw_team_dir は、メインのワークツリーがホームのリポジトリなら、リンクされたワークツリーでも何も出さない" {
+  # shellcheck disable=SC2016 # $1・$2 は bash -c の中で展開する
+  wt_team_dir() { "${TEST_BASH:-bash}" -c '. "$1"; dw_team_dir "$2"' _ "$SCRIPTS/lib/common.sh" "$1"; }
+  git worktree add -q "$TMP/wt" -b feature
+  # ホームのリポジトリでなければ、ワークツリーでも出す
+  run wt_team_dir "$TMP/wt"
+  assert_output "$TMP/wt/.claude/dev-workflow"
+  make_home_repo
+  run wt_team_dir "$TMP/wt"
+  assert_output ""
+  run wt_team_dir "$REPO"
+  assert_output ""
+}
+
 @test "dw_team_dir は、引数が無くても set -u で落ちず、何も出さない" {
   # shellcheck disable=SC2016 # 引数は、起動した bash の中で展開させる
   run "${TEST_BASH:-bash}" -c 'set -eu; . "$1"; dw_team_dir; echo ok' _ "$SCRIPTS/lib/common.sh"
