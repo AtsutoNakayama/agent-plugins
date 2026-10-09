@@ -744,8 +744,12 @@ has() {
     '手順7で、人に ready にするよう伝える'
   has "task-auto の手順7" "$(step "$f" 7)" '`created` が false で `draft` が true' '下書きのまま残したこと' \
     '人が ready にする（`gh pr ready <PR番号>`）よう伝える'
-  # ready にする手順を書かない（実行するのは人。手順7の案内の中の `gh pr ready <PR番号>` だけを許す）
-  bad="$(grep -nF 'gh pr ready' "$f" | grep -vF '`gh pr ready <PR番号>`' | grep -vF '`gh pr ready` は実行しない' || true)"
+  # ready にする手順を書かない（実行するのは人。手順7の案内の中の `gh pr ready <PR番号>` と、実行しないと書いた句だけを許す）。
+  # 許した句を含む行をまるごと除くと、同じ行に足された別の実行の指示を見逃すので、句だけを取り除いてから探す
+  rest="$(cat "$f")"
+  rest="${rest//'`gh pr ready <PR番号>`'/}"
+  rest="${rest//'`gh pr ready` は実行しない'/}"
+  bad="$(grep -nF 'gh pr ready' <<<"$rest" || true)"
   [ -z "$bad" ] || fail "gh pr ready を実行する手順があります: $bad"
   grep -qF '下書きのまま残し、`gh pr ready` は実行しない' "$BATS_TEST_DIRNAME/../docs/design.md" || fail "設計書にありません"
 }
