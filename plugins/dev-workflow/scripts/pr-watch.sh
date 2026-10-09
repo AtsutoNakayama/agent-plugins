@@ -31,6 +31,8 @@
 #   6. idle  nothing_to_do  上のどれでもない（CI が全部通るか無く、対応する指摘も無い）
 #
 # 決まり:
+#   - 対応が要る指摘（unresolved_threads・unanswered_reviews・unanswered_comments）は、pr-feedback.sh の
+#     counts.unanswered をそのまま使う（判定を1か所にまとめ、gh-pr-check と食い違わないようにする）
 #   - 材料は pr-feedback.sh の出力と、GraphQL で読むマージキューの状態・作成時刻・フォークか・レビューの投稿者（PR の URL から引く）
 #     （マージキューの状態は gh pr view に無い。設計書 §10）
 #   - テストのため、環境変数 PR_WATCH_NOW（UNIX 秒）で今の時刻を差し替えられる
@@ -93,12 +95,10 @@ printf '%s\n' "$fb" "$res" | jq -s --argjson now "$now" --argjson wait_min "$rev
   def norm: ascii_downcase | sub("\\[bot\\]$"; "");
   .[0] as $f | .[1].data.resource as $g
   | ($f.pr) as $p
-  | ($f.own_comments | map(.created_at) | max // "") as $last_own
-  | ([$f.feedback[] | .threads[] | select(.replied | not)] | length) as $n_threads
-  | ([$f.feedback[].reviews[]
-      | select(.state == "CHANGES_REQUESTED" or .body != "")
-      | select(.submitted_at > $last_own)] | length) as $n_reviews
-  | ([$f.feedback[].comments[] | select(.created_at > $last_own)] | length) as $n_comments
+  # 対応が要る指摘の判定は pr-feedback.sh が決める（gh-pr-check と同じ判定にそろえる）
+  | ($f.counts.unanswered.threads) as $n_threads
+  | ($f.counts.unanswered.reviews) as $n_reviews
+  | ($f.counts.unanswered.comments) as $n_comments
   # 最初のレビューを待つ投稿者。担当の skill がある投稿者のうち、レビュー・スレッド・コメントのどれも付けていない人
   | ([$g.reviews.nodes[].author.login // empty | norm] + [$f.feedback[].author | norm]) as $arrived
   | (($now - ($g.createdAt | fromdateiso8601)) < ($wait_min * 60)) as $in_wait_window
