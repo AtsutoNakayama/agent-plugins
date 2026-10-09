@@ -175,3 +175,51 @@ grader_pattern() { sed -n "s/^pattern: '\\(.*\\)'\$/\\1/p" "$EVALS/$1/graders/$2
   grep -qE "$(grader_pattern $c moves-to-hold)" .fake-gh/writes || fail "moves-to-hold に当たりません: $(cat .fake-gh/writes)"
   if grep -qE "$(grader_pattern $c no-other-writes)" .fake-gh/writes; then fail "no-other-writes に当たります: $(cat .fake-gh/writes)"; fi
 }
+
+@test "task-auto の範囲外の指摘のケースの準備の後、着手からレビュー・起票・PR の作成まで、スクリプトが偽の gh で進み、grader に当たる" {
+  local c=task-auto-files-out-of-scope
+  run "${TEST_BASH:-bash}" "$EVALS/$c/fixture.sh"
+  assert_success
+  # 範囲外の指摘のもと（前からある誤字）
+  grep -qF 'Helo, %s!' bin/greet.sh || fail "bin/greet.sh に誤字がありません"
+  run "${TEST_BASH:-bash}" "$SCRIPTS/auto-check.sh" --issue 2
+  assert_success
+  assert_equal "$(jq -c '[.action, .resume]' <<<"$output")" '["proceed",null]'
+  run "${TEST_BASH:-bash}" "$SCRIPTS/next-tasks.sh" --issue 2
+  assert_success
+  assert_equal "$(jq -r .issue.overlap <<<"$output")" none
+  [ ! -s .fake-gh/writes ] || fail "着手の前に書き込みました: $(cat .fake-gh/writes)"
+  run "${TEST_BASH:-bash}" "$SCRIPTS/task-start.sh" --issue 2 --slug add-farewell
+  assert_success
+  assert_equal "$(jq -c '[.status.to, .status.warnings]' <<<"$output")" '["In Progress",[]]'
+  local wt
+  wt="$(jq -r .worktree <<<"$output")"
+  # 作業役の実装の代わり
+  # shellcheck disable=SC2016 # 書き出すスクリプトの中身なので、展開させない
+  printf '#!/usr/bin/env bash\nset -euo pipefail\nprintf "Goodbye, %%s!\\n" "$1"\n' >"$wt/bin/farewell.sh"
+  git -C "$wt" add bin/farewell.sh
+  git -C "$wt" commit -q -m "feat: 別れの挨拶のスクリプトを足す"
+  cd "$wt"
+  # レビューは、リポジトリの誤字の観点だけを使い、1周で終える
+  run "${TEST_BASH:-bash}" "$SCRIPTS/review-perspectives.sh" --auto
+  assert_success
+  assert_equal "$(jq -c '[[.perspectives[].name], .context.max_rounds, .context.issue]' <<<"$output")" '[["typo"],1,2]'
+  printf '## 背景\n#2 の自動のレビューで見つかった指摘\n' >"$TMP/issue.md"
+  run "${TEST_BASH:-bash}" "$SCRIPTS/issue-create.sh" --title "greet.sh の挨拶の誤字を直す" --type fix --body-file "$TMP/issue.md"
+  assert_success
+  assert_equal "$(jq -r .number <<<"$output")" 99
+  printf '## 概要\n別れの挨拶\n\nCloses #2\n' >"$TMP/pr.md"
+  run "${TEST_BASH:-bash}" "$SCRIPTS/pr-create.sh" --issue 2 --body-file "$TMP/pr.md" --no-draft
+  assert_success
+  assert_equal "$(jq -c '[.created, .draft, .pr.number]' <<<"$output")" '[true,false,98]'
+  cd "$WS"
+  grep -qE "$(grader_pattern $c files-issue)" .fake-gh/writes || fail "files-issue に当たりません: $(cat .fake-gh/writes)"
+  grep -qE "$(grader_pattern $c opens-pr)" .fake-gh/writes || fail "opens-pr に当たりません: $(cat .fake-gh/writes)"
+}
+
+@test "task-auto の範囲外の指摘のケースの grader は、起票しないで PR を作っただけの記録には当たらない" {
+  local c=task-auto-files-out-of-scope
+  printf 'issue edit 2 --add-assignee @me\npr create --base main --head feat/2-add-farewell\nissue edit 2 --body-file -\n' >"$TMP/writes"
+  if grep -qE "$(grader_pattern $c files-issue)" "$TMP/writes"; then fail "起票していない記録に files-issue が当たります"; fi
+  grep -qE "$(grader_pattern $c opens-pr)" "$TMP/writes" || fail "opens-pr に当たりません"
+}
