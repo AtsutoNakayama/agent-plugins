@@ -833,3 +833,14 @@ fake_issue_tasks() {
   assert_equal "$(head -n 2 "$TMP/issue-edit-body")" "$(printf -- '## やること\n- [x] 一つ目')"
   assert_equal "$(tail -n 1 "$TMP/issue-edit-body")" "- [ ] 足す項目"
 }
+
+@test "本文に絵文字があっても（128 KiB を超える1行でも）、出力の本文は PR に渡した本文と同じにする" {
+  # 標準入力の jq -R は、4096 バイトを超える1行の、読み込みの区切りにまたがる BMP の外の文字（絵文字）を壊すので、
+  # 出力の本文は --rawfile で読む（本文の Closes を整える前の読み込み（-Rrs）は、この差分より前からあり、別に直す）
+  setup_branch
+  fake_issue 17 '["feat"]'
+  { printf '## 概要\n'; for _ in $(seq 1 30000); do printf 'ab😀'; done; printf '\n'; } >"$TMP/body.md"
+  run_pr --issue 17 --body-file "$TMP/body.md"
+  assert_success
+  assert_equal "$(jq -r .body <<<"$json")" "$(cat "$TMP/pr-body")"
+}

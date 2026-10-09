@@ -98,7 +98,7 @@ if ! $dry_run; then
 fi
 
 # 本文は長くなりうるので、引数ではなくファイルで jq に渡す（引数1つの長さには上限がある。標準入力の -R では、
-# 大きな入力の BMP の外の文字（絵文字など）が読み込みの区切りで割れることがあるので、--rawfile で読ませる）
+# 4096 バイトを超える1行の BMP の外の文字（絵文字など）が読み込みの区切りで割れることがあるので、--rawfile で読ませる）
 body_file="$(mktemp)"
 trap 'rm -f "$body_file"' EXIT
 printf '%s' "$body" >"$body_file"

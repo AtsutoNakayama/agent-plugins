@@ -328,12 +328,17 @@ fi
 # 組織のルールセットも含めてブランチに効いているルールで見る）。読むだけなので dry-run でも読む。読めなければ null にし、止めない
 merge_queue="$(dw_merge_queue_enabled '{owner}/{repo}' "$pr_base")" || merge_queue=null
 
-# 本文と Issue のチェックリストの項目（tasks）は大きいことがあるので、引数ではなく標準入力で jq に渡す（引数1つの長さには上限がある）
-{ printf '%s' "$body" | jq -Rs .; printf '%s\n' "$tasks"; } | jq -s --argjson i "$issue" --arg branch "$branch" --arg base "$base" --arg pr_base "$pr_base" --arg title "$title" \
+# 本文と Issue のチェックリストの項目（tasks）は大きいことがあるので、引数では渡さない（引数1つの長さには上限がある）。
+# 本文は一時ファイルにして --rawfile で、tasks は標準入力の JSON で渡す（標準入力の -R では、4096 バイトを超える1行の
+# BMP の外の文字が読み込みの区切りで割れることがある）
+out_body="$(mktemp)"
+trap 'rm -f "${body_tmp:-}" "$out_body"' EXIT
+printf '%s' "$body" >"$out_body"
+printf '%s\n' "$tasks" | jq --rawfile body "$out_body" --argjson i "$issue" --arg branch "$branch" --arg base "$base" --arg pr_base "$pr_base" --arg title "$title" \
   --argjson labels "$labels" --argjson breaking "$breaking" --argjson draft "$draft" --argjson created "$created" \
   --arg number "$pr_number" --arg url "$pr_url" --argjson status "$status" \
   --argjson checked "$to_check" --argjson added "$to_add" \
-  --argjson dry "$dry_run" --argjson actions "$actions" --argjson merge_queue "$merge_queue" '.[0] as $body | .[1] as $tasks | {
+  --argjson dry "$dry_run" --argjson actions "$actions" --argjson merge_queue "$merge_queue" '. as $tasks | {
     issue: $i,
     dry_run: $dry,
     branch: $branch,
