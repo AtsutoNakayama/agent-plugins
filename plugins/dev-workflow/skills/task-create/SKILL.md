@@ -13,7 +13,7 @@ description: 依頼の内容から Issue を起票し、type ラベルを付け�
 
 - `${CLAUDE_PLUGIN_ROOT}/scripts/config.sh`：合わせた設定の出力
 - `${CLAUDE_PLUGIN_ROOT}/scripts/adr-list.sh`：ADR の作成を提案するかの設定（`suggest`。`adr.suggest`）
-- `${CLAUDE_PLUGIN_ROOT}/scripts/parent-candidate.sh`：分けた Issue の案の木の一番上の親を外すとき、重なる既にある Issue を代わりの親にできるか（サブ Issue の有無・既にある親・紐付けた後の深さと `sub_issues.max_depth`）と、することの `action`（`use_as_parent`・`no_parent`）を出す。何も変えない（`--help` で使い方）
+- `${CLAUDE_PLUGIN_ROOT}/scripts/parent-candidate.sh`：分けた Issue の案の木の一番上の親を外すとき、重なる既にある Issue を代わりの親にできるか（サブ Issue の有無・既にある親・紐付けた後の深さと `sub_issues.max_depth`。上限を超えると分かってたどるのを止めたときは、深さは null）と、することの `action`（`use_as_parent`・`no_parent`）を出す。何も変えない（`--help` で使い方）
 - `${CLAUDE_PLUGIN_ROOT}/scripts/issue-create.sh`：起票・ラベル（type と breaking）・Project への追加・Status と Story Point の設定・依存関係（blocked by）の登録・親の Issue への紐付け（サブ Issue。`--help` で使い方）
 
 ## 起票を頼まれていない相談で呼ばれたとき
@@ -91,7 +91,7 @@ Issue の分け方・親子の構成の相談（起票はまだ頼まれてい�
 次の点は、分けた Issue の場合の決まりとする。
 
 - **重なった Issue の扱い**：重なった分けた Issue だけを対象にし、残りの分けた Issue の下書きは止めない。扱いは次の3つで、手順3の選択肢と同じ言葉を使う。重なりの問いは、重なった Issue ごとには出さず、手順3の確認の中で1回にまとめる
-  - **外す**：その分けた Issue は起票せず、重なる既にある Issue を使う。ほかの分けた Issue がそれに依存していれば、依存先を既にある Issue の `#N` に付け替え（本文の「依存」と `--blocked-by` も）、付け替えたことを確認で伝える。外すのが案の木の一番上の親なら、重なる既にある Issue を子の親にできるかを `parent-candidate.sh --issue <重なる既にある Issue の番号> --levels <外した親の下の層の数（子だけなら 1、孫もあれば 2）>` で判定し、出力の `action` に従う（外した親の代わりとして使う例外で、下の「新しく足さない」とは別。親にできるかは自分で判断し直さない）。`use_as_parent` なら、子は親なしにせず、重なる既にある Issue を親にする（その Issue に Story Point が入っていれば空欄にすることも確認で伝える）。`no_parent` なら、親にせず、子を親なしで起票し、そのことと理由（`reasons`：サブ Issue を持つ・既に別の親を持つ・`sub_issues.max_depth` を超える）を確認で伝える。スクリプトが止まったら、`no_parent` と同じに扱い（親にできるかを確かめられないので、`issue-create.sh` の `--parent` で紐付けない）、子を親なしで起票することと、理由として標準エラーの1行のメッセージを確認で伝える。木の途中の親（上にさらに親がある親）を外すときは、その子の親を、外した親のさらに上の親にする（深さは外す前より浅くなる）
+  - **外す**：その分けた Issue は起票せず、重なる既にある Issue を使う。ほかの分けた Issue がそれに依存していれば、依存先を既にある Issue の `#N` に付け替え（本文の「依存」と `--blocked-by` も）、付け替えたことを確認で伝える。外すのが案の木の一番上の親なら、重なる既にある Issue を子の親にできるかを `parent-candidate.sh --issue <重なる既にある Issue の番号> --levels <外した親の下の層の数（子だけなら 1、孫もあれば 2）>` で判定し、出力の `action` に従う（外した親の代わりとして使う例外で、下の「新しく足さない」とは別。親にできるかは自分で判断し直さない）。`use_as_parent` なら、子は親なしにせず、重なる既にある Issue を親にする（その Issue に Story Point が入っていれば空欄にすることも確認で伝える）。`no_parent` なら、親にせず、子を親なしで起票し、そのことと理由（`reasons`：サブ Issue を持つ・既に別の親を持つ・`sub_issues.max_depth` を超える）を確認で伝える。スクリプトが止まったら、通信などの一時的な失敗のこともあるので、1回だけ実行し直す。それでも止まったら、`no_parent` と同じに扱い（親にできるかを確かめられないので、`issue-create.sh` の `--parent` で紐付けない）、子を親なしで起票する。確認では、止まったときの標準エラーの1行のメッセージと、後で GitHub の画面などから子を重なる既にある Issue に紐付けられることを伝える（親にするかはユーザーに聞かない）。木の途中の親（上にさらに親がある親）を外すときは、その子の親を、外した親のさらに上の親にする（深さは外す前より浅くなる）
   - **重ならない部分だけにする**：重なった分けた Issue の本文の「やること」から、既にある Issue と重なる項目を除き、その Issue を本文の「背景」に `#N` で書く
   - **そのまま起票する**：重なりを承知で、案のとおりに起票する
 - **親の候補と案の親子の木**：Issue の親は1つだけなので、分けた Issue の親は案の親子の木で決め、既にある Issue を親の候補として新しく足さない（木の親が既にある Issue なら、その Issue が親）。サブ Issue を持つ既にある Issue が、分けた Issue の仕様にあたるときは、親にせず、重なる Issue として確認で伝える
