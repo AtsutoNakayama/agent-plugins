@@ -68,11 +68,11 @@ CD_PATHS=(plugins .github/scripts tests/eval tests/test_helper.bash ':!*.md' ':!
 
 # CDPATH='' の無い cd の行を「<ファイル>:<行の中身（前の空白を除く）>」で出力する。コメントの行は除く。
 # cd はコマンドの位置（行頭、( $( { ; & | の後、then・do・else の後）にあるものだけを見る（case のパターンの cd | や、文の中の cd は見ない）。
-# CDPATH='' cd は、cd の前が CDPATH='' なので当たらない
+# CDPATH='' cd は、cd の前が CDPATH='' なので当たらない。単語の境界は、macOS の git の ERE で働かない \b を使わずに書く
 # 使い方: bare_cd <git grep の pathspec>...
 bare_cd() {
   # shellcheck disable=SC2016 # 正規表現の $ をそのまま渡す
-  git grep -nE --full-name -e '(^|[;&|({]|\$\(|\b(then|do|else))[[:space:]]*cd([[:space:]]+[^|[:space:]]|$)' -- "$@" \
+  git grep -nE --full-name -e '(^|[;&|({]|\$\(|(^|[^[:alnum:]_])(then|do|else))[[:space:]]*cd([[:space:]]+[^|[:space:]]|$)' -- "$@" \
     | awk -F: '{ f = $1; sub(/^[^:]*:[0-9]+:[[:space:]]*/, ""); if ($0 !~ /^#/) print f ":" $0 }'
 }
 
@@ -106,6 +106,9 @@ tests/test_helper.bash:cd "$REPO" || return 1'
     '( cd "$dir" ) && { cd "$dir"; }' \
     'if true; then cd -P "$dir"; fi' \
     'true && cd "$dir"' \
+    'for d in a; do cd "$d"; done' \
+    'if false; then :; else cd "$dir"; fi' \
+    'undo cd "$dir"' \
     'x="$(CDPATH='"''"' cd "$dir" && pwd)"' \
     '  # cd "$dir" はコメント' \
     '  cd | pushd) ;;' \
@@ -118,5 +121,7 @@ tests/test_helper.bash:cd "$REPO" || return 1'
 probe.sh:x="$(cd "$dir" && pwd)"
 probe.sh:( cd "$dir" ) && { cd "$dir"; }
 probe.sh:if true; then cd -P "$dir"; fi
-probe.sh:true && cd "$dir"'
+probe.sh:true && cd "$dir"
+probe.sh:for d in a; do cd "$d"; done
+probe.sh:if false; then :; else cd "$dir"; fi'
 }
