@@ -788,4 +788,8 @@ has() {
   grep -q '今は着手しない' "$f" || fail "「今は着手しない」の選択肢がありません"
   grep -q '起票した後に着手するかは使う人が決める' "$BATS_TEST_DIRNAME/../plugins/dev-workflow/defaults/task-flow.md" || fail "task-flow.md にありません"
   grep -q '着手するかを聞いてから `task-start` に進む' "$BATS_TEST_DIRNAME/../docs/design.md" || fail "設計書にありません"
+  grep -q 'task-create 手順6 | 起票した後に着手するか | 聞かず、着手しない' "$SKILLS/task-auto/SKILL.md" || fail "task-auto の確認の代わりの表にありません"
+  grep -q '手順6（着手するかを聞く）は行わず' "$SKILLS/task-auto/SKILL.md" || fail "task-auto の手順5にありません"
+  grep -q '既存の Issue に「着手して」と言ったときは、もう一度聞きません' "$BATS_TEST_DIRNAME/../plugins/dev-workflow/defaults/task-flow.md" || fail "task-flow.md に既存の Issue の扱いがありません"
+  grep -q '起票した後に着手するか（着手まで頼まれていないとき）' "$BATS_TEST_DIRNAME/../docs/design.md" || fail "設計書の確認を取る操作の列にありません"
 }
