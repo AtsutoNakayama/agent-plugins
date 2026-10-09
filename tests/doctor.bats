@@ -164,6 +164,35 @@ labels_check() { jq -c '.checks[] | select(.name == "labels") | [.ok, .level, .d
   assert_equal "$(jq -r '[.checks[] | select(.name == "pr-check-handlers")] | length' <<<"$output")" 0
 }
 
+@test "pr_check.handlers の形が想定外（配列・文字列でない値）でも、doctor は成功し、pr-check-handlers を出さない" {
+  fake_gh
+  export FAKE_SCOPES="project"
+  export HOME="$TMP/home"
+  echo '{"pr_check": {"handlers": ["x"]}}' >.claude/dev-workflow/config.json
+  run_script doctor.sh
+  assert_success
+  assert_equal "$(jq -r '[.checks[] | select(.name == "pr-check-handlers")] | length' <<<"$output")" 0
+  echo '{"pr_check": {"handlers": {"some-bot[bot]": 123}}}' >.claude/dev-workflow/config.json
+  run_script doctor.sh
+  assert_success
+  assert_equal "$(jq -r '[.checks[] | select(.name == "pr-check-handlers")] | length' <<<"$output")" 0
+}
+
+@test "pr_check.handlers の skill 名が安全でない（../x・a/b・.・..）ときは、その位置に SKILL.md があっても警告する" {
+  fake_gh
+  export FAKE_SCOPES="project"
+  export HOME="$TMP/home"
+  mkdir -p .claude/x .claude/skills/a/b
+  echo x >.claude/x/SKILL.md
+  echo x >.claude/skills/a/b/SKILL.md
+  echo x >.claude/skills/SKILL.md
+  echo '{"pr_check": {"handlers": {"a[bot]": "../x", "b[bot]": "a/b", "c[bot]": ".", "d[bot]": ".."}}}' >.claude/dev-workflow/config.json
+  run_script doctor.sh
+  assert_success
+  assert_equal "$(jq -r '.checks[] | select(.name == "pr-check-handlers") | [.ok, .level] | @tsv' <<<"$output")" $'false\twarn'
+  assert_output --partial "../x、a/b、.、.."
+}
+
 @test "設定が壊れていれば config が失敗する" {
   fake_gh
   export FAKE_SCOPES="project"

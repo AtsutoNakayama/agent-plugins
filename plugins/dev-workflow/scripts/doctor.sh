@@ -113,7 +113,9 @@ if [ -n "$repo_root" ]; then
   while IFS= read -r handler_skill; do
     [ -n "$handler_skill" ] || continue
     case "$handler_skill" in *:*) continue ;; esac
-    if [ ! -f "$repo_root/.claude/skills/$handler_skill/SKILL.md" ] && [ ! -f "$HOME/.claude/skills/$handler_skill/SKILL.md" ]; then
+    # パスに組み立てるのは、安全な名前（英数字・.・_・-）だけ。../x や a/b のような名前は「無い」ものとして扱う
+    if ! [[ "$handler_skill" =~ ^[A-Za-z0-9._-]+$ ]] || [ "$handler_skill" = . ] || [ "$handler_skill" = .. ] \
+      || { [ ! -f "$repo_root/.claude/skills/$handler_skill/SKILL.md" ] && [ ! -f "$HOME/.claude/skills/$handler_skill/SKILL.md" ]; }; then
       missing_handlers="$missing_handlers${missing_handlers:+、}$handler_skill"
     fi
   done < <(jq -r '(.pr_check.handlers // {}) | if type == "object" then .[] | strings else empty end' 2>/dev/null <<<"$config" || true)
