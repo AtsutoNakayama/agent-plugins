@@ -351,6 +351,8 @@ https://github.com/me/demo/pull/42"
 @test "push・commit ではないサブコマンドでは、push・commit の語があっても出さない" {
   silent "git stash push -m x" "git stash commit" "git log --grep commit" "git log --grep=push" "git-lfs push origin" \
     "git config alias.push x" "echo digit push"
+  # stash の取り出し・破棄（guard-git が調べる）も、push・commit ではないので出さない
+  silent "git stash pop" "git stash apply stash@{0}" "git stash drop 1" "git stash clear"
 }
 
 @test "push と、ブランチを作るコマンドを続けても、PR・CI は今のブランチ、Issue は両方のものを出す" {

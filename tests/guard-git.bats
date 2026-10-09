@@ -434,6 +434,56 @@ silent() {
   allowed "cd - && git switch -c feat/x" "cd - && git checkout -b feat/x" "cd - && git branch feat/x"
 }
 
+# 今のブランチで、追跡しているファイル f を変えて stash を作る。使い方: make_stash [メッセージ]
+make_stash() {
+  [ -f f ] || { echo a >f && git add f && git commit -q -m f; }
+  echo "$RANDOM" >>f
+  if [ $# -gt 0 ]; then git stash push -q -m "$1"; else git stash -q; fi
+}
+
+@test "別のブランチで作った stash の取り出し・破棄（pop・apply・drop・branch）を止める" {
+  make_stash
+  git checkout -q -b feat/1-x
+  denied "別のブランチ（main）で作られた stash" "git stash pop" "git stash apply" "git stash drop" "git stash pop 0" \
+    "git stash pop --index stash@{0}" "git stash apply -q 'stash@{0}'" "git stash drop -q stash@{0}" \
+    "git stash branch feat/2-y" "git stash branch feat/2-y stash@{0}" "git stash pop -- 0"
+  # 今のブランチで作った stash は取り出せる。番号で、別のブランチの stash を指せば止める
+  make_stash "fix: x"
+  allowed "git stash pop" "git stash apply stash@{0}" "git stash drop 0" "git stash branch feat/2-y"
+  denied "別のブランチ（main）で作られた stash" "git stash pop 1" "git stash apply stash@{1}" "git stash branch feat/2-y 1"
+  # 理由は1行で伝える
+  run_hook "git stash pop 1"
+  [ "${#lines[@]}" -eq 1 ]
+}
+
+@test "stash は全ワークツリーで共有されるので、別のワークツリーで作った stash も、ブランチが違えば止める" {
+  make_stash
+  git worktree add -q -b feat/1-x "$TMP/wt"
+  denied "別のブランチ（main）で作られた stash" "cd $TMP/wt && git stash pop" "git -C $TMP/wt stash apply"
+  allowed "git stash pop"
+}
+
+@test "git stash clear は、どのブランチの上でも止める" {
+  denied "git stash clear" "git stash clear"
+  git checkout -q -b feat/1-x
+  denied "git stash clear" "git stash clear"
+}
+
+@test "stash を作る・見るだけの操作と、無い stash の取り出しは止めない" {
+  allowed "git stash pop" "git stash apply stash@{3}"
+  make_stash
+  git checkout -q -b feat/1-x
+  allowed "git stash" "git stash push -m x" "git stash list" "git stash show -p" "git stash show stash@{0}" "git stash pop stash@{5}"
+}
+
+@test "導入していないリポジトリでは stash を止めない。対象が分からないときの取り出しは止める" {
+  make_stash
+  git checkout -q -b feat/1-x
+  denied "対象のリポジトリが分からない" "cd - && git stash pop"
+  rm .claude/dev-workflow/config.json
+  silent "git stash pop" "git stash clear"
+}
+
 @test "規約に合わない名前でブランチを作るコマンドは、止めずに警告する" {
   warned foo \
     "git switch -c foo" \

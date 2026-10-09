@@ -535,6 +535,33 @@ gc_commit_args_on() {
   esac
 }
 
+# git stash pop・apply・drop・branch の引数から、取り出す・消す stash を gc_stash_ref に入れる。guard-git.sh が使う。
+# 書かなければ stash@{0}、数だけなら stash@{<数>}（git と同じ）。branch は、1つ目の位置引数がブランチの名前で、2つ目が stash。
+# オプション（--index・-q）は値を取らない。-- の後ろは、すべて位置引数
+# 使い方: gc_stash_args <サブコマンド（pop・apply・drop・branch）> <引数>...
+gc_stash_ref=""
+# shellcheck disable=SC2034 # gc_stash_ref は呼び出し側（フック）が読む
+gc_stash_args() {
+  local want=1 pos=0
+  [ "$1" != branch ] || want=2
+  shift
+  gc_stash_ref=""
+  gc_args gc_stash_args_on "" "--index --quiet" "$@"
+  [ -n "$gc_stash_ref" ] || gc_stash_ref=0
+  case "$gc_stash_ref" in
+    *[!0-9]*) ;;
+    *) gc_stash_ref="stash@{$gc_stash_ref}" ;;
+  esac
+}
+gc_stash_args_on() {
+  [ "$1" = arg ] || return 0
+  pos=$((pos + 1))
+  if [ "$pos" -eq "$want" ]; then
+    gc_stash_ref="$2"
+    gc_stop=true
+  fi
+}
+
 # --- コマンドごとの解析 -------------------------------------------------------------
 
 # cd で移る。after のときの外側の相対パスの扱いは、先頭のコメント。gc_scan の中から呼ぶ。
