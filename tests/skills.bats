@@ -779,3 +779,13 @@ has() {
   grep -qF 'parent-state.sh --issue <番号> --assume-closed <番号>:<理由>' "$SKILLS/task-cancel/SKILL.md" || fail "task-cancel が取りやめた Issue を --assume-closed で渡していません"
   grep -q '「Issue だけ閉じる」を選んだときも含む' "$SKILLS/task-cancel/SKILL.md" || fail "task-cancel の手順8の実行条件がありません"
 }
+
+# shellcheck disable=SC2016 # バッククォートはスキルの本文の文字で、展開させない
+@test "task-create は、着手まで頼まれていなければ、起票の後に着手するかを聞いてから task-start に進む（task-create・task-flow・設計書）" {
+  local f="$SKILLS/task-create/SKILL.md"
+  grep -q '^### 6. 着手するかを聞く' "$f" || fail "task-create に、着手するかを聞く手順がありません"
+  grep -q '「起票して着手して」のように着手まで頼まれたときは、聞かずに `task-start` に進む' "$f" || fail "着手まで頼まれたときは聞かないことがありません"
+  grep -q '今は着手しない' "$f" || fail "「今は着手しない」の選択肢がありません"
+  grep -q '起票した後に着手するかは使う人が決める' "$BATS_TEST_DIRNAME/../plugins/dev-workflow/defaults/task-flow.md" || fail "task-flow.md にありません"
+  grep -q '着手するかを聞いてから `task-start` に進む' "$BATS_TEST_DIRNAME/../docs/design.md" || fail "設計書にありません"
+}
