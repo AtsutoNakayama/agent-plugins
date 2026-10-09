@@ -448,6 +448,21 @@ JSON
   assert_equal "$(out_of '.todo[0] | [.waiting, [.blocked_by[] | [.repo, .number]]]')" '[true,[["me/other",5]]]'
 }
 
+@test "Project の項目と依存先のリポジトリの綴りが大文字小文字だけ違っても、このリポジトリの Issue として扱う" {
+  setup_fake_gh
+  item 10 Todo $'## 依存\n- #6' "" ME/DEMO
+  item 20 Todo "" "" Me/Demo
+  item 30 Todo "" "" me/other
+  write_page
+  # 依存関係の API の #5 は綴りだけ違うこのリポジトリの Issue。本文の #6 は同じ Issue の重複にならず、このリポジトリのまま
+  echo '[{"number": 5, "state": "open", "repository_url": "https://api.github.com/repos/Me/DEMO"}]' >"$FIX/blocked-10.json"
+  echo open >"$FIX/state-6"
+  run_script next-tasks.sh
+  assert_success
+  assert_equal "$(out_of '[.todo[] | .number]')" '[10,20]'
+  assert_equal "$(out_of '.todo[0].blocked_by | map([.repo, .number])')" '[["me/demo",5],["me/demo",6]]'
+}
+
 @test "着手中の Issue に PR も領域も無ければ、Todo の各 Issue に、重なるか分からないと警告を付ける" {
   setup_fake_gh
   item 10 Todo $'## 変更するファイル・領域\n- docs/'

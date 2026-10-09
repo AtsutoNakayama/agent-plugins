@@ -443,6 +443,15 @@ assert_no_changes() {
   assert_equal "$(jq -c .parent <<<"$json")" '{"number":12,"depth":2,"story_point_cleared":null}'
 }
 
+@test "--parent の親の Project の項目は、リポジトリの綴りの大文字小文字が違っても同じリポジトリのものとして見つける" {
+  setup_fake_gh
+  existing_issue 12
+  project_items Other/Repo:12:3 Me/Demo:12:8
+  run_create --title t --type feat --parent 12 --story-point 3
+  assert_success
+  assert_equal "$(jq -c .parent <<<"$json")" '{"number":12,"depth":2,"story_point_cleared":8}'
+}
+
 @test "--parent の親に Story Point が入っていれば、子を足した後に空欄にする" {
   setup_fake_gh
   existing_issue 12
