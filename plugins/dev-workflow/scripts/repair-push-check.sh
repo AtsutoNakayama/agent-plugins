@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 # 無人で push する前に、push で origin に入る変更のパスを機械的に確かめる（ADR 000285「無人で push する条件」）。
-# push の対象に .github/workflows/ か .claude/ の変更が含まれていたら、push してはいけない（ok が false）。
+# push の対象に、リポジトリ直下の .github/ 以下か、どの階層の .claude/ 以下の変更が含まれていたら、push してはいけない（ok が false）。
+# .github/ は workflows だけでなく、workflow が呼ぶ actions・scripts や CODEOWNERS などで CI と権限に影響し、
+# 入れ子の .claude/ も、そのディレクトリで動く Claude の権限と設定に影響するため（#331）。
 # 何も変えない（読むだけ。push もしない）。
 #
 # 使い方: repair-push-check.sh --base-branch B [--branch X]
@@ -57,7 +59,7 @@ git diff --name-only --no-renames -z "$against" HEAD >"$diff_file" \
 # パスに改行が入っていても壊れないよう -z で読む
 while IFS= read -r -d '' path; do
   case "$path" in
-    .github/workflows/* | .claude/*) ;;
+    .github/* | .claude/* | */.claude/*) ;;
     *) continue ;;
   esac
   # 取り込んだ base_branch と同じ内容なら、このブランチの変更ではない
