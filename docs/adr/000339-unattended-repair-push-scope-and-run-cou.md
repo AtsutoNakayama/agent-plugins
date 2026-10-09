@@ -59,7 +59,8 @@ push の回数の数え方
 
 ### push の回数の数え方
 
-* `repair-run` のマーカーを `<!-- dev-workflow:repair-run head=<sha> -->` にする。`<sha>` は、push で進める前の PR の head の sha（`gh pr view --json headRefOid`。40 桁）。
+* `repair-run` のマーカーを `<!-- dev-workflow:repair-run head=<sha> -->` にする。`<sha>` は、fetch・pull を済ませた後の `git rev-parse origin/<ブランチ>`（push で進める前の origin の head。40 桁）。push の直前は手元が origin の先にいる（`unpulled` が 0）ので、PR の head と同じ sha になる。
+* 数えるのは `repair-run-count.sh` で行う。PR のコメント（`gh pr view --json comments` か `gh api` の出力）と今の PR の head の sha を受け取り、値だけで回数を出す。投稿者（`repair.reply_logins`）と再開の起点の時刻でも絞れる。
 * 見回りは、`repair-run` のうち、今の PR の head が `head` の sha と違うもの（head がそこから進んだもの）だけを、`head` の値ごとに1回として数える。無人の push は強制をしない fast-forward だけなので、同じ sha から進める push は1回しか無く、同じ sha で何度試しても1回になる。
 * push に失敗した回、コメントを付けた後に push の前で止まった・落ちた回は、PR の head がその sha のままなので数えない。その後に別の実行が同じ sha から push すれば、その sha が1回と数えられる。
 * 人の push で head が進んだときは、ADR 000285 の「再開の起点」で数え直しになるので、起点より前の `repair-run` は数えない（変えない）。
@@ -87,7 +88,7 @@ push の回数の数え方
 * `tests/repair-push-check.bats` で、`.github/` 以下の workflows 以外のパス・入れ子の `.claude/`・名前が似ているだけのパス・取り込んだ main と同じ内容の入れ子の `.claude/` を確かめる。
 * `tests/auto-hold.bats` で、`--repair-reason` の印の位置・同じ実行の再試行・使えない文字を確かめ、`repair-next.sh --stop-reasons` の一覧のどれも、`auto-hold.sh --repair-reason` に通ることを確かめる。`tests/repair-next.bats` で、`--stop-reasons` の一覧が判断の表（`--help`）の stop の `reason` と一致することを確かめる（`repair-next.sh` は、一覧に無い値で stop を返そうとすると、jq のエラーで止まる）。
 * `tests/skills.bats` で、branch-update の無人の手順に、`repair-run` の `head`・数え方・`--repair-reason` の渡し方が書かれていることを確かめる。
-* `repair-run` を数える見回りのスクリプトは、見回りのワークフロー（#341）で実装し、そこで、push していない回を数えないことを bats で確かめる。
+* `tests/repair-run-count.bats` で、push していない回（`head` が今の head と同じ）を数えないこと・同じ `head` の重複が1回になること・古い形式を1つ1回と数えること・投稿者と時刻の絞り込み・本文の先頭に無いマーカーを数えないことを確かめる。見回りのワークフロー（#341）は、このスクリプトで数える。
 
 ## 各案の長所と短所
 
