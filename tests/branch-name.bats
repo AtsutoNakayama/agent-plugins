@@ -196,10 +196,128 @@ assert_check_matches_parse() {
   assert_output "feat|17"
 }
 
-@test "dw_check_branch_pattern は、設定が空・部分的（branch.pattern が文字列でない・labels.types が無い）でも、正規表現の誤りとはしない" {
+@test "dw_check_branch_pattern は、設定が空・部分的（branch.pattern が無い・null、labels.types が無い）でも、誤りとはしない" {
   for c in '{}' '{"labels":{"types":["feat"]}}' '{"branch":{"pattern":null},"labels":{"types":["feat"]}}' '{"branch":{"pattern":"{type}/{issue_number}"}}'; do
     # shellcheck disable=SC2016 # bash -c の中で展開させる
     run "${TEST_BASH:-bash}" -c '. "$1/lib/common.sh"; dw_check_branch_pattern "$2"' _ "$SCRIPTS" "$c"
     assert_success
   done
+}
+
+# lib/common.sh の関数を、テストの bash（TEST_BASH）で呼ぶ
+# 使い方: run_common <関数> [引数]...
+run_common() {
+  # shellcheck disable=SC2016 # bash -c の中で展開させる
+  run "${TEST_BASH:-bash}" -c '. "$1/lib/common.sh"; shift; "$@"' _ "$SCRIPTS" "$@"
+}
+
+# 設定 <JSON> で、dw_check_branch_pattern（終了コード 1）・dw_parse_branch・--check（終了コード 2）が、
+# どれも <メッセージ> を含む1行で設定の誤りを報告し、正規表現の誤りとは報告しないことを確かめる
+# 使い方: assert_config_error <設定の JSON> <メッセージ>
+assert_config_error() {
+  run_common dw_check_branch_pattern "$1"
+  assert_failure 1
+  assert_output --partial "$2"
+  refute_output --partial "正規表現として正しくありません"
+  assert_equal "${#lines[@]}" 1
+  run_common dw_parse_branch "$1" feat/17-x
+  assert_failure 2
+  assert_output --partial "$2"
+  refute_output --partial "正規表現として正しくありません"
+  assert_equal "${#lines[@]}" 1
+  printf '%s\n' "$1" >.claude/dev-workflow/config.local.json
+  run_script branch-name.sh --check feat/17-add-login
+  assert_failure 2
+  assert_output --partial "$2"
+  refute_output --partial "正規表現として正しくありません"
+  assert_equal "${#lines[@]}" 1
+}
+
+@test "branch.pattern が文字列でない（数値・オブジェクト・配列・真偽値）ときは、設定の誤りとして終了コード 2 で報告する" {
+  assert_config_error '{"branch":{"pattern":5},"labels":{"types":["feat"]}}' 'branch.pattern（5）が文字列ではありません'
+  assert_config_error '{"branch":{"pattern":{"a":1}},"labels":{"types":["feat"]}}' 'branch.pattern（{"a":1}）が文字列ではありません'
+  assert_config_error '{"branch":{"pattern":["x"]},"labels":{"types":["feat"]}}' 'branch.pattern（["x"]）が文字列ではありません'
+  assert_config_error '{"branch":{"pattern":true},"labels":{"types":["feat"]}}' 'branch.pattern（true）が文字列ではありません'
+}
+
+@test "labels.types が文字列の配列でないときは、正規表現の誤りではなく labels.types の誤りとして報告する" {
+  assert_config_error '{"branch":{"pattern":"{type}/{issue_number}-{slug}"},"labels":{"types":"feat"}}' 'labels.types（"feat"）が文字列の配列ではありません'
+  assert_config_error '{"branch":{"pattern":"{type}/{issue_number}-{slug}"},"labels":{"types":["feat",1]}}' 'labels.types（["feat",1]）が文字列の配列ではありません'
+}
+
+@test "labels.types に正規表現の記号を含む type があれば、検査の段階で設定の誤りとして報告する（実際の labels.types で検査する）" {
+  assert_config_error '{"branch":{"pattern":"{type}/{issue_number}-{slug}"},"labels":{"types":["feat","c++"]}}' 'labels.types の「c++」に正規表現の記号があります'
+  assert_config_error '{"branch":{"pattern":"{type}/{issue_number}-{slug}"},"labels":{"types":["feat","fix("]}}' 'labels.types の「fix(」に正規表現の記号があります'
+}
+
+@test "設定が JSON として壊れているときは、正規表現の誤りではなく、JSON を読めないと報告する" {
+  for c in '{' '{"branch":' '{}{}'; do
+    run_common dw_check_branch_pattern "$c"
+    assert_failure 1
+    assert_output --partial "設定を JSON として読めません"
+    refute_output --partial "正規表現として正しくありません"
+    assert_equal "${#lines[@]}" 1
+    run_common dw_parse_branch "$c" feat/17-x
+    assert_failure 2
+    assert_output --partial "設定を JSON として読めません"
+    assert_equal "${#lines[@]}" 1
+  done
+}
+
+@test "設定がオブジェクトでないなど、ほかの理由で検査できないときは、正規表現の誤りではなく、検査できない理由を報告する" {
+  for c in '[]' '{"branch":"x"}' '{"branch":{"pattern":"{type}"},"labels":"x"}'; do
+    run_common dw_check_branch_pattern "$c"
+    assert_failure 1
+    assert_output --partial "branch.pattern を検査できません"
+    refute_output --partial "正規表現として正しくありません"
+    assert_equal "${#lines[@]}" 1
+  done
+}
+
+@test "branch.pattern が無い・null の設定では、dw_parse_branch は取り出せない（|）を出力し、エラーにしない" {
+  for c in '{}' '{"labels":{"types":["feat"]}}' '{"branch":{"pattern":null},"labels":{"types":["feat"]}}'; do
+    run_common dw_parse_branch "$c" feat/17-x
+    assert_success
+    assert_output "|"
+  done
+}
+
+# jq を、呼ばれるたびに $TMP/jq.log に1行を足してから本物の jq を実行するものに置き換える。
+# branch.pattern の正規表現の定義（def branch_re）を含む呼び出しは「branch」、ほかは「other」と記録する
+use_counting_jq() {
+  local real
+  real="$(command -v jq)"
+  mkdir -p "$TMP/bin"
+  cat >"$TMP/bin/jq" <<SH
+#!/bin/sh
+case "\$*" in *"def branch_re"*) echo branch >>"$TMP/jq.log" ;; *) echo other >>"$TMP/jq.log" ;; esac
+exec "$real" "\$@"
+SH
+  chmod +x "$TMP/bin/jq"
+  export PATH="$TMP/bin:$PATH"
+}
+
+@test "dw_parse_branch・--check は、設定の検査と判定を1回の jq で行う（検査をやり直さない）" {
+  use_counting_jq
+  for c in '{"labels":{"types":["feat"]},"branch":{"pattern":"{type}/{issue_number}-{slug}"}}' \
+    '{"labels":{"types":["feat"]},"branch":{"pattern":"{type}/{issue_number}-{slug}("}}' \
+    '{"labels":{"types":["feat"]},"branch":{"pattern":5}}'; do
+    rm -f "$TMP/jq.log"
+    run_common dw_parse_branch "$c" feat/17-x
+    assert_equal "$(wc -l <"$TMP/jq.log" | tr -d ' ')" 1
+    rm -f "$TMP/jq.log"
+    run_common dw_check_branch_pattern "$c"
+    assert_equal "$(wc -l <"$TMP/jq.log" | tr -d ' ')" 1
+  done
+  # --check は設定を読む（config.sh）ほかに、branch.pattern の検査と判定で jq を1回だけ起動する
+  for name in feat/17-add-login wip/17-add-login; do
+    rm -f "$TMP/jq.log"
+    run_script branch-name.sh --check "$name"
+    assert_equal "$(grep -c '^branch$' "$TMP/jq.log")" 1
+  done
+  echo '{"branch": {"pattern": "{type}/{issue_number}-{slug}("}}' >.claude/dev-workflow/config.json
+  rm -f "$TMP/jq.log"
+  run_script branch-name.sh --check feat/17-add-login
+  assert_failure 2
+  assert_equal "$(grep -c '^branch$' "$TMP/jq.log")" 1
 }

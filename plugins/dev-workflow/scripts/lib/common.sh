@@ -480,38 +480,74 @@ dw_is_json_object() {
   jq -se "$DW_JQ_ONE_OBJECT" "$1" >/dev/null 2>&1
 }
 
-# 設定（入力）の branch.pattern を、type と Issue の番号を取り出す正規表現にする jq の定義（dw_parse_branch・dw_issue_branches）
-# jq の変数（$t）を bash に展開させないため、シングルクォートで書く
+# 設定（入力）の branch.pattern を、type と Issue の番号を取り出す正規表現にする jq の定義（dw_parse_branch・dw_issue_branches・
+# branch-name.sh --check）。branch.pattern が文字列でない（設定が空・部分的）ときは null（どの名前にも合わない）、
+# labels.types が無いときは空の配列とみなす。
+#   branch_error   設定（入力）を検査し、誤りがあれば設定の誤りと分かる1行のメッセージを、無ければ null を返す。
+#                  branch.pattern が無い・null なら、組み立てられないだけで誤りではないので null。文字列でない型、
+#                  文字列の配列でない labels.types、正規表現の記号を含む type（type は文字どおりに照合する名前なので）、
+#                  正規表現としての誤りを、それぞれの原因で報告する。ほかの jq の失敗は「検査できません」と理由を添える
+#   branch_config  入力（設定の JSON の文字列。jq -R -s で読む）を {c: 設定} にする。JSON として読めなければ、
+#                  {e: メッセージ}。読めても branch_error が誤りを返せば {e: メッセージ}。jq の起動 1 回で、
+#                  JSON の読み取り・検査・解析までできるようにする
+# jq の変数（$t など）を bash に展開させないため、シングルクォートで書く
 # shellcheck disable=SC2016
-DW_JQ_BRANCH_RE='def branch_re: .labels.types as $t | .branch.pattern
-  | gsub("\\{type\\}"; "(?<type>" + ($t | join("|")) + ")")
-  | gsub("\\{issue_number\\}"; "(?<issue>[0-9]+)")
-  | gsub("\\{slug\\}"; "[a-z0-9]+(?:-[a-z0-9]+)*")
-  | "^" + . + "$";'
+DW_JQ_BRANCH_RE='def branch_re: if (.branch.pattern | type) != "string" then null
+  else (.labels.types // []) as $t | .branch.pattern
+    | gsub("\\{type\\}"; "(?<type>" + ($t | join("|")) + ")")
+    | gsub("\\{issue_number\\}"; "(?<issue>[0-9]+)")
+    | gsub("\\{slug\\}"; "[a-z0-9]+(?:-[a-z0-9]+)*")
+    | "^" + . + "$" end;
+def branch_error: try (
+    .branch.pattern as $p | (.labels.types // []) as $t
+    | if $p == null then null
+      elif ($p | type) != "string" then "branch.pattern（\($p | tojson)）が文字列ではありません。設定を直してください"
+      elif ($t | type) != "array" or any($t[]; type != "string") then
+        "labels.types（\($t | tojson)）が文字列の配列ではありません。設定を直してください"
+      elif any($t[]; test("[][\\\\^$.|?*+(){}]")) then
+        "labels.types の「\(first($t[] | select(test("[][\\\\^$.|?*+(){}]"))) | tojson | .[1:-1])」に正規表現の記号があります。設定を直してください"
+      else branch_re as $re
+        | try ("" | test($re) | null)
+          catch (if (tostring | test("Regex failure|is not a valid regex")) then
+              "branch.pattern（\($p | tojson)）が正規表現として正しくありません。設定を直してください"
+            else error end)
+      end)
+  catch "branch.pattern を検査できません（\(tostring | gsub("\n"; " "))）。設定を直してください";
+def branch_config: (try {c: fromjson}
+    catch {e: "設定を JSON として読めません（\(tostring | gsub("\n"; " "))）。設定を直してください"})
+  | if has("e") then . else (.c | branch_error) as $e | if $e then {e: $e} else . end end;'
 
-# 設定の branch.pattern が、正規表現として正しいかを確かめる。正しくなければ、設定の誤りと分かる1行を出力して 1 を返す
+# 設定の branch.pattern を検査する（DW_JQ_BRANCH_RE の branch_error）。誤りがあれば、設定の誤りと分かる1行を出力して 1 を返す
 # （jq の test は正しくない正規表現で失敗し、ブランチ名が合わないのと区別できないため、先に確かめる）
-# branch.pattern が文字列でない（設定が空・部分的）ときは、組み立てられないだけで正規表現の誤りではないので、確かめずに通す
+# branch.pattern が無い・null（設定が空・部分的）ときは、組み立てられないだけで誤りではないので通す
 # 使い方: dw_check_branch_pattern <設定の JSON>
 dw_check_branch_pattern() {
-  # shellcheck disable=SC2016 # jq の変数（$re）を bash に展開させない
-  jq -e "$DW_JQ_BRANCH_RE"'if (.branch.pattern | type) != "string" then true
-    else (.labels.types //= []) | branch_re as $re | "" | test($re) | true end' <<<"$1" >/dev/null 2>&1 \
-    || { printf 'branch.pattern（%s）が正規表現として正しくありません。設定を直してください\n' "$(jq -c '.branch.pattern' <<<"$1")"; return 1; }
+  local msg
+  msg="$(jq -R -s -r "$DW_JQ_BRANCH_RE"'branch_config | .e // empty' <<<"$1")" \
+    || msg="branch.pattern を検査できませんでした（jq が失敗しました）"
+  [ -z "$msg" ] || { printf '%s\n' "$msg"; return 1; }
 }
 
 # ブランチ名を branch.pattern に当て、type と Issue の番号を「<type>|<番号>」で出力する（無いものは空）
 # 区切りを空白にすると、read が先頭の空白を外して、type が空のときに番号を type と取り違える
-# branch.pattern が正規表現として正しくなければ、メッセージを出して終了コード 2 で止まる（dw_check_branch_pattern）。
+# 設定の検査（dw_check_branch_pattern と同じ）と解析は、1回の jq で行う。設定に誤りがあれば、
+# メッセージを出して終了コード 2 で止まる。
 # 使い方: dw_parse_branch <設定の JSON> <ブランチ名>
 dw_parse_branch() {
-  local msg
-  msg="$(dw_check_branch_pattern "$1")" || dw_die "$msg" 2
+  local out
+  # 誤りは「!」を、解析の結果は「=」を先頭に付けて出し、取り違えないようにする
   # shellcheck disable=SC2016 # jq の変数（$b・$re）を bash に展開させない
-  jq -r --arg b "$2" "$DW_JQ_BRANCH_RE"'
-    branch_re as $re
-    | (try ($b | capture($re)) catch null) // {}
-    | "\(.type // "")|\(.issue // "")"' <<<"$1"
+  out="$(jq -R -s -r --arg b "$2" "$DW_JQ_BRANCH_RE"'
+    branch_config
+    | if has("e") then "!" + .e
+      else .c | branch_re as $re
+        | (try ($b | capture($re)) catch null) // {}
+        | "=\(.type // "")|\(.issue // "")" end' <<<"$1")" \
+    || dw_die "branch.pattern を検査できませんでした（jq が失敗しました）" 2
+  case "$out" in
+    '!'*) dw_die "${out#!}" 2 ;;
+  esac
+  printf '%s\n' "${out#=}"
 }
 
 # GitHub の GraphQL API を呼び、応答の JSON を出力する。GraphQL は、gh のサブコマンドにも REST にも手段が無いときだけ使う。
