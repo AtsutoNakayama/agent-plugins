@@ -258,6 +258,98 @@ MD
     '[["doc/decisions/000010-a.md",["doc/decisions/000020-b.md"]],["doc/decisions/000020-b.md",[]]]'
 }
 
+# adr-list.sh の出力から、000010-a.md の cited_in_supplements を出す。使い方: cited_of_a "$output"
+cited_of_a() { jq -c '[.adrs[] | select(.path | endswith("000010-a.md")) | .cited_in_supplements[]]' <<<"$1"; }
+
+@test "cited_in_supplements：? の後ろとタイトルを外し、参照形式のリンクの定義も数える" {
+  write_adr docs/adr/000010-a.md "issue: 10" "A"
+  for n in 20 30 40; do write_adr "docs/adr/0000$n-x$n.md" "issue: $n" "X$n"; done
+  printf '## 補足\n\n[A](000010-a.md?x=1)\n' >>docs/adr/000020-x20.md
+  printf '## 補足\n\n[A](000010-a.md "タイトル")\n' >>docs/adr/000030-x30.md
+  printf '## 補足\n\n[ADR 000010][a] を変える\n\n[a]: ./000010-a.md "A"\n' >>docs/adr/000040-x40.md
+  run_script adr-list.sh
+  assert_success
+  assert_equal "$(cited_of_a "$output")" '["docs/adr/000020-x20.md","docs/adr/000030-x30.md","docs/adr/000040-x40.md"]'
+}
+
+@test "cited_in_supplements：コードブロック・HTML のコメント・インラインのコードの中のリンクと、画像のリンクは数えない（md_scan と同じ）" {
+  write_adr docs/adr/000010-a.md "issue: 10" "A"
+  write_adr docs/adr/000020-b.md "issue: 20" "B"
+  cat >>docs/adr/000020-b.md <<'MD'
+## 補足
+
+~~~
+[~~~ の中](000010-a.md)
+```
+[~~~ の中の ``` の後](000010-a.md)
+~~~
+
+````md
+```
+[```` の中の ``` の後](000010-a.md)
+````
+
+```x``` の1行は囲みではないので、次の行は数える対象だが、リンクは画像だけ ![画像](000010-a.md)
+
+<!--
+[複数行のコメントの中](000010-a.md)
+-->
+
+<!-- [1行のコメントの中](000010-a.md) --> と `[インラインのコード](000010-a.md)` と ``[2つの ` で囲む](000010-a.md)``
+MD
+  run_script adr-list.sh
+  assert_success
+  assert_equal "$(cited_of_a "$output")" '[]'
+  # ```x``` の1行を囲みとみなすと、後ろの行が全部コードブロックになって数えないので、最後に数えるリンクを足して確かめる
+  printf '\n[数える](000010-a.md)\n' >>docs/adr/000020-b.md
+  run_script adr-list.sh
+  assert_success
+  assert_equal "$(cited_of_a "$output")" '["docs/adr/000020-b.md"]'
+}
+
+@test "cited_in_supplements：補足の後の「# 」の見出しより後ろのリンクは数えない" {
+  write_adr docs/adr/000010-a.md "issue: 10" "A"
+  write_adr docs/adr/000020-b.md "issue: 20" "B"
+  printf '## 補足\n\n本文\n\n# 別の見出し\n\n[A](000010-a.md)\n' >>docs/adr/000020-b.md
+  run_script adr-list.sh
+  assert_success
+  assert_equal "$(cited_of_a "$output")" '[]'
+}
+
+@test "cited_in_supplements：補足の見出しは、閉じの #・## の後のタブ・More Information の大文字と小文字の違いも許す" {
+  write_adr docs/adr/000010-a.md "issue: 10" "A"
+  for n in 20 30 40 50; do write_adr "docs/adr/0000$n-x$n.md" "issue: $n" "X$n"; done
+  printf '## 補足 ##\n\n[A](000010-a.md)\n' >>docs/adr/000020-x20.md
+  printf '##\t補足\n\n[A](000010-a.md)\n' >>docs/adr/000030-x30.md
+  printf '## More information\n\n[A](000010-a.md)\n' >>docs/adr/000040-x40.md
+  # 補足ではない節のリンクは数えない
+  printf '## 補足の後の節\n\n[A](000010-a.md)\n' >>docs/adr/000050-x50.md
+  run_script adr-list.sh
+  assert_success
+  assert_equal "$(cited_of_a "$output")" '["docs/adr/000020-x20.md","docs/adr/000030-x30.md","docs/adr/000040-x40.md"]'
+}
+
+@test "cited_in_supplements：adr.dir が ./docs/adr・docs//adr・docs/./adr でも当たる" {
+  write_adr docs/adr/000010-a.md "issue: 10" "A"
+  write_adr docs/adr/000020-b.md "issue: 20" "B"
+  printf '## 補足\n\n[A](000010-a.md)\n' >>docs/adr/000020-b.md
+  for d in ./docs/adr docs//adr docs/./adr; do
+    echo "{\"adr\": {\"dir\": \"$d\"}}" >.claude/dev-workflow/config.json
+    run_script adr-list.sh
+    assert_success
+    assert_equal "$(jq -c '[.adrs[] | .cited_in_supplements | length]' <<<"$output")" '[1,0]'
+  done
+}
+
+# shellcheck disable=SC2016 # バッククォートは ADR の本文の文字で、展開させない
+@test "コードブロックの中の「# 」の行は見出しにしない" {
+  mkdir -p docs/adr
+  printf -- '---\nissue: 1\n---\n\n```sh\n# コメント\n```\n\n# 見出し\n' >docs/adr/000001-a.md
+  run_script adr-list.sh
+  assert_success
+  assert_equal "$(jq -c '[.adrs[].title]' <<<"$output")" '["見出し"]'
+}
+
 @test "--issue が無ければ、proposal と adr_tasks は null で、Issue を読まない" {
   run_script adr-list.sh
   assert_success

@@ -9,10 +9,14 @@
 #
 # 置き場所の直下の *.md を読み、ファイル名の順（ロケールに左右されない文字の順）に出す（下のディレクトリは読まない）。置き場所が無ければ、ADR は無いものとする。
 # front matter（先頭の --- から次の --- まで）の issue・status と、最初の「# 」の見出しを読む。行末の CR と先頭の BOM は外して読む。
-# 「補足」の節（見出しが「## 補足」か、MADR の元の「## More Information」の節。次の「# 」か「## 」の見出しまで。
-# コードブロック（``` か ~~~ で囲んだ行）の中は除く）からは、インラインのリンク [文](先) の先を読み、リンクしている ADR を
-# 求める。リンクの先は、その ADR のファイルからの相対パス（/ で始まればリポジトリのルートからのパス）として解き、
-# #・? からの後ろは外す。URL（https: など）と、置き場所の直下の ADR でない先と、自分へのリンクは数えない。
+# 見出しと補足は、front matter の後の本文を、Issue の本文と同じ md_scan（lib/common.sh）で読み、コードブロックの中と
+# 複数行の HTML のコメントの中の行は除く（コードブロックの中の「# 」の行は見出しにしない）。
+# 「補足」の節（見出しが「## 補足」か、MADR の元の「## More Information」の節。閉じの # と大文字・小文字の違いは問わない。
+# 次の「# 」か「## 」の見出しまで）からは、インラインのリンク [文](先) の先と、参照形式のリンクの定義 [ref]: 先 の先を読み、
+# リンクしている ADR を求める。画像のリンク ![文](先)、行の中の HTML のコメントとインラインのコードの中のリンクは数えない。
+# リンクの先は、その ADR のファイルからの相対パス（/ で始まればリポジトリのルートからのパス）として解き、#・? からの後ろは
+# 外す。URL（https: など）と、置き場所の直下の ADR でない先と、自分へのリンクは数えない。パスは . と .. と重なった / を
+# 解いて比べる（adr.dir が ./docs/adr のようでも当たる）。
 # 値は YAML の1行として読む（空白の後の # からのコメントを外し、囲む引用符を外してエスケープを元の文字に戻す）。
 # issue は数字だけ（先頭の # と 0 は外す）なら番号、それ以外（無い・テンプレートのまま）は null。# を付けるなら、引用符で
 # 囲む（"#151"）。囲まない #151 は、YAML のとおりコメントなので、値なし（null）になる。
@@ -79,9 +83,10 @@ case "$suggest" in
   *) dw_die "adr.suggest は true か false にしてください: ${suggest}" 2 ;;
 esac
 
-# ADR ごとに「A<TAB>パス<TAB>issue<TAB>status<TAB>title」の1行と、補足のリンクごとに「L<TAB>パス<TAB>リンクの先」の1行にし、
-# 最後に1回の jq でまとめる。ADR が多くても遅くならないよう、awk は全部のファイルに1回だけ起動する。awk は中身の無い
-# ファイルを1行も読まないので、そのファイルは、ファイルの一覧（files）から、値の無い ADR として補う
+# ADR ごとに「A<TAB>パス<TAB>issue<TAB>status」の1行と、front matter の後の本文の行ごとに「B<TAB>パス<TAB>行」の1行にし、
+# 最後に1回の jq でまとめる（見出しと補足は、jq で本文を md_scan に通して読む）。ADR が多くても遅くならないよう、awk は全部の
+# ファイルに1回だけ起動する。awk は中身の無いファイルを1行も読まないので、そのファイルは、ファイルの一覧（files）から、値の無い
+# ADR として補う
 files="" rows=""
 if [ -d "$repo_root/$adr_dir" ]; then
   # awk にはリポジトリのルートからの相対パスで渡し、出力のパスをそのまま使う
@@ -99,31 +104,14 @@ if [ -d "$repo_root/$adr_dir" ]; then
         gsub(/\t/, " ", v)
         return v
       }
-      function flush() { if (cur != "") printf "A\t%s\t%s\t%s\t%s\n", cur, i, s, t }
-      # 行の中のインラインのリンク [文](先) の先を、1つずつ L の行にする（<先> の形と、先の後ろの "タイトル" も読む）
-      function links(line,   m) {
-        while (match(line, /\]\([^)]*\)/)) {
-          m = substr(line, RSTART + 2, RLENGTH - 3)
-          line = substr(line, RSTART + RLENGTH)
-          sub(/^[ \t]+/, "", m)
-          if (substr(m, 1, 1) == "<") { m = substr(m, 2); sub(/>.*$/, "", m) } else sub(/[ \t].*$/, "", m)
-          sub(/[#?].*$/, "", m)
-          gsub(/\t/, " ", m)
-          if (m != "") printf "L\t%s\t%s\n", cur, m
-        }
-      }
-      FNR == 1 { flush(); cur = FILENAME; i = s = t = ""; fm = 0; head = 0; sup = 0; fence = 0 }
+      function flush() { if (cur != "") printf "A\t%s\t%s\t%s\n", cur, i, s }
+      FNR == 1 { flush(); cur = FILENAME; i = s = ""; fm = 0 }
       FNR == 1 && $0 == "---" { fm = 1; next }
       fm && $0 == "---" { fm = 0; next }
       fm && /^issue:/ && i == "" { i = clean($0); next }
       fm && /^status:/ && s == "" { s = clean($0); next }
       fm { next }
-      # 最初の「# 」の行を見出しにする
-      !head && /^# / { t = substr($0, 3); sub(/[ \t\r]+$/, "", t); gsub(/\t/, " ", t); head = 1; next }
-      /^[ \t]*(```|~~~)/ { fence = !fence; next }
-      fence { next }
-      /^##? / { sup = ($0 ~ /^## +(補足|More Information)[ \t]*$/); next }
-      sup { links($0) }
+      { printf "B\t%s\t%s\n", cur, $0 }
       END { flush() }' "$@")"
   fi
 fi
@@ -137,7 +125,7 @@ printf '%s' "$files" >"$tmp_dir/files"
 printf '%s' "$rows" >"$tmp_dir/rows"
 # shellcheck disable=SC2016 # jq の変数を bash に展開させない
 res="$(jq -n -r --rawfile files "$tmp_dir/files" --rawfile row_lines "$tmp_dir/rows" \
-  --arg dir "$adr_dir" --argjson suggest "$suggest" --arg want "$issue" '
+  --arg dir "$adr_dir" --argjson suggest "$suggest" --arg want "$issue" "$DW_JQ_MD_SCAN"'
   def nz: if . == "" then null else . end;
   # issue の値は、先頭の #（引用符で囲んだ "#151" のときだけ残っている）と先頭の 0 を外して、数字だけなら番号にする
   def num: ltrimstr("#") | if test("^[0-9]+$") and test("[1-9]") then tonumber else null end;
@@ -145,16 +133,39 @@ res="$(jq -n -r --rawfile files "$tmp_dir/files" --rawfile row_lines "$tmp_dir/r
   def normpath: reduce (split("/")[] | select(. != "" and . != ".")) as $x ([];
       if . == null then null elif $x == ".." then (if length > 0 then .[:-1] else null end) else . + [$x] end)
     | if . == null then null else join("/") end;
+  # 補足の節の見出し（「## 補足」か、MADR の元の「## More Information」。閉じの # と、大文字・小文字の違いも許す）と、節の終わり
+  # （次の「# 」か「## 」の見出し）
+  def sup_head: test("^ {0,3}##[ \t]+(補足|more information)([ \t]+#+)?[ \t]*$"; "i");
+  def sup_end: test("^ {0,3}#{1,2}(\\s|$)");
+  # 行から、インラインのリンク [文](先)（画像 ![文](先) は除く）の先と、参照形式のリンクの定義 [ref]: 先 の先を出す。
+  # 行の中の HTML のコメントとインラインのコードの中は読まない
+  def link_targets:
+    gsub("<!--.*?-->"; "") | gsub("(?<b>`+).*?\\k<b>"; "")
+    | ((capture("^ {0,3}\\[[^\\]]+\\]:[ \t]*(?:<(?<a>[^>]*)>|(?<b>[^ \t]+))") | .a // .b // ""),
+       (capture("(?<!!)\\[[^\\]]*\\]\\([ \t]*(?:<(?<a>[^>]*)>|(?<b>[^)\\s]*))[^)]*\\)"; "g") | .a // .b // ""))
+    | sub("[#?].*$"; "") | select(. != "");
   [$row_lines | split("\n")[] | select(. != "") | split("\t")] as $lines
   | (reduce ($lines[] | select(.[0] == "A")) as $r ({}; .[$r[1]] = $r[1:])) as $rows
-  # 補足のリンクの先を、リンクしている ADR のファイルからの相対パスとして、リポジトリのルートからのパスに解く
-  | [$lines[] | select(.[0] == "L") | {from: .[1], to: .[2]}
-    | select(.to | test("^[A-Za-z][A-Za-z0-9+.-]*:") | not)
-    | .to = (if (.to | startswith("/")) then .to else (.from | sub("[^/]*$"; "")) + .to end | normpath)
-    | select(.to != null and .to != .from)] as $links
+  # 本文の行を ADR ごとにまとめ、md_scan で GitHub に表示される行（コードブロックと複数行の HTML のコメントを除く）にする
+  | (reduce ($lines[] | select(.[0] == "B")) as $r ({}; .[$r[1]] += [$r[2:] | join("\t")])
+     | map_values(join("\n") | md_scan | .lines | map(.text))) as $bodies
+  # 補足のリンクの先を、リンクしている ADR のファイルからの相対パスとして、リポジトリのルートからのパスに解き、
+  # 先（正規化したパス）ごとに、リンクしている ADR をまとめる
+  | (reduce ($bodies | to_entries[] | .key as $from
+        | foreach .value[] as $l ({sup: false};
+            if $l | sup_head then {sup: true, l: null} elif $l | sup_end then {sup: false, l: null}
+            else .l = (if .sup then $l else null end) end;
+            .l // empty)
+        | link_targets
+        | select(test("^[A-Za-z][A-Za-z0-9+.-]*:") | not)
+        | (if startswith("/") then . else ($from | sub("[^/]*$"; "")) + . end | normpath) as $to
+        | select($to != null and $to != ($from | normpath))
+        | {from: $from, to: $to}) as $k ({}; .[$k.to] += [$k.from])) as $cited
   | [$files | split("\n")[] | select(. != "") | . as $p | ($rows[$p] // [$p])
-    | {path: $p, issue: (.[1] // "" | num), status: (.[2] // "" | nz), title: (.[3] // "" | nz),
-       cited_in_supplements: ([$links[] | select(.to == $p) | .from] | unique)}]
+    | {path: $p, issue: (.[1] // "" | num), status: (.[2] // "" | nz),
+       # 最初の「# 」の行を見出しにする（コードブロックの中の「# 」の行は見出しにしない）
+       title: (first($bodies[$p][]? | select(startswith("# ")) | .[2:] | sub("[ \t]+$"; "") | gsub("\t"; " ")) // null),
+       cited_in_supplements: ($cited[$p | normpath] // [] | unique)}]
   # glob の並びはロケールで変わるので、文字の順に並べ直す
   | sort_by(.path)
   | (if $want == "" then null else ($want | tonumber) end) as $n
