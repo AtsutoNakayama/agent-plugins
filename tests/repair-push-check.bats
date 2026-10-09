@@ -1,0 +1,158 @@
+#!/usr/bin/env bats
+# repair-push-check.sh：無人で push する前の、パスの機械的な確認（ADR 000285）。本物の git で確かめる。
+
+load test_helper
+
+setup() {
+  test_helper_setup
+  # origin（bare）を作って、main を push する
+  git init -q --bare -b main "$TMP/origin.git"
+  git remote add origin "$TMP/origin.git"
+  mkdir -p .github/workflows .claude/dev-workflow src
+  echo a >src/a.txt
+  echo w >.github/workflows/ci.yml
+  git add -A && git commit -q -m base
+  git push -q origin main
+  git checkout -q -b feat/1-x
+}
+
+commit_file() { mkdir -p "$(dirname "$1")" && echo "$2" >"$1" && git add "$1" && git commit -q -m "change $1"; }
+
+@test "通常のファイルだけなら ok" {
+  commit_file src/b.txt b
+  run_script repair-push-check.sh --base-branch main
+  assert_success
+  assert_equal "$(jq -c . <<<"$output")" '{"ok":true,"forbidden":[],"compared_with":"origin/main"}'
+}
+
+@test ".github/workflows/ を変えていたら ok が false で、そのパスを返す" {
+  commit_file .github/workflows/ci.yml changed
+  run_script repair-push-check.sh --base-branch main
+  assert_success
+  assert_equal "$(jq -c '[.ok, .forbidden]' <<<"$output")" '[false,[".github/workflows/ci.yml"]]'
+}
+
+@test ".claude/ を新しく足していたら ok が false" {
+  commit_file .claude/dev-workflow/x.json '{}'
+  run_script repair-push-check.sh --base-branch main
+  assert_success
+  assert_equal "$(jq -c '[.ok, .forbidden]' <<<"$output")" '[false,[".claude/dev-workflow/x.json"]]'
+}
+
+@test "取り込んだ main が変えた .github/workflows/ は数えない（main と同じ内容のパス）" {
+  # main が workflows を変え、それを取り込む
+  git checkout -q main
+  commit_file .github/workflows/ci.yml from-main
+  git push -q origin main
+  git checkout -q feat/1-x
+  commit_file src/b.txt b
+  git fetch -q origin
+  git merge -q --no-edit origin/main
+  run_script repair-push-check.sh --base-branch main
+  assert_success
+  assert_equal "$(jq -c '[.ok, .forbidden]' <<<"$output")" '[true,[]]'
+}
+
+@test "origin のブランチがあれば、それとの差だけを見る（push 済みの変更は数えない）" {
+  commit_file .github/workflows/ci.yml pushed
+  git push -q origin feat/1-x
+  commit_file src/b.txt b
+  git fetch -q origin
+  run_script repair-push-check.sh --base-branch main
+  assert_success
+  assert_equal "$(jq -c '[.ok, .compared_with]' <<<"$output")" '[true,"origin/feat/1-x"]'
+}
+
+@test "origin/<base> が無いと止まる" {
+  run_script repair-push-check.sh --base-branch nothing
+  assert_failure 2
+}
+
+@test "--base-branch が無いと止まる" {
+  run_script repair-push-check.sh
+  assert_failure 64
+}
+
+@test "禁止パスから名前を変えて出したときも、元のパスを返す（名前の変更で漏れない）" {
+  git mv .github/workflows/ci.yml src/ci.yml
+  git commit -q -m rename
+  run_script repair-push-check.sh --base-branch main
+  assert_success
+  assert_equal "$(jq -c '[.ok, (.forbidden | sort)]' <<<"$output")" '[false,[".github/workflows/ci.yml"]]'
+}
+
+@test "パスの [ を glob にしない（main と同じ内容のパスを、別のパスの変更で禁止にしない）" {
+  git push -q origin feat/1-x
+  git checkout -q main
+  commit_file '.claude/[a].txt' same
+  git push -q origin main
+  git checkout -q feat/1-x
+  git fetch -q origin
+  git merge -q --no-edit origin/main
+  commit_file '.claude/a.txt' changed
+  run_script repair-push-check.sh --base-branch main
+  assert_success
+  assert_equal "$(jq -c '[.ok, .forbidden]' <<<"$output")" '[false,[".claude/a.txt"]]'
+}
+
+@test "detached HEAD で --branch が無いと止まる。--branch があれば進む" {
+  commit_file src/b.txt b
+  git checkout -q --detach
+  run_script repair-push-check.sh --base-branch main
+  assert_failure 64
+  run_script repair-push-check.sh --base-branch main --branch feat/1-x
+  assert_success
+  assert_equal "$(jq -r .compared_with <<<"$output")" origin/main
+}
+
+@test "--branch X：origin/X があれば origin/X、無ければ origin/<base> との差を見る" {
+  commit_file src/b.txt b
+  git push -q origin feat/1-x
+  git fetch -q origin
+  run_script repair-push-check.sh --base-branch main --branch feat/1-x
+  assert_success
+  assert_equal "$(jq -r .compared_with <<<"$output")" origin/feat/1-x
+  run_script repair-push-check.sh --base-branch main --branch feat/none
+  assert_success
+  assert_equal "$(jq -r .compared_with <<<"$output")" origin/main
+}
+
+@test "値の無い --base-branch・--branch と、不明な引数は 64 で止まる" {
+  run_script repair-push-check.sh --base-branch
+  assert_failure 64
+  run_script repair-push-check.sh --base-branch main --branch
+  assert_failure 64
+  run_script repair-push-check.sh --base-branch main --nope
+  assert_failure 64
+}
+
+@test "workflows と .claude を同時に変えると forbidden は 2 件" {
+  commit_file .github/workflows/ci.yml changed
+  commit_file .claude/dev-workflow/x.json '{}'
+  run_script repair-push-check.sh --base-branch main
+  assert_success
+  assert_equal "$(jq -c '[.ok, (.forbidden | sort)]' <<<"$output")" '[false,[".claude/dev-workflow/x.json",".github/workflows/ci.yml"]]'
+}
+
+@test ".github/scripts/ だけの変更は ok（禁止は workflows と .claude だけ）" {
+  commit_file .github/scripts/x.sh '#!/bin/sh'
+  run_script repair-push-check.sh --base-branch main
+  assert_success
+  assert_equal "$(jq -c '[.ok, .forbidden]' <<<"$output")" '[true,[]]'
+}
+
+@test "git diff が失敗したら、禁止パスなしと読まずに終了コード 2 で止まる（ok:true を出さない）" {
+  commit_file .github/workflows/ci.yml changed
+  real_git="$(command -v git)"
+  mkdir -p "$TMP/shim"
+  cat >"$TMP/shim/git" <<SHIM
+#!/usr/bin/env bash
+case "\$*" in *"diff --name-only"*) echo "fatal: simulated" >&2; exit 128 ;; esac
+exec "$real_git" "\$@"
+SHIM
+  chmod +x "$TMP/shim/git"
+  PATH="$TMP/shim:$PATH" run_script repair-push-check.sh --base-branch main
+  assert_failure 2
+  refute_output --partial '"ok":true'
+  assert_output --partial "git diff に失敗しました"
+}
