@@ -97,6 +97,23 @@ run_pr() {
   assert_failure
 }
 
+@test "pr.title_pattern が正規表現として正しくない・文字列でないときは、タイトルが合わないではなく設定の誤りとして報告し、push しない" {
+  setup_branch
+  for p in '"^(feat"' 5 null; do
+    echo "{\"pr\": {\"title_pattern\": $p}}" >.claude/dev-workflow/config.local.json
+    run_pr --issue 17 --body-file "$TMP/body.md"
+    assert_failure 2
+    if [ "$p" = '"^(feat"' ]; then
+      assert_output --partial 'pr.title_pattern（"^(feat"）が正規表現として正しくありません'
+    else
+      assert_output --partial "pr.title_pattern（${p}）が文字列ではありません"
+    fi
+    refute_output --partial "タイトルが規約に合いません"
+    run git rev-parse -q --verify origin/feat/17-x
+    assert_failure
+  done
+}
+
 @test "タイトルの type が Issue の type ラベルと違えば止まる" {
   setup_branch
   run_pr --issue 17 --body-file "$TMP/body.md" --title "fix: 作業 17"

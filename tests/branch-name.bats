@@ -48,6 +48,19 @@ load fake_gh
   assert_equal "$(jq -r .branch <<<"$output")" 17/feat-x
 }
 
+@test "ブランチ名を作るときも、branch.pattern が文字列でない・正規表現として正しくなければ、設定の誤りとして終了コード 2" {
+  for p in 5 null '{"a":1}'; do
+    echo "{\"branch\": {\"pattern\": $p}}" >.claude/dev-workflow/config.json
+    run_script branch-name.sh --issue 17 --type fix --slug x
+    assert_failure 2
+    assert_output --partial "branch.pattern（${p}）が文字列ではありません"
+  done
+  echo '{"branch": {"pattern": "{type}/{issue_number}-{slug}("}}' >.claude/dev-workflow/config.json
+  run_script branch-name.sh --issue 17 --type fix --slug x
+  assert_failure 2
+  assert_output --partial "正規表現として正しくありません"
+}
+
 @test "type ラベルが無い、または複数あればエラーになる" {
   setup_fake_gh
   fake_issue 17 '["priority: high"]'

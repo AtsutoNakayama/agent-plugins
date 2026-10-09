@@ -11,7 +11,7 @@
 #
 # 形は設定の branch.pattern（既定: {type}/{issue_number}-{slug}）。
 # branch.pattern のプレースホルダ: {type} は type ラベル、{issue_number} は Issue の番号、{slug} は英語の短い説明。
-# --check は規約に合わなければ終了コード 1 で、理由を出力する。設定を読めない、または branch.pattern が正規表現として正しくなければ終了コード 2。
+# --check は規約に合わなければ終了コード 1 で、理由を出力する。設定を読めない、または branch.pattern の設定に誤り（正規表現として正しくない・文字列でないなど）があれば終了コード 2。
 set -euo pipefail
 
 # shellcheck source=lib/common.sh
@@ -111,6 +111,11 @@ fi
 jq -e --arg t "$type" '.labels.types | index($t)' <<<"$config" >/dev/null \
   || dw_die "type は labels.types のどれかにしてください: $type" 64
 
+# branch.pattern の設定の誤りは、--check と同じく終了コード 2 で止める（dw_check_branch_pattern）。
+# 無い・null の branch.pattern は、検査では通すが、ブランチ名は作れないので止める（jq -r が「null」という名前にするため）
+msg="$(dw_check_branch_pattern "$config")" || dw_die "$msg" 2
+jq -e '.branch.pattern | type == "string"' <<<"$config" >/dev/null \
+  || dw_die "branch.pattern（$(jq -c '.branch.pattern' <<<"$config")）が文字列ではありません。設定を直してください" 2
 pattern="$(jq -r '.branch.pattern' <<<"$config")"
 branch="$(jq -rn --arg p "$pattern" --arg t "$type" --arg i "$issue" --arg s "$slug" \
   '$p | gsub("\\{type\\}"; $t) | gsub("\\{issue_number\\}"; $i) | gsub("\\{slug\\}"; $s)')"

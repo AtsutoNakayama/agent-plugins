@@ -111,3 +111,21 @@ commit_with() {
   assert_success
   assert_equal "$(git log -1 --format=%s)" "feat: 長い本文"
 }
+
+@test "commit.pattern が正規表現として正しくない・文字列でないときは、1行目が規約に合わないではなく設定の誤りとして報告する" {
+  setup_branch
+  echo '{"commit": {"pattern": "^(feat"}}' >.claude/dev-workflow/config.json
+  commit_with "feat: ログインを追加する"
+  assert_failure 2
+  assert_output --partial 'commit.pattern（"^(feat"）が正規表現として正しくありません'
+  refute_output --partial "規約に合いません"
+  assert_equal "${#lines[@]}" 1
+  for p in 5 '{"a":1}' null; do
+    echo "{\"commit\": {\"pattern\": $p}}" >.claude/dev-workflow/config.json
+    commit_with "feat: ログインを追加する"
+    assert_failure 2
+    assert_output --partial "commit.pattern（$p）が文字列ではありません"
+    refute_output --partial "規約に合いません"
+  done
+  assert_equal "$(git rev-list --count HEAD)" 1
+}

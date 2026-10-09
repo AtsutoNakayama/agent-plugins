@@ -102,7 +102,7 @@ dw_read_issue() {
 #     Issue の作業と決めつけたりしない
 # PR からは探さない（Closes #17, #18 の PR やリリース用の PR のように、別の Issue のブランチまで拾うため）。
 # origin を読めなければ止まる（「origin に無い」と区別できないまま出すと、使う側が片付けを誤るため）。
-# branch.pattern が正規表現として正しくなければ、メッセージを出して終了コード 2 で止まる（dw_check_branch_pattern）。
+# branch.pattern の設定に誤り（正規表現として正しくないなど）があれば、メッセージを出して終了コード 2 で止まる（dw_check_branch_pattern）。
 # 使い方: dw_issue_branches <メインのワークツリー> <Issue の番号（dw_issue_number でそろえたもの）> <設定の JSON>
 dw_issue_branches() {
   local names refs msg
@@ -133,7 +133,7 @@ dw_issue_branches() {
 #   open_prs    Issue を閉じる PR のうち開いているもの（フォークや別のリポジトリの PR も含む）。[{number, url, branch,
 #               cross（フォークか別のリポジトリの PR なら true。branch は、今のリポジトリのブランチとは限らない）}]
 #   merged_prs  Issue を閉じる PR のうちマージ済みの、今のリポジトリのもの。[{number, url, branch}]
-# origin・PR を読めなければ止まる。branch.pattern が正規表現として正しくなければ、設定の誤りとして終了コード 2 で止まる（dw_issue_branches）。
+# origin・PR を読めなければ止まる。branch.pattern の設定に誤り（正規表現として正しくないなど）があれば、終了コード 2 で止まる（dw_issue_branches）。
 # 使い方: dw_issue_work <メインのワークツリー> <Issue の番号> <設定の JSON> <Issue の JSON（closedByPullRequestsReferences を含む）>
 dw_issue_work() {
   local found branches='[]' candidates='[]' open_prs='[]' merged_prs='[]' cross b is_local is_remote confirmed wt nwo="" url pr_repo pr head
@@ -480,6 +480,32 @@ dw_is_json_object() {
   jq -se "$DW_JQ_ONE_OBJECT" "$1" >/dev/null 2>&1
 }
 
+# jq の失敗の理由（catch で受け取ったもの）が、正規表現として正しくないことによるものなら true にする jq の定義。
+# jq 1.6 は「… is not a valid regex: …」、1.7 以降は「Regex failure: …」と出す
+# shellcheck disable=SC2016
+DW_JQ_REGEX_FAILURE='def regex_failure: tostring | test("Regex failure|is not a valid regex");'
+
+# 文字列を、設定の正規表現（<キー>。例：commit.pattern）に当てる。合えば 0、合わなければ 1 を返す。
+# 設定の値が文字列でない・正規表現として正しくないときは、合わないのと区別できるよう、設定の誤りと分かる1行を出して
+# 終了コード 2 で止まる（jq の test は正しくない正規表現で失敗し、合わないのと区別できないため）
+# 使い方: dw_config_regex_test <設定の JSON> <キー（. で区切る）> <文字列>
+dw_config_regex_test() {
+  local out
+  # shellcheck disable=SC2016 # jq の変数を bash に展開させない
+  out="$(jq -r --arg k "$2" --arg s "$3" "$DW_JQ_REGEX_FAILURE"'
+    (try getpath($k | split(".")) catch null) as $p
+    | if ($p | type) != "string" then "!\($k)（\($p | tojson)）が文字列ではありません。設定を直してください"
+      else try (if ($s | test($p)) then "+" else "-" end)
+        catch (if regex_failure then "!\($k)（\($p | tojson)）が正規表現として正しくありません。設定を直してください"
+          else "!\($k) を検査できません（\(tostring | gsub("\n"; " "))）。設定を直してください" end) end' <<<"$1")" \
+    || dw_die "${2} を検査できませんでした（jq が失敗しました）" 2
+  case "$out" in
+    '!'*) dw_die "${out#!}" 2 ;;
+    +) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
 # 設定（入力）の branch.pattern を、type と Issue の番号を取り出す正規表現にする jq の定義（dw_parse_branch・dw_issue_branches・
 # branch-name.sh --check）。branch.pattern が文字列でない（設定が空・部分的）ときは null（どの名前にも合わない）、
 # labels.types が無いときは空の配列とみなす。
@@ -492,7 +518,7 @@ dw_is_json_object() {
 #                  JSON の読み取り・検査・解析までできるようにする
 # jq の変数（$t など）を bash に展開させないため、シングルクォートで書く
 # shellcheck disable=SC2016
-DW_JQ_BRANCH_RE='def branch_re: if (.branch.pattern | type) != "string" then null
+DW_JQ_BRANCH_RE="$DW_JQ_REGEX_FAILURE"'def branch_re: if (.branch.pattern | type) != "string" then null
   else (.labels.types // []) as $t | .branch.pattern
     | gsub("\\{type\\}"; "(?<type>" + ($t | join("|")) + ")")
     | gsub("\\{issue_number\\}"; "(?<issue>[0-9]+)")
@@ -508,7 +534,7 @@ def branch_error: try (
         "labels.types の「\(first($t[] | select(test("[][\\\\^$.|?*+(){}]"))) | tojson | .[1:-1])」に正規表現の記号があります。設定を直してください"
       else branch_re as $re
         | try ("" | test($re) | null)
-          catch (if (tostring | test("Regex failure|is not a valid regex")) then
+          catch (if regex_failure then
               "branch.pattern（\($p | tojson)）が正規表現として正しくありません。設定を直してください"
             else error end)
       end)
