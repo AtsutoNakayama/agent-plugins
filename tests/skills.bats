@@ -481,6 +481,24 @@ has() {
     || fail "再レビュー（手順8）でも /code-review をサブエージェントに任せることが書かれていません"
 }
 
+# shellcheck disable=SC2016 # バッククォートはスキルの本文の文字で、展開させない
+@test "review は、設定 review.code_review_effort があるときだけ、1周目と再レビューの /code-review にその段階を渡す（設計書 §7）" {
+  f="$SKILLS/review/SKILL.md"
+  step1="$(step "$f" 1)"
+  grep -q '`context` の `code_review_effort`' <<<"$step1" \
+    || fail "手順1に、context の code_review_effort を読むことが書かれていません"
+  grep -q 'null なら段階を付けない' <<<"$step1" \
+    || fail "手順1に、設定が null なら段階を渡さないことが書かれていません"
+  step3="$(step "$f" 3)"
+  grep -q '`code_review_effort` が null でなければ、引数の先頭にその段階を付ける（`<段階> <ブランチ名>`。サブエージェントに任せるときも同じ）' <<<"$step3" \
+    || fail "手順3に、/code-review（サブエージェントに任せるときも）に段階を渡すことが書かれていません"
+  grep -q '`code_review_effort` が null でなければ、その前に段階を付ける' <<<"$step3" \
+    || fail "手順3の、/code-review を任せるサブエージェントへの指示の引数に、段階が入っていません"
+  step8="$(step "$f" 8)"
+  grep -q '`code_review_effort` が null でなければ、手順3と同じく引数の先頭にその段階を付ける' <<<"$step8" \
+    || fail "再レビュー（手順8）の /code-review に段階を渡すことが書かれていません"
+}
+
 @test "repo-setup は、レビューに使うモデルを決めていなければ、使うかと保存する層を聞き、使わないことも保存する" {
   f="$SKILLS/repo-setup/SKILL.md"
   step2="$(step "$f" 2)"
