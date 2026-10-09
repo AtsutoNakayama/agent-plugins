@@ -20,7 +20,8 @@
 #   action  merge（origin/<base_branch> を merge する）・pull（git pull --no-rebase で origin のブランチを取り込む）・
 #           checks（テストとチェックを実行する）・fix（失敗を直す）・push_check（repair-push-check.sh を実行する）・
 #           push（push する）・finish（取り込まずに、何も書き込まずに終える）・recheck（数秒待って branch-status.sh を実行し直す）・
-#           stop（止まる。Issue にコメントして保留の列に移す）
+#           stop（止まる。Issue にコメントして保留の列に移す。reason は、auto-hold.sh の --repair-reason にそのまま渡し、
+#           見回りが止まった理由の種類を見分ける印にする）
 #
 # 判断の表（上から順に当てはめる）
 #   step が start

@@ -141,3 +141,12 @@ check() {
   done
   check "$VERIFY" '.fix_attempts = null | .max_fix_attempts = null | .status.dirty = null' "push ready"
 }
+
+@test "stop の reason は、どれも auto-hold.sh の --repair-reason にそのまま渡せる形（#332）" {
+  script="$BATS_TEST_DIRNAME/../plugins/dev-workflow/scripts/repair-next.sh"
+  reasons="$(grep -o 'r("stop"; "[^"]*")' "$script" | sed 's/.*; "\(.*\)")/\1/' | sort -u)"
+  [ -n "$reasons" ] || fail "repair-next.sh から stop の reason を読めません"
+  while IFS= read -r r; do
+    [[ "$r" =~ ^[a-z][a-z0-9_]*$ ]] || fail "stop の reason「$r」は --repair-reason に渡せません（英小文字で始め、英小文字・数字・_ だけ）"
+  done <<<"$reasons"
+}
