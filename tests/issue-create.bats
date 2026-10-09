@@ -452,6 +452,16 @@ assert_no_changes() {
   assert_equal "$(jq -c .parent <<<"$json")" '{"number":12,"depth":2,"story_point_cleared":8}'
 }
 
+@test "--parent の親の Project の項目に repository_url が無いものがあっても、飛ばして親の項目を見つける" {
+  setup_fake_gh
+  existing_issue 12
+  project_items me/demo:12:8
+  jq '[{node_id: "ITX", content: {number: 12}, fields: []}] + .' "$FIX/ProjectItems.json" >"$FIX/p" && mv "$FIX/p" "$FIX/ProjectItems.json"
+  run_create --title t --type feat --parent 12 --story-point 3
+  assert_success
+  assert_equal "$(jq -c .parent <<<"$json")" '{"number":12,"depth":2,"story_point_cleared":8}'
+}
+
 @test "--parent の親に Story Point が入っていれば、子を足した後に空欄にする" {
   setup_fake_gh
   existing_issue 12

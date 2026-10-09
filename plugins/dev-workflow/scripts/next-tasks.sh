@@ -200,7 +200,7 @@ for n in $(jq -r '.[].number' <<<"$todo"); do
       (($a | map({repo: ((.repository_url // "") | sub("^.*/repos/"; "") | if . == "" or same_repo(.; $repo) then $repo else . end),
                   number, source: "dependency", state: (.state | ascii_downcase)}))
        + ($b | map({repo: $repo, number: ., source: "body", state: null})))
-      | group_by([.repo, .number])
+      | group_by([(.repo | ascii_downcase), .number])
       | map({repo: .[0].repo, number: .[0].number, sources: (map(.source) | unique), state: (map(.state // empty) | first // null)}))}]' <<<"$deps")"
 done
 open_in_project="$(jq -c --argjson a "$active" --argjson h "$hold" '[.[].number] + [$a[].number] + [$h[].number]' <<<"$todo")"

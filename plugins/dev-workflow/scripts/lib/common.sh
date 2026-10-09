@@ -543,7 +543,7 @@ dw_gh_find() {
 }
 
 # リポジトリ（OWNER/NAME）が同じかを、大文字小文字を区別せずに比べる。GitHub はリポジトリ名の大文字小文字を区別せず、
-# API の repository_url と gh repo view の nameWithOwner で綴りが違うことがあるため、親子をたどる処理（dw_issue_parents・issue-cancel.sh の子孫の判定）で使う。
+# API の repository_url と gh repo view の nameWithOwner で綴りが違うことがあるため、リポジトリを比べる処理（dw_issue_parents・dw_issue_work・dw_project_item・issue-cancel.sh の子孫の判定・next-tasks.sh）で使う。
 # jq の中では、プログラムの先頭に "$DW_JQ_SAME_REPO" を足して same_repo(<a>; <b>) を使う。bash では dw_same_repo <a> <b>。
 # shellcheck disable=SC2016,SC2034 # $a・$b は jq の変数で、bash に展開させない。source した側（issue-cancel.sh）で使う
 DW_JQ_SAME_REPO='def same_repo($a; $b): (($a // "") | ascii_downcase) == (($b // "") | ascii_downcase);'
@@ -1163,7 +1163,7 @@ dw_project_item() {
   [ -z "${4:-}" ] || args+=(-f fields="$4")
   gh api --paginate "$1/items" -X GET "${args[@]}" \
     | jq -sc --arg r "$2" --argjson n "$3" "$DW_JQ_SAME_REPO"'
-        [add // [] | .[] | select(.content.number == $n and same_repo(.content.repository_url | sub("^.*/repos/"; ""); $r))][0]'
+        [add // [] | .[] | select(.content.number == $n and same_repo((.content.repository_url // "") | sub("^.*/repos/"; ""); $r))][0]'
 }
 
 # Project の項目から、<Issue の URL> の項目の id（node id）を探して出力する。無ければ何も出さずに失敗する。

@@ -463,6 +463,16 @@ JSON
   assert_equal "$(out_of '.todo[0].blocked_by | map([.repo, .number])')" '[["me/demo",5],["me/demo",6]]'
 }
 
+@test "別のリポジトリの同じ依存が、綴りだけ違って2件返っても、1件にまとめる（出力の綴りは最初のもの）" {
+  setup_fake_gh
+  item 10 Todo
+  write_page
+  echo '[{"number": 5, "state": "open", "repository_url": "https://api.github.com/repos/me/other"}, {"number": 5, "state": "open", "repository_url": "https://api.github.com/repos/Me/Other"}]' >"$FIX/blocked-10.json"
+  run_script next-tasks.sh
+  assert_success
+  assert_equal "$(out_of '.todo[0].blocked_by | length')" 1
+}
+
 @test "着手中の Issue に PR も領域も無ければ、Todo の各 Issue に、重なるか分からないと警告を付ける" {
   setup_fake_gh
   item 10 Todo $'## 変更するファイル・領域\n- docs/'
