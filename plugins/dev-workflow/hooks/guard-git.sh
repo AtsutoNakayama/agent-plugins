@@ -13,6 +13,7 @@
 # 標準出力に出し、終了コード 0 で終わる。
 # 操作の対象のリポジトリ（cd・pushd・popd・git -C・env -C で移った先、--git-dir・GIT_DIR などで指したリポジトリ）が、導入して
 # いないリポジトリなら何もしない（gc_target・target_set_up）。git がリポジトリを見つけられないときは、守りを外さないよう調べる（設計書 §1）。
+# ただし今のブランチを読めないので、コミットと、push 先を書かない push（と HEAD・@ への push）は止める（target_unknown）。
 # コマンドの文字列の解析は、pr-link.sh と共有する（scripts/lib/git-command.sh）。timeout・env などの前に付くコマンドは飛ばすが、
 # sh -c・xargs などを通したコマンドや git の別名（alias）を通すと見逃す。
 # 最後の守りは GitHub のルールセット（setup-repo.sh）。
@@ -49,7 +50,7 @@ deny() { dw_die "$1" 2; }
 #   - ルートが分かれば、そこ（かメインのワークツリー）にチームの設定があるか（dw_is_set_up）
 #   - リポジトリは分かるがルートが分からない（bare リポジトリ、外から指した --separate-git-dir のリポジトリなど）ときは、
 #     HEAD にチームの設定がコミットされているか
-#   - git がリポジトリを見つけられない（ディレクトリが分からない cd - の後など）ときは、守りを外さないよう、導入したものとみなす
+#   - git がリポジトリを見つけられない（ディレクトリが分からない cd - の後など）ときは、守りを外さないよう、導入したものとみなす（ただし今のブランチを読めないので、コミットと push 先を書かない push（と HEAD・@ への push）は止める。target_unknown）
 target_set_up() {
   local w prev wt
   if [ -n "$gc_root" ]; then
@@ -75,6 +76,16 @@ target_set_up() {
     ! dw_is_home_repo "$wt" || return 1
   done
   gc_git cat-file -e "HEAD:.claude/dev-workflow/config.json"
+}
+
+# 対象のリポジトリを git が見つけられないとき（ディレクトリが分からない cd - の後など）に成功する。gc_target の後に呼ぶ。
+# このときは HEAD を読めず、今のブランチが分からない。空のブランチを base_branch ではないとみなして通すと守りが外れるので、
+# 今のブランチに頼る操作（コミットと、push 先を書かない push・HEAD や @ への push）は止める。それ以外の、先の名前を書いた push は、書かれた先で判断できるので通す
+target_unknown() { [ -z "$gc_repo" ]; }
+
+# 対象が分からないときに止める理由。使い方: unknown_target_message <止める操作>
+unknown_target_message() {
+  echo "操作の対象のリポジトリが分からないので、${1}は止めます（今のブランチが分からず、base_branch の上かを確かめられません）。cd -- <絶対パス> && git ...、または git -C <絶対パス> ... で対象を書き直してください"
 }
 
 # 対象のリポジトリの base_branch を求め、base_of に入れる。読めなければ main。gc_target・target_set_up の後（導入した
@@ -132,6 +143,7 @@ check_push() {
   load_base_branch
   base="$base_of"
   if [ "${#gc_push_refs[@]}" -eq 0 ]; then
+    ! target_unknown || deny "$(unknown_target_message "push 先を書かない push")"
     [ "$current" != "$base" ] \
       || deny "${base} へは push しません。作業用のブランチ（task-start）で PR を作ってください"
     return 0
@@ -143,9 +155,17 @@ check_push() {
       *) dest="$w" ;;
     esac
     case "$dest" in
-      HEAD | @) dest="$current" ;;
+      HEAD | @)
+        # 今のブランチを読めないと dest が空になって通ってしまうので、止める
+        ! target_unknown || deny "$(unknown_target_message "HEAD・@ への push")"
+        dest="$current"
+        ;;
     esac
     dest="${dest#refs/heads/}"
+    # ":" は、先を書かない matching refspec で、手元とリモートに同じ名前のブランチをすべて push する（base_branch も含みうる）。
+    # 今のブランチだけを調べても防げないので、いつも止める
+    [ "$w" != ":" ] \
+      || deny "matching refspec（:）は、同じ名前のブランチをすべて push するので止めます。push するブランチの名前を書いてください"
     [ -z "$dest" ] || [ "$dest" != "$base" ] \
       || deny "${base} へは push しません。作業用のブランチ（task-start）で PR を作ってください"
   done
@@ -181,7 +201,7 @@ check_git() {
   shift
   case "$sub" in
     commit | push | switch | checkout | branch | worktree)
-      # 操作の対象を求め、導入していないリポジトリなら何もしない（git がリポジトリを見つけられないときは、今までどおり調べる）
+      # 操作の対象を求め、導入していないリポジトリなら何もしない（git がリポジトリを見つけられないときは、今までどおり調べる。ただし今のブランチを読めないので、コミットと push 先を書かない push（と HEAD・@ への push）は止める。target_unknown）
       gc_target
       target_set_up || return 0
       ;;
@@ -190,6 +210,7 @@ check_git() {
 
   case "$sub" in
     commit)
+      ! target_unknown || deny "$(unknown_target_message "コミット")"
       load_base_branch
       base="$base_of"
       [ "$(gc_branch)" != "$base" ] \

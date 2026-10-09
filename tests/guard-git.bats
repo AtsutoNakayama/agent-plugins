@@ -382,8 +382,28 @@ silent() {
   denied "強制 push" "$(printf 'git commit -F - <<EOF\nfix: x\nEOF\ngit push -f')"
 }
 
-@test "リポジトリの外や、行き先の分からない cd の後は、ブランチでは止めない" {
-  allowed "cd $TMP && git commit -m x" "cd \$SOMEWHERE && git commit -m x"
+@test "対象のリポジトリが分からないときは、コミットと push 先を書かない push を止め、対象の書き直し方を案内する" {
+  # 導入していない設定でも、ディレクトリが分からない cd の後も、リポジトリの外も、今のブランチを読めない
+  denied "対象のリポジトリが分からない" \
+    "cd - && git commit -m x" "cd \$SOMEWHERE && git commit -m x" "cd $TMP && git commit -m x" \
+    "cd - && git push" "cd \$SOMEWHERE && git push origin" "cd $TMP && git push"
+  denied "git -C <絶対パス>" "cd - && git commit -m x"
+  # HEAD・@ への push も、今のブランチを読めないので止める。HEAD:feat/x のように先の名前を書けば判断できる
+  denied "対象のリポジトリが分からない" "cd - && git push origin HEAD" "cd - && git push origin @"
+  allowed "cd - && git push origin HEAD:feat/x"
+  # ":" は matching refspec（同じ名前のブランチをすべて push する）なので、対象が分からなくても止める
+  denied "matching refspec" "cd - && git push origin :"
+  denied "main へは push しません" "cd - && git push origin HEAD:main"
+  # push 先を書いた push は、書かれた先で判断できる
+  allowed "cd - && git push origin feat/1-x"
+  denied "main へは push しません" "cd - && git push origin main"
+  # 対象を書き直せば、そのリポジトリで判断する
+  git checkout -q -b feat/1-x
+  allowed "cd - && git -C $REPO commit -m x" "cd - && git -C $REPO push" "cd - && git -C $REPO push origin HEAD"
+}
+
+@test "対象のリポジトリが分からないときも、コミット・push 以外は止めない" {
+  allowed "cd - && git switch -c feat/x" "cd - && git checkout -b feat/x" "cd - && git branch feat/x"
 }
 
 @test "規約に合わない名前でブランチを作るコマンドは、止めずに警告する" {
@@ -873,6 +893,13 @@ EOF
   export HOME="$TMP/wt"
   ln -s "$REPO" "$TMP/-r"
   denied "main の上ではコミットしません" "cd $TMP && cd -- -r && git commit -m x" "cd $TMP && cd -L -- -r && git commit -m x"
+}
+
+@test "push の引数が : のとき（matching refspec）は、同じ名前のブランチをすべて push するので、どのブランチの上でも止める" {
+  git checkout -q -b feat/1-x
+  denied "matching refspec" "git push origin :"
+  git checkout -q main
+  denied "matching refspec" "git push origin :"
 }
 
 @test "ホームのリポジトリ（ユーザーの層と同じ場所にチームの設定が見える）は導入したとみなさず、守らない" {
