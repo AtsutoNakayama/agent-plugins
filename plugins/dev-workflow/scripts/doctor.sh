@@ -111,13 +111,12 @@ fi
 if [ -n "$repo_root" ]; then
   missing_handlers=""
   while IFS= read -r handler_skill; do
-    [ -n "$handler_skill" ] || continue
     # <プラグイン>:<名前>（両側が1文字以上）の形だけを除く。「:」「a:」「:b」は壊れた名前なので除かない
     case "$handler_skill" in ?*:?*) continue ;; esac
     # パスに組み立てるのは、安全な名前（英数字・.・_・-）だけ。../x や a/b のような名前は「無い」ものとして扱う
     if ! [[ "$handler_skill" =~ ^[A-Za-z0-9._-]+$ ]] || [ "$handler_skill" = . ] || [ "$handler_skill" = .. ] \
       || { [ ! -f "$repo_root/.claude/skills/$handler_skill/SKILL.md" ] && { [ -z "${HOME:-}" ] || [ ! -f "$HOME/.claude/skills/$handler_skill/SKILL.md" ]; }; }; then
-      missing_handlers="$missing_handlers${missing_handlers:+、}$handler_skill"
+      missing_handlers="$missing_handlers${missing_handlers:+、}${handler_skill:-（空）}"
     fi
   done < <(jq -r '(.pr_check.handlers // {}) | if type == "object" then .[] | strings else empty end' 2>/dev/null <<<"$config" || true)
   if [ -n "$missing_handlers" ]; then

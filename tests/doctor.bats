@@ -215,6 +215,17 @@ labels_check() { jq -c '.checks[] | select(.name == "labels") | [.ok, .level, .d
   assert_output --partial "見つかりません: :、a:、:b（"
 }
 
+@test "pr_check.handlers の担当の skill が空文字なら、（空）として警告する" {
+  fake_gh
+  export FAKE_SCOPES="project"
+  export HOME="$TMP/home"
+  echo '{"pr_check": {"handlers": {"some-bot[bot]": ""}}}' >.claude/dev-workflow/config.json
+  run_script doctor.sh
+  assert_success
+  assert_equal "$(jq -r '.checks[] | select(.name == "pr-check-handlers") | [.ok, .level] | @tsv' <<<"$output")" $'false\twarn'
+  assert_output --partial "見つかりません: （空）（"
+}
+
 @test "設定が壊れていれば config が失敗する" {
   fake_gh
   export FAKE_SCOPES="project"
