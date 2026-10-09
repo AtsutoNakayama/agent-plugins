@@ -12,7 +12,7 @@ description: 設計上の判断を、MADR 4.0.0 の書式（日本語に訳し�
 スクリプトとテンプレート:
 
 - `${CLAUDE_PLUGIN_ROOT}/scripts/config.sh`：合わせた設定の出力（`adr.dir` が ADR の置き場所。既定 `docs/adr`）
-- `${CLAUDE_PLUGIN_ROOT}/scripts/adr-list.sh`：置き場所にある ADR の一覧と、提案するかの設定 `adr.suggest`。`--issue N` では、front matter の `issue` が N の ADR だけに絞り、その Issue で ADR の作成を提案するか（`proposal`。Issue の本文も gh で読んで決める）と、読んだ ADR の項目（`adr_tasks`）も出す
+- `${CLAUDE_PLUGIN_ROOT}/scripts/adr-list.sh`：置き場所にある ADR の一覧と、提案するかの設定 `adr.suggest`。`--issue N` では、front matter の `issue` が N の ADR だけに絞り、その Issue で ADR の作成を提案するか（`proposal`。Issue の本文も gh で読んで決める）と、読んだ ADR の項目（`adr_tasks`）も出す。各 ADR の `cited_in_supplements` は、その ADR に「補足」の節からリンクしているほかの ADR の一覧（一部だけ変えている ADR の逆引き。リンクしているだけで変えていないこともある）
 - `${CLAUDE_PLUGIN_ROOT}/scripts/adr-create.sh`：ファイル名を決めてテンプレートから作る。置き換える ADR の status も書き換える（`--help` で使い方）
 - `${CLAUDE_PLUGIN_ROOT}/templates/adr/`：MADR 4.0.0 を日本語に訳した4つのテンプレート（元にした版とライセンスは同じ場所の `README.md`）
 
@@ -66,7 +66,7 @@ task-create と pr-create は、上の「ADR にすべき判断」に当たる�
 - 起きる結果（良い点・悪い点）と、守られているかの確かめ方
 - 古い ADR を置き換えるか、一部だけ変えるか
 
-既にある ADR（`adr-list.sh` の `adrs`。`title` で見当を付け、近いものは本文も読む）を見て、同じ判断の ADR が無いかを確かめる。同じ判断なら新しく作らず、その ADR を直すか、置き換えるかをユーザーに聞く。
+既にある ADR（`adr-list.sh` の `adrs`。`title` で見当を付け、近いものは本文も読む）を見て、同じ判断の ADR が無いかを確かめる。近い ADR の `cited_in_supplements` に ADR があれば、その「補足」も読み、近い ADR の判断を一部だけ変えていないかを確かめる（一部だけ変える ADR は、変えられる側に何も書かないので、近い ADR の本文だけでは分からない。補足でリンクしているだけで、変えていないこともある）。同じ判断なら新しく作らず、その ADR を直すか、置き換えるかをユーザーに聞く。
 
 ### 2. テンプレートを選ぶ
 

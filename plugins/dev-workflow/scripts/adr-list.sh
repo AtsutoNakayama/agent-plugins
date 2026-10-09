@@ -9,6 +9,10 @@
 #
 # 置き場所の直下の *.md を読み、ファイル名の順（ロケールに左右されない文字の順）に出す（下のディレクトリは読まない）。置き場所が無ければ、ADR は無いものとする。
 # front matter（先頭の --- から次の --- まで）の issue・status と、最初の「# 」の見出しを読む。行末の CR と先頭の BOM は外して読む。
+# 「補足」の節（見出しが「## 補足」か、MADR の元の「## More Information」の節。次の「# 」か「## 」の見出しまで。
+# コードブロック（``` か ~~~ で囲んだ行）の中は除く）からは、インラインのリンク [文](先) の先を読み、リンクしている ADR を
+# 求める。リンクの先は、その ADR のファイルからの相対パス（/ で始まればリポジトリのルートからのパス）として解き、
+# #・? からの後ろは外す。URL（https: など）と、置き場所の直下の ADR でない先と、自分へのリンクは数えない。
 # 値は YAML の1行として読む（空白の後の # からのコメントを外し、囲む引用符を外してエスケープを元の文字に戻す）。
 # issue は数字だけ（先頭の # と 0 は外す）なら番号、それ以外（無い・テンプレートのまま）は null。# を付けるなら、引用符で
 # 囲む（"#151"）。囲まない #151 は、YAML のとおりコメントなので、値なし（null）になる。
@@ -17,7 +21,12 @@
 #   dir      ADR の置き場所（adr.dir。リポジトリのルートからの相対パス）
 #   suggest  設定の adr.suggest（task-create・pr-create で ADR の作成を提案するか。既定 true）
 #   issue    --issue の番号（無ければ null）
-#   adrs     ADR の一覧。path（リポジトリのルートからの相対パス）・issue・status・title（無ければ null）
+#   adrs     ADR の一覧。path（リポジトリのルートからの相対パス）・issue・status・title（無ければ null）・
+#              cited_in_supplements（ほかの ADR のうち、「補足」の節からこの ADR にリンクしているもののパスの一覧。
+#              無ければ []。ファイル名の順）。過去の判断を一部だけ変える ADR は、その関係を自分の「補足」に書き、
+#              変えられる側には何も書かないので、その逆引きにする。補足でリンクしているだけで、変えているとは限らない
+#              （「これは変えない」と参照しているだけのこともある）ので、変えているかは、その ADR の補足を読んで確かめる。
+#              --issue で絞っても、逆引きは置き場所の全部の ADR から作る
 #   proposal --issue のとき、その Issue で ADR の作成を提案するか（--issue が無ければ null）。上から順に決める
 #              disabled  adr.suggest が false。提案しない
 #              exists    その Issue の ADR がある（adrs が空でない）。提案しない
@@ -70,9 +79,9 @@ case "$suggest" in
   *) dw_die "adr.suggest は true か false にしてください: ${suggest}" 2 ;;
 esac
 
-# ADR ごとに「パス<TAB>issue<TAB>status<TAB>title」の1行にし、最後に1回の jq でまとめる。
-# ADR が多くても遅くならないよう、awk は全部のファイルに1回だけ起動する。awk は中身の無いファイルを1行も読まないので、
-# そのファイルは、ファイルの一覧（files）から、値の無い ADR として補う
+# ADR ごとに「A<TAB>パス<TAB>issue<TAB>status<TAB>title」の1行と、補足のリンクごとに「L<TAB>パス<TAB>リンクの先」の1行にし、
+# 最後に1回の jq でまとめる。ADR が多くても遅くならないよう、awk は全部のファイルに1回だけ起動する。awk は中身の無い
+# ファイルを1行も読まないので、そのファイルは、ファイルの一覧（files）から、値の無い ADR として補う
 files="" rows=""
 if [ -d "$repo_root/$adr_dir" ]; then
   # awk にはリポジトリのルートからの相対パスで渡し、出力のパスをそのまま使う
@@ -90,15 +99,31 @@ if [ -d "$repo_root/$adr_dir" ]; then
         gsub(/\t/, " ", v)
         return v
       }
-      function flush() { if (cur != "") printf "%s\t%s\t%s\t%s\n", cur, i, s, t }
-      FNR == 1 { flush(); cur = FILENAME; i = s = t = ""; fm = 0; done = 0 }
-      done { next }
+      function flush() { if (cur != "") printf "A\t%s\t%s\t%s\t%s\n", cur, i, s, t }
+      # 行の中のインラインのリンク [文](先) の先を、1つずつ L の行にする（<先> の形と、先の後ろの "タイトル" も読む）
+      function links(line,   m) {
+        while (match(line, /\]\([^)]*\)/)) {
+          m = substr(line, RSTART + 2, RLENGTH - 3)
+          line = substr(line, RSTART + RLENGTH)
+          sub(/^[ \t]+/, "", m)
+          if (substr(m, 1, 1) == "<") { m = substr(m, 2); sub(/>.*$/, "", m) } else sub(/[ \t].*$/, "", m)
+          sub(/[#?].*$/, "", m)
+          gsub(/\t/, " ", m)
+          if (m != "") printf "L\t%s\t%s\n", cur, m
+        }
+      }
+      FNR == 1 { flush(); cur = FILENAME; i = s = t = ""; fm = 0; head = 0; sup = 0; fence = 0 }
       FNR == 1 && $0 == "---" { fm = 1; next }
       fm && $0 == "---" { fm = 0; next }
       fm && /^issue:/ && i == "" { i = clean($0); next }
       fm && /^status:/ && s == "" { s = clean($0); next }
-      # 見出しを読んだら、そのファイルの残りは読まない（nextfile が無い awk でも、done で残りの行を飛ばす）
-      !fm && /^# / { t = substr($0, 3); sub(/[ \t\r]+$/, "", t); gsub(/\t/, " ", t); done = 1; nextfile }
+      fm { next }
+      # 最初の「# 」の行を見出しにする
+      !head && /^# / { t = substr($0, 3); sub(/[ \t\r]+$/, "", t); gsub(/\t/, " ", t); head = 1; next }
+      /^[ \t]*(```|~~~)/ { fence = !fence; next }
+      fence { next }
+      /^##? / { sup = ($0 ~ /^## +(補足|More Information)[ \t]*$/); next }
+      sup { links($0) }
       END { flush() }' "$@")"
   fi
 fi
@@ -116,9 +141,20 @@ res="$(jq -n -r --rawfile files "$tmp_dir/files" --rawfile row_lines "$tmp_dir/r
   def nz: if . == "" then null else . end;
   # issue の値は、先頭の #（引用符で囲んだ "#151" のときだけ残っている）と先頭の 0 を外して、数字だけなら番号にする
   def num: ltrimstr("#") | if test("^[0-9]+$") and test("[1-9]") then tonumber else null end;
-  (reduce ($row_lines | split("\n")[] | select(. != "") | split("\t")) as $r ({}; .[$r[0]] = $r)) as $rows
+  # パスの . と .. を解く（.. で上に出すぎたら null）
+  def normpath: reduce (split("/")[] | select(. != "" and . != ".")) as $x ([];
+      if . == null then null elif $x == ".." then (if length > 0 then .[:-1] else null end) else . + [$x] end)
+    | if . == null then null else join("/") end;
+  [$row_lines | split("\n")[] | select(. != "") | split("\t")] as $lines
+  | (reduce ($lines[] | select(.[0] == "A")) as $r ({}; .[$r[1]] = $r[1:])) as $rows
+  # 補足のリンクの先を、リンクしている ADR のファイルからの相対パスとして、リポジトリのルートからのパスに解く
+  | [$lines[] | select(.[0] == "L") | {from: .[1], to: .[2]}
+    | select(.to | test("^[A-Za-z][A-Za-z0-9+.-]*:") | not)
+    | .to = (if (.to | startswith("/")) then .to else (.from | sub("[^/]*$"; "")) + .to end | normpath)
+    | select(.to != null and .to != .from)] as $links
   | [$files | split("\n")[] | select(. != "") | . as $p | ($rows[$p] // [$p])
-    | {path: $p, issue: (.[1] // "" | num), status: (.[2] // "" | nz), title: (.[3] // "" | nz)}]
+    | {path: $p, issue: (.[1] // "" | num), status: (.[2] // "" | nz), title: (.[3] // "" | nz),
+       cited_in_supplements: ([$links[] | select(.to == $p) | .from] | unique)}]
   # glob の並びはロケールで変わるので、文字の順に並べ直す
   | sort_by(.path)
   | (if $want == "" then null else ($want | tonumber) end) as $n

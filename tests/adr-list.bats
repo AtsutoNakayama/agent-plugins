@@ -31,7 +31,7 @@ write_adr() {
   assert_success
   assert_equal "$(jq -c '[.dir, .suggest, .issue]' <<<"$output")" '["docs/adr",true,null]'
   assert_equal "$(jq -c '.adrs' <<<"$output")" \
-    '[{"path":"docs/adr/000001-a.md","issue":1,"status":"proposed","title":"プラグインを1つにまとめる"},{"path":"docs/adr/000162-b.md","issue":162,"status":"accepted","title":"ワークツリーを作らない"}]'
+    '[{"path":"docs/adr/000001-a.md","issue":1,"status":"proposed","title":"プラグインを1つにまとめる","cited_in_supplements":[]},{"path":"docs/adr/000162-b.md","issue":162,"status":"accepted","title":"ワークツリーを作らない","cited_in_supplements":[]}]'
 }
 
 @test "--issue で、front matter の issue が同じ ADR だけを出す（ファイル名ではなく front matter で見る）" {
@@ -81,7 +81,7 @@ write_adr() {
   printf 'issue: 9\n' >>docs/adr/a.md
   run_script adr-list.sh
   assert_success
-  assert_equal "$(jq -c '.adrs' <<<"$output")" '[{"path":"docs/adr/a.md","issue":null,"status":"accepted","title":"見出し"}]'
+  assert_equal "$(jq -c '.adrs' <<<"$output")" '[{"path":"docs/adr/a.md","issue":null,"status":"accepted","title":"見出し","cited_in_supplements":[]}]'
 }
 
 @test "front matter も見出しも無いファイル（README など）は、issue・status・title を null にして出す" {
@@ -92,7 +92,7 @@ write_adr() {
   assert_success
   # 並びは文字の順（大文字が先）で、ロケールに左右されない
   assert_equal "$(jq -c '.adrs' <<<"$output")" \
-    '[{"path":"docs/adr/README.md","issue":null,"status":null,"title":null},{"path":"docs/adr/empty.md","issue":null,"status":null,"title":null}]'
+    '[{"path":"docs/adr/README.md","issue":null,"status":null,"title":null,"cited_in_supplements":[]},{"path":"docs/adr/empty.md","issue":null,"status":null,"title":null,"cited_in_supplements":[]}]'
 }
 
 @test "置き場所の下のディレクトリと、.md 以外のファイルは読まない" {
@@ -187,7 +187,7 @@ write_adr() {
   run_script adr-list.sh --issue 151
   assert_success
   assert_equal "$(jq -c '.adrs' <<<"$output")" \
-    '[{"path":"docs/adr/000151-bom.md","issue":151,"status":"accepted","title":"BOM"},{"path":"docs/adr/000151-crlf.md","issue":151,"status":"accepted","title":"CRLF"}]'
+    '[{"path":"docs/adr/000151-bom.md","issue":151,"status":"accepted","title":"BOM","cited_in_supplements":[]},{"path":"docs/adr/000151-crlf.md","issue":151,"status":"accepted","title":"CRLF","cited_in_supplements":[]}]'
 }
 
 @test "引用符で囲んでいない値の、空白の後の # からのコメントは外す" {
@@ -197,6 +197,65 @@ write_adr() {
   run_script adr-list.sh --issue 151
   assert_success
   assert_equal "$(jq -c '[.adrs[] | [.path, .status]]' <<<"$output")" '[["docs/adr/a.md","accepted"],["docs/adr/b.md","a # b"]]'
+}
+
+# 一部だけ変える ADR は、変えられる側を書き換えず、自分の「補足」にリンクを書く（#310）
+@test "cited_in_supplements：ほかの ADR の「補足」の節からリンクされていれば、リンクしている ADR のパスを出す" {
+  write_adr docs/adr/000010-a.md "issue: 10" "A"
+  write_adr docs/adr/000020-b.md "issue: 20" "B"
+  # 補足の外（背景）のリンクと、補足の後の節のリンクは数えない
+  cat >>docs/adr/000020-b.md <<'MD'
+## 背景と課題
+
+[ADR 000010](000010-a.md) を前提にする。
+
+## 補足
+
+* [ADR 000010](000010-a.md#判断の結果) の一部を変える。[同じ ADR](./000010-a.md) へのリンクは1つに数える
+* [自分](000020-b.md)・[外の URL](https://example.com/000030-c.md)・[無い ADR](000099-none.md) は数えない
+
+```md
+[コードブロックの中](000030-c.md)
+```
+
+### 補足の中の小見出し
+
+* [ADR 000030](<000030-c.md> "タイトル") は変えない
+
+## 補足の後の節
+
+[ADR 000040](000040-d.md)
+MD
+  write_adr docs/adr/000030-c.md "issue: 30" "C"
+  # MADR の元の見出し（More Information）と、置き場所の外を通る相対パス・ルートからのパスも読む。改行が \r\n でも読む
+  printf '%s\r\n' '## More Information' '' '[A](../adr/000010-a.md)・[B](/docs/adr/000020-b.md)・[外](../../../000010-a.md)' >>docs/adr/000030-c.md
+  write_adr docs/adr/000040-d.md "issue: 40" "D"
+  run_script adr-list.sh
+  assert_success
+  assert_equal "$(jq -c '[.adrs[] | [.path, .cited_in_supplements]]' <<<"$output")" \
+    '[["docs/adr/000010-a.md",["docs/adr/000020-b.md","docs/adr/000030-c.md"]],["docs/adr/000020-b.md",["docs/adr/000030-c.md"]],["docs/adr/000030-c.md",["docs/adr/000020-b.md"]],["docs/adr/000040-d.md",[]]]'
+}
+
+@test "cited_in_supplements：番号が同じ ADR もパスごとに分け、--issue で絞っても全部の ADR から逆引きする" {
+  write_adr docs/adr/000219-x.md "issue: 219" "X"
+  write_adr docs/adr/000219-y.md "issue: 219" "Y"
+  write_adr docs/adr/000231-z.md "issue: 231" "Z"
+  printf '## 補足\n\n[ADR 000219](000219-y.md)\n' >>docs/adr/000231-z.md
+  run_script adr-list.sh --issue 219
+  assert_success
+  assert_equal "$(jq -c '[.adrs[] | [.path, .cited_in_supplements]]' <<<"$output")" \
+    '[["docs/adr/000219-x.md",[]],["docs/adr/000219-y.md",["docs/adr/000231-z.md"]]]'
+}
+
+@test "cited_in_supplements：adr.dir を変えても、リンクを ADR のファイルからの相対パスとして解く" {
+  echo '{"adr": {"dir": "doc/decisions"}}' >.claude/dev-workflow/config.json
+  write_adr doc/decisions/000010-a.md "issue: 10" "A"
+  write_adr doc/decisions/000020-b.md "issue: 20" "B"
+  printf '## 補足\n\n[A](000010-a.md)\n' >>doc/decisions/000020-b.md
+  run_script adr-list.sh
+  assert_success
+  assert_equal "$(jq -c '[.adrs[] | [.path, .cited_in_supplements]]' <<<"$output")" \
+    '[["doc/decisions/000010-a.md",["doc/decisions/000020-b.md"]],["doc/decisions/000020-b.md",[]]]'
 }
 
 @test "--issue が無ければ、proposal と adr_tasks は null で、Issue を読まない" {

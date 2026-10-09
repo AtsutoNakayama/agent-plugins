@@ -666,6 +666,13 @@ has() {
 }
 
 # shellcheck disable=SC2016 # バッククォートはスキルの本文の文字で、展開させない
+@test "adr-create の重複の確認は、adr-list.sh の cited_in_supplements で、近い ADR を一部だけ変えている ADR も読む（#310）" {
+  adr="$SKILLS/adr-create/SKILL.md"
+  has "adr-create の手順1" "$(step "$adr" 1)" '`cited_in_supplements`' '「補足」も読み' '一部だけ変えていないかを確かめる'
+  grep -qF '`cited_in_supplements`' "$BATS_TEST_DIRNAME/../docs/design.md" || fail "設計書に、補足からの逆引きがありません"
+}
+
+# shellcheck disable=SC2016 # バッククォートはスキルの本文の文字で、展開させない
 @test "task-auto は、auto-check.sh の action ごとにすることを書き、無効なら何もしない（設計書 §8・ADR 000267）" {
   f="$SKILLS/task-auto/SKILL.md"
   s1="$(step "$f" 1)"
