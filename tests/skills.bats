@@ -126,6 +126,19 @@ has() {
   grep -q '手順2で探した結果' <<<"$step3" || fail "手順3の確認に、探した結果がありません"
 }
 
+@test "task-create は、分けた Issue も手順2で読んだ一覧と照らし、重なりの問いを手順3の確認に1回にまとめる" {
+  f="$SKILLS/task-create/SKILL.md"
+  step2="$(step "$f" 2)"
+  step3="$(step "$f" 3)"
+  grep -q '分けた Issue の重複と親の候補を照らす' <<<"$step2" || fail "手順2に、分けた Issue を照らす節がありません"
+  grep -q '一覧は読み直さない' <<<"$step2" || fail "開いている Issue の一覧を読み直さないことが書かれていません"
+  grep -q '残りの分けた Issue の下書きは止めない' <<<"$step2" || fail "重なった Issue だけを対象にし、全体を止めないことが書かれていません"
+  grep -q '案の親子の木で決め' <<<"$step2" || fail "親の候補と案の親子の木がぶつかるときの扱いが書かれていません"
+  grep -q '手順3の確認の中で1回にまとめる' <<<"$step2" || fail "重なりの問いを1回にまとめることが書かれていません"
+  grep -q '分けた Issue が既にある Issue と重なるとき' <<<"$step3" || fail "手順3の確認に、分けた Issue の重なりの問いがありません"
+  grep -q '重なった Issue は外して、残りを起票する' <<<"$step3" || fail "手順3に、重なった Issue だけを外す選択肢がありません"
+}
+
 @test "task-next は読み取り専用（確認を取らず、Issue や列を変えるスクリプトを呼ばない。設計書 §8）" {
   f="$SKILLS/task-next/SKILL.md"
   grep -q 'next-tasks.sh' "$f" || fail "task-next が next-tasks.sh を使っていません"
