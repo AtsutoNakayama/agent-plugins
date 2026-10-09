@@ -199,6 +199,11 @@ body="$(printf '%s' "$body" | jq -Rrs --arg k "$keyword" --arg n "$issue" '
     elif $body == "" then "\($k) #\($n)"
     else "\($body)\n\n\($k) #\($n)" end')"
 [ "$body" != "$keyword #$issue" ] || dw_die "本文が空です（概要・変更点・確認方法を書いてください）" 64
+# 本文は一時ファイルに1回だけ書き、PR を作るときの --body-file と、最後の出力の --rawfile の両方で使う
+# （$( ) で受けた本文は改行で終わらないので、末尾に足した改行は、出力では1つだけ外せば元に戻る）
+body_tmp="$(mktemp)"
+trap 'rm -f "$body_tmp"' EXIT
+printf '%s\n' "$body" >"$body_tmp"
 
 # --- 3. push --------------------------------------------------------------------
 if ! $dry_run; then
@@ -234,9 +239,6 @@ else
   note "${base} に向けた PR「${title}」を作る$($draft && echo '（下書き）')"
   [ "$(jq length <<<"$labels")" = 0 ] || note "PR にラベル $(jq -r 'join(", ")' <<<"$labels") を付ける"
   if ! $dry_run; then
-    body_tmp="$(mktemp)"
-    trap 'rm -f "$body_tmp"' EXIT
-    printf '%s\n' "$body" >"$body_tmp"
     pr_args=(--base "$base" --head "$branch" --title "$title" --body-file "$body_tmp")
     $draft && pr_args+=(--draft)
     while IFS= read -r l; do
@@ -329,16 +331,13 @@ fi
 merge_queue="$(dw_merge_queue_enabled '{owner}/{repo}' "$pr_base")" || merge_queue=null
 
 # 本文と Issue のチェックリストの項目（tasks）は大きいことがあるので、引数では渡さない（引数1つの長さには上限がある）。
-# 本文は一時ファイルにして --rawfile で、tasks は標準入力の JSON で渡す（標準入力の -R では、4096 バイトを超える1行の
+# 本文は一時ファイル（body_tmp）から --rawfile で、tasks は標準入力の JSON で渡す（標準入力の -R では、4096 バイトを超える1行の
 # BMP の外の文字が読み込みの区切りで割れることがある）
-out_body="$(mktemp)"
-trap 'rm -f "${body_tmp:-}" "$out_body"' EXIT
-printf '%s' "$body" >"$out_body"
-printf '%s\n' "$tasks" | jq --rawfile body "$out_body" --argjson i "$issue" --arg branch "$branch" --arg base "$base" --arg pr_base "$pr_base" --arg title "$title" \
+printf '%s\n' "$tasks" | jq --rawfile body_text "$body_tmp" --argjson i "$issue" --arg branch "$branch" --arg base "$base" --arg pr_base "$pr_base" --arg title "$title" \
   --argjson labels "$labels" --argjson breaking "$breaking" --argjson draft "$draft" --argjson created "$created" \
   --arg number "$pr_number" --arg url "$pr_url" --argjson status "$status" \
   --argjson checked "$to_check" --argjson added "$to_add" \
-  --argjson dry "$dry_run" --argjson actions "$actions" --argjson merge_queue "$merge_queue" '. as $tasks | {
+  --argjson dry "$dry_run" --argjson actions "$actions" --argjson merge_queue "$merge_queue" '. as $tasks | ($body_text | rtrimstr("\n")) as $body | {
     issue: $i,
     dry_run: $dry,
     branch: $branch,
