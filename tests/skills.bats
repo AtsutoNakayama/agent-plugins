@@ -308,12 +308,14 @@ has() {
   has "手順2" "$(step "$f" 2)" '`git merge --no-edit origin/<base>`'
 }
 
+# shellcheck disable=SC2016 # バッククォートはスキルの本文の文字で、展開させない
 @test "pr-create は、既にある PR のマージ先が設定の base_branch と違えば、そのマージ先との差で PR に入る変更を読む（#284）" {
   f="$SKILLS/pr-create/SKILL.md"
   has "pr-create の手順2" "$(step "$f" 2)" 'baseRefName' '`git diff origin/<マージ先>...HEAD`'
   ! grep -qF 'origin/<base_branch>' "$f" || fail "pr-create に、設定の base_branch との差で変更を読む手順（origin/<base_branch>）が残っています"
 }
 
+# shellcheck disable=SC2016 # バッククォートはスキルの本文の文字で、展開させない
 @test "branch-update は、衝突を直すどの場面でも、両立できると判断した衝突も含めて、直す前に直し方の方針の確認を取る（設計書 §8・ADR 000237）" {
   # 両立できると判断した衝突を確かめずに直し、push の前の確認の時点で直したコミットが既にできていた（#237）
   # 文の言い回しに縛られないよう、箇条（見出しの語や選択肢の名前）で場所を決め、その中の要の語だけを確かめる
