@@ -391,8 +391,8 @@ silent() {
   # HEAD・@ への push も、今のブランチを読めないので止める。HEAD:feat/x のように先の名前を書けば判断できる
   denied "対象のリポジトリが分からない" "cd - && git push origin HEAD" "cd - && git push origin @"
   allowed "cd - && git push origin HEAD:feat/x"
-  # ":" は先を書かない matching refspec なので、先を書かない push と同じに止める
-  denied "対象のリポジトリが分からない" "cd - && git push origin :"
+  # ":" は matching refspec（同じ名前のブランチをすべて push する）なので、対象が分からなくても止める
+  denied "matching refspec" "cd - && git push origin :"
   denied "main へは push しません" "cd - && git push origin HEAD:main"
   # push 先を書いた push は、書かれた先で判断できる
   allowed "cd - && git push origin feat/1-x"
@@ -895,9 +895,9 @@ EOF
   denied "main の上ではコミットしません" "cd $TMP && cd -- -r && git commit -m x" "cd $TMP && cd -L -- -r && git commit -m x"
 }
 
-@test "push の引数が : のとき（先を書かない matching refspec）は、base_branch の上では止める" {
+@test "push の引数が : のとき（matching refspec）は、同じ名前のブランチをすべて push するので、どのブランチの上でも止める" {
   git checkout -q -b feat/1-x
-  allowed "git push origin :"
+  denied "matching refspec" "git push origin :"
   git checkout -q main
-  denied "main へは push しません" "git push origin :"
+  denied "matching refspec" "git push origin :"
 }
