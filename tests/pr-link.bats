@@ -182,9 +182,16 @@ remote_branch() {
     "git checkout -p feat/23-x" "git switch --detach feat/23-x" "git checkout --detach feat/23-x"
 }
 
+@test "手元に無い名前（コマンドが失敗した・ブランチの名前でなかった）は、リモートにあっても、追跡ブランチとして出さない" {
+  fake_issue 23 '["feat"]'
+  remote_branch feat/23-x
+  silent "git switch feat/23-x" "git checkout feat/23-x" "git checkout -t origin/feat/23-x"
+}
+
 @test "リモート名の後ろが完全に一致しないブランチ（team/feat/23-x）は、追跡ブランチの候補にしない" {
   fake_issue 23 '["feat"]'
   remote_branch team/feat/23-x
+  # 手元に作った直後（reflog が「Created from」の 1 行）で、リモートの名前だけが出す・出さないを分ける
   git branch -q feat/23-x HEAD
   silent "git switch feat/23-x" "git checkout feat/23-x"
 }

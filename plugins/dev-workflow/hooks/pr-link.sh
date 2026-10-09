@@ -90,7 +90,7 @@ add_new_name() { new_names+=("$1"); }
 # ブランチを作るコマンドの名前は、guard-git.sh と同じ書き方（-cname なども）で拾う。-b・-B の無い git worktree add は、
 # 2つ目の位置引数（git worktree add <パス> <ブランチ>）を名前にする。commit-ish を書かない git worktree add <パス> は、
 # パスの最後の名前にする。git switch・checkout が作る追跡ブランチ（gc_tracking_branches）は、候補の名前が、リモートにあり、
-# 手元に無いか今作られた（reflog が「branch: Created from …」の 1 行だけ）ときに拾う
+# 手元にあり、今作られた（reflog が「branch: Created from …」の 1 行だけ）ときに拾う
 # 使い方: on_git <サブコマンド> <引数>...
 on_git() {
   local sub="$1" k tracking=false
@@ -129,11 +129,13 @@ on_git() {
     push | commit) add_event "$sub" "$(gc_branch)" ;;
     *)
       for k in "${new_names[@]}"; do
-        # 追跡ブランチの候補は、リモートにあり、手元に無いか、今作られたものだけ（前からある手元のブランチは、ただの切り替え）。
-        # このフックはコマンドの後に動くので、作られたブランチは手元にあり、reflog で今作ったかを見る
+        # 追跡ブランチの候補は、リモートにあり、手元にあって、今作られたものだけ（前からある手元のブランチは、ただの切り替え。
+        # 手元に無ければ、コマンドが失敗したか、ブランチの名前でなかった）。このフックはコマンドの後に動くので、
+        # 作られたブランチは手元にあり、reflog で今作ったかを見る
         if $tracking; then
           gc_remote_has "$k" || continue
-          ! gc_git show-ref --verify --quiet "refs/heads/$k" || gc_just_created "$k" || continue
+          gc_git show-ref --verify --quiet "refs/heads/$k" || continue
+          gc_just_created "$k" || continue
         fi
         add_event create "$k"
       done

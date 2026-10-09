@@ -261,7 +261,7 @@ gc_skip_opts_on() {
 
 # ブランチを作る git のコマンドから、作るブランチの名前を探し、名前ごとに「<コールバック> <名前>」を呼ぶ。
 # 対象は git switch -c/-C/--create/--force-create/--orphan、git checkout -b/-B/--orphan、git worktree add -b/-B、git branch <名前>、
-# と、commit-ish を書かない git worktree add <パス>（パスの最後の名前でブランチを作る。--detach・--orphan のときは作らない）。
+# と、commit-ish を書かない git worktree add <パス>（パスの最後の名前でブランチを作る。--orphan も同じ。--detach のときは作らない）。
 # 手元に無いブランチへの git switch・checkout が作る追跡ブランチは、リモートを見ないと分からないので、gc_tracking_branches で拾う。
 # オプションの読み方は gc_opt（-qc name・-cname・--cre name）。
 # 使い方: gc_new_branches <コールバック> <サブコマンド> <引数>...
@@ -281,8 +281,8 @@ gc_new_branches() {
   esac
 }
 
-# git worktree add の引数から、作るブランチの名前を探す。-b・-B があればその名前。無くて、--detach・--orphan も無く、
-# 位置引数が <パス> だけなら、git はパスの最後の名前でブランチを作る
+# git worktree add の引数から、作るブランチの名前を探す。-b・-B があればその名前。無くて、--detach も無く、
+# 位置引数が <パス> だけなら（--orphan も同じ）、git はパスの最後の名前でブランチを作る
 # 使い方: gc_worktree_add <コールバック> <add の後の引数>...
 gc_worktree_add() {
   local cb="$1" explicit=false detach=false npos=0 path="" name
@@ -304,7 +304,7 @@ gc_worktree_add_on() {
     opt)
       case "$2" in
         -b | -B) explicit=true ;;
-        --orphan | --detach | -d) detach=true ;;
+        --detach | -d) detach=true ;;
       esac
       ;;
     arg)

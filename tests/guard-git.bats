@@ -433,10 +433,10 @@ silent() {
 }
 
 @test "commit-ish を書かない git worktree add <パス> は、パスの最後の名前のブランチを作るので警告する。作らないときは出さない" {
-  warned bad_name "git worktree add ../bad_name"
+  warned bad_name "git worktree add ../bad_name" "git worktree add --orphan ../bad_name"
   run_hook "git worktree add ../bad_name"
   assert_output --partial "ブランチ名 bad_name は規約に合いません"
-  silent "git worktree add --detach ../bad_name" "git worktree add -d ../bad_name" "git worktree add --orphan ../bad_name" \
+  silent "git worktree add --detach ../bad_name" "git worktree add -d ../bad_name" \
     "git worktree add ../bad_name main" "git worktree add .."
   warned 21-x "git worktree add ../feat/21-x"
 }
