@@ -829,3 +829,19 @@ has() {
   grep -qF 'parent-state.sh --issue <番号> --assume-closed <番号>:<理由>' "$SKILLS/task-cancel/SKILL.md" || fail "task-cancel が取りやめた Issue を --assume-closed で渡していません"
   grep -q '「Issue だけ閉じる」を選んだときも含む' "$SKILLS/task-cancel/SKILL.md" || fail "task-cancel の手順8の実行条件がありません"
 }
+
+# shellcheck disable=SC2016 # バッククォートはスキルの本文の文字で、展開させない
+@test "task-create は、着手まで頼まれていなければ、起票の後に着手するかを聞いてから task-start に進む（task-create・task-flow・設計書）" {
+  local f="$SKILLS/task-create/SKILL.md"
+  grep -q '^### 6. 着手するかを聞く' "$f" || fail "task-create に、着手するかを聞く手順がありません"
+  grep -q "候補は着手できる子の Issue だけで、新しく起票した親は除く" "$f" || fail "task-create の手順6に、候補から新しい親を除くことがありません"
+  grep -q "着手まで頼まれていて、子が特定されていないとき：着手する子を AskUserQuestion で聞き、選ばれた子の番号を渡す" "$f" || fail "task-create の手順6に、親子で子が特定されていないときに子を聞くことがありません"
+  grep -q '「起票して着手して」のように着手まで頼まれたときは、通常は聞かずに `task-start` に進む' "$f" || fail "着手まで頼まれたときは聞かないことがありません"
+  grep -q '今は着手しない' "$f" || fail "「今は着手しない」の選択肢がありません"
+  grep -q '起票した後に着手するかは使う人が決める' "$BATS_TEST_DIRNAME/../plugins/dev-workflow/defaults/task-flow.md" || fail "task-flow.md にありません"
+  grep -q '着手するかを聞いてから `task-start` に進む' "$BATS_TEST_DIRNAME/../docs/design.md" || fail "設計書にありません"
+  grep -q 'task-create 手順6 | 起票した後に着手するか | 聞かず、着手しない' "$SKILLS/task-auto/SKILL.md" || fail "task-auto の確認の代わりの表にありません"
+  grep -q '手順6（着手するかを聞く）は行わず' "$SKILLS/task-auto/SKILL.md" || fail "task-auto の手順5にありません"
+  grep -q '既存の Issue に「着手して」と言ったときは、もう一度聞きません' "$BATS_TEST_DIRNAME/../plugins/dev-workflow/defaults/task-flow.md" || fail "task-flow.md に既存の Issue の扱いがありません"
+  grep -q '起票した後に着手するか（着手まで頼まれていないとき）' "$BATS_TEST_DIRNAME/../docs/design.md" || fail "設計書の確認を取る操作の列にありません"
+}
