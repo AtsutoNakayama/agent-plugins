@@ -666,6 +666,20 @@ has() {
 }
 
 # shellcheck disable=SC2016 # バッククォートはスキルの本文の文字で、展開させない
+@test "proposed の ADR を採択するときは、status を accepted に、date を採択した日に書き換え、それだけを例外にする（#311・ADR 000338）" {
+  adr="$SKILLS/adr-create/SKILL.md"
+  has "adr-create の手順3" "$(step "$adr" 3)" \
+    '`proposed` の ADR を採択するときは、`status` を `accepted` に書き換え、`date` を採択した日に更新する' \
+    '置き換えたときの status の行と、`proposed` の ADR を採択するときの `status` と `date` の行だけ' \
+    'この2つの行の書き換えだけで、ほかの行は書き換えない'
+  has "adr-create の手順4" "$(step "$adr" 4)" '後で採択するときは、手順3のとおり `status` と `date` の行だけを書き換える'
+  grep -qF '`proposed` の ADR を採択するときは、`status` を `accepted` に書き換え、`date` を採択した日に更新する**' "$BATS_TEST_DIRNAME/../docs/design.md" \
+    || fail "設計書に、採択するときの status と date の扱いがありません"
+  grep -qF '`proposed` の ADR を採択するときは、`status` を `accepted` に書き換え、`date` を採択した日に更新します' \
+    "$BATS_TEST_DIRNAME/../plugins/dev-workflow/templates/adr/README.md" || fail "テンプレートの README に、採択するときの扱いがありません"
+}
+
+# shellcheck disable=SC2016 # バッククォートはスキルの本文の文字で、展開させない
 @test "adr-create の重複の確認は、adr-list.sh の cited_in_supplements で、近い ADR を一部だけ変えている ADR も読む（#310）" {
   adr="$SKILLS/adr-create/SKILL.md"
   has "adr-create の手順1" "$(step "$adr" 1)" '`cited_in_supplements`' '「補足」も読み' '一部だけ変えていないかを確かめる'
