@@ -733,6 +733,23 @@ has() {
     || fail "表の review 手順8が、PR の作成へ進むことになっていません"
 }
 
+# shellcheck disable=SC2016 # バッククォートはスキルの本文の文字で、展開させない
+@test "task-auto は、既にある下書きの PR を使うときは下書きのまま残し（gh pr ready を実行しない）、人に ready にするよう伝える（#282）" {
+  f="$SKILLS/task-auto/SKILL.md"
+  grep -qF '既にある下書きの PR を使うときは、下書きのまま残し、`gh pr ready` は実行しない' "$f" || fail "決まりにありません"
+  table="$(section "$f" '## 確認の代わりに決めること')"
+  grep -qF '下書きなら下書きのまま残し（`gh pr ready` は実行しない）、人に ready にするよう伝える' <<<"$table" \
+    || fail "確認の代わりに決めることの表にありません"
+  has "task-auto の手順6" "$(step "$f" 6)" '`created: false`' '`draft` が true なら' '下書きのまま残す。`gh pr ready` は実行しない' \
+    '手順7で、人に ready にするよう伝える'
+  has "task-auto の手順7" "$(step "$f" 7)" '`created` が false で `draft` が true' '下書きのまま残したこと' \
+    '人が ready にする（`gh pr ready <PR番号>`）よう伝える'
+  # ready にする手順を書かない（実行するのは人。手順7の案内の中の `gh pr ready <PR番号>` だけを許す）
+  bad="$(grep -nF 'gh pr ready' "$f" | grep -vF '`gh pr ready <PR番号>`' | grep -vF '`gh pr ready` は実行しない' || true)"
+  [ -z "$bad" ] || fail "gh pr ready を実行する手順があります: $bad"
+  grep -qF '下書きのまま残し、`gh pr ready` は実行しない' "$BATS_TEST_DIRNAME/../docs/design.md" || fail "設計書にありません"
+}
+
 @test "スキルが直接実行するスクリプト（scripts/ と scripts/setup/ の .sh）は、git で実行権限が付いている（lib/ は読み込むだけなので除く）" {
   # bats はスクリプトを bash で起動するので、実行権限が無くても通ってしまう。スキルは ${CLAUDE_PLUGIN_ROOT}/scripts/… を
   # そのまま実行するので、権限が無いと Permission denied で止まる（task-auto の eval で見つかった）
