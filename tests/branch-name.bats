@@ -142,6 +142,48 @@ assert_check_matches_parse() {
   assert_check_matches_parse feat/17-add-login "|"
 }
 
+@test "--check と dw_parse_branch は、problem() が拒否せず正規表現だけが拒否する名前・先頭が 0 の番号・スラッシュが多い名前でも一致する" {
+  # problem() は通し、branch.pattern の正規表現だけが拒否する（slug の中の連続したハイフン）
+  assert_check_matches_parse feat/17-add--login "|"
+  # problem() も拒否する名前（大文字・末尾のハイフン）でも、dw_parse_branch は取り出さない
+  assert_check_matches_parse feat/17-Add "|"
+  assert_check_matches_parse feat/17- "|"
+  # 先頭が 0 の番号は、そのまま取り出す（番号をそろえるのは使う側）
+  assert_check_matches_parse feat/017-x "feat|017"
+  # スラッシュが多い名前
+  assert_check_matches_parse feat/17-a/b "|"
+  assert_check_matches_parse wip/feat/17-a "|"
+  assert_check_matches_parse feat/x/17-a "|"
+}
+
+@test "--check と dw_parse_branch は、別の type の接頭辞になる type（feat と feature）でも一致する" {
+  echo '{"labels": {"types": ["feat", "feature"]}}' >.claude/dev-workflow/config.json
+  assert_check_matches_parse feature/17-add-login "feature|17"
+  assert_check_matches_parse feat/17-add-login "feat|17"
+  assert_check_matches_parse featur/17-add-login "|"
+  assert_check_matches_parse features/17-add-login "|"
+}
+
+@test "--check と dw_parse_branch は、正規表現の特殊文字を含む branch.pattern でも一致する" {
+  # . はどの1文字にも合い、(…)? は省略できる
+  echo '{"branch": {"pattern": "{type}.(wip-)?{issue_number}-{slug}"}}' >.claude/dev-workflow/config.json
+  assert_check_matches_parse feat/17-add-login "feat|17"
+  assert_check_matches_parse featx17-add-login "feat|17"
+  assert_check_matches_parse feat/wip-17-add-login "feat|17"
+  # . も1文字に合うので、feat17-add-login は「feat|7」になる（--check も受け入れる）
+  assert_check_matches_parse feat17-add-login "feat|7"
+  assert_check_matches_parse feat-add-login "|"
+  assert_check_matches_parse feat/wip17-add-login "|"
+}
+
+@test "--check は branch.pattern の形に合わない名前で、終了コード 1 で終わる（設定の誤りの 2 にしない）" {
+  for name in feat/17-add--login feat/17-a/b wip/17-add-login; do
+    run_script branch-name.sh --check "$name"
+    assert_failure 1
+    assert_equal "$(jq -r .valid <<<"$output")" false
+  done
+}
+
 @test "--check は設定を読めなければ終了コード 2" {
   echo '{' >.claude/dev-workflow/config.json
   run_script branch-name.sh --check feat/17-add-login
