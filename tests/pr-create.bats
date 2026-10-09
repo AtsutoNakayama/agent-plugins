@@ -822,3 +822,14 @@ fake_issue_tasks() {
   assert_equal "$(jq -c '[.pr_base, .merge_queue]' <<<"$json")" '["feat/日本語",true]'
   assert_equal "$(args api-rules)" 'repos/{owner}/{repo}/rules/branches/feat%2F%E6%97%A5%E6%9C%AC%E8%AA%9E?per_page=100'
 }
+
+@test "Issue のチェックリストが長くても（引数の長さの上限の 128 KiB を超えても）、--check と --add-task で本文を直して PR を作る" {
+  setup_branch
+  long_text "$TMP/long"
+  set_issue_body "$(printf -- '## やること\n- [ ] 一つ目\n- [ ] %s\n' "$(cat "$TMP/long")")"
+  run_pr --issue 17 --body-file "$TMP/body.md" --check 一つ目 --add-task 足す項目
+  assert_success
+  assert_equal "$(jq -c '[.checked, .added, (.tasks | length)]' <<<"$json")" '[["一つ目"],["足す項目"],2]'
+  assert_equal "$(head -n 2 "$TMP/issue-edit-body")" "$(printf -- '## やること\n- [x] 一つ目')"
+  assert_equal "$(tail -n 1 "$TMP/issue-edit-body")" "- [ ] 足す項目"
+}

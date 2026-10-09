@@ -137,18 +137,19 @@ has_breaking_note() { printf '%s' "$1" | jq -Rse 'test("(^|\n)BREAKING[ -]CHANGE
 # 使い方: scan_of <Issue の JSON> [jq のフィルター（既定 .）]
 scan_of() { jq -c "$DW_JQ_MD_SCAN"' .body // "" | md_scan | '"${2:-.}" <<<"$1"; }
 tasks="$(scan_of "$issue_json" .items)"
+# 項目（tasks・now_scan）は Issue の本文から読むので長くなりうる。引数ではなく標準入力で jq に渡す（引数1つの長さには上限がある）
 # 文が1つの項目にだけ当たらない --check の文を出す（無い・複数ある）
 # shellcheck disable=SC2016 # jq のプログラムなので、$ は展開しない
 unmatched_jq='map(. as $s | select([$t[] | select(.text == $s)] | length != 1))'
-unmatched="$(jq -c --argjson t "$tasks" "$unmatched_jq" <<<"$checks")"
+unmatched="$(printf '%s\n' "$checks" "$tasks" | jq -sc '.[1] as $t | .[0] | '"$unmatched_jq")"
 [ "$unmatched" = '[]' ] \
   || dw_die "--check の文の項目が Issue #${issue} のチェックリストに1つだけではありません（無いか、同じ文が複数あります）: $(jq -r 'join(" / ")' <<<"$unmatched")" 64
 # まだチェックの無い項目だけに付ける
-to_check="$(jq -c --argjson t "$tasks" 'map(. as $s | select(any($t[]; .text == $s and (.checked | not))))' <<<"$checks")"
+to_check="$(printf '%s\n' "$checks" "$tasks" | jq -sc '.[1] as $t | .[0] | map(. as $s | select(any($t[]; .text == $s and (.checked | not))))')"
 # 文が同じ項目がまだ無いものだけを足す
 # shellcheck disable=SC2016 # jq のプログラムなので、$ は展開しない
 missing_jq='map(. as $s | select(any($t[]; .text == $s) | not))'
-to_add="$(jq -c --argjson t "$tasks" "$missing_jq" <<<"$adds")"
+to_add="$(printf '%s\n' "$adds" "$tasks" | jq -sc '.[1] as $t | .[0] | '"$missing_jq")"
 
 # --- 既にある PR ----------------------------------------------------------------
 # --head はブランチ名だけで探すので、fork の同じ名前のブランチからの PR を除く
@@ -278,18 +279,19 @@ if ! $dry_run && [ "$(jq -n --argjson c "$to_check" --argjson a "$to_add" '$c + 
   # 項目と見出しは、読み直した本文を1回だけ読んで使う
   # jq の起動を増やさないよう、項目（.items）と見出し（.headings）は、それぞれの jq の中で取り出す
   now_scan="$(scan_of "$now_json")"
-  [ "$(jq -c --argjson scan "$now_scan" '$scan.items as $t | '"$unmatched_jq" <<<"$to_check")" = '[]' ] \
+  [ "$(printf '%s\n' "$to_check" "$now_scan" | jq -sc '.[1].items as $t | .[0] | '"$unmatched_jq")" = '[]' ] \
     || dw_die "PR #${pr_number} はできていますが、Issue #${issue} の本文のチェックリストが途中で変わり、指定した文の項目が1つだけではなくなったので、チェックを付けませんでした（項目を確かめ直してから、もう一度実行してください）" 2
   # 読み直す間に足された項目は、もう足さない
-  now_add="$(jq -c --argjson scan "$now_scan" '$scan.items as $t | '"$missing_jq" <<<"$to_add")"
+  now_add="$(printf '%s\n' "$to_add" "$now_scan" | jq -sc '.[1].items as $t | .[0] | '"$missing_jq")"
   # 出力の added は、実際に足した項目にする
   to_add="$now_add"
   # 指定した行の行頭のチェックボックスだけを [x] にし、項目の文の中の [ ] や、ほかの行（改行の \r を含む）はそのまま残す。
   # 足す項目は、最初の項目がある節（次の見出しの手前まで。コードブロックの中の見出しの形の行は見出しとみなさない）の
   # 最後の空でない行の後に、最初の項目と同じ字下げで置く。改行は本文に合わせる（DW_JQ_LINES。CRLF の本文の改行の無い最後の行の
   # 後に足しても、LF を混ぜない）
-  jq -j --argjson scan "$now_scan" --argjson c "$to_check" --argjson a "$now_add" "$DW_JQ_LINES"'
-    $scan.items as $t | $scan.headings as $headings
+  printf '%s\n' "$now_json" "$now_scan" | jq -sj --argjson c "$to_check" --argjson a "$now_add" "$DW_JQ_LINES"'
+    .[1] as $scan | .[0]
+    | $scan.items as $t | $scan.headings as $headings
     | ($t | map(select(.text as $s | $c | index($s))) | map(.line)) as $lines
     | .body // "" | split("\n")
     | to_entries
@@ -316,7 +318,7 @@ if ! $dry_run && [ "$(jq -n --argjson c "$to_check" --argjson a "$to_add" '$c + 
            then [] else [""] end) as $gap
         | $l | insert_after($last; $gap + ($a | map($indent + "- [ ] " + .)))
       end
-    | join("\n")' <<<"$now_json" \
+    | join("\n")' \
     | gh issue edit "$issue" --body-file - >/dev/null \
     || dw_die "PR #${pr_number} はできていますが、Issue #${issue} のチェックリストを変えられませんでした（もう一度実行すれば変えます）"
 fi
@@ -326,12 +328,12 @@ fi
 # 組織のルールセットも含めてブランチに効いているルールで見る）。読むだけなので dry-run でも読む。読めなければ null にし、止めない
 merge_queue="$(dw_merge_queue_enabled '{owner}/{repo}' "$pr_base")" || merge_queue=null
 
-# 本文は大きいことがあるので、引数ではなく標準入力で jq に渡す（引数1つの長さには上限がある）
-printf '%s' "$body" | jq -Rs --argjson i "$issue" --arg branch "$branch" --arg base "$base" --arg pr_base "$pr_base" --arg title "$title" \
+# 本文と Issue のチェックリストの項目（tasks）は大きいことがあるので、引数ではなく標準入力で jq に渡す（引数1つの長さには上限がある）
+{ printf '%s' "$body" | jq -Rs .; printf '%s\n' "$tasks"; } | jq -s --argjson i "$issue" --arg branch "$branch" --arg base "$base" --arg pr_base "$pr_base" --arg title "$title" \
   --argjson labels "$labels" --argjson breaking "$breaking" --argjson draft "$draft" --argjson created "$created" \
   --arg number "$pr_number" --arg url "$pr_url" --argjson status "$status" \
-  --argjson tasks "$tasks" --argjson checked "$to_check" --argjson added "$to_add" \
-  --argjson dry "$dry_run" --argjson actions "$actions" --argjson merge_queue "$merge_queue" '. as $body | {
+  --argjson checked "$to_check" --argjson added "$to_add" \
+  --argjson dry "$dry_run" --argjson actions "$actions" --argjson merge_queue "$merge_queue" '.[0] as $body | .[1] as $tasks | {
     issue: $i,
     dry_run: $dry,
     branch: $branch,

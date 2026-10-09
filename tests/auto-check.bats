@@ -385,3 +385,12 @@ run_check() {
     assert_equal "$(jq -c '[.action, .resume.branch]' <<<"$output")" '["proceed","feat/17-x"]'
   done
 }
+
+@test "Issue の本文が長くても（引数の長さの上限の 128 KiB を超えても）止まらない" {
+  setup_auto
+  long_text "$TMP/long"
+  fake_issue_body 17 "${BODY/なし/$(cat "$TMP/long")}"
+  run_check --issue 17
+  assert_success
+  assert_equal "$(jq -c '[.action, .reasons, (.issue.body | length > 60000)]' <<<"$output")" '["proceed",[],true]'
+}

@@ -103,13 +103,16 @@ if [ -d "$repo_root/$adr_dir" ]; then
   fi
 fi
 
-# 1行目に、Issue を読まずに決まる proposal（読む必要があれば read、--issue が無ければ -）を、2行目からに出力の JSON を出す
+# 1行目に、Issue を読まずに決まる proposal（読む必要があれば read、--issue が無ければ -）を、2行目からに出力の JSON を出す。
+# ファイルの一覧は ADR が多いと長くなるので、行（rows）と同じく、引数ではなく標準入力で渡す（引数1つの長さには上限がある）
 # shellcheck disable=SC2016 # jq の変数を bash に展開させない
-res="$(printf '%s' "$rows" | jq -r -R -s --arg files "$files" --arg dir "$adr_dir" --argjson suggest "$suggest" --arg want "$issue" '
+res="$({ printf '%s' "$files" | jq -R -s .; printf '%s' "$rows" | jq -R -s .; } \
+  | jq -r -s --arg dir "$adr_dir" --argjson suggest "$suggest" --arg want "$issue" '
   def nz: if . == "" then null else . end;
   # issue の値は、先頭の #（引用符で囲んだ "#151" のときだけ残っている）と先頭の 0 を外して、数字だけなら番号にする
   def num: ltrimstr("#") | if test("^[0-9]+$") and test("[1-9]") then tonumber else null end;
-  (reduce (split("\n")[] | select(. != "") | split("\t")) as $r ({}; .[$r[0]] = $r)) as $rows
+  .[0] as $files
+  | (reduce (.[1] | split("\n")[] | select(. != "") | split("\t")) as $r ({}; .[$r[0]] = $r)) as $rows
   | [$files | split("\n")[] | select(. != "") | . as $p | ($rows[$p] // [$p])
     | {path: $p, issue: (.[1] // "" | num), status: (.[2] // "" | nz), title: (.[3] // "" | nz)}]
   # glob の並びはロケールで変わるので、文字の順に並べ直す

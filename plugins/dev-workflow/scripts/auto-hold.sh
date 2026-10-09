@@ -97,6 +97,11 @@ if ! $dry_run; then
     || dw_die "${done_note}保留の列「${hold}」に移せませんでした（$($commented || echo 'この実行のコメントは既にあります。')もう一度実行すれば、コメントは付け直さずに列だけを移します）"
 fi
 
-jq -n --argjson i "$issue" --arg c "$body" --argjson cm "$commented" --argjson s "$status" \
+# 本文は長くなりうるので、引数ではなくファイルで jq に渡す（引数1つの長さには上限がある。標準入力の -R では、
+# 大きな入力の BMP の外の文字（絵文字など）が読み込みの区切りで割れることがあるので、--rawfile で読ませる）
+body_file="$(mktemp)"
+trap 'rm -f "$body_file"' EXIT
+printf '%s' "$body" >"$body_file"
+jq -n --argjson i "$issue" --rawfile c "$body_file" --argjson cm "$commented" --argjson s "$status" \
   --argjson d "$dry_run" --argjson a "$actions" \
   '{issue: $i, comment: $c, commented: $cm, status: $s, dry_run: $d, actions: $a}'

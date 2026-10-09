@@ -81,8 +81,10 @@ for p in $(jq -r '.[].number' <<<"$chain"); do
     items="$(dw_issue_items "$repo_nwo" "$p")" || items=null
     column="$(jq -r --arg p "$project_id" '[.projectItems.nodes[]? | select(.project.id == $p)][0].fieldValueByName.name // empty' <<<"$items")"
   fi
-  out="$(jq -c --argjson parent "$parent" --argjson kids "$children" --argjson assumed "$assumed" --arg column "$column" '
-    ($kids | map(. as $k | {number, title,
+  # 子の一覧は本文を含んで長くなりうるので、引数ではなく標準入力で jq に渡す（引数1つの長さには上限がある）
+  out="$(printf '%s\n' "$out" "$children" | jq -sc --argjson parent "$parent" --argjson assumed "$assumed" --arg column "$column" '
+    .[1] as $kids | .[0]
+    | ($kids | map(. as $k | {number, title,
       state: (if ($assumed | any(.number == $k.number)) then "closed" else $k.state end),
       state_reason: (if ($assumed | any(.number == $k.number)) and $k.state != "closed"
         then ([$assumed[] | select(.number == $k.number)][0].reason) else ($k.state_reason // null) end)})) as $list
@@ -94,7 +96,7 @@ for p in $(jq -r '.[].number' <<<"$chain"); do
         all_closed: $all,
         suggest: (if $parent.state == "open" and $all
           then (if ($list | all(.state_reason == "not_planned" or .state_reason == "duplicate")) then "not_planned" else "completed" end)
-          else null end)}]' <<<"$out")"
+          else null end)}]')"
 done
 
 jq -n --argjson i "$issue" --argjson parents "$out" '{issue: $i, parents: $parents}'

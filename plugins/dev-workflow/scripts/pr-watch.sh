@@ -86,12 +86,13 @@ jq -e '.data.resource | type == "object" and has("createdAt")' >/dev/null 2>&1 <
 
 now="${PR_WATCH_NOW:-$(date -u +%s)}"
 
+# 指摘とコメントは本文を含んで長くなりうるので、引数ではなく標準入力で渡す（引数1つの長さには上限がある）
 # jq の変数（$f など）を bash に展開させないため、シングルクォートで書く
 # shellcheck disable=SC2016
-jq -n --argjson f "$fb" --argjson g "$(jq -c .data.resource <<<"$res")" \
-  --argjson now "$now" --argjson wait_min "$review_wait_minutes" '
+printf '%s\n' "$fb" "$res" | jq -s --argjson now "$now" --argjson wait_min "$review_wait_minutes" '
   def norm: ascii_downcase | sub("\\[bot\\]$"; "");
-  ($f.pr) as $p
+  .[0] as $f | .[1].data.resource as $g
+  | ($f.pr) as $p
   | ($f.own_comments | map(.created_at) | max // "") as $last_own
   | ([$f.feedback[] | .threads[] | select(.replied | not)] | length) as $n_threads
   | ([$f.feedback[].reviews[]

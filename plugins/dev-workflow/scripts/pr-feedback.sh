@@ -93,8 +93,9 @@ while :; do
   page="$(dw_gql "$query" "$vars" 2>&1)" || dw_die "PR #${number} のスレッドを読めません: $page"
   jq -e '.data.repository.pullRequest.reviewThreads' >/dev/null 2>&1 <<<"$page" \
     || dw_die "PR #${number} のスレッドを読めません: $page"
-  threads="$(jq -c --argjson p "$(jq -c '[.data.repository.pullRequest.reviewThreads.nodes[] | select(.isResolved | not)]' <<<"$page")" \
-    '. + $p' <<<"$threads")"
+  # スレッドの本文は長くなりうるので、引数ではなく標準入力で jq に渡す（引数1つの長さには上限がある）
+  threads="$(printf '%s\n' "$threads" "$page" \
+    | jq -sc '.[0] + [.[1].data.repository.pullRequest.reviewThreads.nodes[] | select(.isResolved | not)]')"
   [ "$(jq -r '.data.repository.pullRequest.reviewThreads.pageInfo.hasNextPage' <<<"$page")" = true ] || break
   # カーソルが空か前回と同じなら、同じページを読み続けてしまう（無限ループ）ので止める
   next_after="$(jq -r '.data.repository.pullRequest.reviewThreads.pageInfo.endCursor // empty' <<<"$page")"
@@ -103,12 +104,14 @@ while :; do
   after="$next_after"
 done
 
+# PR とスレッドは本文を含んで長くなりうるので、引数ではなく標準入力で渡す（引数1つの長さには上限がある）
 # jq の変数（$h など）を bash に展開させないため、シングルクォートで書く
 # shellcheck disable=SC2016
-jq -n --argjson v "$view" --argjson threads "$threads" --argjson handlers "$handlers" '
+printf '%s\n' "$view" "$threads" | jq -s --argjson handlers "$handlers" '
   def norm: ascii_downcase | sub("\\[bot\\]$"; "");
   def login: (.author.login // "ghost");
-  ($v.author.login // "" | norm) as $me
+  .[0] as $v | .[1] as $threads
+  | ($v.author.login // "" | norm) as $me
   | ($handlers | to_entries | map({key: (.key | norm), value}) | from_entries) as $h
 
   # CI のチェック。CheckRun（Actions など）と StatusContext（外部のコミットの状態）をそろえる

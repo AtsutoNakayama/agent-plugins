@@ -69,9 +69,10 @@ config="$("$BASH" "$DW_SCRIPTS_DIR/config.sh")"
 
 # 使い方: out <action> <Issue の JSON か null> <理由の配列>
 settings=null resume=null
+# Issue の JSON は本文を含んで長くなりうるので、引数ではなく標準入力で jq に渡す（引数1つの長さには上限がある）
 out() {
-  jq -n --arg a "$1" --argjson i "$2" --argjson r "$3" --argjson s "$settings" --argjson w "$resume" \
-    '{issue: $i, action: $a, reasons: $r, resume: $w, settings: $s}'
+  printf '%s\n' "$2" "$3" | jq -s --arg a "$1" --argjson s "$settings" --argjson w "$resume" \
+    '{issue: .[0], action: $a, reasons: .[1], resume: $w, settings: $s}'
 }
 
 # 無効なら、ほかの設定を検査せずに止まる（無効のリポジトリで、使わない設定の誤りで止まらないように）

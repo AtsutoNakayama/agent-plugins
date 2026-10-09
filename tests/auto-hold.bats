@@ -161,3 +161,15 @@ run_hold() {
   assert_success
   assert_equal "$(called issue-comment)" 1
 }
+
+@test "止まった理由が長くても（引数の長さの上限の 128 KiB を超えても）、コメントして列を移す" {
+  setup_hold
+  set_comments
+  # 絵文字（BMP の外の文字）も混ぜ、読み込みの区切りで割れないことも確かめる
+  long_text "$TMP/reason.md" 'あ😀'
+  run_hold --issue 17 --reason-file "$TMP/reason.md"
+  assert_success
+  assert_equal "$(jq -c '[.commented, (.comment | length > 60000)]' <<<"$output")" '[true,true]'
+  assert_equal "$(cat "$TMP/issue-comment-body")" "$(printf '<!-- dev-workflow:task-auto run=r1 -->\n\n%s' "$(cat "$TMP/reason.md")")"
+  assert_equal "$(jq -r .comment <<<"$output")" "$(cat "$TMP/issue-comment-body")"
+}

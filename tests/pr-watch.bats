@@ -326,3 +326,12 @@ expect() {
   run grep '^READ PrWatch ' "$CALLS"
   assert_output "READ PrWatch $(jq -r .url "$FIX/pr-view.json")"
 }
+
+@test "指摘やコメントの本文が長くても（引数の長さの上限の 128 KiB を超えても）止まらない" {
+  setup_fake_gh
+  long_text "$TMP/long"
+  jq --rawfile b "$TMP/long" '.comments = [{id: "C1", author: {login: "bob"}, body: $b, createdAt: "2026-10-01T00:05:00Z", url: "u"}]' \
+    "$FIX/pr-view.json" >"$TMP/v.json"
+  mv "$TMP/v.json" "$FIX/pr-view.json"
+  expect act '["unanswered_comments"]'
+}

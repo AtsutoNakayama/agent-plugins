@@ -67,8 +67,10 @@ issue_json="$(dw_read_issue "$issue" number,title,state,subIssuesSummary,closedB
 work="$(dw_issue_work "$main_root" "$issue" "$config" "$issue_json")"
 
 # task-finish がすることを、上から順に当てはまったもので決める（判断をスキルの文章に置かず、bats で組み合わせを確かめるため）
-jq -n --argjson i "$issue_json" --argjson w "$work" '
-  {issue: {number: $i.number, title: $i.title, state: $i.state, url: $i.url,
+# ブランチの一覧（work）は長くなりうるので、引数ではなく標準入力で jq に渡す（引数1つの長さには上限がある）
+printf '%s\n' "$issue_json" "$work" | jq -s '
+  .[0] as $i | .[1] as $w
+  | {issue: {number: $i.number, title: $i.title, state: $i.state, url: $i.url,
            open_sub_issues: (($i.subIssuesSummary.total // 0) - ($i.subIssuesSummary.completed // 0))}} + $w
   | .action = (
       if (.branches | length) > 0 then "cleanup"

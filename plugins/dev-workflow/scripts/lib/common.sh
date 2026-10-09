@@ -185,8 +185,9 @@ dw_issue_work() {
       '. + [{name: $b, local: $l, remote: $r, worktree: (if $w == "" then null else $w end), from: "pr", pr: $n}]' <<<"$candidates")"
   done < <(jq -r '.closedByPullRequestsReferences // [] | .[]
     | [.url, (if .repository then "\(.repository.owner.login)/\(.repository.name)" else "" end)] | @tsv' <<<"$4")
-  jq -n --argjson b "$branches" --argjson c "$candidates" --argjson o "$open_prs" --argjson m "$merged_prs" \
-    '{branches: $b, candidates: $c, open_prs: $o, merged_prs: $m}'
+  # ブランチの一覧は、名前の似たブランチが多いと長くなるので、引数ではなく標準入力で jq に渡す（引数1つの長さには上限がある）
+  printf '%s\n' "$branches" "$candidates" "$open_prs" "$merged_prs" \
+    | jq -s '{branches: .[0], candidates: .[1], open_prs: .[2], merged_prs: .[3]}'
 }
 
 # ブランチを使っているワークツリーの場所。ディレクトリが無い（手で消して記録だけが残った）ものは、無いものとして空を返す。
@@ -560,7 +561,8 @@ dw_issue_parents() {
     p="$(dw_gh_find gh api "repos/$repo/issues/$cur/parent")" || return 1
     [ "$p" != null ] || break
     dw_same_repo "$(jq -r '.repository_url | sub("^.*/repos/"; "")' <<<"$p")" "$repo" || break
-    out="$(jq -c --argjson p "$p" '. + [$p | {number, title, state, state_reason: (.state_reason // null)}]' <<<"$out")"
+    # 親の JSON は本文を含んで長くなりうるので、引数ではなく標準入力で jq に渡す（引数1つの長さには上限がある）
+    out="$(printf '%s\n' "$out" "$p" | jq -sc '.[0] + [.[1] | {number, title, state, state_reason: (.state_reason // null)}]')" || return 1
     cur="$(jq -r .number <<<"$p")"
     i=$((i + 1))
   done

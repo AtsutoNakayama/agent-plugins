@@ -352,3 +352,14 @@ write_adr() {
   run_script adr-list.sh --issue 151
   assert_equal "$(jq -c .proposal <<<"$output")" '"pending"'
 }
+
+@test "ADR が多くても（パスの一覧が引数の長さの上限の 128 KiB を超えても）止まらない" {
+  mkdir -p docs/adr
+  (cd docs/adr && for i in $(seq 1 1800); do
+    : >"$(printf '%06d-a-long-name-of-the-decision-to-make-the-list-of-paths-long.md' "$i")"
+  done)
+  printf -- '---\nissue: 151\n---\n\n# 最後\n' >docs/adr/999999-last.md
+  run_script adr-list.sh
+  assert_success
+  assert_equal "$(jq -c '[(.adrs | length), .adrs[-1].issue, .adrs[-1].title]' <<<"$output")" '[1801,151,"最後"]'
+}
