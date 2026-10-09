@@ -193,6 +193,28 @@ labels_check() { jq -c '.checks[] | select(.name == "labels") | [.ok, .level, .d
   assert_output --partial "../x、a/b、.、.."
 }
 
+@test "HOME が未設定でも、pr_check.handlers の検査は落ちず、リポジトリの層だけで判断する" {
+  fake_gh
+  export FAKE_SCOPES="project"
+  mkdir -p .claude/skills/my-respond
+  echo x >.claude/skills/my-respond/SKILL.md
+  echo '{"pr_check": {"handlers": {"a[bot]": "my-respond", "b[bot]": "nothing"}}}' >.claude/dev-workflow/config.json
+  unset HOME
+  run_script doctor.sh
+  assert_success
+  assert_output --partial "pr_check.handlers の担当の skill が見つかりません: nothing（"
+}
+
+@test "pr_check.handlers の「:」「a:」「:b」は、プラグインの skill として除かず、警告する" {
+  fake_gh
+  export FAKE_SCOPES="project"
+  export HOME="$TMP/home"
+  echo '{"pr_check": {"handlers": {"a[bot]": ":", "b[bot]": "a:", "c[bot]": ":b", "d[bot]": "p:ok"}}}' >.claude/dev-workflow/config.json
+  run_script doctor.sh
+  assert_success
+  assert_output --partial "見つかりません: :、a:、:b（"
+}
+
 @test "設定が壊れていれば config が失敗する" {
   fake_gh
   export FAKE_SCOPES="project"
