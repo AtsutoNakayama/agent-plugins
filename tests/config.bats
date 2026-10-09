@@ -162,6 +162,16 @@ load test_helper
   assert_output "opus"
 }
 
+@test "review.code_review_effort の既定は null（/code-review に段階を渡さない）で、上位の層で指定できる" {
+  run_script config.sh .review.code_review_effort
+  assert_success
+  assert_output "null"
+  echo '{"review": {"code_review_effort": "low"}}' >.claude/dev-workflow/config.local.json
+  run_script config.sh .review.code_review_effort
+  assert_success
+  assert_output "low"
+}
+
 @test "導入していないリポジトリやリポジトリの外では、ユーザーの層（設定とガイド）を読まない" {
   echo '{"language": "en"}' >"$WORKFLOW_USER_DIR/config.json"
   echo user >"$WORKFLOW_USER_DIR/commit.md"

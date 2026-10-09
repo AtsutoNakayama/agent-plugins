@@ -64,7 +64,9 @@
 #                 進んだコミットの数）・issue（番号か null）・type（null もある）・type_from（issue・branch・given・null）・
 #                 max_rounds（--auto のとき、設定 review.max_rounds の値。1以上の整数でなければ止まる。--auto でなければ null）・
 #                 model（--auto のとき、設定 review.model の値。
-#                 null か opus・sonnet・haiku・fable でなければ止まる。--auto でなければ null）
+#                 null か opus・sonnet・haiku・fable でなければ止まる。--auto でなければ null）・
+#                 code_review_effort（--auto のとき、設定 review.code_review_effort の値。/code-review に渡す effort の段階。
+#                 null か low・medium・high・xhigh・max でなければ止まる。--auto でなければ null）
 set -euo pipefail
 
 # shellcheck source=lib/common.sh
@@ -96,6 +98,7 @@ done
 type_from=null
 max_rounds=null
 model=null
+code_review_effort=null
 if [ "$auto" = true ]; then
   if [ -n "$base$target$type$issue" ]; then
     dw_die "--auto と --base・--target・--type・--issue は一緒に使えません" 64
@@ -109,6 +112,9 @@ if [ "$auto" = true ]; then
   # review.model もほかの設定と同じく層を合わせた値を使う（ユーザーの層は、導入したリポジトリの中でだけ効く。設計書 §7）
   model="$(jq -c '.review.model' <<<"$config")"
   dw_review_model_ok "$model" || dw_die "review.model は null か $(dw_review_model_names) のどれかにしてください: ${model}" 2
+  code_review_effort="$(jq -c '.review.code_review_effort' <<<"$config")"
+  dw_code_review_effort_ok "$code_review_effort" \
+    || dw_die "review.code_review_effort は null か $(dw_code_review_effort_names) のどれかにしてください: ${code_review_effort}" 2
   base_branch="$(dw_base_branch "$config")"
   target="origin/$base_branch"
   git fetch -q origin "$base_branch" 2>/dev/null \
@@ -392,10 +398,10 @@ if [ "$filter" = true ]; then
     fi
   done < <(jq -c '.perspectives[]' <<<"$result")
   result="$(jq -c --argjson k "$kept" '.perspectives = $k' <<<"$result")"
-  context="$(jq -nc --arg b "$base" --arg t "$target" --argjson a "$ahead" --arg i "$issue" --arg ty "$type" --argjson mr "$max_rounds" --argjson m "$model" \
+  context="$(jq -nc --arg b "$base" --arg t "$target" --argjson a "$ahead" --arg i "$issue" --arg ty "$type" --argjson mr "$max_rounds" --argjson m "$model" --argjson cre "$code_review_effort" \
     --argjson f "$(if [ "$type_from" = null ]; then echo null; else jq -n --arg x "$type_from" '$x'; fi)" \
     '{base: $b, target: $t, ahead: $a, issue: (if $i == "" then null else ($i | tonumber) end),
-      type: (if $ty == "" then null else $ty end), type_from: $f, max_rounds: $mr, model: $m}')"
+      type: (if $ty == "" then null else $ty end), type_from: $f, max_rounds: $mr, model: $m, code_review_effort: $cre}')"
 fi
 
 jq --argjson s "$skipped" --argjson c "$context" \

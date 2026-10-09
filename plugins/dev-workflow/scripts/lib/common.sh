@@ -927,6 +927,22 @@ dw_review_model_names() {
   jq -r 'join("・")' <<<"$DW_REVIEW_MODELS"
 }
 
+# review スキルが組み込みの /code-review に渡せる effort の段階（設定の review.code_review_effort）。
+# 設定が null なら段階を渡さず、/code-review が最後に打った段階かセッションの effort を使う（設計書 §7）。source した側で使う
+# shellcheck disable=SC2034
+DW_CODE_REVIEW_EFFORTS='["low", "medium", "high", "xhigh", "max"]'
+
+# review.code_review_effort に書ける値（null か DW_CODE_REVIEW_EFFORTS のどれか）かを確かめる。値は JSON で渡す（例: "low"・null）
+# 使い方: dw_code_review_effort_ok <値の JSON>
+dw_code_review_effort_ok() {
+  jq -e --argjson v "$1" '$v == null or (($v | type) == "string" and index($v) != null)' <<<"$DW_CODE_REVIEW_EFFORTS" >/dev/null 2>&1
+}
+
+# 使える段階の一覧を「low・medium・high・xhigh・max」の形で出力する（エラーのメッセージ用）
+dw_code_review_effort_names() {
+  jq -r 'join("・")' <<<"$DW_CODE_REVIEW_EFFORTS"
+}
+
 # リポジトリの個人の上書き（config.local.json）のパスを出力する。今のワークツリーに無ければ、メインのワークツリーのもの。
 # config.sh が読む場所と、setup-models.sh が書く場所を、ここで1つに決める
 # 使い方: dw_local_config_file <リポジトリのルート>

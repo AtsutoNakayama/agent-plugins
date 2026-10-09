@@ -411,7 +411,7 @@ auto_branch() {
   run_script review-perspectives.sh --auto
   assert_success
   assert_equal "$(jq -c .context <<<"$output")" \
-    "{\"base\":\"$BASE\",\"target\":\"origin/main\",\"ahead\":0,\"issue\":17,\"type\":\"fix\",\"type_from\":\"issue\",\"max_rounds\":3,\"model\":null}"
+    "{\"base\":\"$BASE\",\"target\":\"origin/main\",\"ahead\":0,\"issue\":17,\"type\":\"fix\",\"type_from\":\"issue\",\"max_rounds\":3,\"model\":null,\"code_review_effort\":null}"
   used regression-test || fail "Issue の type（fix）で regression-test が使われていません: $output"
   used issue-requirements || fail "$output"
   [ -n "$(skipped_reason main-drift)" ] || fail "$output"
@@ -562,6 +562,57 @@ auto_branch() {
   echo '{"review": {"model": "sonnet"}}' >.claude/dev-workflow/config.local.json
   run_script review-perspectives.sh --auto
   assert_equal "$(json_of "$output" | jq -r .context.model)" sonnet
+}
+
+@test "--auto は、設定の review.code_review_effort を context に出し、既定は null（段階を渡さない）" {
+  auto_branch feat/17-add-thing
+  fake_issue 17 '["feat"]'
+  run_script review-perspectives.sh --auto
+  assert_success
+  assert_equal "$(jq -c .context.code_review_effort <<<"$output")" null
+  for v in low medium high xhigh max; do
+    echo "{\"review\": {\"code_review_effort\": \"$v\"}}" >.claude/dev-workflow/config.json
+    run_script review-perspectives.sh --auto
+    assert_success
+    assert_equal "$(jq -r .context.code_review_effort <<<"$output")" "$v"
+  done
+}
+
+@test "--auto でなければ、context は null で、review.code_review_effort の誤りでは止まらない" {
+  echo '{"review": {"code_review_effort": "ultra"}}' >.claude/dev-workflow/config.json
+  run_script review-perspectives.sh
+  assert_success
+  assert_equal "$(jq -c .context <<<"$output")" null
+}
+
+@test "--auto は、review.code_review_effort が null か low〜max の段階でなければ止まる" {
+  auto_branch feat/17-add-thing
+  fake_issue 17 '["feat"]'
+  for v in '"ultra"' '"High"' '"auto"' '""' 3 true '["low"]' '{"effort": "low"}'; do
+    echo "{\"review\": {\"code_review_effort\": $v}}" >.claude/dev-workflow/config.json
+    run_script review-perspectives.sh --auto
+    assert_failure 2
+    assert_output --partial "review.code_review_effort は null か low・medium・high・xhigh・max のどれかにしてください"
+  done
+}
+
+@test "--auto は、review.code_review_effort をユーザーの層（導入したリポジトリだけ）と config.local.json で決められ、local が優先する" {
+  auto_branch feat/17-add-thing
+  fake_issue 17 '["feat"]'
+  echo '{"review": {"code_review_effort": "low"}}' >"$WORKFLOW_USER_DIR/config.json"
+  rm -f .claude/dev-workflow/config.json
+  run_script review-perspectives.sh --auto
+  assert_success
+  assert_equal "$(json_of "$output" | jq -c .context.code_review_effort)" null
+  mark_set_up
+  run_script review-perspectives.sh --auto
+  assert_success
+  assert_equal "$(json_of "$output" | jq -r .context.code_review_effort)" low
+  echo '{"review": {"code_review_effort": "high"}}' >.claude/dev-workflow/config.json
+  echo '{"review": {"code_review_effort": "medium"}}' >.claude/dev-workflow/config.local.json
+  run_script review-perspectives.sh --auto
+  assert_success
+  assert_equal "$(json_of "$output" | jq -r .context.code_review_effort)" medium
 }
 
 @test "--auto は、ブランチ名の番号が PR の番号なら、Issue は無いものとし、PR のラベルで type を決めない" {
