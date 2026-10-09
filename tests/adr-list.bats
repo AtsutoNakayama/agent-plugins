@@ -355,7 +355,7 @@ write_adr() {
 
 @test "ADR が多くても（パスの一覧が引数の長さの上限の 128 KiB を超えても）止まらない" {
   mkdir -p docs/adr
-  (cd docs/adr && for i in $(seq 1 1800); do
+  (CDPATH='' cd docs/adr && for i in $(seq 1 1800); do
     : >"$(printf '%06d-a-long-name-of-the-decision-to-make-the-list-of-paths-long.md' "$i")"
   done)
   printf -- '---\nissue: 151\n---\n\n# 最後\n' >docs/adr/999999-last.md
@@ -368,7 +368,7 @@ write_adr() {
   # 標準入力の jq -R は、4096 バイトを超える1行（長い見出し）の、読み込みの区切りにまたがる BMP の外の文字（絵文字）を壊すので、使わない
   mkdir -p docs/adr
   emoji="$(printf '😀%.0s' $(seq 1 15))"
-  (cd docs/adr && for i in 1 2 3; do : >"$(printf '%06d-%s.md' "$i" "$emoji")"; done)
+  (CDPATH='' cd docs/adr && for i in 1 2 3; do : >"$(printf '%06d-%s.md' "$i" "$emoji")"; done)
   title="$(printf 'ab😀%.0s' $(seq 1 3000))"
   printf -- '---\nissue: 151\n---\n\n# %s\n' "$title" >docs/adr/999999-last.md
   run_script adr-list.sh
