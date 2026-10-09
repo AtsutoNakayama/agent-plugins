@@ -7,7 +7,9 @@
 # cd で移った先、pushd・popd で積んだ・戻った場所（シェルと同じく、dirs のスタックを追う）、git -C・env -C で指した先を追う
 # （( ) の中で移った・積んだ分は外に効かない）。case の枝はすべて順に動いたものとして、関数の定義の本体はその場で
 # 動いたものとして読む。cd - の後は、移った先を不明とする。前に付くコマンド（builtin・command・exec・time・nohup・
-# env・timeout・nice）は、そのオプションとともに飛ばす（env -S の値は env と同じく語に分ける）。$( ) の中のコマンドは調べない。
+# env・timeout・nice・sudo・stdbuf・setsid・ionice・chrt・taskset・flock）は、そのオプションと位置引数（timeout の時間、
+# chrt の優先度、taskset のマスク、flock のファイル）とともに飛ばす（env -S の値は env と同じく語に分ける。env -C・sudo -D は
+# git -C と同じに扱う）。$( ) の中のコマンドは調べない。
 # sh -c・xargs などや git の別名（alias）を通すと見逃す。パイプラインの各コマンドと、& でバックグラウンドで動かす並びも、
 # ( ) と同じくサブシェルとして扱う（gc_restore の前のコメント）。読み方は bash の振る舞い（版で違うところは 4.3 以降）に合わせる
 # （zsh などでは、パイプラインの最後のコマンドが今のシェルで動くなど、移った先を誤ることがある）。
@@ -15,7 +17,7 @@
 # 使い方:
 #   gc_scan <コールバック> <コマンドの文字列> <始めのディレクトリ（空なら不明）> [after [<戻す先>]]
 #   git の呼び出しごとに「<コールバック> <サブコマンド> <残りの引数>...」を呼ぶ。呼ぶ前に、次の変数を設定する。
-#     gc_git_dir  git を実行するディレクトリ（cd・pushd・popd で移った先、git -C・env -C で指した先。分からなければ空）
+#     gc_git_dir  git を実行するディレクトリ（cd・pushd・popd で移った先、git -C・env -C・sudo -D で指した先。分からなければ空）
 #     gc_gopts    git のグローバルオプションのうち、対象を変えるもの（--git-dir・--work-tree）。配列
 #     gc_genv     先頭の代入のうち、対象を変えるもの（GIT_DIR・GIT_WORK_TREE・GIT_COMMON_DIR）。配列
 #   コールバックの中では、gc_git でその対象に対して git を実行できる。
@@ -800,6 +802,18 @@ gc_unset_genv() {
   gc_genv=(${kept[@]+"${kept[@]}"})
 }
 
+# env -C・sudo -D の値（gc_skip_opts で読んだ <番号> のオプション）を、<基準のディレクトリ> から解決して、呼び出し元（gc_command）の
+# cdir に入れる。値をくっつけて書いたとき（-C~/x・--chdir=~/x）は、シェルは ~ を展開しない
+# 使い方: gc_set_cdir <基準のディレクトリ> <番号>
+gc_set_cdir() {
+  if [ "${gc_optk[$2]}" = attached ]; then
+    cdir="$(gc_resolve_dir "$1" "${gc_optv[$2]}" no-tilde)"
+  else
+    cdir="$(gc_resolve_dir "$1" "${gc_optv[$2]}")"
+  fi
+  has_cdir=true
+}
+
 # 1つのコマンド（単語の並び）を調べる。cd・pushd・popd・dirs なら場所とスタックを変え、git ならコールバックを呼ぶ。
 # gc_scan の中から呼ぶ。
 # 使い方: gc_command <単語>...
@@ -871,6 +885,80 @@ gc_command() {
         gc_skip_opts n --adjustment= "$@"
         shift "$gc_nopt"
         ;;
+      sudo)
+        # sudo [オプション] [代入] <コマンド>。-D <dir>（--chdir）は、env -C と同じく、このコマンドだけをその場所で実行する。
+        # -h は、値をくっつけたときだけ値（ホスト）を取るので、値を取らないものとして読む（-hx の x などは、オプションとして飛ぶ）。
+        # -e（sudoedit）・-l・-v・-K・-V は、コマンドを実行しない（-e の後ろはファイル）
+        ext=true
+        shift
+        gc_skip_opts aCcDgpRrTtUu "--close-from= --login-class= --chdir= --group= --host= --prompt= --chroot= --role= --type= --command-timeout= --other-user= --user= --edit --list --validate --remove-timestamp --version" "$@"
+        shift "$gc_nopt"
+        if $has_cdir; then envbase="$cdir"; else envbase="$gc_dir"; fi
+        k=0
+        while [ "$k" -lt "${#gc_optn[@]}" ]; do
+          case "${gc_optn[k]}" in
+            -e | --edit | -l | --list | -v | --validate | -K | --remove-timestamp | -V | --version) return 0 ;;
+            -D | --chdir) gc_set_cdir "$envbase" "$k" ;;
+          esac
+          k=$((k + 1))
+        done
+        ;;
+      stdbuf)
+        # stdbuf -i <モード>・-o <モード>・-e <モード>
+        ext=true
+        shift
+        gc_skip_opts ioe "--input= --output= --error=" "$@"
+        shift "$gc_nopt"
+        ;;
+      setsid)
+        # setsid -c・-f・-w（値を取らない）
+        ext=true
+        shift
+        gc_skip_opts "" "" "$@"
+        shift "$gc_nopt"
+        ;;
+      ionice)
+        # ionice -c <クラス>・-n <レベル>・-t。-p・-P・-u は、動いているプロセスを変えるだけで、コマンドを実行しない
+        ext=true
+        shift
+        gc_skip_opts cnpPu "--class= --classdata= --pid= --pgid= --uid= --ignore" "$@"
+        shift "$gc_nopt"
+        for k in ${gc_optn[@]+"${gc_optn[@]}"}; do
+          case "$k" in -p | -P | -u | --pid | --pgid | --uid) return 0 ;; esac
+        done
+        ;;
+      chrt)
+        # chrt [オプション] <優先度> <コマンド>。-T・-P・-D は値（ナノ秒）を取る。-p・-m は、コマンドを実行しない。
+        # 優先度を省ける版もあるので、優先度は数のときだけ飛ばす
+        ext=true
+        shift
+        gc_skip_opts TPD "--sched-runtime= --sched-period= --sched-deadline= --pid --max" "$@"
+        shift "$gc_nopt"
+        for k in ${gc_optn[@]+"${gc_optn[@]}"}; do
+          case "$k" in -p | --pid | -m | --max) return 0 ;; esac
+        done
+        case "${1:-}" in '' | *[!0-9]*) ;; *) shift ;; esac
+        ;;
+      taskset)
+        # taskset [オプション] <マスク> <コマンド>。-p は、動いているプロセスを変えるだけで、コマンドを実行しない
+        ext=true
+        shift
+        gc_skip_opts "" "--all-tasks --cpu-list --pid" "$@"
+        shift "$gc_nopt"
+        for k in ${gc_optn[@]+"${gc_optn[@]}"}; do
+          case "$k" in -p | --pid) return 0 ;; esac
+        done
+        [ $# -eq 0 ] || shift
+        ;;
+      flock)
+        # flock [オプション] <ファイル> <コマンド>。-w・-E は値を取る。ファイルの後ろの -c <文字列> は sh -c と同じで、中は調べない
+        ext=true
+        shift
+        gc_skip_opts wEc "--timeout= --conflict-exit-code= --command=" "$@"
+        shift "$gc_nopt"
+        [ $# -eq 0 ] || shift
+        case "${1:-}" in -c | --command | --command=*) return 0 ;; esac
+        ;;
       env)
         ext=true
         shift
@@ -888,14 +976,7 @@ gc_command() {
           case "${gc_optn[k]}" in
             # -C <dir> は、このコマンドだけを、その場所で実行する（git -C と同じに扱う）。
             # 値をくっつけて書いたとき（-C~/x・--chdir=~/x）は、シェルは ~ を展開しない
-            -C | --chdir)
-              if [ "${gc_optk[k]}" = attached ]; then
-                cdir="$(gc_resolve_dir "$envbase" "${gc_optv[k]}" no-tilde)"
-              else
-                cdir="$(gc_resolve_dir "$envbase" "${gc_optv[k]}")"
-              fi
-              has_cdir=true
-              ;;
+            -C | --chdir) gc_set_cdir "$envbase" "$k" ;;
             # -S <文字列> は、値を env と同じく語に分けて、続きの引数の前に置く
             -S | --split-string)
               gc_split_s "${gc_optv[k]}"

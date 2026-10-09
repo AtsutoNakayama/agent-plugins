@@ -598,6 +598,24 @@ EOF"
   shows_wt "env --chdir=$TMP/wt git push"
 }
 
+@test "前に付くコマンド（sudo・stdbuf・setsid・ionice・chrt・taskset・flock）を飛ばして、git を拾い、sudo -D の先で判断する" {
+  shows "sudo git push" "PR を作る:"
+  shows "sudo -u root -- git commit -m x" "Issue #17: https://github.com/me/demo/issues/17"
+  shows "stdbuf -oL git push" "PR を作る:"
+  shows "setsid -w git commit -m x" "Issue #17: https://github.com/me/demo/issues/17"
+  shows "ionice -c3 git push" "PR を作る:"
+  shows "chrt -b 0 git commit -m x" "Issue #17: https://github.com/me/demo/issues/17"
+  shows "taskset -c 0 git commit -m x" "Issue #17: https://github.com/me/demo/issues/17"
+  shows "flock -w 5 $TMP/x.lock git commit -m x" "Issue #17: https://github.com/me/demo/issues/17"
+  make_wt
+  shows_wt "sudo -D ../wt git commit -m x"
+  shows_wt "sudo --chdir=$TMP/wt git push"
+  # sudo の後ろの cd は、外部のコマンドなので場所を移さない（( ) の中なので、移ったと読めば wt のリンクを出す）
+  run_hook "(sudo cd $TMP/wt; git commit -m x)"
+  assert_success
+  [[ "$output" == *"issues/17"* ]] || fail "sudo cd で移ったと読んだ: $output"
+}
+
 @test "git commit の略した --dry-run（--dry）も dry-run とみなし、-m などの値は --dry-run と読まない" {
   silent "git commit --dry -m x" "git commit -a --dry-r"
   shows "git commit -m --dry-run" "Issue #17: https://github.com/me/demo/issues/17"

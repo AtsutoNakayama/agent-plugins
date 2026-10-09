@@ -833,6 +833,32 @@ silent() {
   allowed "command -v git push -f" "command -pV git push -f"
 }
 
+@test "前に付くコマンド（sudo・stdbuf・setsid・ionice・chrt・taskset・flock）を、そのオプションと位置引数とともに飛ばして、git を調べる" {
+  denied "main へは push しません" "sudo git push origin main" "sudo -u root -g wheel git push origin main" \
+    "sudo -E -H -n -- git push origin main" "sudo --user=root git push origin main" "sudo -C 3 git push origin main" \
+    "sudo FOO=1 git push origin main"
+  git checkout -q -b feat/21-x
+  denied "強制 push" \
+    "stdbuf -oL git push -f" "stdbuf -i0 -o L -e 0 git push -f" "stdbuf --output=L --error 0 git push -f" \
+    "setsid git push -f" "setsid -w -f git push -f" "setsid --wait git push -f" \
+    "ionice -c3 git push -f" "ionice -c 2 -n 7 -t git push -f" "ionice --class=idle git push -f" \
+    "chrt 10 git push -f" "chrt -r 10 git push -f" "chrt -b 0 git push -f" "chrt -T 100 -D 200 -d 0 git push -f" \
+    "taskset 0x1 git push -f" "taskset -c 0,1 git push -f" "taskset -a 3 git push -f" \
+    "flock /tmp/x.lock git push -f" "flock -w 5 -x /tmp/x.lock git push -f" "flock -E 3 -n /tmp/x.lock git push -f" \
+    "sudo stdbuf -oL setsid ionice -c3 nice -n 5 git push -f"
+  # コマンドを実行しない使い方（sudo -l・-v・-K・-V・-e、ionice -p、chrt -p・-m、taskset -p、flock -u）は、git を調べない
+  allowed "sudo -l git push -f" "sudo -v" "sudo -K" "sudo -V" "sudo -e git" "ionice -p 1 git" "chrt -p 1 git" "chrt -m" \
+    "taskset -p 1 git" "taskset -cp 0 1 git" "flock -u 3"
+}
+
+@test "sudo -D <dir> で移った先で、そのコマンドの git を判断する" {
+  git worktree add -q -b feat/21-x "$TMP/wt"
+  allowed "sudo -D $TMP/wt git commit -m x" "sudo -D ../wt git commit -m x" "sudo --chdir=$TMP/wt git commit -m x" \
+    "sudo -D$TMP/wt git commit -m x"
+  # sudo -D は、そのコマンドだけに効く
+  denied "main の上ではコミットしません" "sudo -D $TMP/wt true; git commit -m x" "cd $TMP/wt && sudo -D $REPO git commit -m x"
+}
+
 @test "env -S の値は、env と同じく引用符とエスケープを解いて分ける" {
   git checkout -q -b feat/21-x
   denied "main へは push しません" "env -S \"git push origin 'main'\"" "env -S 'git push origin \"main\"'" \
@@ -897,6 +923,10 @@ EOF
   denied "main の上ではコミットしません" "cd -@ $TMP/wt; git commit -m x"
   denied "main の上ではコミットしません" "cd $TMP/wt && builtin cd $REPO && git commit -m x" \
     "cd $TMP/wt && builtin -- cd $REPO && git commit -m x"
+  # sudo・stdbuf・setsid などの後ろの cd も、外部のコマンドとして実行するので、場所を移さない
+  denied "main の上ではコミットしません" "sudo cd $TMP/wt; git commit -m x" "stdbuf -oL cd $TMP/wt; git commit -m x" \
+    "setsid cd $TMP/wt; git commit -m x" "ionice -c3 cd $TMP/wt; git commit -m x" "chrt 0 cd $TMP/wt; git commit -m x" \
+    "taskset 1 cd $TMP/wt; git commit -m x" "flock /tmp/x.lock cd $TMP/wt; git commit -m x"
 }
 
 @test "cd \"\" は移らない（引数の無い cd だけが \$HOME へ移る）" {
