@@ -13,7 +13,8 @@
 #             まだ push していない）・no_conflict（main と衝突しない）・up_to_date（遅れていない）・
 #             merge_state_unknown（衝突するか分からない）・base_mismatch（GitHub と手元で判断が食い違う）
 #   queue     キューの案内。キューを使い、action が none のときだけ。conflict（キューの中で先に並んだ PR と衝突した）・
-#             queued（並んでいる）・removed（外れたまま）・not_queued（入っていない）。ほかは null
+#             queued（並んでいる）・removed（外れたまま。外れた後に push していない）・not_queued（入っていない。
+#             外れた後に push して、まだ入れ直していないときも）。ほかは null
 #   fallback  ユーザーに確かめてからすること（merge・push）。action が recheck なら、調べ直しても分からないとき。
 #             none なら、ユーザーが最新の main を求めたとき（取り込むものが無ければ null）。ほかは null
 #

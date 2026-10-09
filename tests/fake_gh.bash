@@ -24,11 +24,12 @@
 #                                   無ければ $FIX/rules.json、それも無ければ [] を返す。<ブランチ> は、パスの URL エンコードを戻した
 #                                   ブランチ名そのままで、/ はディレクトリの区切りになる（release/v1 なら $FIX/rules/release/v1.json）
 # - gh api repos/.../issues/N/parent  「api-parent N」を $CALLS に記録し、$FIX/parent-N.json を返す（無ければ HTTP 404 で失敗する）
+# - gh api repos/.../activity?...   「api-activity <パス>」を $CALLS に記録し、$FIX/activity.json（無ければ []）を返す
 # - gh api repos/...                「api-get <パス>」を $CALLS に記録する。$FIX/remote-ref があれば {} を、無ければ HTTP 404 で失敗する
 # - gh api -X DELETE <パス>          「api-delete <パス>」を $CALLS に記録する
 # - gh api graphql                  操作名ごとに $FIX/<操作名>.json（変数 number があり $FIX/<操作名>-issue-<number>.json があればそれ）を返し、「<操作名> <変数>」を $CALLS に記録する
 # - gh project ・Project の REST     fake_gh_project.bash が受け持つ（ProjectView・ProjectFields・AddItem・SetField など）
-# FAKE_FAIL に指定した操作名（issue-view・edit・issue-comment・issue-close・pr-list・pr-view・pr-create・pr-comment・pr-close・api-get・api-delete・api-sub-issues・api-rules・api-parent を含む）は、FAKE_FAIL_MSG（既定: gh: failed）を出して失敗する。
+# FAKE_FAIL に指定した操作名（issue-view・edit・issue-comment・issue-close・pr-list・pr-view・pr-create・pr-comment・pr-close・api-get・api-delete・api-sub-issues・api-rules・api-parent・api-activity を含む）は、FAKE_FAIL_MSG（既定: gh: failed）を出して失敗する。
 
 setup_fake_gh() {
   FIX="$TMP/fix"
@@ -123,6 +124,11 @@ case "$1 $2" in
     fail api-parent
     [ -f "$FIX/parent-$n.json" ] || { echo "gh: No parent issue found (HTTP 404)" >&2; exit 1; }
     cat "$FIX/parent-$n.json"
+    ;;
+  "api repos/"*/activity\?*)
+    echo "api-activity $2" >>"$CALLS"
+    fail api-activity
+    if [ -f "$FIX/activity.json" ]; then cat "$FIX/activity.json"; else echo '[]'; fi
     ;;
   "api repos/"*)
     echo "api-get $2" >>"$CALLS"

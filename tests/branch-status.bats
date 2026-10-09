@@ -240,13 +240,66 @@ queue_removed_fixture() {
     '["CLEAN",{"enabled":true,"state":null,"position":null,"removed":{"reason":"merge_conflict","at":"2026-10-04T16:36:30Z"}}]'
 }
 
-@test "外れた後に push したかは見ない（コミットの時刻は手元でコミットした時刻なので、外れた時刻と比べない）" {
+# PR のブランチへの activity を作る。使い方: activity_fixture <activity_type> <時刻>...（2つずつ）
+activity_fixture() {
+  local out='[]'
+  while [ $# -ge 2 ]; do
+    out="$(jq -c --arg ty "$1" --arg t "$2" '. + [{ref: "refs/heads/feat/17-x", activity_type: $ty, timestamp: $t}]' <<<"$out")"
+    shift 2
+  done
+  echo "$out" >"$FIX/activity.json"
+}
+
+@test "キューから外れた後に PR のブランチへ push していれば、removed は null（直して、まだ入れ直していない。#323）" {
+  setup_branch
+  queue_removed_fixture '{"__typename": "RemovedFromMergeQueueEvent", "reason": "failed_checks", "createdAt": "2026-10-04T16:36:30Z"}'
+  activity_fixture push 2026-10-04T17:00:00Z
+  run_status
+  assert_success
+  assert_equal "$(jq -c .pr.merge_queue <<<"$output")" '{"enabled":true,"state":null,"position":null,"removed":null}'
+  # PR の URL のリポジトリの、今のブランチの activity を読む
+  assert_equal "$(grep '^api-activity ' "$CALLS")" 'api-activity repos/me/demo/activity?ref=refs%2Fheads%2Ffeat%2F17-x&per_page=100'
+  # force push も push として数える
+  activity_fixture force_push 2026-10-04T17:00:00Z
+  run_status
+  assert_equal "$(jq -c .pr.merge_queue.removed <<<"$output")" null
+}
+
+@test "外れる前の push・push 以外の activity・外れた後のコミットの時刻では、removed は残る（コミットの時刻は手元でコミットした時刻なので使わない）" {
   setup_branch
   queue_removed_fixture '{"__typename": "RemovedFromMergeQueueEvent", "reason": "merge_conflict", "createdAt": "2026-10-04T16:36:30Z"}'
-  # 外れた時刻より新しいコミットがあっても、removed は残る
+  activity_fixture push 2026-10-04T16:00:00Z branch_creation 2026-10-04T17:00:00Z
   jq '.data.resource.commits = {nodes: [{commit: {committedDate: "2026-10-04T17:00:00Z"}}]}' "$FIX/PrQueue.json" >"$FIX/q" && mv "$FIX/q" "$FIX/PrQueue.json"
   run_status
   assert_equal "$(jq -r .pr.merge_queue.removed.reason <<<"$output")" merge_conflict
+}
+
+@test "外れた後の push を読めなければ、取得できないときと同じく merge_queue は null" {
+  setup_branch
+  queue_removed_fixture '{"__typename": "RemovedFromMergeQueueEvent", "reason": "merge_conflict", "createdAt": "2026-10-04T16:36:30Z"}'
+  FAKE_FAIL=api-activity run_status
+  assert_success
+  assert_equal "$(jq -c '.pr | [.number, .merge_queue]' <<<"$output")" '[5,null]'
+}
+
+@test "外れていなければ（並んでいる・イベントが無い）、push は読まない" {
+  setup_branch
+  echo '[{"number": 5, "url": "https://github.com/me/demo/pull/5", "mergeStateStatus": "CLEAN", "isCrossRepository": false}]' >"$FIX/pr-list.json"
+  echo '{"data": {"resource": {"isMergeQueueEnabled": true, "mergeQueueEntry": {"state": "QUEUED", "position": 1}}}}' >"$FIX/PrQueue.json"
+  run_status
+  assert_success
+  assert_equal "$(grep -c '^api-activity ' "$CALLS")" 0
+}
+
+@test "フォークからの同じ名前のブランチの PR は、キューの状態も push も読まない（pr-merge-status.sh と同じく、フォークの push は見ない）" {
+  setup_branch
+  queue_removed_fixture '{"__typename": "RemovedFromMergeQueueEvent", "reason": "merge_conflict", "createdAt": "2026-10-04T16:36:30Z"}'
+  # queue_removed_fixture は同じ名前のブランチの PR を作るので、フォークからの PR に置き換える
+  echo '[{"number": 5, "url": "https://github.com/me/demo/pull/5", "mergeStateStatus": "CLEAN", "isCrossRepository": true}]' >"$FIX/pr-list.json"
+  run_status
+  assert_success
+  assert_equal "$(jq -c .pr <<<"$output")" null
+  assert_equal "$(grep -c '^\(api-activity\|PrQueue\) ' "$CALLS")" 0
 }
 
 @test "キューから外れた後に入れ直していれば（最後のイベントが入れたもの）、removed は null" {

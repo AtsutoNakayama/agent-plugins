@@ -40,7 +40,9 @@
 #                         キューに並んだ PR は、merge_state が CLEAN でも、先に並んだ PR と衝突すると state が UNMERGEABLE になり、
 #                         すぐにキューから外れる。removed は、PR がキューから外れたままのときの、外れた理由と時刻（{reason, at}。
 #                         reason は GitHub の値で、衝突なら merge_conflict）。外れた後にキューへ入れ直していれば null。
-#                         外れた後に push したかは見ない（理由に対応済みかは分からない）。取得できなければ merge_queue は null になる
+#                         外れた後に PR のブランチへ push していれば（直して、まだ入れ直していない）、removed は null。
+#                         push は、リポジトリの activity の push・force_push の時刻で見る（pr-merge-status.sh と同じ）。
+#                         キューの状態か push を取得できなければ merge_queue は null になる
 #   push_commits          push で origin に入るコミット（どれも {sha, subject} の配列。新しい順）
 #                           to       数える基準。origin にブランチがあれば origin/<ブランチ>、無ければ（初回の push）origin/<base>。
 #                                    どの組も、この基準に無いコミットだけを数える（origin に既にあるコミットは数えない）
@@ -190,10 +192,11 @@ fi
 # マージキューの状態は gh pr list にも REST にも無いので GraphQL で読む（設計書 §10）。PR の URL から引くので、
 # リポジトリの所有者と名前を別に調べなくてよい。取得できなければ merge_queue は null にする。
 # 衝突した PR はすぐにキューから外れて mergeQueueEntry が null になるので、外れたことはタイムラインの最後の
-# キューの出入りのイベントで見る。キューに並んでおらず、最後が外れたイベントなら、外れたままとみなす。
-# 外れた後に push したかは見ない。GitHub には push の時刻が無く（Commit.pushedDate は廃止）、コミットの時刻
-# （committedDate）は手元でコミットした時刻なので、外れる前に作ったコミットや手元の時計のずれで誤る。
-# push の後でも PR はキューから外れたままなので、branch-update は、対応済みなら入れ直すよう案内する
+# キューの出入りのイベントで見る。キューに並んでおらず、最後が外れたイベントで、外れた後に PR のブランチへの push が
+# 無ければ、外れたままとみなす。push があれば、直して、まだ入れ直していないので、外れたままとはしない（removed は null。
+# pr-merge-status.sh の not_queued に当たる）。push の時刻は、リポジトリの activity で見る（common.sh の dw_pushed_since。
+# pr-merge-status.sh と共通。コミットの時刻は手元でコミットした時刻なので使わない。ADR 000323）。
+# fork の PR は上で除いているので、push を読むのはこのリポジトリのブランチだけになる
 if [ "$pr" != null ]; then
   queue=null
   # shellcheck disable=SC2016 # GraphQL の変数（$url）を bash に展開させないため、シングルクォートで書く
@@ -214,6 +217,14 @@ if [ "$pr" != null ]; then
            removed: (if .mergeQueueEntry == null and $ev.__typename == "RemovedFromMergeQueueEvent"
                      then {reason: $ev.reason, at: $ev.createdAt} else null end)}
       else null end' <<<"$res" 2>/dev/null || echo null)"
+    # 外れた後に push していれば、外れたままとはしない。push を読めなければ、取得できないときと同じく merge_queue は null にする
+    if [ "$(jq -r '.removed != null' <<<"$queue" 2>/dev/null)" = true ]; then
+      if pushed="$(dw_pushed_since "$(jq -r .url <<<"$pr")" "$branch" false "$(jq -r .removed.at <<<"$queue")" 2>/dev/null)"; then
+        [ "$pushed" != true ] || queue="$(jq -c '.removed = null' <<<"$queue")"
+      else
+        queue=null
+      fi
+    fi
   fi
   pr="$(jq -c --argjson q "$queue" '. + {merge_queue: $q}' <<<"$pr")"
 fi
