@@ -31,7 +31,8 @@ push と PR の作成は GitHub に残るので、必ず手順5でユーザー�
 ### 2. 変更を確かめる
 
 - `git status` で未コミットの変更が無いか見る。あれば commit スキルでコミットしてから進める（PR に入れない変更なら、ユーザーに確かめる）
-- `git log --oneline --no-show-signature origin/<base_branch>..HEAD` と `git diff origin/<base_branch>...HEAD` で、PR に入る変更を読む
+- PR のマージ先（`<マージ先>`）を決める。このブランチの開いた PR が既にあれば（`gh pr list --head <ブランチ> --state open --json baseRefName,isCrossRepository` の、`isCrossRepository` が false のもの）、その PR のマージ先（`baseRefName`。設定の `base_branch` と違うことがある）、無ければ `base_branch`
+- `git log --oneline --no-show-signature origin/<マージ先>..HEAD` と `git diff origin/<マージ先>...HEAD` で、PR に入る変更を読む
 
 #### ADR を提案するかを決める
 
