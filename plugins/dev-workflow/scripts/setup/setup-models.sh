@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
 # レビューのサブエージェントに使うモデル（設定の review.model）を、このリポジトリの中の選んだ層の設定ファイルに書く。
 # 何度実行しても同じ結果になる。オプションを付けなければ、今の設定と、どの層で決めたかだけを出力する。
-# ユーザーの層（~/.claude/dev-workflow/config.json）には書かない（ほかの導入したリポジトリにも効くため）。読むのは、
+# ユーザーの層（~/.claude/dev-workflow/config.json）には書かない（ほかの導入したリポジトリにも効くため）。
+# ホームのリポジトリ（<repo>/.claude/dev-workflow が ~/.claude/dev-workflow と同じ場所になるリポジトリ）では、
+# 書く操作（--review-model）は、何も書かずに終了コード 2 で止まる。読むのは、
 # config.sh と同じく、導入したリポジトリ（.claude/dev-workflow/config.json があるリポジトリ）の中でだけ。
 #
 # 使い方: setup-models.sh [オプション]
@@ -61,7 +63,11 @@ elif [ -n "$scope" ]; then
 fi
 
 repo_root="$(dw_repo_root)" || dw_die "リポジトリの中で実行してください" 64
-team_file="$repo_root/.claude/dev-workflow/config.json"
+# ホームのリポジトリでは、チームの設定がユーザーの層のファイルになってしまうので、書かずに止まる
+# （何も書かない確認だけの実行は、層が無い状態を出力する）
+[ -z "$value" ] || dw_refuse_home_repo "$repo_root"
+team_file="$(dw_team_dir "$repo_root")"
+[ -z "$team_file" ] || team_file="$team_file/config.json"
 # 個人の上書き（local）は、config.sh が読むのと同じファイルに書く
 local_file="$(dw_local_config_file "$repo_root")"
 

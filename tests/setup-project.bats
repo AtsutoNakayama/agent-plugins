@@ -478,3 +478,14 @@ called() { grep -c "^$1 " "$CALLS" || true; }
   assert_failure 64
   assert_output --partial "--number に値がありません"
 }
+
+@test "ホームのリポジトリでは、--write-config は GitHub に何も作らず、ユーザーの層のファイルにも書かずに止まる" {
+  setup_fake_gh
+  make_home_repo
+  echo '{"language": "en"}' >"$WORKFLOW_USER_DIR/config.json"
+  run_setup --write-config
+  assert_failure 2
+  assert_output --partial "ホームのリポジトリ"
+  assert_equal "$(cat "$CALLS")" ""
+  assert_equal "$(jq -c . "$WORKFLOW_USER_DIR/config.json")" '{"language":"en"}'
+}

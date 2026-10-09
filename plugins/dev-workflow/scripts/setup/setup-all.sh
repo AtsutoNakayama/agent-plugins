@@ -24,6 +24,8 @@
 #      （.github/ISSUE_TEMPLATE/task.md）を作る。既にテンプレートがあれば作らない
 #      （チームの設定の pr.template が実在するファイルを指していれば、PR テンプレートは作らない）
 # 作ったファイルはコミットしない。マージ先のブランチは守られているので、PR でマージする。
+# ホームのリポジトリ（.claude/dev-workflow が ~/.claude/dev-workflow と同じ場所になるリポジトリ）には導入できない。
+# ユーザーの層のファイルに書いてしまうので、理由を伝えて、何もせずに終了コード 2 で止まる。
 set -euo pipefail
 
 # shellcheck source=../lib/common.sh
@@ -88,6 +90,8 @@ if $review_model_given; then
 fi
 
 repo_root="$(dw_repo_root)" || dw_die "リポジトリの中で実行してください" 64
+# ホームのリポジトリには導入できない。GitHub に何かを作る前に止まる
+dw_refuse_home_repo "$repo_root"
 cd "$repo_root"
 setup_dir="$DW_SCRIPTS_DIR/setup"
 

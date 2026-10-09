@@ -286,3 +286,14 @@ assert_no_calls() {
   assert_output --partial "--keep-defaults"
   refute_output --partial "set -euo"
 }
+
+@test "ホームのリポジトリでは、ユーザーの層の labels.json をリポジトリのラベルの定義として読まない" {
+  setup_fake_gh
+  make_home_repo
+  current "$(github_defaults)"
+  printf '%s\n' '[{"name": "only-home", "color": "000000"}]' >"$WORKFLOW_USER_DIR/labels.json"
+  run_setup --dry-run
+  assert_success
+  assert_equal "$(jq -r '.labels.created | index("only-home")' <<<"$json")" null
+  assert_equal "$(jq -r '.labels.created | index("feat") != null' <<<"$json")" true
+}

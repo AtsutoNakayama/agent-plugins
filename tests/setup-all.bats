@@ -423,3 +423,14 @@ SH
   run_all --repo me/demo
   assert_failure 64
 }
+
+@test "ホームのリポジトリでは、どの初期設定も実行せず、理由を伝えて止まる" {
+  setup_fake_plugin
+  make_home_repo
+  echo '{"language": "en"}' >"$WORKFLOW_USER_DIR/config.json"
+  run_all
+  assert_failure 2
+  assert_output --partial "ホームのリポジトリ"
+  assert_equal "$(cat "$CALLS")" ""
+  assert_equal "$(jq -c . "$WORKFLOW_USER_DIR/config.json")" '{"language":"en"}'
+}

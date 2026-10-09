@@ -11,7 +11,9 @@
 #                      （--write-config で今の保留の列から変えるとき、今の列にこのリポジトリの開いている Issue が
 #                      残っていれば、何も変えずに止まる）
 #   --write-config     .claude/dev-workflow/config.json の project（と --hold-column の status.hold）を書き換える
-#                      （対象のリポジトリの中で実行すること）
+#                      （対象のリポジトリの中で実行すること。ホームのリポジトリ（.claude/dev-workflow が
+#                      ~/.claude/dev-workflow と同じ場所になるリポジトリ）では、ユーザーの層のファイルに書いてしまうので、
+#                      何もせずに終了コード 2 で止まる）
 #   --dry-run          変更せず、行う予定の操作だけを出力する
 #
 # 行うこと:
@@ -93,6 +95,10 @@ msg_status() { printf 'Status 列に %s を追加する' "$(jq -r 'join(" / ")' 
 msg_sp="Story Point（数値）の項目「${sp_name}」を追加する"
 
 # --- リポジトリと所有者 ---------------------------------------------------------
+# ホームのリポジトリでは、設定の書き込み先がユーザーの層のファイルになるので、GitHub に何かを作る前に止まる
+if $write_config; then
+  dw_refuse_home_repo "$(dw_repo_root || true)"
+fi
 repo_json="$(gh repo view ${repo:+"$repo"} --json id,name,nameWithOwner,owner)"
 repo_id="$(jq -r .id <<<"$repo_json")"
 repo_nwo="$(jq -r .nameWithOwner <<<"$repo_json")"
@@ -308,7 +314,7 @@ fi
 # --- 設定ファイルへの書き込み ---------------------------------------------------
 if $write_config; then
   repo_root="$(dw_repo_root)" || dw_die "リポジトリの中で実行してください"
-  config_file="$repo_root/.claude/dev-workflow/config.json"
+  config_file="$(dw_team_dir "$repo_root")/config.json"
   # 既に同じ project なら書き直さない（書式の違いで空白だけの差分を作らない）
   write=true
   if [ -n "$project_number" ] && [ -f "$config_file" ] \

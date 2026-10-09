@@ -186,3 +186,21 @@ json_of() { printf '%s\n' "$1" | LC_ALL=C sed -n '/^{/,$p'; }
   assert_equal "$(cat "$TEAM")" '{"review": "x"}'
   [ ! -e "$TEAM.tmp" ]
 }
+
+@test "ホームのリポジトリでは、ユーザーの層のファイルに書かずに止まる。読むだけなら層を出さない" {
+  make_home_repo
+  echo '{"review": {"model": "opus"}}' >"$WORKFLOW_USER_DIR/config.json"
+  echo '{"review": {"model": "haiku"}}' >"$WORKFLOW_USER_DIR/config.local.json"
+  for scope in team local; do
+    run_script setup/setup-models.sh --review-model sonnet --scope "$scope"
+    assert_failure 2
+    assert_output --partial "ホームのリポジトリ"
+    run_script setup/setup-models.sh --review-model sonnet --scope "$scope" --dry-run
+    assert_failure 2
+  done
+  assert_equal "$(jq -c . "$WORKFLOW_USER_DIR/config.json")" '{"review":{"model":"opus"}}'
+  assert_equal "$(jq -c . "$WORKFLOW_USER_DIR/config.local.json")" '{"review":{"model":"haiku"}}'
+  run_script setup/setup-models.sh
+  assert_success
+  assert_equal "$(jq -c '[.review.decided, .review.layers]' <<<"$output")" '[false,[]]'
+}

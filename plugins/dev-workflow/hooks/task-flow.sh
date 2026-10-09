@@ -39,7 +39,10 @@ if ! command -v jq >/dev/null 2>&1; then
 fi
 
 # 上で導入したと確かめてあるので、置き場所は dw_user_dir で求める（dw_user_dir_for で判定をやり直さない）
-files=("$(dw_user_dir)/task-flow.md" "$repo_root/.claude/dev-workflow/task-flow.md")
+files=("$(dw_user_dir)/task-flow.md")
+# ホームのリポジトリでは、チームの追記の場所がユーザーの層と同じなので、チームの追記は足さない（dw_team_dir が空）
+team_dir="$(dw_team_dir "$repo_root")"
+[ -z "$team_dir" ] || files+=("$team_dir/task-flow.md")
 
 out="$(cat "$default_file")"
 added=()

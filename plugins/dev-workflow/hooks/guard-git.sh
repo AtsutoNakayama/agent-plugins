@@ -52,11 +52,29 @@ deny() { dw_die "$1" 2; }
 #     HEAD にチームの設定がコミットされているか
 #   - git がリポジトリを見つけられない（ディレクトリが分からない cd - の後など）ときは、守りを外さないよう、導入したものとみなす（ただし今のブランチを読めないので、コミットと push 先を書かない push（と HEAD・@ への push）は止める。target_unknown）
 target_set_up() {
+  local w prev wt
   if [ -n "$gc_root" ]; then
     dw_is_set_up "$gc_root"
     return
   fi
   [ -n "$gc_repo" ] || return 0
+  # 作業ツリーを --work-tree・GIT_WORK_TREE で指していて、それがホームのリポジトリ（チームの設定の置き場所がユーザーの層と
+  # 同じ場所）なら、HEAD にある設定は、ユーザーの層のファイルをコミットしたものなので、導入したとみなさない
+  # （dotfiles を bare のリポジトリで管理し、--work-tree=~ で指すとき）
+  prev=""
+  for w in ${gc_gopts[@]+"${gc_gopts[@]}"} ${gc_genv[@]+"${gc_genv[@]}"}; do
+    wt=""
+    if [ "$prev" = --work-tree ]; then
+      wt="$w"
+    else
+      case "$w" in --work-tree=* | GIT_WORK_TREE=*) wt="${w#*=}" ;; esac
+    fi
+    prev="$w"
+    [ -n "$wt" ] || continue
+    # 相対パスは、git が動く場所（cd・-C で移った先）からのもの
+    wt="$(dw_abs_dir "${gc_git_dir:-$dir}" "$wt")" || continue
+    ! dw_is_home_repo "$wt" || return 1
+  done
   gc_git cat-file -e "HEAD:.claude/dev-workflow/config.json"
 }
 
