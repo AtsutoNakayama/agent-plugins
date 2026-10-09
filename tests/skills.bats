@@ -301,6 +301,15 @@ has() {
 }
 
 # shellcheck disable=SC2016 # バッククォートはスキルの本文の文字で、展開させない
+@test "gh-pr-check は、対応が要るかを needs_attention で決め、スレッドの件数だけで未解決なしと言わない（#279）" {
+  f="$SKILLS/gh-pr-check/SKILL.md"
+  grep -q '`needs_attention` が false で' "$f" || fail "gh-pr-check に、needs_attention で終えるかを決めることが書かれていません"
+  grep -q 'counts.threads.*だけを見て' "$f" || fail "gh-pr-check に、スレッドの件数だけで未解決なしと言わないことが書かれていません"
+  grep -q '`reviews`・`comments`・`needs_attention`・`counts.unanswered` を落とさない' "$f" \
+    || fail "gh-pr-check に、出力を絞って読むときも reviews・comments を落とさないことが書かれていません"
+}
+
+# shellcheck disable=SC2016 # バッククォートはスキルの本文の文字で、展開させない
 @test "branch-update は、衝突を直すどの場面でも、両立できると判断した衝突も含めて、直す前に直し方の方針の確認を取る（設計書 §8・ADR 000237）" {
   # 両立できると判断した衝突を確かめずに直し、push の前の確認の時点で直したコミットが既にできていた（#237）
   # 文の言い回しに縛られないよう、箇条（見出しの語や選択肢の名前）で場所を決め、その中の要の語だけを確かめる
