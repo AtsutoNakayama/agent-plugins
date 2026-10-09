@@ -25,7 +25,7 @@
 #            unanswered_reviews    変更の要求か本文のあるレビューで、その後に PR の作者のコメントが無いものがある
 #            unanswered_comments   PR のコメント（作者以外）で、その後に PR の作者のコメントが無いものがある
 #   5. wait  ci_pending            CI が実行中
-#            awaiting_review:<投稿者>  設定の pr_check.handlers の投稿者（CodeRabbit など）の最初のレビューが、まだ付いていない
+#            awaiting_review:<投稿者>  設定の pr_check.handlers の投稿者（レビューの bot など）の最初のレビューが、まだ付いていない
 #                                  （PR を作ってから 60 分たつまで待つ。障害などで際限なく待たないため）
 #            mergeable_unknown     GitHub がマージできるかを計算中（mergeable が UNKNOWN）
 #   6. idle  nothing_to_do  上のどれでもない（CI が全部通るか無く、対応する指摘も無い）

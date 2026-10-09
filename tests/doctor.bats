@@ -119,6 +119,113 @@ labels_check() { jq -c '.checks[] | select(.name == "labels") | [.ok, .level, .d
   assert_equal "$(jq -r '[.checks[] | select(.name == "old-pr-respond-key")] | length' <<<"$output")" 0
 }
 
+@test "pr_check.handlers の担当の skill が .claude/skills/ にあれば、警告しない" {
+  fake_gh
+  export HOME="$TMP/home"
+  export FAKE_SCOPES="project"
+  mkdir -p .claude/skills/my-respond
+  echo x >.claude/skills/my-respond/SKILL.md
+  echo '{"pr_check": {"handlers": {"some-bot[bot]": "my-respond"}}}' >.claude/dev-workflow/config.json
+  run_script doctor.sh
+  assert_success
+  assert_equal "$(jq -r '[.checks[] | select(.name == "pr-check-handlers")] | length' <<<"$output")" 0
+}
+
+@test "pr_check.handlers の担当の skill が ~/.claude/skills/ にあれば、警告しない" {
+  fake_gh
+  export FAKE_SCOPES="project"
+  export HOME="$TMP/home"
+  mkdir -p "$HOME/.claude/skills/my-respond"
+  echo x >"$HOME/.claude/skills/my-respond/SKILL.md"
+  echo '{"pr_check": {"handlers": {"some-bot[bot]": "my-respond"}}}' >.claude/dev-workflow/config.json
+  run_script doctor.sh
+  assert_success
+  assert_equal "$(jq -r '[.checks[] | select(.name == "pr-check-handlers")] | length' <<<"$output")" 0
+}
+
+@test "pr_check.handlers の担当の skill がどこにも無ければ、警告する（失敗にはしない）" {
+  fake_gh
+  export HOME="$TMP/home"
+  export FAKE_SCOPES="project"
+  echo '{"pr_check": {"handlers": {"some-bot[bot]": "my-respnd", "other[bot]": "my-respond"}}}' >.claude/dev-workflow/config.json
+  run_script doctor.sh
+  assert_success
+  assert_equal "$(jq -r '.checks[] | select(.name == "pr-check-handlers") | [.ok, .level] | @tsv' <<<"$output")" $'false\twarn'
+  assert_output --partial "my-respnd、my-respond"
+}
+
+@test "pr_check.handlers がプラグインの skill（<プラグイン>:<名前>）なら、検査しない" {
+  fake_gh
+  export HOME="$TMP/home"
+  export FAKE_SCOPES="project"
+  echo '{"pr_check": {"handlers": {"some-bot[bot]": "other-plugin:respond"}}}' >.claude/dev-workflow/config.json
+  run_script doctor.sh
+  assert_success
+  assert_equal "$(jq -r '[.checks[] | select(.name == "pr-check-handlers")] | length' <<<"$output")" 0
+}
+
+@test "pr_check.handlers の形が想定外（配列・文字列でない値）でも、doctor は成功し、pr-check-handlers を出さない" {
+  fake_gh
+  export FAKE_SCOPES="project"
+  export HOME="$TMP/home"
+  echo '{"pr_check": {"handlers": ["x"]}}' >.claude/dev-workflow/config.json
+  run_script doctor.sh
+  assert_success
+  assert_equal "$(jq -r '[.checks[] | select(.name == "pr-check-handlers")] | length' <<<"$output")" 0
+  echo '{"pr_check": {"handlers": {"some-bot[bot]": 123}}}' >.claude/dev-workflow/config.json
+  run_script doctor.sh
+  assert_success
+  assert_equal "$(jq -r '[.checks[] | select(.name == "pr-check-handlers")] | length' <<<"$output")" 0
+}
+
+@test "pr_check.handlers の skill 名が安全でない（../x・a/b・.・..）ときは、その位置に SKILL.md があっても警告する" {
+  fake_gh
+  export FAKE_SCOPES="project"
+  export HOME="$TMP/home"
+  mkdir -p .claude/x .claude/skills/a/b
+  echo x >.claude/x/SKILL.md
+  echo x >.claude/skills/a/b/SKILL.md
+  echo x >.claude/skills/SKILL.md
+  echo '{"pr_check": {"handlers": {"a[bot]": "../x", "b[bot]": "a/b", "c[bot]": ".", "d[bot]": ".."}}}' >.claude/dev-workflow/config.json
+  run_script doctor.sh
+  assert_success
+  assert_equal "$(jq -r '.checks[] | select(.name == "pr-check-handlers") | [.ok, .level] | @tsv' <<<"$output")" $'false\twarn'
+  assert_output --partial "../x、a/b、.、.."
+}
+
+@test "HOME が未設定でも、pr_check.handlers の検査は落ちず、リポジトリの層だけで判断する" {
+  fake_gh
+  export FAKE_SCOPES="project"
+  mkdir -p .claude/skills/my-respond
+  echo x >.claude/skills/my-respond/SKILL.md
+  echo '{"pr_check": {"handlers": {"a[bot]": "my-respond", "b[bot]": "nothing"}}}' >.claude/dev-workflow/config.json
+  unset HOME
+  run_script doctor.sh
+  assert_success
+  assert_output --partial "pr_check.handlers の担当の skill が見つかりません: nothing（"
+}
+
+@test "pr_check.handlers の「:」「a:」「:b」は、プラグインの skill として除かず、警告する" {
+  fake_gh
+  export FAKE_SCOPES="project"
+  export HOME="$TMP/home"
+  echo '{"pr_check": {"handlers": {"a[bot]": ":", "b[bot]": "a:", "c[bot]": ":b", "d[bot]": "p:ok"}}}' >.claude/dev-workflow/config.json
+  run_script doctor.sh
+  assert_success
+  assert_output --partial "見つかりません: :、a:、:b（"
+}
+
+@test "pr_check.handlers の担当の skill が空文字なら、（空）として警告する" {
+  fake_gh
+  export FAKE_SCOPES="project"
+  export HOME="$TMP/home"
+  echo '{"pr_check": {"handlers": {"some-bot[bot]": ""}}}' >.claude/dev-workflow/config.json
+  run_script doctor.sh
+  assert_success
+  assert_equal "$(jq -r '.checks[] | select(.name == "pr-check-handlers") | [.ok, .level] | @tsv' <<<"$output")" $'false\twarn'
+  assert_output --partial "見つかりません: （空）（"
+}
+
 @test "設定が壊れていれば config が失敗する" {
   fake_gh
   export FAKE_SCOPES="project"

@@ -50,15 +50,37 @@ Issue の番号を取るスキル（`task-start`・`task-status`・`task-finish`
 
 `gh-pr-check` は、投稿者ごとに担当の skill を、設定（`.claude/dev-workflow/config.json`）の `pr_check.handlers` で指定できます。担当の skill がある投稿者の指摘は、その skill に任せます（PR の番号を引数にして呼びます）。設定が無ければ、すべて汎用の手順で扱います。投稿者の名前は、大文字と小文字、末尾の `[bot]` を区別しません。
 
+次は、レビューの bot `some-reviewer[bot]` の担当を、リポジトリの skill `review-respond` にする例です。担当の skill の作り方は、下の「担当の skill を作る」を参照してください。
+
 ```json
 {
   "pr_check": {
     "handlers": {
-      "coderabbitai[bot]": "coderabbit-respond"
+      "some-reviewer[bot]": "review-respond"
     }
   }
 }
 ```
+
+### 担当の skill を作る
+
+担当の skill は、`.claude/skills/<名前>/SKILL.md`（リポジトリ。チームで共有できます）か `~/.claude/skills/<名前>/SKILL.md`（自分だけ）に置く普通の skill です。`<プラグイン>:<名前>` の形でプラグインの skill も指定できます。
+
+1. **受け取るもの**：`gh-pr-check` が、Skill ツールで PR の番号だけを引数にして呼びます。それ以外は渡されないので、skill の中で PR の状態を読みます。
+2. **自分の担当の分を読む**：`pr-feedback.sh --pr <PR番号>` を実行します（プラグインの `scripts/` にあり、読むだけで何も変えません）。出力の `feedback` は投稿者ごとの配列で、`author` が担当の投稿者のものだけを `jq` で取り出します。
+   ```bash
+   "${CLAUDE_PLUGIN_ROOT}/scripts/pr-feedback.sh" --pr 12 \
+     | jq '.feedback[] | select((.author | ascii_downcase | sub("\\[bot\\]$"; "")) == "some-reviewer")'
+   ```
+   比べる名前は小文字で書きます。`pr-feedback.sh` は、作者名を小文字にして末尾の `[bot]` を取り除いたもの（`ascii_downcase` と `sub("\\[bot\\]$"; "")`）で照らすので、例の `jq` も作者名を同じように正規化してから、小文字の名前と比べています。
+   各要素には、返信待ちのスレッド（`threads`）、レビュー本文（`reviews`）、PR のコメント（`comments`）が入っています。出力の全項目は、スクリプト冒頭のコメントにあります。
+3. **投稿者の名前の調べ方**：PR に付いた指摘の投稿者は、`gh pr view <PR番号> --json comments,reviews --jq '[.comments[].author.login, .reviews[].author.login] | unique'` で分かります。設定のキーと `feedback[].author` は、大文字と小文字、末尾の `[bot]` を区別せずに照らされます（`gh` は bot の名前を `[bot]` なしで返します）。
+4. **守る決まり**
+   - 自分の担当の投稿者の分だけを扱います。ほかの投稿者の指摘や、人のコメントは、触らずに `gh-pr-check` の汎用の手順に任せます。
+   - 直すものは、一覧にしてユーザーに選んでもらいます。勝手にすべてを直しません。
+   - push と、スレッドへの返信は、内容を見せて承認を得てから行います。
+
+書いたら `doctor.sh` を実行してください。`pr_check.handlers` の skill が、リポジトリにもユーザーにも見つからないと警告します（プラグインの skill は検査しません）。
 
 ### pr-respond から gh-pr-check への移行
 
@@ -71,7 +93,7 @@ Issue の番号を取るスキル（`task-start`・`task-status`・`task-finish`
 {
   "pr_check": {
     "handlers": {
-      "coderabbitai[bot]": "coderabbit-respond"
+      "some-reviewer[bot]": "review-respond"
     }
   }
 }
@@ -211,7 +233,7 @@ base_ahead: required
 - base_branch への `git push`（base_branch の上で push 先を書かずに push するときを含む）
 - 強制 push（`--force` / `-f` / `+<refspec>` / `--mirror`）。`--force-with-lease` は許可する
 
-また、規約（`branch.pattern`）に合わない名前でブランチを作ろうとしたとき（`git switch -c` / `git checkout -b` / `git branch <名前>` / `git worktree add -b`）は、コマンドは止めずに、使用者と Claude に警告します。
+また、規約（`branch.pattern`）に合わない名前でブランチを作ろうとしたとき（`git switch -c` / `git checkout -b` / `git branch <名前>` / `git worktree add -b` / commit-ish を書かない `git worktree add <パス>`（パスの最後の名前でブランチを作ります））は、コマンドは止めずに、使用者と Claude に警告します。
 
 `cd`・`pushd`・`popd`（積んだ場所を、シェルと同じく追います）や `git -C`・`env -C` で移った先、`--git-dir`・`GIT_DIR` などで指した先（先頭の `~`・`$HOME` は、シェルと同じく展開します）のリポジトリ・ブランチで判断し、その先が導入していないリポジトリなら止めません。守るブランチ（`base_branch`）も、その先のリポジトリの設定から読みます。bare リポジトリのように作業ツリーが分からないリポジトリは、HEAD にチームの設定がコミットされているかで判断します。git がリポジトリを見つけられないとき（ディレクトリが分からない `cd -` の後など）は、今のブランチを読めないので、コミットと、push 先を書かない push（と `HEAD`・`@` への push）は止めます。絶対パスの `cd` か `git -C` で対象を書き直してください。前に付くコマンド（`timeout`・`nice`・`env`・`time`・`nohup`・`command`・`builtin`・`exec`）は、そのオプションとともに飛ばして調べます。コマンドの文字列を簡易に解析するだけなので、`sh -c`・`xargs` などを通したコマンドや git の別名を通すと見逃します。コマンドの読み方は bash の振る舞いに合わせているので、zsh などでは、移った先を誤ることがあります（パイプラインの最後のコマンドが今のシェルで動くなど）。`case` の枝は、どれが動くか分からないので、すべて順に動いたものとして読みます。関数の定義の本体は、その場で動いたものとして読みます（定義しただけで呼ばないときも、本体の中の `cd` は外に効いたものとして読みます）。パイプラインの各コマンドや `&` で動かすコマンドの中で移った分は、シェルと同じく外に効かないものとして扱います（`{ }`・ループ・`if` などの複合コマンドは、全体を1つのコマンドとして扱います）。最後の守りは GitHub のルールセット（下記）です。
 
@@ -225,7 +247,7 @@ base_ahead: required
 | `git commit`（`commit.sh` を含む）、ブランチ・ワークツリーの作成（`git switch -c` など。`task-start.sh` を含む） | 紐付く Issue |
 | `gh pr create`・`gh issue create`（`pr-create.sh`・`issue-create.sh` を含む） | 作った PR・Issue（標準出力から拾う） |
 
-- 紐付く Issue は、ブランチ名（`branch.pattern` の `{issue_number}`）から分かります。ブランチを作るコマンドでは、作るブランチの Issue です（名前を拾えないときは出しません）。main など、Issue の番号が分からないブランチでは、ブランチから導くリンクは出しません。
+- 紐付く Issue は、ブランチ名（`branch.pattern` の `{issue_number}`）から分かります。ブランチを作るコマンドでは、作るブランチの Issue です。リモートにだけあるブランチを追跡ブランチとして作る `git switch <名前>` / `git checkout <名前>` / `git switch -t <リモート>/<名前>` / `git checkout -t <リモート>/<名前>` も含みます（コマンドの後に動くので、今作られたブランチ（ブランチの reflog が「Created from」の 1 行だけ）が対象で、前から手元にあるブランチへの切り替えと、手元にできなかったときは出しません。commit-ish を書かない `git worktree add <パス>` は、パスの最後の名前をブランチの名前にします。名前を拾えないときも出しません）。main など、Issue の番号が分からないブランチでは、ブランチから導くリンクは出しません。
 - `cd`・`pushd`・`popd`・`git -C`・`env -C`・`--git-dir`・`GIT_DIR` などで別のリポジトリ・ブランチへ移った git のコマンドでは、移った先のリポジトリ・ブランチのリンクを出します。ただし、次のときは移った先を正しく追えません。
   - `cd sub && git push && cd ..`・`pushd sub && git push && popd` のように、後ろでまた移るコマンドでは、移る前のブランチで判断します。`cd -` の後の git のコマンドには、リンクを出しません。
   - プロジェクトのルートにいるときに、相対パスへ `cd` したコマンド（`cd ../other && git push`）には、リンクを出しません。プロジェクトの外へ移ると、Claude Code が今のディレクトリをプロジェクトのルートに戻すので、どこへ移ったのか分からないためです。絶対パスへの `cd` なら追えます。
@@ -315,6 +337,7 @@ plugins/dev-workflow/scripts/setup/setup-repo.sh --required-check lint-result --
 - 指定した名前の一覧で、必須のチェックを置き換えます。CI を足したり外したりしたときは、新しい一覧で実行し直します。付けなければ、ルールセットの必須のチェックの一覧には触れません。GitHub の設定画面で直した必須のチェックも、そのまま残ります。ただし、最新の main の取り込み（strict）は、マージキューの有無で決まります。キューを使っていれば、オプションが無くても外します。使っていなければ、`--required-check`・`--no-merge-queue` のときに求め、どちらも無ければ今のままです。
 - チェックの名前は、チームの CI で決まるので、プラグインは決めません。CI が無いリポジトリや、まだ報告されたことのない名前を指定すると、チェックが「待ち」のまま残ってマージできなくなります。名前は、そのチェックが一度動いてから指定してください。
 - 名前は、CI 全体の結果を1つにまとめる「門番のジョブ」にすることをおすすめします。ジョブを足しても、必須の名前は変わらずに済みます。ジョブごとに必須にすると、CI の変更のたびにこのコマンドを実行し直すことになります。
+- マージキューを使うなら、必須のチェックを出すワークフローに `on: merge_group` が要ります。ドキュメントだけの変更で重いジョブを飛ばす判定は、`merge_group` では `github.event.merge_group.base_sha` との差で行ってください。詳しくは「マージキューを使う」を参照してください。
 - `paths-ignore` などでワークフローが動かない PR（ドキュメントだけの変更など）は、そのチェックが報告されず、「待ち」のままマージできなくなります。`paths-ignore` はやめ、変更の範囲を見て重いジョブを `if` で飛ばしたうえで、門番のジョブは必ず動かして成功にしてください（このリポジトリの `.github/workflows/lint.yml`・`test.yml` が例です）。
 
 #### マージキューを使う
@@ -330,6 +353,7 @@ plugins/dev-workflow/scripts/setup/setup-repo.sh --no-merge-queue
 ```
 
 - マージキューは、Organization の公開リポジトリと、GitHub Enterprise Cloud の Organization の非公開リポジトリで使えます。個人のアカウントのリポジトリでは使えないので、`--merge-queue` は止まります。使えるかは、出力の `merge_queue.available` で分かります。
+- 選び方：使えるリポジトリで PR を並列に進めるなら、マージキューをおすすめします。最新の main の取り込み（strict）では、別の PR がマージされるたびに、残りの PR へ main を取り込み直して CI を通し直します。キューなら取り込み直しは要らず、取り込むのは main とコンフリクトしたときだけです。strict は、キューを使えないリポジトリ（個人のアカウントなど）と、キューを使わないと決めたリポジトリで使います。必須のチェックと、strict またはキューを設定していれば、どちらの方式でも、古い main で通った CI の結果のままマージされることはありません（設定しないままだと、どちらも効きません）。
 - `--merge-queue`・`--no-merge-queue` は、`setup-all.sh` にも渡せます。どちらも付けなければ、キューを今のまま使う・使わないままにします。
 - 必須のチェックを求めるワークフローは、`merge_group` のイベントでも動くようにしてください（`on: merge_group`）。動かないと、キューのチェックが「待ち」のまま残ってマージされません。`setup-repo.sh` は、base_branch の `.github/workflows/` を読んで、必須のチェック（ほかのルールセットと古いブランチ保護が求めるものも含めます）のジョブがあるワークフローが `merge_group` で動くかを確かめ、出力の `merge_queue.merge_group` に出します（`--dry-run` でも、キューを使わないときも確かめます）。チェックの名前は、GitHub がジョブのチェックに付ける名前（`name:` があればその値、無ければジョブの ID）と突き合わせるので、どのジョブとも対応しない名前（外部のアプリのチェックなど）は確かめられません。`${{ }}` の式を含む `name:` のジョブ（matrix の値を名前に入れたものなど）とも突き合わせないので、そのチェックも確かめられません。確かめたいときは、式を含まない名前のジョブ（CI 全体の結果をまとめる門番のジョブなど）を必須のチェックにしてください。ジョブの `if:` で `merge_group` を除いていても（`if: github.event_name != 'merge_group'` など）、キューでは動きません。飛ばされたジョブのチェックは成功とみなされるので、キューは CI を動かさないまま PR をマージしてしまいます。そこで、必須のチェックのジョブと、そのジョブが `needs:` でたどれるジョブの `if:` も読み、`merge_group` を除いていれば「動かない」とし、ジョブの `if:` を直すよう案内します。`if: always()` などの門番のジョブが頼るジョブを除いているときは、門番は動くものの、CI を動かしたかは結果の確かめ方次第なので、「確かめられない」とします。出力の `merge_queue.merge_group.not_running` には、動かないチェックを、直す場所（`reason`。ワークフローの `on:` に `merge_group` が無ければ `on`、ジョブの `if:` で除いていれば `if`）と一緒に出します。`github.event_name` を `==`・`!=` で比べるだけの項は読み分けますが、それ以外に `github.event`・`github.head_ref`・`github.base_ref`・`github.ref`・`merge_group` を使う式（`github.event.pull_request.draft == false` など）は、動くか確かめられないとします。再利用するワークフローの、呼ばれる側のジョブの `if:` は読みません。キューを使うときは、動かないチェックと、確かめられないチェックを警告しますが、止めはしません。キューを使わないときは、警告せずに結果を出力に出すだけです。キューを使い始めた後は、`doctor.sh` が同じことを確かめます。
 - `doctor.sh` は、main にマージキューと最新の main の取り込みのどちらが効いているかを表示します。main に必須のチェックが無いときは、CI が通らなくてもマージできるので警告し（マージキューを使っていても警告します。ルールセットだけでなく、古いブランチ保護の必須のチェックも見ます。古いブランチ保護にだけ必須のチェックがあるときは、strict かが分からないので、マージキューと最新の main の取り込みのどちらが効いているかは表示しません）、`/dev-workflow:repo-setup`（`setup-repo.sh --required-check`）で設定するよう案内します。CI の無いリポジトリでこの警告を止めるには、`.claude/dev-workflow/config.json` に `"require_status_checks": false` を書きます（個人の設定 `config.local.json` やユーザーの設定では止められません）。

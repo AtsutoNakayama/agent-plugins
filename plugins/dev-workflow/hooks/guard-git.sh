@@ -5,7 +5,8 @@
 #   - base_branch への git push（base_branch の上で push 先を書かずに push するときを含む）
 #   - 強制 push（--force / -f / +<refspec> / --mirror）。--force-with-lease は許可する
 #
-# また、ブランチを作るコマンド（git switch -c / git checkout -b / git branch <名前> / git worktree add -b）で、
+# また、ブランチを作るコマンド（git switch -c / git checkout -b / git branch <名前> / git worktree add -b /
+# commit-ish を書かない git worktree add <パス>（パスの最後の名前でブランチを作る））で、
 # 名前が規約（branch-name.sh --check）に合わなければ、コマンドは止めずに警告する。
 #
 # 標準入力でフックの入力（JSON）を受け取る。止めるときは理由を標準エラーに1行で出し、終了コード 2 で終わる
@@ -186,7 +187,7 @@ check_branch_name() {
   load_base_branch
   [ "$name" != "$base_of" ] || return 0
   gc_git show-ref --verify --quiet "refs/heads/$name" && return 0
-  [ -z "$(gc_git for-each-ref --format=x "refs/remotes/*/$name" || true)" ] || return 0
+  ! gc_remote_has "$name" || return 0
   # 規約に合わないときだけ終了コード 1（設定を読めないなどは 2）
   out="$( (cd "$gc_root" && WORKFLOW_REPO_ROOT="$gc_root" "$BASH" "$DW_SCRIPTS_DIR/branch-name.sh" --check "$name") 2>/dev/null)" \
     && return 0

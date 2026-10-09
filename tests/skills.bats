@@ -330,6 +330,31 @@ has() {
 }
 
 # shellcheck disable=SC2016 # バッククォートはスキルの本文の文字で、展開させない
+@test "branch-update は、無人で直すとき、確認を指示役の判断に置き換え、決められなければ Issue にコメントして保留の列に移して止まる（ADR 000285）" {
+  f="$SKILLS/branch-update/SKILL.md"
+  un="$(section "$f" "## 無人で直すとき")"
+  has "「## 無人で直すとき」の節" "$un" 'AskUserQuestion は使わない' '強制 push をしない' '--force-with-lease' 'マージはしない' 'キューに入れ直さない' \
+    'コンフリクトだけ' '信用できない入力'
+  # 次にすることは repair-next.sh が決め、SKILL.md には action ごとにすることだけを書く
+  nx="$(sed -n '/^### 次にすることの決め方/,/^### 衝突の直し方/p' <<<"$un")"
+  has "次にすることの決め方" "$nx" 'repair-next.sh' '`plan.fallback` は使わない' 'キューから外れたとき' '`confirm`・`infer`' '`unconfirmed`' \
+    '"dirty":<branch-status.sh の dirty>' '`push_check_ok` は null に戻す' '`push_check_ok` を null に戻す' 'repair-push-check.sh --base-branch <base_branch>' '通常の `git push origin' '値を組み合わせて決め直さない'
+  for a in finish recheck pull merge checks fix push_check push stop; do
+    grep -qF "| \`$a\` |" <<<"$nx" || fail "repair-next.sh の action「$a」のすることが表にありません"
+  done
+  has "衝突の直し方" "$(sed -n '/^### 衝突の直し方/,/^### PR のコメント/p' <<<"$un")" \
+    '指示役が次のとおりに決める' '止まる衝突' '.github/workflows/' '.claude/'
+  has "PR のコメント" "$(sed -n '/^### PR のコメント/,/^### 止まる/p' <<<"$un")" '<!-- dev-workflow:repair-run -->' '代わりに決めたこと' 'issues/comments/<ID>' '-X PATCH' '`--edit-last` は使わない' '追記する'
+  has "止まる" "$(sed -n '/^### 止まる$/,/^### 結果を返す/p' <<<"$un")" \
+    'git merge --abort' 'auto-hold.sh --issue <番号> --run-id <実行の id> --reason-file <ファイル>' 'repair-stopped reason=other' 'push はしない'
+  # 無人で GitHub に書き込まない／resolve しない
+  ! grep -q 'resolveReviewThread' <<<"$un" || fail "無人の節で resolveReviewThread を呼ぶ手順があります"
+  # description で、無人の使い方に触れている
+  frontmatter "$f" | grep -q '無人で直す' || fail "branch-update の description に、無人で直す使い方がありません"
+  [ -x "$BATS_TEST_DIRNAME/../plugins/dev-workflow/scripts/repair-push-check.sh" ] || fail "repair-push-check.sh が実行できません"
+}
+
+# shellcheck disable=SC2016 # バッククォートはスキルの本文の文字で、展開させない
 @test "branch-update は、push しなかったどの出口でも、push・CI・キューへの入れ直しの案内をせず、止めた理由と手元に残ったものを伝える" {
   # push しなかった出口でも、手順6が push・CI・キューへの入れ直しの案内を伝えていた（#242）
   f="$SKILLS/branch-update/SKILL.md"
