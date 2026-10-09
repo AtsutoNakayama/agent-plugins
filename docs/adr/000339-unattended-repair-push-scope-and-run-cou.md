@@ -52,6 +52,8 @@ push の回数の数え方
 * `repair-push-check.sh` は、push で origin に入る変更に、次のパスがあれば `ok` を false にする。取り込んだ `base_branch` と同じ内容のパスは、今までどおり数えない。
   * リポジトリ直下の `.github/` 以下のすべて（`workflows/` だけでなく、`actions/`・`scripts/`・`CODEOWNERS`・`dependabot.yml` なども）
   * どの階層の `.claude/` 以下も（`.claude/…` と `…/.claude/…`）
+  * `.github`（直下）・`.claude`（どの階層も）という名前そのもの。ファイル・シンボリックリンク・サブモジュール（gitlink）にすると、中身を差し替えられるため
+* パスは大文字と小文字を区別せずに照らす（`.Claude/`・`.GitHub/` も止める）。大文字と小文字を区別しないファイルシステム（macOS・Windows の既定）では、`.Claude/` も `.claude/` として読まれるため。
 * 入れ子の `.github/`（`docs/.github/` など）は、GitHub が読まないので止めない。名前が似ているだけのパス（`.githubx/`・`.claudex/`・`.claude.md`）も止めない。
 * 衝突の直し方で「直すのに変更が要るなら止まる」とするパスも、同じ範囲にする。
 

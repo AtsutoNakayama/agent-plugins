@@ -190,3 +190,37 @@ SHIM
   refute_output --partial '"ok":true'
   assert_output --partial "git diff に失敗しました"
 }
+
+@test ".github・.claude という名前そのもの（ファイル・シンボリックリンク）も止める" {
+  # 名前をファイルとシンボリックリンクにするため、先にディレクトリを消して push しておく（.claude は追跡していない空のディレクトリ）
+  git rm -q -r .github
+  rm -rf .github .claude
+  git commit -q -m "rm dirs"
+  git push -q origin feat/1-x
+  echo x >.github
+  ln -s /tmp .claude
+  mkdir -p sub && ln -s ../src sub/.claude
+  git add .github .claude sub/.claude && git commit -q -m names
+  git fetch -q origin
+  run_script repair-push-check.sh --base-branch main
+  assert_success
+  assert_equal "$(jq -c '[.ok, (.forbidden | sort)]' <<<"$output")" '[false,[".claude",".github","sub/.claude"]]'
+}
+
+@test ".claude という名前のサブモジュール（gitlink）も止める" {
+  git init -q "$TMP/sub" && git -C "$TMP/sub" commit -q --allow-empty -m s
+  git -c protocol.file.allow=always submodule -q add "$TMP/sub" pkg/.claude
+  git commit -q -m submodule
+  run_script repair-push-check.sh --base-branch main
+  assert_success
+  assert_equal "$(jq -c '[.ok, .forbidden]' <<<"$output")" '[false,["pkg/.claude"]]'
+}
+
+@test "大文字と小文字を区別せずに止める（.Claude/・sub/.CLAUDE/・.GitHub/）" {
+  commit_file .Claude/settings.json '{}'
+  commit_file sub/.CLAUDE/x x
+  commit_file .GitHub/x x
+  run_script repair-push-check.sh --base-branch main
+  assert_success
+  assert_equal "$(jq -c '[.ok, (.forbidden | sort)]' <<<"$output")" '[false,[".Claude/settings.json",".GitHub/x","sub/.CLAUDE/x"]]'
+}

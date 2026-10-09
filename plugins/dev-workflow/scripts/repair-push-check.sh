@@ -3,6 +3,8 @@
 # push の対象に、リポジトリ直下の .github/ 以下か、どの階層の .claude/ 以下の変更が含まれていたら、push してはいけない（ok が false）。
 # .github/ は workflows だけでなく、workflow が呼ぶ actions・scripts や CODEOWNERS などで CI と権限に影響し、
 # 入れ子の .claude/ も、そのディレクトリで動く Claude の権限と設定に影響するため（#331）。
+# .github・.claude という名前そのもの（シンボリックリンク・ファイル・サブモジュール）も止める（中身を差し替えられるため）。
+# 大文字と小文字は区別しない（大文字と小文字を区別しないファイルシステムでは .Claude/ も .claude/ として読まれるため）。
 # 何も変えない（読むだけ。push もしない）。
 #
 # 使い方: repair-push-check.sh --base-branch B [--branch X]
@@ -58,8 +60,10 @@ git diff --name-only --no-renames -z "$against" HEAD >"$diff_file" \
   || dw_die "git diff に失敗しました（${against} と HEAD の差を取れません）" 2
 # パスに改行が入っていても壊れないよう -z で読む
 while IFS= read -r -d '' path; do
-  case "$path" in
-    .github/* | .claude/* | */.claude/*) ;;
+  # bash 3.2 には ${var,,} が無いので tr で小文字にする。LC_ALL=C で、ASCII の英字だけを変える
+  lower="$(printf '%s' "$path" | LC_ALL=C tr 'ABCDEFGHIJKLMNOPQRSTUVWXYZ' 'abcdefghijklmnopqrstuvwxyz')"
+  case "$lower" in
+    .github | .github/* | .claude | .claude/* | */.claude | */.claude/*) ;;
     *) continue ;;
   esac
   # 取り込んだ base_branch と同じ内容なら、このブランチの変更ではない
