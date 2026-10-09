@@ -703,6 +703,24 @@ dw_merge_queue_enabled() {
   jq -s "$DW_JQ_MERGE_QUEUE"' add // [] | merge_queue' <<<"$rules" 2>/dev/null
 }
 
+# PR のブランチに、<時刻> より後の push（push・force_push）があるかを、true か false で出力する。マージキューから
+# 外れた後に push したか（直して、まだ入れ直していないか）を見分けるのに使う（pr-merge-status.sh・branch-status.sh。ADR 000323）。
+# GitHub には PR のコミットを push した時刻が無く（Commit.pushedDate は廃止。コミットの時刻は手元でコミットした時刻）、
+# リポジトリの activity（REST）がブランチへの push の時刻を返すので、それで見る。新しい順に返るので、最初のページだけ見ればよい。
+# フォークからの PR（<フォークか> が true）は、push がこのリポジトリの activity に無いので、読まずに false を出力する。
+# 読めなければ、理由を標準エラーに出して非0を返す（どう扱うかは呼び出し側で決める）。
+# 使い方: dw_pushed_since <PR の URL> <PR のブランチ> <フォークか（true・false）> <時刻（ISO 8601）>
+dw_pushed_since() {
+  local repo out
+  if [ "$3" = true ]; then echo false; return 0; fi
+  repo="$(jq -rn --arg u "$1" '$u | capture("^https?://[^/]+/(?<r>[^/]+/[^/]+)/pull/").r // empty' 2>/dev/null || true)"
+  [ -n "$repo" ] || { echo "PR の URL からリポジトリが分かりません: $1" >&2; return 1; }
+  out="$(gh api "repos/$repo/activity?ref=$(jq -rn --arg r "refs/heads/$2" '$r | @uri')&per_page=100" 2>&1)" \
+    || { printf '%s\n' "$out" >&2; return 1; }
+  jq -e 'type == "array"' >/dev/null 2>&1 <<<"$out" || { printf '%s\n' "$out" >&2; return 1; }
+  jq --arg t "$4" 'any(.[]; (.activity_type == "push" or .activity_type == "force_push") and ((.timestamp // "") > $t))' <<<"$out"
+}
+
 # 古いブランチ保護（ルールセットでない）が求める必須のチェックの名前の一覧（JSON の配列）を出力する。
 # rules/branches には出ないので、ブランチの情報（branches/<ブランチ> の protection）から読む。
 # 読めなければ（保護が無い・権限が無いなど）[] を出力する。

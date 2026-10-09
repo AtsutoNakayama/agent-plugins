@@ -36,8 +36,9 @@
 #   - 並んでいなければ、タイムラインのキューの出入りのイベントの最後を見る
 #     - 最後が外れたイベント（RemovedFromMergeQueueEvent）で、理由が merged なら waiting（PR の state が MERGED に
 #       変わる直前。次に確かめれば merged になる）
-#     - それ以外の理由で、外れた後に PR のブランチへの push（リポジトリの activity の push・force_push）が無ければ removed。
-#       push があれば、直して入れ直す前なので not_queued。フォークからの PR は push を読めないので、removed のまま
+#     - それ以外の理由で、外れた後に PR のブランチへの push（リポジトリの activity の push・force_push。common.sh の
+#       dw_pushed_since。branch-status.sh と共通）が無ければ removed。push があれば、直して入れ直す前なので not_queued。
+#       フォークからの PR は push を読めないので、removed のまま
 #     - 最後が入れたイベント（AddedToMergeQueueEvent）なら waiting（並んだ直後で、まだ mergeQueueEntry に出ていない）
 #     - イベントが無ければ not_queued
 #   - removed のとき、外れたイベントのコミット（beforeCommit。キューの一時的なブランチのコミット）の merge_group の実行を、
@@ -81,7 +82,7 @@ done
 
 # 1回確かめる。結果の JSON を標準出力に出す
 check_once() {
-  local view base queue res q pushes repo ref run_json sha
+  local view base queue res q pushed run_json sha
   view="$(gh pr view ${pr:+"$pr"} ${branch:+"$branch"} --json number,url,state,baseRefName,headRefName,isCrossRepository 2>&1)" \
     || dw_die "PR を読めません: $view"
   jq -e 'type == "object" and has("number") and has("state")' >/dev/null 2>&1 <<<"$view" \
@@ -94,7 +95,7 @@ check_once() {
   fi
   # キューの状態は、OPEN でキューを使うときだけ読む（MERGED・CLOSED やキューを使わないリポジトリでは、読めなくても動きを変えない）
   q='{"entry": null, "event": null}'
-  pushes='[]'
+  pushed=false
   run_json='[]'
   if [ "$queue" = true ]; then
     # キューに並んでいるか（mergeQueueEntry）とキューから外れたイベント（RemovedFromMergeQueueEvent）は、gh pr view にも
@@ -123,19 +124,11 @@ check_once() {
 
     # 外れたまま（並んでおらず、最後が merged 以外の理由で外れたイベント）のときだけ、外れた後の push と失敗した CI を読む
     if jq -e '.entry == null and .event.__typename == "RemovedFromMergeQueueEvent" and .event.reason != "merged"' >/dev/null <<<"$q"; then
-      # 外れた後に push したかは、リポジトリの activity（ブランチへの push の時刻）で見る。GitHub には PR のコミットを
-      # push した時刻が無く（Commit.pushedDate は廃止）、コミットの時刻は手元でコミットした時刻なので使えない。
-      # 新しい順に返るので、最初のページだけ見ればよい。フォークのブランチへの push はこのリポジトリの activity に無いので読まない
-      if [ "$(jq -r .isCrossRepository <<<"$view")" != true ]; then
-        repo="$(jq -r '.url | capture("^https?://[^/]+/(?<r>[^/]+/[^/]+)/pull/").r // empty' <<<"$view" 2>/dev/null)" \
-          || dw_die "PR の URL からリポジトリが分かりません: $(jq -r .url <<<"$view")"
-        [ -n "$repo" ] || dw_die "PR の URL からリポジトリが分かりません: $(jq -r .url <<<"$view")"
-        ref="$(jq -rn --arg r "refs/heads/$(jq -r .headRefName <<<"$view")" '$r | @uri')"
-        pushes="$(gh api "repos/$repo/activity?ref=$ref&per_page=100" 2>&1)" \
-          || dw_die "PR のブランチへの push を読めません: $pushes"
-        jq -e 'type == "array"' >/dev/null 2>&1 <<<"$pushes" \
-          || dw_die "PR のブランチへの push を読めません: $pushes"
-      fi
+      # 外れた後に push したか（直して、まだ入れ直していないか）は、PR のブランチへの push の時刻で見る（branch-status.sh と共通。
+      # フォークからの PR は読まずに false）
+      pushed="$(dw_pushed_since "$(jq -r .url <<<"$view")" "$(jq -r .headRefName <<<"$view")" \
+        "$(jq -r .isCrossRepository <<<"$view")" "$(jq -r .event.createdAt <<<"$q")" 2>&1)" \
+        || dw_die "PR のブランチへの push を読めません: $pushed"
       # 外れる原因になったキューの CI は、外れたイベントのコミット（キューの一時的なブランチのコミット）で絞って読む。
       # リポジトリ全体の merge_group の実行の新しい方から数えると、忙しいリポジトリでは自分の実行が窓から外れうるため
       sha="$(jq -r '.event.beforeCommit.oid // empty' <<<"$q")"
@@ -150,13 +143,11 @@ check_once() {
 
   # jq の変数（$v など）を bash に展開させないため、シングルクォートで書く
   # shellcheck disable=SC2016
-  printf '%s\n' "$view" "$q" "$pushes" "$run_json" | jq -s --argjson qe "$queue" '
+  printf '%s\n' "$view" "$q" "$run_json" | jq -s --argjson qe "$queue" --argjson pushed "$pushed" '
     def failed: . as $r | ["failure", "cancelled", "timed_out", "startup_failure"] | index($r.conclusion // "") != null;
-    .[0] as $v | .[1] as $q | .[2] as $pushes | .[3] as $runs
+    .[0] as $v | .[1] as $q | .[2] as $runs
     | ($q.event // null) as $ev
     | ($ev != null and $ev.__typename == "RemovedFromMergeQueueEvent") as $was_removed
-    | ($was_removed and any($pushes[]; (.activity_type == "push" or .activity_type == "force_push")
-                                        and ((.timestamp // "") > $ev.createdAt))) as $pushed
     | (if $v.state == "MERGED" then "merged"
        elif $v.state != "OPEN" or $qe != true then "not_queued"
        elif $q.entry != null then "waiting"
