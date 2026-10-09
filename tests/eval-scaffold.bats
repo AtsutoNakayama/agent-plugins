@@ -183,6 +183,7 @@ grader_pattern() { sed -n "s/^pattern: '\\(.*\\)'\$/\\1/p" "$EVALS/$1/graders/$2
   # 範囲外の指摘のもと（前からある誤字）
   grep -qF 'Helo, %s!' bin/greet.sh || fail "bin/greet.sh に誤字がありません"
   # 観点の担当者は差分（git diff）を読むので、差分に無い bin/greet.sh も Read で読むよう、ファイル名を挙げて書く
+  # shellcheck disable=SC2016 # バッククォートは観点の本文の文字で、展開させない
   grep -qF '`bin/greet.sh`' .claude/dev-workflow/review/typo.md || fail "誤字の観点に bin/greet.sh がありません"
   grep -qF '差分に無くても必ず Read で読む' .claude/dev-workflow/review/typo.md || fail "誤字の観点に、Read で読むことがありません"
   run "${TEST_BASH:-bash}" "$SCRIPTS/auto-check.sh" --issue 2
