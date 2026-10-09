@@ -433,7 +433,10 @@ gc_worktree_branch_on() {
 # gc_git で対象のリポジトリを調べる
 # 使い方: gc_remote_has <名前>
 gc_remote_has() {
-  gc_git for-each-ref --format='%(refname:lstrip=3)' refs/remotes 2>/dev/null | grep -Fxq -- "$1" || return 1
+  # パイプにすると、grep が先に終わって書く側が SIGPIPE で落ち、pipefail の下で「無い」と誤るので、出力を変数に取り、here-string で渡す
+  local refs
+  refs="$(gc_git for-each-ref --format='%(refname:lstrip=3)' refs/remotes 2>/dev/null)" || return 1
+  grep -Fxq -- "$1" <<<"$refs"
 }
 
 # 手元のブランチ <名前> が、今の git switch・checkout で作られたものか（reflog が「branch: Created from …」の 1 行だけ）。

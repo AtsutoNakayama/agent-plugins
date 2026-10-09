@@ -133,9 +133,9 @@ on_git() {
         # 手元に無ければ、コマンドが失敗したか、ブランチの名前でなかった）。このフックはコマンドの後に動くので、
         # 作られたブランチは手元にあり、reflog で今作ったかを見る
         if $tracking; then
-          gc_remote_has "$k" || continue
           gc_git show-ref --verify --quiet "refs/heads/$k" || continue
           gc_just_created "$k" || continue
+          gc_remote_has "$k" || continue
         fi
         add_event create "$k"
       done
