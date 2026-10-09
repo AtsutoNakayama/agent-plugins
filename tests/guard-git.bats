@@ -421,6 +421,8 @@ silent() {
     "git branch -f foo main" \
     "git branch --track foo origin/main" \
     "git worktree add -b foo ../wt" \
+    "git worktree add ../foo" \
+    "git worktree add -f --lock ../x/foo/" \
     "git worktree add -f -B foo ../wt main" \
     "git -C $REPO switch -c foo" \
     "git fetch && git switch -c foo"
@@ -428,6 +430,21 @@ silent() {
   assert_output --partial "branch.pattern（{type}/{issue_number}-{slug}）の形になっていません"
   assert_output --partial "task-start"
   warned Feat/1-x "git switch -c Feat/1-x"
+}
+
+@test "commit-ish を書かない git worktree add <パス> は、パスの最後の名前のブランチを作るので警告する。作らないときは出さない" {
+  warned bad_name "git worktree add ../bad_name"
+  run_hook "git worktree add ../bad_name"
+  assert_output --partial "ブランチ名 bad_name は規約に合いません"
+  silent "git worktree add --detach ../bad_name" "git worktree add -d ../bad_name" "git worktree add --orphan ../bad_name" \
+    "git worktree add ../bad_name main" "git worktree add .."
+  warned 21-x "git worktree add ../feat/21-x"
+}
+
+@test "リモートにだけあるブランチへの switch・checkout や、-t の追跡ブランチは、これまでどおり確かめない" {
+  git update-ref refs/remotes/origin/bad_name HEAD
+  silent "git switch bad_name" "git checkout bad_name" "git checkout -t origin/bad_name" "git switch --track origin/bad_name" \
+    "git worktree add ../bad_name"
 }
 
 @test "ブランチを作るオプションを略して書いても、git と同じに読んで警告する" {

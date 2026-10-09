@@ -137,6 +137,33 @@ shows_wt() {
   silent "git worktree add ../wt"
 }
 
+@test "commit-ish を書かない git worktree add <パス> は、パスの最後の名前（/ を含まない）が規約に合わないので、Issue を出さない" {
+  fake_issue 23 '["feat"]'
+  git switch -q main
+  silent "git worktree add ../feat/23-x" "git worktree add --detach ../feat/23-x" "git worktree add ../feat/23-x HEAD"
+}
+
+@test "リモートにだけあるブランチを追跡ブランチとして作る git switch・checkout では、そのブランチの Issue を出す" {
+  fake_issue 23 '["feat"]'
+  git update-ref refs/remotes/origin/feat/23-x HEAD
+  local c
+  for c in "git checkout -t origin/feat/23-x" "git switch -t origin/feat/23-x" "git switch --track origin/feat/23-x" \
+    "git checkout --track=direct origin/feat/23-x" "git switch feat/23-x" "git checkout feat/23-x" "git checkout -q feat/23-x"; do
+    shows "$c" "Issue #23: https://github.com/me/demo/issues/23"
+    [[ "$output" != *"issues/17"* ]]
+  done
+}
+
+@test "手元にあるブランチ、リモートにも無い名前、ブランチを作らない書き方の switch・checkout では、Issue を出さない" {
+  fake_issue 23 '["feat"]'
+  git update-ref refs/remotes/origin/feat/23-x HEAD
+  git update-ref refs/heads/feat/23-x HEAD
+  silent "git switch feat/23-x" "git checkout feat/23-x" "git checkout -t origin/feat/23-x"
+  git update-ref -d refs/heads/feat/23-x
+  silent "git switch feat/24-y" "git checkout feat/24-y" "git checkout -- feat/23-x" "git checkout feat/23-x -- file" \
+    "git checkout -p feat/23-x" "git switch --detach feat/23-x" "git checkout --detach feat/23-x"
+}
+
 @test "作るブランチの名前に Issue の番号が無い、またはブランチを作らないときは、今のブランチの Issue を出さない" {
   fake_issue 23 '["feat"]'
   silent "git branch scratch" "git switch -c scratch" "git branch --set-upstream-to origin/main feat/23-x"

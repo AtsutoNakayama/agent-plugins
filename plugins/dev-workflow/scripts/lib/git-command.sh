@@ -260,7 +260,9 @@ gc_skip_opts_on() {
 }
 
 # ブランチを作る git のコマンドから、作るブランチの名前を探し、名前ごとに「<コールバック> <名前>」を呼ぶ。
-# 対象は git switch -c/-C/--create/--force-create/--orphan、git checkout -b/-B/--orphan、git worktree add -b/-B、git branch <名前>。
+# 対象は git switch -c/-C/--create/--force-create/--orphan、git checkout -b/-B/--orphan、git worktree add -b/-B、git branch <名前>、
+# と、commit-ish を書かない git worktree add <パス>（パスの最後の名前でブランチを作る。--detach・--orphan のときは作らない）。
+# 手元に無いブランチへの git switch・checkout が作る追跡ブランチは、リモートを見ないと分からないので、gc_tracking_branches で拾う。
 # オプションの読み方は gc_opt（-qc name・-cname・--cre name）。
 # 使い方: gc_new_branches <コールバック> <サブコマンド> <引数>...
 gc_new_branches() {
@@ -273,9 +275,86 @@ gc_new_branches() {
     worktree)
       if [ "${1:-}" = add ]; then
         shift
-        gc_create_opts "$cb" bB "" "$@"
+        gc_worktree_add "$cb" "$@"
       fi
       ;;
+  esac
+}
+
+# git worktree add の引数から、作るブランチの名前を探す。-b・-B があればその名前。無くて、--detach・--orphan も無く、
+# 位置引数が <パス> だけなら、git はパスの最後の名前でブランチを作る
+# 使い方: gc_worktree_add <コールバック> <add の後の引数>...
+gc_worktree_add() {
+  local cb="$1" explicit=false detach=false npos=0 path="" name
+  shift
+  gc_args gc_worktree_add_on bB "--reason= --orphan --detach" "$@"
+  if $explicit; then
+    gc_create_opts "$cb" bB "" "$@"
+  elif ! $detach && [ "$npos" -eq 1 ]; then
+    path="${path%"${path##*[!/]}"}"
+    name="${path##*/}"
+    case "$name" in
+      '' | . | ..) ;;
+      *) "$cb" "$name" ;;
+    esac
+  fi
+}
+gc_worktree_add_on() {
+  case "$1" in
+    opt)
+      case "$2" in
+        -b | -B) explicit=true ;;
+        --orphan | --detach | -d) detach=true ;;
+      esac
+      ;;
+    arg)
+      npos=$((npos + 1))
+      path="$2"
+      ;;
+  esac
+}
+
+# git switch・git checkout が、手元に無いブランチを、リモートの同じ名前のブランチから追跡ブランチとして作るときの、
+# 作るブランチの名前の候補を、「<コールバック> <名前>」に渡す。ブランチがあるかは見ない（呼び出し側が、手元に無く、
+# リモートにあるかを確かめる）。対象は、位置引数がブランチの名前の 1 つだけの git switch <名前>・git checkout <名前>と、
+# -t・--track を付けた git switch -t <リモート>/<名前>・git checkout -t <リモート>/<名前>（名前はリモートの後ろ）。
+# -c・-b などで作る・--detach・-p・-- を使うときは、gc_new_branches の扱いなので渡さない
+# 使い方: gc_tracking_branches <コールバック> <サブコマンド> <引数>...
+gc_tracking_branches() {
+  local cb="$1" sub="$2" shorts track=false skip=false npos=0 first=""
+  shift 2
+  case "$sub" in
+    switch) shorts=cC ;;
+    checkout) shorts=bB ;;
+    *) return 0 ;;
+  esac
+  gc_args gc_tracking_on "$shorts" "--create= --force-create= --orphan= --conflict= --pathspec-from-file= --detach --patch --track" "$@"
+  if $skip || [ "$npos" -ne 1 ]; then
+    return 0
+  fi
+  case "$first" in
+    '' | -*) return 0 ;;
+  esac
+  if $track; then
+    case "$first" in
+      */*) first="${first#*/}" ;;
+    esac
+  fi
+  "$cb" "$first"
+}
+gc_tracking_on() {
+  case "$1" in
+    opt)
+      case "$2" in
+        -t | --track) track=true ;;
+        -c | -C | -b | -B | --create | --force-create | --orphan | -d | --detach | -p | --patch | --pathspec-from-file) skip=true ;;
+      esac
+      ;;
+    arg)
+      npos=$((npos + 1))
+      [ "$npos" -gt 1 ] || first="$2"
+      ;;
+    dd) skip=true ;;
   esac
 }
 

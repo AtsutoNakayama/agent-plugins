@@ -91,7 +91,7 @@ add_new_name() { new_names+=("$1"); }
 # 2つ目の位置引数（git worktree add <パス> <ブランチ>）を名前にする
 # 使い方: on_git <サブコマンド> <引数>...
 on_git() {
-  local sub="$1" k
+  local sub="$1" k tracking=false
   shift
   new_names=()
   case "$sub" in
@@ -111,6 +111,11 @@ on_git() {
         shift
         gc_worktree_branch add_new_name "$@"
       fi
+      # 手元に無いブランチへの switch・checkout は、リモートに同じ名前があれば、追跡ブランチを作る（確かめるのは下）
+      if [ "${#new_names[@]}" -eq 0 ] && { [ "$sub" = switch ] || [ "$sub" = checkout ]; }; then
+        gc_tracking_branches add_new_name "$sub" "$@"
+        tracking=true
+      fi
       [ "${#new_names[@]}" -gt 0 ] || return 0
       ;;
     *) return 0 ;;
@@ -122,6 +127,11 @@ on_git() {
     push | commit) add_event "$sub" "$(gc_branch)" ;;
     *)
       for k in "${new_names[@]}"; do
+        # 追跡ブランチの候補は、手元に無く、リモートにあるものだけ（手元にあれば、ただの切り替え）
+        if $tracking; then
+          ! gc_git show-ref --verify --quiet "refs/heads/$k" || continue
+          [ -n "$(gc_git for-each-ref --format=x "refs/remotes/*/$k" || true)" ] || continue
+        fi
         add_event create "$k"
       done
       ;;

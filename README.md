@@ -211,7 +211,7 @@ base_ahead: required
 - base_branch への `git push`（base_branch の上で push 先を書かずに push するときを含む）
 - 強制 push（`--force` / `-f` / `+<refspec>` / `--mirror`）。`--force-with-lease` は許可する
 
-また、規約（`branch.pattern`）に合わない名前でブランチを作ろうとしたとき（`git switch -c` / `git checkout -b` / `git branch <名前>` / `git worktree add -b`）は、コマンドは止めずに、使用者と Claude に警告します。
+また、規約（`branch.pattern`）に合わない名前でブランチを作ろうとしたとき（`git switch -c` / `git checkout -b` / `git branch <名前>` / `git worktree add -b` / commit-ish を書かない `git worktree add <パス>`（パスの最後の名前でブランチを作ります））は、コマンドは止めずに、使用者と Claude に警告します。
 
 `cd`・`pushd`・`popd`（積んだ場所を、シェルと同じく追います）や `git -C`・`env -C` で移った先、`--git-dir`・`GIT_DIR` などで指した先（先頭の `~`・`$HOME` は、シェルと同じく展開します）のリポジトリ・ブランチで判断し、その先が導入していないリポジトリなら止めません。守るブランチ（`base_branch`）も、その先のリポジトリの設定から読みます。bare リポジトリのように作業ツリーが分からないリポジトリは、HEAD にチームの設定がコミットされているかで判断します。git がリポジトリを見つけられないとき（ディレクトリが分からない `cd -` の後など）は、今のブランチを読めないので、コミットと、push 先を書かない push（と `HEAD`・`@` への push）は止めます。絶対パスの `cd` か `git -C` で対象を書き直してください。前に付くコマンド（`timeout`・`nice`・`env`・`time`・`nohup`・`command`・`builtin`・`exec`）は、そのオプションとともに飛ばして調べます。コマンドの文字列を簡易に解析するだけなので、`sh -c`・`xargs` などを通したコマンドや git の別名を通すと見逃します。コマンドの読み方は bash の振る舞いに合わせているので、zsh などでは、移った先を誤ることがあります（パイプラインの最後のコマンドが今のシェルで動くなど）。`case` の枝は、どれが動くか分からないので、すべて順に動いたものとして読みます。関数の定義の本体は、その場で動いたものとして読みます（定義しただけで呼ばないときも、本体の中の `cd` は外に効いたものとして読みます）。パイプラインの各コマンドや `&` で動かすコマンドの中で移った分は、シェルと同じく外に効かないものとして扱います（`{ }`・ループ・`if` などの複合コマンドは、全体を1つのコマンドとして扱います）。最後の守りは GitHub のルールセット（下記）です。
 
@@ -225,7 +225,7 @@ base_ahead: required
 | `git commit`（`commit.sh` を含む）、ブランチ・ワークツリーの作成（`git switch -c` など。`task-start.sh` を含む） | 紐付く Issue |
 | `gh pr create`・`gh issue create`（`pr-create.sh`・`issue-create.sh` を含む） | 作った PR・Issue（標準出力から拾う） |
 
-- 紐付く Issue は、ブランチ名（`branch.pattern` の `{issue_number}`）から分かります。ブランチを作るコマンドでは、作るブランチの Issue です（名前を拾えないときは出しません）。main など、Issue の番号が分からないブランチでは、ブランチから導くリンクは出しません。
+- 紐付く Issue は、ブランチ名（`branch.pattern` の `{issue_number}`）から分かります。ブランチを作るコマンドでは、作るブランチの Issue です。リモートにだけあるブランチを追跡ブランチとして作る `git switch <名前>` / `git checkout <名前>` / `git switch -t <リモート>/<名前>` / `git checkout -t <リモート>/<名前>` も含みます（名前を拾えないときは出しません）。main など、Issue の番号が分からないブランチでは、ブランチから導くリンクは出しません。
 - `cd`・`pushd`・`popd`・`git -C`・`env -C`・`--git-dir`・`GIT_DIR` などで別のリポジトリ・ブランチへ移った git のコマンドでは、移った先のリポジトリ・ブランチのリンクを出します。ただし、次のときは移った先を正しく追えません。
   - `cd sub && git push && cd ..`・`pushd sub && git push && popd` のように、後ろでまた移るコマンドでは、移る前のブランチで判断します。`cd -` の後の git のコマンドには、リンクを出しません。
   - プロジェクトのルートにいるときに、相対パスへ `cd` したコマンド（`cd ../other && git push`）には、リンクを出しません。プロジェクトの外へ移ると、Claude Code が今のディレクトリをプロジェクトのルートに戻すので、どこへ移ったのか分からないためです。絶対パスへの `cd` なら追えます。
