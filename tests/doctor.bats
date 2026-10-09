@@ -119,6 +119,51 @@ labels_check() { jq -c '.checks[] | select(.name == "labels") | [.ok, .level, .d
   assert_equal "$(jq -r '[.checks[] | select(.name == "old-pr-respond-key")] | length' <<<"$output")" 0
 }
 
+@test "pr_check.handlers の担当の skill が .claude/skills/ にあれば、警告しない" {
+  fake_gh
+  export HOME="$TMP/home"
+  export FAKE_SCOPES="project"
+  mkdir -p .claude/skills/my-respond
+  echo x >.claude/skills/my-respond/SKILL.md
+  echo '{"pr_check": {"handlers": {"some-bot[bot]": "my-respond"}}}' >.claude/dev-workflow/config.json
+  run_script doctor.sh
+  assert_success
+  assert_equal "$(jq -r '[.checks[] | select(.name == "pr-check-handlers")] | length' <<<"$output")" 0
+}
+
+@test "pr_check.handlers の担当の skill が ~/.claude/skills/ にあれば、警告しない" {
+  fake_gh
+  export FAKE_SCOPES="project"
+  export HOME="$TMP/home"
+  mkdir -p "$HOME/.claude/skills/my-respond"
+  echo x >"$HOME/.claude/skills/my-respond/SKILL.md"
+  echo '{"pr_check": {"handlers": {"some-bot[bot]": "my-respond"}}}' >.claude/dev-workflow/config.json
+  run_script doctor.sh
+  assert_success
+  assert_equal "$(jq -r '[.checks[] | select(.name == "pr-check-handlers")] | length' <<<"$output")" 0
+}
+
+@test "pr_check.handlers の担当の skill がどこにも無ければ、警告する（失敗にはしない）" {
+  fake_gh
+  export HOME="$TMP/home"
+  export FAKE_SCOPES="project"
+  echo '{"pr_check": {"handlers": {"some-bot[bot]": "my-respnd", "other[bot]": "my-respond"}}}' >.claude/dev-workflow/config.json
+  run_script doctor.sh
+  assert_success
+  assert_equal "$(jq -r '.checks[] | select(.name == "pr-check-handlers") | [.ok, .level] | @tsv' <<<"$output")" $'false\twarn'
+  assert_output --partial "my-respnd、my-respond"
+}
+
+@test "pr_check.handlers がプラグインの skill（<プラグイン>:<名前>）なら、検査しない" {
+  fake_gh
+  export HOME="$TMP/home"
+  export FAKE_SCOPES="project"
+  echo '{"pr_check": {"handlers": {"some-bot[bot]": "other-plugin:respond"}}}' >.claude/dev-workflow/config.json
+  run_script doctor.sh
+  assert_success
+  assert_equal "$(jq -r '[.checks[] | select(.name == "pr-check-handlers")] | length' <<<"$output")" 0
+}
+
 @test "設定が壊れていれば config が失敗する" {
   fake_gh
   export FAKE_SCOPES="project"
