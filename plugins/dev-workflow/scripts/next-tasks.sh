@@ -98,7 +98,8 @@ while :; do
          sub_issues: (.content.subIssuesSummary.total // 0)} | .parent = (.sub_issues > 0)
       | select(($todo != "" and .status == $todo) or ($hold != "" and .status == $hold) or (.status | IN($active[]))
           or .number == $target)]' <<<"$page")"
-  issues="$(jq -c --argjson p "$picked" '. + $p' <<<"$issues")"
+  # 項目は本文を含んで長くなりうるので、引数ではなく標準入力で jq に渡す（引数1つの長さには上限がある。以下の一覧も同じ）
+  issues="$(printf '%s\n' "$issues" "$picked" | jq -sc add)"
   [ "$(jq -r '.data.repositoryOwner.projectV2.items.pageInfo.hasNextPage' <<<"$page")" = true ] || break
   # カーソルが空か前回と同じなら、同じページを読み続けてしまう（無限ループ）ので止める
   next_after="$(jq -r '.data.repositoryOwner.projectV2.items.pageInfo.endCursor // empty' <<<"$page")"
@@ -167,9 +168,10 @@ odefs='
 if [ -n "$target" ]; then
   target_item="$(jq -c --argjson t "$target" 'map(select(.number == $t))[0] // empty' <<<"$issues")"
   [ -n "$target_item" ] || target_item="$(dw_read_issue "$target" number,title,body | jq -c '. + {status: null}')"
-  jq -n --argjson target "$target_item" --argjson active "$active" --argjson prs "$prs" --arg todo "$todo_col" \
+  printf '%s\n' "$target_item" "$active" "$prs" | jq -s --arg todo "$todo_col" \
     --arg repo "$repo_nwo" --arg owner "$owner" --argjson number "$number" "$defs$odefs"'
-    ($active | active_paths($prs)) as $act
+    .[0] as $target | .[1] as $active | .[2] as $prs
+    | ($active | active_paths($prs)) as $act
     | ($target | {number, title, url, status: (if .status == "" then null else .status end),
         areas: areas, areas_ignored: areas_ignored, no_files: no_files} | with_overlap($act)
         | .overlap = (if (.conflicts_with_active | length) > 0 then "conflict"
@@ -195,19 +197,20 @@ for n in $(jq -r '.[].number' <<<"$todo"); do
   api_all="$(gh api --paginate "$repo_issue_dir/$n/dependencies/blocked_by?per_page=100" | jq -sc 'add // []')" \
     || dw_die "Issue #${n} の依存関係を読めませんでした"
   body_deps="$(jq -c --argjson n "$n" '.[] | select(.number == $n) | .body_deps' <<<"$todo")"
-  deps="$(jq -c --argjson n "$n" --argjson a "$api_all" --argjson b "$body_deps" --arg repo "$repo_nwo" "$DW_JQ_SAME_REPO"'
-    . + [{number: $n, blockers: (
+  deps="$(printf '%s\n' "$deps" "$api_all" "$body_deps" | jq -sc --argjson n "$n" --arg repo "$repo_nwo" "$DW_JQ_SAME_REPO"'
+    .[1] as $a | .[2] as $b
+    | .[0] + [{number: $n, blockers: (
       (($a | map({repo: ((.repository_url // "") | sub("^.*/repos/"; "") | if . == "" or same_repo(.; $repo) then $repo else . end),
                   number, source: "dependency", state: (.state | ascii_downcase)}))
        + ($b | map({repo: $repo, number: ., source: "body", state: null})))
       | group_by([(.repo | ascii_downcase), .number])
-      | map({repo: .[0].repo, number: .[0].number, sources: (map(.source) | unique), state: (map(.state // empty) | first // null)}))}]' <<<"$deps")"
+      | map({repo: .[0].repo, number: .[0].number, sources: (map(.source) | unique), state: (map(.state // empty) | first // null)}))}]')"
 done
-open_in_project="$(jq -c --argjson a "$active" --argjson h "$hold" '[.[].number] + [$a[].number] + [$h[].number]' <<<"$todo")"
+open_in_project="$(printf '%s\n' "$todo" "$active" "$hold" | jq -sc '[.[0][].number] + [.[1][].number] + [.[2][].number]')"
 # 状態がまだ分からないもの（このリポジトリの本文の依存で、Project に無いもの）を REST で読む
 fetched='{}'
-for d in $(jq -r --argjson o "$open_in_project" --arg repo "$repo_nwo" \
-  "$DW_JQ_SAME_REPO"'[.[].blockers[] | select(.state == null and same_repo(.repo; $repo) and (.number as $x | $o | index($x) | not)) | .number] | unique | .[]' <<<"$deps"); do
+for d in $(printf '%s\n' "$deps" "$open_in_project" | jq -rs --arg repo "$repo_nwo" \
+  "$DW_JQ_SAME_REPO"'.[1] as $o | [.[0][].blockers[] | select(.state == null and same_repo(.repo; $repo) and (.number as $x | $o | index($x) | not)) | .number] | unique | .[]'); do
   # 本文の「依存」は手で書くので、無い Issue（404・410）の番号もありうる。止まらず、閉じたと分からないので待ちのままにする
   # （状態は not_found）。認証・通信などほかの失敗は、dw_gh_find が理由を伝えて止まる
   s="$(dw_gh_find gh api "$repo_issue_dir/$d" -q .state)"
@@ -215,10 +218,10 @@ for d in $(jq -r --argjson o "$open_in_project" --arg repo "$repo_nwo" \
   fetched="$(jq -c --arg d "$d" --arg s "$s" '. + {($d): ($s | ascii_downcase)}' <<<"$fetched")"
 done
 
-jq -n --argjson todo "$todo" --argjson active "$active" --argjson deps "$deps" --argjson fetched "$fetched" \
-  --argjson in_project "$open_in_project" --argjson hold "$hold" \
-  --argjson prs "$prs" --arg repo "$repo_nwo" --arg owner "$owner" --argjson number "$number" "$DW_JQ_SAME_REPO$odefs"'
-  ($active | active_paths($prs)) as $act
+printf '%s\n' "$todo" "$active" "$deps" "$fetched" "$open_in_project" "$hold" "$prs" \
+  | jq -s --arg repo "$repo_nwo" --arg owner "$owner" --argjson number "$number" "$DW_JQ_SAME_REPO$odefs"'
+  .[0] as $todo | .[1] as $active | .[2] as $deps | .[3] as $fetched | .[4] as $in_project | .[5] as $hold | .[6] as $prs
+  | ($active | active_paths($prs)) as $act
   | ($act | unknown_numbers) as $active_unknown
   | ($todo | map(. as $t
       | ($deps[] | select(.number == $t.number).blockers) as $bl

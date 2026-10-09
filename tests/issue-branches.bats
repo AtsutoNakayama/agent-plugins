@@ -270,3 +270,18 @@ action_of() {
   assert_failure 2
   assert_output --partial "正規表現として正しくありません"
 }
+
+@test "Issue の候補のブランチが多くても（一覧が引数の長さの上限の 128 KiB を超えても）止まらない" {
+  sha="$(git rev-parse HEAD)"
+  long="$(printf 'x%.0s' $(seq 1 220))"
+  {
+    echo '# pack-refs with: peeled fully-peeled sorted'
+    printf '%s refs/heads/feat/17-x\n' "$sha"
+    for i in $(seq 1 450); do
+      printf '%s refs/heads/wip/17-%04d-%s\n' "$sha" "$i" "$long"
+    done
+  } >"$TMP/origin.git/packed-refs"
+  run_branches --issue 17
+  assert_success
+  assert_equal "$(jq -c '[(.branches | map(.name)), (.candidates | length)]' <<<"$json")" '[["feat/17-x"],450]'
+}

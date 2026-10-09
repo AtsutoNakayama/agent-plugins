@@ -925,3 +925,31 @@ args() { grep "^$1 " "$CALLS" | sed -n "${2:-1}p" | cut -d' ' -f2-; }
   assert_success
   assert_equal "$(out_of '.todo[0].body_deps')" '[5]'
 }
+
+@test "本文・依存・着手中の Issue・PR のファイルが多くて長くても（引数の長さの上限の 128 KiB を超えても）止まらない" {
+  setup_fake_gh
+  long_text "$TMP/long"
+  # 本文の長い Todo（本文の依存 #99 は Project に無いので、状態を読みにいく）
+  jq -nc --rawfile b "$TMP/long" '{content: {__typename: "Issue", number: 10, title: "作業 10", state: "OPEN",
+      body: ("## 背景\n" + $b + "\n## 変更するファイル・領域\n- docs/\n## 依存\n- #99\n"),
+      url: "https://github.com/me/demo/issues/10", repository: {nameWithOwner: "me/demo"}, subIssuesSummary: {total: 0}},
+    status: {name: "Todo"}, sp: null}' >>"$FIX/nodes"
+  # 着手中の Issue を 25000 件（番号の一覧だけでも 128 KiB を超える）
+  jq -nc 'range(10000; 35000) | {content: {__typename: "Issue", number: ., title: "作業 \(.)", state: "OPEN", body: "",
+      url: "https://github.com/me/demo/issues/\(.)", repository: {nameWithOwner: "me/demo"}, subIssuesSummary: {total: 0}},
+    status: {name: "In Progress"}, sp: null}' >>"$FIX/nodes"
+  write_page
+  echo open >"$FIX/state-99"
+  # 依存関係の API は、依存先の Issue を本文ごと返す
+  jq -n --rawfile b "$TMP/long" '[{number: 5, state: "open", body: $b, repository_url: "https://api.github.com/repos/me/demo"}]' >"$FIX/blocked-10.json"
+  # 着手中の #10000 の PR が、パスの長いファイルを 2500 個変えている
+  jq -n '[{number: 50, headRefName: "feat/10000-x", closingIssuesReferences: [],
+    files: [range(0; 2500) | {path: "plugins/dev-workflow/a-long-directory-name/for-the-list-of-files-\(.).sh"}]}]' >"$FIX/pr-list.json"
+  run_script next-tasks.sh
+  assert_success
+  assert_equal "$(out_of '[.next, (.todo[0] | [.number, .waiting, (.blocked_by | map(.number))])]')" '[null,[10,true,[5,99]]]'
+  assert_equal "$(out_of '[(.in_progress | length), (.in_progress[0] | [.number, (.pr_files | length)])]')" '[25000,[10000,2500]]'
+  run_script next-tasks.sh --issue 10
+  assert_success
+  assert_equal "$(out_of '[.issue.number, .issue.areas, (.in_progress | length)]')" '[10,["docs"],25000]'
+}

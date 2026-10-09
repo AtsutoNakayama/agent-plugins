@@ -524,3 +524,22 @@ writes() { grep -oE '^(issue-comment|issue-close|pr-comment|pr-close|api-delete)
   assert_equal "$(grep '^api-get ' "$CALLS")" "api-get repos/me/demo/git/ref/heads/feature/login%232"
   assert_equal "$(grep '^api-delete ' "$CALLS")" "api-delete repos/me/demo/git/refs/heads/feature/login%232"
 }
+
+@test "Issue・子孫・PR の本文やコメントが長くても（引数の長さの上限の 128 KiB を超えても）止まらない" {
+  setup_cancel
+  sub_tree
+  cancel_prs '["前のコメント"]'
+  long_text "$TMP/long"
+  # 子孫の一覧（REST は本文も返す）と、Issue・子・PR のコメントを長くする
+  for f in "$FIX/sub-issues-17.json" "$FIX/sub-issues-30.json"; do
+    jq --rawfile b "$TMP/long" 'map(. + {body: $b})' "$f" >"$TMP/j" && mv "$TMP/j" "$f"
+  done
+  for f in "$FIX/issue-17.json" "$FIX/issue-30.json" "$FIX/issue-31.json"; do
+    jq --rawfile b "$TMP/long" '.comments = [{body: $b}]' "$f" >"$TMP/j" && mv "$TMP/j" "$f"
+  done
+  jq --rawfile b "$TMP/long" 'map(.comments = [{body: $b}])' "$FIX/pr-list.json" >"$TMP/j" && mv "$TMP/j" "$FIX/pr-list.json"
+  run_script issue-cancel.sh --issue 17 --reason "やめます" --sub-issues close --branch feat/17-x --dry-run
+  assert_success
+  assert_equal "$(jq -c '[.issue, .commented, (.sub_issues.open | map([.number, .commented])), (.pull_requests | map([.number, .commented]))]' <<<"$output")" \
+    '[17,true,[[30,true],[31,true]],[[42,true]]]'
+}

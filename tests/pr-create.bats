@@ -59,6 +59,8 @@ run_pr() {
   assert_success
   assert_equal "$(cat "$TMP/pr-body")" "$(printf '## 概要\n作業した\n\n## 変更点\n- work.txt\n\n## 確認方法\n- 見た\n\nCloses #17')"
   assert_equal "$(jq -r .body <<<"$json")" "$(cat "$TMP/pr-body")"
+  # 出力の本文は、末尾に改行を足さない（$( ) では末尾の改行の違いが見えないので、JSON のまま比べる）
+  assert_equal "$(jq -c .body <<<"$json")" '"## 概要\n作業した\n\n## 変更点\n- work.txt\n\n## 確認方法\n- 見た\n\nCloses #17"'
 }
 
 @test "本文に Closes #N があれば足さない（#170 は別の Issue とみなす）" {
@@ -821,4 +823,45 @@ fake_issue_tasks() {
   assert_success
   assert_equal "$(jq -c '[.pr_base, .merge_queue]' <<<"$json")" '["feat/日本語",true]'
   assert_equal "$(args api-rules)" 'repos/{owner}/{repo}/rules/branches/feat%2F%E6%97%A5%E6%9C%AC%E8%AA%9E?per_page=100'
+}
+
+@test "Issue のチェックリストが長くても（引数の長さの上限の 128 KiB を超えても）、--check と --add-task で本文を直して PR を作る" {
+  setup_branch
+  long_text "$TMP/long"
+  set_issue_body "$(printf -- '## やること\n- [ ] 一つ目\n- [ ] %s\n' "$(cat "$TMP/long")")"
+  run_pr --issue 17 --body-file "$TMP/body.md" --check 一つ目 --add-task 足す項目
+  assert_success
+  assert_equal "$(jq -c '[.checked, .added, (.tasks | length)]' <<<"$json")" '[["一つ目"],["足す項目"],2]'
+  assert_equal "$(head -n 2 "$TMP/issue-edit-body")" "$(printf -- '## やること\n- [x] 一つ目')"
+  assert_equal "$(tail -n 1 "$TMP/issue-edit-body")" "- [ ] 足す項目"
+}
+
+@test "本文に絵文字があっても（128 KiB を超える1行でも）、出力の本文は PR に渡した本文と同じにする" {
+  # 標準入力の jq -R は、4096 バイトを超える1行の、読み込みの区切りにまたがる BMP の外の文字（絵文字）を壊すので、
+  # 出力の本文は --rawfile で読む（本文の Closes を整える前の読み込み（-Rrs）は、この差分より前からあり、別に直す）
+  setup_branch
+  fake_issue 17 '["feat"]'
+  { printf '## 概要\n'; for _ in $(seq 1 30000); do printf 'ab😀'; done; printf '\n'; } >"$TMP/body.md"
+  run_pr --issue 17 --body-file "$TMP/body.md"
+  assert_success
+  assert_equal "$(jq -r .body <<<"$json")" "$(cat "$TMP/pr-body")"
+}
+
+@test "--check と --add-task を多く指定しても（項目の合計が引数の長さの上限の 128 KiB を超えても）、本文を直して PR を作る" {
+  setup_branch
+  pad="$(printf 'x%.0s' $(seq 1 240))"
+  args=()
+  body='## やること'
+  for i in $(seq 1 600); do
+    body="${body}
+- [ ] c${i}-${pad}"
+    args+=(--check "c${i}-${pad}" --add-task "a${i}-${pad}")
+  done
+  set_issue_body "$body"
+  run_pr --issue 17 --body-file "$TMP/body.md" "${args[@]}"
+  assert_success
+  assert_equal "$(jq -c '[(.checked | length), (.added | length), .added[0], (.actions | map(select(test("チェックリスト"))) | length)]' <<<"$json")" \
+    "[600,600,\"a1-${pad}\",2]"
+  assert_equal "$(grep -c '^- \[x\] c' "$TMP/issue-edit-body")" 600
+  assert_equal "$(grep -c '^- \[ \] a' "$TMP/issue-edit-body")" 600
 }

@@ -313,3 +313,18 @@ out_of() { jq -c "$1" <<<"$output"; }
   assert_success
   assert_equal "$(cut -d' ' -f1 "$CALLS" | sort -u | tr '\n' ' ')" "PrThreads PrView "
 }
+
+@test "スレッド・レビュー・コメントの本文が長くても（引数の長さの上限の 128 KiB を超えても）止まらない" {
+  setup_fake_gh
+  long_text "$TMP/long"
+  jq -nc --rawfile b "$TMP/long" '{isResolved: false, isOutdated: false, path: "a.sh", line: 3,
+    comments: {nodes: [{databaseId: 100, author: {login: "alice"}, body: $b, url: "u100", createdAt: "t1"}]}}' >>"$FIX/threads"
+  write_threads
+  jq --rawfile b "$TMP/long" '.reviews = [{id: "R1", author: {login: "alice"}, state: "COMMENTED", body: $b, submittedAt: "t2", commit: {oid: "abc"}}]
+    | .comments = [{id: "C1", author: {login: "bob"}, body: $b, createdAt: "t3", url: "u3"}]' "$FIX/pr-view.json" >"$TMP/v.json"
+  mv "$TMP/v.json" "$FIX/pr-view.json"
+  run_script pr-feedback.sh
+  assert_success
+  assert_equal "$(out_of .counts)" '{"threads":1,"reviews":1,"comments":1}'
+  assert_equal "$(out_of '.feedback[0].threads[0].comments[0].body | length')" 60000
+}

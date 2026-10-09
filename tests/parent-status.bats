@@ -421,3 +421,21 @@ SH
   assert_success
   assert_equal "$(find "$TMP/tmpdir" -type f | wc -l | tr -d ' ')" 0
 }
+
+@test "親や子の本文が長くても（引数の長さの上限の 128 KiB を超えても）、親をたどって状態を出す" {
+  setup_parents
+  long_text "$TMP/long"
+  # REST の parent と sub_issues は、Issue の本文も返す
+  for f in "$FIX/parent-17.json" "$FIX/parent-10.json"; do
+    jq --rawfile b "$TMP/long" '. + {body: $b}' "$f" >"$TMP/j" && mv "$TMP/j" "$f"
+  done
+  set_children 10 "$(sub 17 open)" "$(sub 18 closed completed)"
+  set_children 5 "$(sub 10 open)"
+  jq --rawfile b "$TMP/long" 'map(. + {body: $b})' "$FIX/sub-issues-10.json" >"$TMP/j" && mv "$TMP/j" "$FIX/sub-issues-10.json"
+  run_script parent-state.sh --issue 17 --assume-closed 17
+  assert_success
+  assert_equal "$(jq -c '[.parents[] | [.number, .children.total, .all_closed]]' <<<"$output")" '[[10,2,true],[5,1,false]]'
+  run_script status-set.sh --issue 17 --to start
+  assert_success
+  assert_equal "$(moved)" "IT17,IT10,IT5,"
+}

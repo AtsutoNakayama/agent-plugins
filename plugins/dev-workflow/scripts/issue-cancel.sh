@@ -117,13 +117,14 @@ level="$(dw_sub_issues "repos/$repo_nwo/issues/$issue")"
 depth=0
 while [ "$(jq length <<<"$level")" -gt 0 ] && [ "$depth" -lt 8 ]; do
   depth=$((depth + 1))
-  open_subs="$(jq -c --argjson l "$level" '. + ($l | map(select(.state == "open")
-    | {number, title, repo: (.repository_url | sub("^.*/repos/"; ""))}))' <<<"$open_subs")"
+  # 子の一覧は本文を含んで長くなりうるので、引数ではなく標準入力で jq に渡す（引数1つの長さには上限がある。下も同じ）
+  open_subs="$(printf '%s\n' "$open_subs" "$level" | jq -sc '.[0] + (.[1] | map(select(.state == "open")
+    | {number, title, repo: (.repository_url | sub("^.*/repos/"; ""))}))')"
   next='[]'
   # 孫の数（sub_issues_summary）が応答に無ければ、孫を見落とさないよう読みにいく
   for path in $(jq -r '.[] | select((.sub_issues_summary.total // 1) > 0) | .url | sub("^.*?/repos/"; "repos/")' <<<"$level"); do
     children="$(dw_sub_issues "$path")"
-    next="$(jq -c --argjson c "$children" '. + $c' <<<"$next")"
+    next="$(printf '%s\n' "$next" "$children" | jq -sc 'add')"
   done
   level="$next"
 done
@@ -142,8 +143,8 @@ if [ "$sub_issues" = close ]; then
   for n in $(jq -r '.[].number' <<<"$open_subs"); do
     # $( ) は末尾の改行を落とすので、最後のコメントは取り出さずに jq の中で理由と比べる（親や PR と同じ）
     child="$(gh issue view "$n" --json comments)" || dw_die "子の Issue #${n} を読めませんでした"
-    with_comment="$(jq -c --argjson n "$n" --argjson child "$child" --arg r "$reason" \
-      '. + [{number: $n, commented: ($child.comments[-1].body != $r)}]' <<<"$with_comment")"
+    with_comment="$(printf '%s\n' "$with_comment" "$child" | jq -sc --argjson n "$n" --arg r "$reason" \
+      '.[0] + [{number: $n, commented: (.[1].comments[-1].body != $r)}]')"
   done
   open_subs="$(jq -c --argjson w "$with_comment" 'map(. as $s | . + ($w[] | select(.number == $s.number) | {commented}))' <<<"$open_subs")"
 fi
@@ -228,10 +229,11 @@ if [ -n "$remote" ]; then
     || dw_die "Issue #${issue} は閉じましたが、リモートのブランチ ${branch} を削除できませんでした（もう一度実行すると続きから進みます）"
 fi
 
-jq -n --argjson found "$found" --argjson dry "$dry_run" --arg reason "$reason" --arg sr "$state_reason" \
+# Issue の JSON はコメントを含んで長くなりうるので、引数ではなく標準入力で jq に渡す（引数1つの長さには上限がある）
+jq --argjson dry "$dry_run" --arg reason "$reason" --arg sr "$state_reason" \
   --arg dup "$duplicate_of" --argjson commented "$commented" --argjson closed "$closed" --argjson actions "$actions" \
   --arg branch "$branch" --arg remote "$remote" --argjson prs "$prs" \
-  --arg subs_mode "$sub_issues" --argjson subs "$open_subs" '{
+  --arg subs_mode "$sub_issues" --argjson subs "$open_subs" '. as $found | {
     issue: $found.number,
     title: $found.title,
     dry_run: $dry,
@@ -245,4 +247,4 @@ jq -n --argjson found "$found" --argjson dry "$dry_run" --arg reason "$reason" -
     remote_branch_deleted: ($remote != ""),
     sub_issues: {action: (if $subs_mode == "" then null else $subs_mode end), open: $subs},
     actions: $actions
-  }'
+  }' <<<"$found"

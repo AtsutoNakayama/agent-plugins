@@ -94,7 +94,7 @@ task-auto は `auto.enabled` が true のリポジトリでしか動きません
 - **macOS 標準の bash 3.2 で動くように書きます**。連想配列（`declare -A`）、`mapfile` / `readarray`、`${var,,}` などの bash 4 以降の機能は使いません。スクリプトの先頭には `set -euo pipefail` を書きます。
 - 日本語などの ASCII 以外の文字が変数の直後に続くときは、`"${var}」"` のように波括弧で囲みます（bash 3.2 は `"$var」"` の `」` のバイトまで変数名とみなします。CI で検査しています）。
 - **スキルから呼ぶファイルは `plugins/dev-workflow/` の中に置きます**。プラグインとしてインストールされるのはこのディレクトリだけなので、外に置いたファイルは使う人の環境にありません。スキルからは `${CLAUDE_PLUGIN_ROOT}/scripts/...` のように参照します。
-- **置き場所を求めるために、相対パスになりうる場所（`dirname` の結果など）へ cd するときは、`CDPATH='' cd ...` と書きます**。CDPATH を export した環境では、cd がパスを出力するので、置き場所が2行になって読み込みに失敗します（`tests/cdpath.bats` で検査しています）。
+- **cd は `CDPATH='' cd ...` と書きます**。CDPATH を export した環境では、相対パス（`dirname` の結果など）への cd がパスを出力するので、置き場所が2行になって読み込みに失敗します。`CDPATH=''` の無い cd は、`tests/cdpath.bats` が見つけて失敗します。検査の対象のファイルは、そのテストの `CD_PATHS` です。絶対パスだと保証した cd や、メッセージの中に cd と書いただけの行は、そのテストの許可の一覧に理由を添えて足します。
 - **shellcheck を通します**。警告を抑えるときは、理由をコメントに書きます。
 - スクリプトの出力は JSON、エラーは終了コードと1行のメッセージにします。初期設定用のスクリプト（`scripts/setup/`）は `--dry-run` に対応します（設計書 §10）。
 
@@ -145,7 +145,7 @@ macOS 以外でも、Docker の `bash:3.2` イメージで macOS 標準の bash 
 ```bash
 root=$(plugins/dev-workflow/scripts/main-root.sh | jq -r .main_root)   # 元のリポジトリ（サブモジュールや bare 配置でも求まる）
 top=$(git rev-parse --show-toplevel)                       # 今いるリポジトリまたはワークツリー
-gitdir=$(cd "$(git rev-parse --git-common-dir)" && pwd)    # git のデータ（サブモジュールでは上のリポジトリの .git/modules の中）
+gitdir=$(CDPATH='' cd "$(git rev-parse --git-common-dir)" && pwd)    # git のデータ（サブモジュールでは上のリポジトリの .git/modules の中）
 docker run --rm -v "$root:$root" -v "$top:$top" -v "$gitdir:$gitdir" -w "$top" bash:3.2 sh -c '
   apk add --no-cache jq git bats bash parallel >/dev/null &&
   git config --global --add safe.directory "*" &&

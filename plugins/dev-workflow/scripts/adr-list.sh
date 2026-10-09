@@ -82,7 +82,7 @@ if [ -d "$repo_root/$adr_dir" ]; then
   done
   if [ $# -gt 0 ]; then
     files="$(printf '%s\n' "$@")"
-    rows="$(cd "$repo_root" && awk "$DW_AWK_STRIP_CR_BOM$DW_AWK_YAML"'
+    rows="$(CDPATH='' cd "$repo_root" && awk "$DW_AWK_STRIP_CR_BOM$DW_AWK_YAML"'
       # YAML の1行の値を読む（strip・unquote は DW_AWK_YAML。merge-group-check.sh と同じ読み方）
       function clean(v) {
         sub(/^[^:]*:/, "", v)
@@ -103,13 +103,20 @@ if [ -d "$repo_root/$adr_dir" ]; then
   fi
 fi
 
-# 1行目に、Issue を読まずに決まる proposal（読む必要があれば read、--issue が無ければ -）を、2行目からに出力の JSON を出す
+# 1行目に、Issue を読まずに決まる proposal（読む必要があれば read、--issue が無ければ -）を、2行目からに出力の JSON を出す。
+# ファイルの一覧と行（rows）は ADR が多いと長くなるので、引数ではなく一時ファイルにして --rawfile で渡す（引数1つの長さには
+# 上限がある。標準入力の -R では、4096 バイトを超える1行（長い見出しなど）の BMP の外の文字が読み込みの区切りで割れることがある）
+tmp_dir="$(mktemp -d)"
+trap 'rm -rf "$tmp_dir"' EXIT
+printf '%s' "$files" >"$tmp_dir/files"
+printf '%s' "$rows" >"$tmp_dir/rows"
 # shellcheck disable=SC2016 # jq の変数を bash に展開させない
-res="$(printf '%s' "$rows" | jq -r -R -s --arg files "$files" --arg dir "$adr_dir" --argjson suggest "$suggest" --arg want "$issue" '
+res="$(jq -n -r --rawfile files "$tmp_dir/files" --rawfile row_lines "$tmp_dir/rows" \
+  --arg dir "$adr_dir" --argjson suggest "$suggest" --arg want "$issue" '
   def nz: if . == "" then null else . end;
   # issue の値は、先頭の #（引用符で囲んだ "#151" のときだけ残っている）と先頭の 0 を外して、数字だけなら番号にする
   def num: ltrimstr("#") | if test("^[0-9]+$") and test("[1-9]") then tonumber else null end;
-  (reduce (split("\n")[] | select(. != "") | split("\t")) as $r ({}; .[$r[0]] = $r)) as $rows
+  (reduce ($row_lines | split("\n")[] | select(. != "") | split("\t")) as $r ({}; .[$r[0]] = $r)) as $rows
   | [$files | split("\n")[] | select(. != "") | . as $p | ($rows[$p] // [$p])
     | {path: $p, issue: (.[1] // "" | num), status: (.[2] // "" | nz), title: (.[3] // "" | nz)}]
   # glob の並びはロケールで変わるので、文字の順に並べ直す

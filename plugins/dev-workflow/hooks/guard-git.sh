@@ -105,7 +105,7 @@ load_base_branch() {
   if [ -n "$gc_root" ]; then
     if team="$( (dw_team_base_branch "$gc_root/.claude/dev-workflow/config.json") 2>/dev/null)"; then
       # 末尾の改行を消さないよう、印（.）を付けて受けて外す（dw_base_branch と同じ）
-      base="$( (cd "$gc_root" && WORKFLOW_REPO_ROOT="$gc_root" "$BASH" "$DW_SCRIPTS_DIR/config.sh" '.base_branch | strings | . + "."') 2>/dev/null || true)"
+      base="$( (CDPATH='' cd "$gc_root" && WORKFLOW_REPO_ROOT="$gc_root" "$BASH" "$DW_SCRIPTS_DIR/config.sh" '.base_branch | strings | . + "."') 2>/dev/null || true)"
       base="${base%.}"
       dw_valid_base_branch "$base" || base="$team"
     fi
@@ -189,7 +189,7 @@ check_branch_name() {
   gc_git show-ref --verify --quiet "refs/heads/$name" && return 0
   ! gc_remote_has "$name" || return 0
   # 規約に合わないときだけ終了コード 1（設定を読めないなどは 2）
-  out="$( (cd "$gc_root" && WORKFLOW_REPO_ROOT="$gc_root" "$BASH" "$DW_SCRIPTS_DIR/branch-name.sh" --check "$name") 2>/dev/null)" \
+  out="$( (CDPATH='' cd "$gc_root" && WORKFLOW_REPO_ROOT="$gc_root" "$BASH" "$DW_SCRIPTS_DIR/branch-name.sh" --check "$name") 2>/dev/null)" \
     && return 0
   [ $? -eq 1 ] || return 0
   warnings+=("ブランチ名 ${name} は規約に合いません（$(jq -r '.reason // empty' <<<"$out" 2>/dev/null || true)）。")

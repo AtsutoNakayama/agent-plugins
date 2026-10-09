@@ -352,3 +352,28 @@ write_adr() {
   run_script adr-list.sh --issue 151
   assert_equal "$(jq -c .proposal <<<"$output")" '"pending"'
 }
+
+@test "ADR が多くても（パスの一覧が引数の長さの上限の 128 KiB を超えても）止まらない" {
+  mkdir -p docs/adr
+  (CDPATH='' cd docs/adr && for i in $(seq 1 1800); do
+    : >"$(printf '%06d-a-long-name-of-the-decision-to-make-the-list-of-paths-long.md' "$i")"
+  done)
+  printf -- '---\nissue: 151\n---\n\n# 最後\n' >docs/adr/999999-last.md
+  run_script adr-list.sh
+  assert_success
+  assert_equal "$(jq -c '[(.adrs | length), .adrs[-1].issue, .adrs[-1].title]' <<<"$output")" '[1801,151,"最後"]'
+}
+
+@test "ADR の見出しが長く絵文字を含んでも（4096 バイトを超える1行で、読み込みの区切りにまたがっても）壊さずに出す" {
+  # 標準入力の jq -R は、4096 バイトを超える1行（長い見出し）の、読み込みの区切りにまたがる BMP の外の文字（絵文字）を壊すので、使わない
+  mkdir -p docs/adr
+  emoji="$(printf '😀%.0s' $(seq 1 15))"
+  (CDPATH='' cd docs/adr && for i in 1 2 3; do : >"$(printf '%06d-%s.md' "$i" "$emoji")"; done)
+  title="$(printf 'ab😀%.0s' $(seq 1 3000))"
+  printf -- '---\nissue: 151\n---\n\n# %s\n' "$title" >docs/adr/999999-last.md
+  run_script adr-list.sh
+  assert_success
+  assert_equal "$(jq -c '[(.adrs | length), ([.. | strings | select(test("\uFFFD"))] | length)]' <<<"$output")" '[4,0]'
+  assert_equal "$(jq -r '.adrs[0].path' <<<"$output")" "docs/adr/000001-${emoji}.md"
+  assert_equal "$(jq -r '.adrs[-1].title' <<<"$output")" "$title"
+}
