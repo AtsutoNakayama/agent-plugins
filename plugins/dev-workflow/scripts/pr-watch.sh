@@ -89,8 +89,7 @@ now="${PR_WATCH_NOW:-$(date -u +%s)}"
 # 指摘とコメントは本文を含んで長くなりうるので、引数ではなく標準入力で渡す（引数1つの長さには上限がある）
 # jq の変数（$f など）を bash に展開させないため、シングルクォートで書く
 # shellcheck disable=SC2016
-printf '%s\n' "$fb" "$res" | jq -s --argjson now "$now" --argjson wait_min "$review_wait_minutes" '
-  def norm: ascii_downcase | sub("\\[bot\\]$"; "");
+printf '%s\n' "$fb" "$res" | jq -s --argjson now "$now" --argjson wait_min "$review_wait_minutes" "$DW_JQ_LOGIN_NORM"'
   .[0] as $f | .[1].data.resource as $g
   | ($f.pr) as $p
   | ($f.own_comments | map(.created_at) | max // "") as $last_own

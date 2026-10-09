@@ -107,8 +107,7 @@ done
 # PR とスレッドは本文を含んで長くなりうるので、引数ではなく標準入力で渡す（引数1つの長さには上限がある）
 # jq の変数（$h など）を bash に展開させないため、シングルクォートで書く
 # shellcheck disable=SC2016
-printf '%s\n' "$view" "$threads" | jq -s --argjson handlers "$handlers" '
-  def norm: ascii_downcase | sub("\\[bot\\]$"; "");
+printf '%s\n' "$view" "$threads" | jq -s --argjson handlers "$handlers" "$DW_JQ_LOGIN_NORM"'
   def login: (.author.login // "ghost");
   .[0] as $v | .[1] as $threads
   | ($v.author.login // "" | norm) as $me
