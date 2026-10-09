@@ -147,11 +147,10 @@ if [ -n "$parent" ]; then
   max_depth="$(dw_max_depth "$config")"
   parent_issue="$(dw_rest_issue "$repo_nwo" "$parent")"
   [ "$parent_issue" != null ] || dw_die "親にする Issue #${parent} がありません（${repo_nwo}）"
-  # 親から上へたどり、起票する Issue が何層目になるかを数える（一番上の Issue が 1 層目。起票する Issue は親の 1 つ下）。
-  # 上限を超えると分かったら（親の上に max_depth - 1 個の親があれば）、それより上はたどらない
-  ancestors="$(dw_count_parents "$parent_issue" "$((max_depth - 1))")"
-  depth="$((2 + $(jq .count <<<"$ancestors")))"
-  [ "$depth" -le "$max_depth" ] \
+  # 起票する Issue は親の 1 層下。上限を超えると分かったら、それより上はたどらない（深さの規則は dw_sub_issue_depth）
+  depth_check="$(dw_sub_issue_depth "$parent_issue" 1 "$max_depth")"
+  depth="$(jq -r '.depth // empty' <<<"$depth_check")"
+  [ "$(jq -r .exceeds <<<"$depth_check")" = false ] \
     || dw_die "#${parent} の子にすると、親子の深さが上限の ${max_depth} 層を超えます（sub_issues.max_depth）" 2
   if [ "$depth" -gt "$DW_SUB_ISSUE_DEPTH_GUIDE" ]; then
     dw_warn "#${parent} の子にすると ${depth} 層目になります（目安は ${DW_SUB_ISSUE_DEPTH_GUIDE} 層まで）"

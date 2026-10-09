@@ -8,14 +8,14 @@
 #   --levels L  候補の下に紐付ける層の数（1〜7。必須）。外した親の子だけなら 1、その子にさらに子（孫）があれば 2
 #
 # 次の3つのどれかに当てはまれば、親にせず、子を親なしで起票する（action: no_parent）。どれにも当てはまらなければ親にする（action: use_as_parent）。
-#   has_sub_issues     候補がサブ Issue を持つ（閉じた子も含む。有無だけを確かめ、数は数えない）
+#   has_sub_issues     候補がサブ Issue を持つ（閉じた子も含む。応答の sub_issues_summary.total で決め、無ければ1件だけ読む）
 #   has_parent         候補が既に親を持つ（別のリポジトリの親も含む）
 #   exceeds_max_depth  候補の下に紐付けた一番深い Issue が、設定の sub_issues.max_depth（既定 3）の層を超える
 #                      深さは issue-create.sh の検査と同じく、候補から上へ issues/{番号}/parent をたどって数える（一番上の Issue が1層目。
-#                      別のリポジトリの親もたどる）。上限を超えると分かった時点でたどるのを止める（親が1つあれば has_parent で親にしないことも決まる）
+#                      別のリポジトリの親もたどる）。上限を超えると分かった時点でたどるのを止める（規則は lib/common.sh の dw_sub_issue_depth）
 #
 # 出力: {issue, has_sub_issues, parent（一番近い親の {number, repo} か null）,
-#        depth（紐付けた一番深い Issue の層。たどるのを途中で止めたときは、上限を超えた値で、実際より浅いことがある）, max_depth,
+#        depth（紐付けた一番深い Issue の層。上限を超えると分かってたどるのを止めたときは null）, max_depth,
 #        has_parent, exceeds_max_depth, reasons（当てはまった条件の名前の配列。親にするなら []）, action（use_as_parent か no_parent）}
 # 候補が無い・PR の番号なら止まる（終了コード 1）。sub_issues.max_depth が 1・2・3 のどれでもなければ止まる（終了コード 2）。
 set -euo pipefail
@@ -58,21 +58,20 @@ candidate="$(dw_rest_issue "$repo_nwo" "$issue")"
 [ "$candidate" != null ] || dw_die "親にする候補の Issue #${issue} がありません（${repo_nwo}）"
 path="$(jq -r '.url | sub("^.*?/repos/"; "repos/")' <<<"$candidate")"
 
-# サブ Issue があるかだけを知ればよいので、1件だけ読む（全ページは読まない）
-has_subs="$(gh api "$path/sub_issues?per_page=1" | jq 'length > 0')" \
-  || dw_die "#${issue} のサブ Issue を読めませんでした"
+# サブ Issue があるか。Issue の応答の sub_issues_summary.total で決め、無いときだけ1件だけ読む（全ページは読まない。
+# issue-cancel.sh と同じ読み方）。読むときは dw_gh_find を通し、404・410 はサブ Issue なしとする
+has_subs="$(jq '.sub_issues_summary.total // null | if . == null then null else . > 0 end' <<<"$candidate")"
+if [ "$has_subs" = null ]; then
+  subs="$(dw_gh_find gh api "$path/sub_issues?per_page=1")"
+  has_subs="$(jq 'if . == null then false else length > 0 end' <<<"$subs")"
+fi
 
-# 候補から上へたどる。候補が 1 + 親の数 層目で、紐付けた一番深い Issue はその levels 層下。
-# 親の数が max_depth - levels に達すれば上限を超えるので、そこで止める。親の有無は知りたいので、少なくとも1回はたどる
-limit="$((max_depth - levels))"
-[ "$limit" -ge 1 ] || limit=1
-ancestors="$(dw_count_parents "$candidate" "$limit")"
-depth="$((1 + $(jq .count <<<"$ancestors") + levels))"
+# 候補の下に levels 層を紐付けたときの深さ（規則は dw_sub_issue_depth）。親があるかは知りたいので、少なくとも1回はたどる
+result="$(dw_sub_issue_depth "$candidate" "$levels" "$max_depth" 1)"
 
-jq -n --argjson i "$issue" --argjson subs "$has_subs" --argjson a "$ancestors" \
-  --argjson depth "$depth" --argjson max "$max_depth" '
-  {has_sub_issues: $subs, has_parent: ($a.first != null), exceeds_max_depth: ($depth > $max)} as $c
+jq -n --argjson i "$issue" --argjson subs "$has_subs" --argjson r "$result" --argjson max "$max_depth" '
+  {has_sub_issues: $subs, has_parent: ($r.first != null), exceeds_max_depth: $r.exceeds} as $c
   | ([$c | to_entries[] | select(.value) | .key]) as $reasons
-  | {issue: $i, has_sub_issues: $subs, parent: $a.first, depth: $depth, max_depth: $max,
+  | {issue: $i, has_sub_issues: $subs, parent: $r.first, depth: $r.depth, max_depth: $max,
      has_parent: $c.has_parent, exceeds_max_depth: $c.exceeds_max_depth,
      reasons: $reasons, action: (if $reasons == [] then "use_as_parent" else "no_parent" end)}'

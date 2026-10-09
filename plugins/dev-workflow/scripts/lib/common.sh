@@ -757,23 +757,39 @@ dw_rest_issue() {
   jq -c 'if . == null or .pull_request then null else . end' <<<"$out"
 }
 
-# REST の Issue の JSON から上へ issues/{番号}/parent をたどり、親を <上限> 個まで数えて、
-# {count（数えた親の数）, first（一番近い親の {number, repo}。repo は API の url から読む。親が無ければ null）} を出力する。
-# 上限まで数えたら、それより上はたどらない（親子の深さが上限を超えると分かった時点で止めるため。API の呼び出しは <上限> 回まで）。
-# 親の親は別のリポジトリにあることもあるので、応答の API の URL からパスを作り、別のリポジトリの親もたどる。
-# 使い方: dw_count_parents <Issue の JSON> <上限>
-dw_count_parents() {
-  local node="$1" limit="$2" count=0 first=null
+# 親子の深さの規則をまとめた関数。<Issue の JSON> の下に <下の層の数> の層の Issue を紐付けたとき、一番深い Issue が何層目になるか
+# （一番上の Issue が 1 層目。<Issue> は 1 + 上の親の数 層目で、一番深い Issue はその <下の層の数> 層下）と、
+# 上限 <max_depth> を超えるかを調べ、{depth（一番深い Issue の層。上限を超えると分かってたどるのを止めたときは null）,
+# exceeds（上限を超えるか）, first（一番近い親の {number, repo}。親が無いか、たどらなかったときは null）} を出力する。
+# 上へ issues/{番号}/parent をたどり、上限を超えると分かった時点で止める（API の呼び出しは max_depth - <下の層の数> 回まで）。
+# <最低の回数> を渡すと、上限に関わらず、少なくともその回数はたどる（親があるかを知りたいとき 1。既定 0）。
+# 親の親は別のリポジトリにあることもあるので、たどる API のパスは応答の url から作り、別のリポジトリの親もたどる。
+# first の repo は repository_url から作り、無ければ url から作る。
+# 使い方: dw_sub_issue_depth <Issue の JSON> <下の層の数> <max_depth> [<最低の回数>]
+dw_sub_issue_depth() {
+  local node="$1" levels="$2" max="$3" limit count=0 first=null out path
+  limit=$((max - levels))
+  [ "$limit" -ge "${4:-0}" ] || limit="${4:-0}"
+  # 関数は if の中から呼ばれると set -e が効かないので、失敗は明示して返す
+  path="$(jq -r '.url | sub("^.*?/repos/"; "repos/")' <<<"$node")" || return 1
   while [ "$count" -lt "$limit" ]; do
-    # 関数は if の中から呼ばれると set -e が効かないので、失敗は明示して返す
-    node="$(dw_gh_find gh api "repos/$(jq -r '.url | sub("^.*?/repos/"; "")' <<<"$node")/parent")" || return 1
+    node="$(dw_gh_find gh api "$path/parent")" || return 1
     [ "$node" != null ] || break
-    if [ "$first" = null ]; then
-      first="$(jq -c '{number, repo: (.url | sub("^.*?/repos/"; "") | sub("/issues/[0-9]+$"; ""))}' <<<"$node")" || return 1
-    fi
     count=$((count + 1))
+    # 1つの応答から、次にたどるパス（1行目）と、親の {number, repo}（2行目）を、jq を1回だけ起動して作る
+    out="$(jq -r '(.url | sub("^.*?/repos/"; "repos/")),
+      ({number, repo: (if .repository_url then .repository_url | sub("^.*?/repos/"; "")
+        else .url | sub("^.*?/repos/"; "") | sub("/issues/[0-9]+$"; "") end)} | tojson)' <<<"$node")" || return 1
+    path="${out%%
+*}"
+    [ "$first" != null ] || first="${out#*
+}"
   done
-  jq -nc --argjson c "$count" --argjson f "$first" '{count: $c, first: $f}'
+  # 上限の回数までたどった（その上にも親があるかもしれない）なら、一番深い Issue は 1 + count + levels 層より深く、
+  # 上限を超える（count が max - levels に達したか、<最低の回数> で levels だけで上限に届いているため）
+  jq -nc --argjson c "$count" --argjson l "$levels" --argjson m "$max" --argjson lim "$limit" --argjson f "$first" '
+    if $c >= $lim then {depth: null, exceeds: true, first: $f}
+    else (1 + $c + $l) as $d | {depth: $d, exceeds: ($d > $m), first: $f} end'
 }
 
 # 破壊的変更を表すラベル。type ラベルとは別に付け、PR のタイトルの type の後に ! を付ける（設計書 §5）。source した側で使う

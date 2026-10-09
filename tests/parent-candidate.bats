@@ -9,6 +9,7 @@ load test_helper
 # gh api repos/me/demo/issues/<番号> は $FIX/issue-<番号>.json を返し（無ければ 404）、「GetIssue <番号>」を記録する。
 # gh api repos/<所有者>/<名前>/issues/<番号>/parent は $FIX/parent-<番号>.json を返し（無ければ 404）、「GetParent <番号>」を記録する。
 # gh api repos/.../issues/<番号>/sub_issues?per_page=1 は $FIX/sub-issues-<番号>.json（無ければ []）の先頭の1件を返し、「GetSubIssues <引数>」を記録する。
+#   $FIX/sub-issues-<番号>.404 があれば、HTTP 404 で失敗する。
 # gh repo view は $FAKE_REPO（既定 me/demo）を返し、gh api repos/<FAKE_REPO>/issues/<番号> の <番号> を読む。
 # それ以外の gh api は「Other <引数>」を記録して失敗する（書き込みをしないことを確かめる）。
 # FAKE_FAIL に指定した操作名は、FAKE_FAIL_MSG（既定: gh: failed）を出して失敗する。
@@ -34,6 +35,7 @@ case "$1 $2" in
     path="${2%%\?*}"
     n="${path%/sub_issues}"
     n="${n##*/}"
+    [ ! -f "$FIX/sub-issues-$n.404" ] || { echo 'gh: Not Found (HTTP 404)' >&2; exit 1; }
     if [ -f "$FIX/sub-issues-$n.json" ]; then jq -c '.[:1]' "$FIX/sub-issues-$n.json"; else echo '[]'; fi
     ;;
   "api repos/"*/issues/*/parent)
@@ -118,33 +120,41 @@ max_depth() { echo "{\"sub_issues\": {\"max_depth\": $1}}" >.claude/dev-workflow
   set_parent 5 2 other/repo
   run_script parent-candidate.sh --issue 12 --levels 1
   assert_success
-  # 候補（3 層目）の子は 4 層目。上限 3 の手前の 2 個の親を数えたところで止める
+  # 候補の上に親が 2 個あれば、上限 3 を超えると分かるので、そこで止めて depth は null にする
   assert_equal "$(jq -c '[.depth, .max_depth, .exceeds_max_depth, .parent, .action]' <<<"$output")" \
-    '[4,3,true,{"number":5,"repo":"me/demo"},"no_parent"]'
+    '[null,3,true,{"number":5,"repo":"me/demo"},"no_parent"]'
   assert_equal "$(jq -c .reasons <<<"$output")" '["has_parent","exceeds_max_depth"]'
   assert_equal "$(grep '^GetParent ' "$CALLS" | tr '\n' ,)" "GetParent 12,GetParent 5,"
+  # 親の親が無ければ、深さは最後まで数えた値
+  rm "$FIX/parent-5.json"
+  max_depth 3
+  run_script parent-candidate.sh --issue 12 --levels 1
+  assert_success
+  assert_equal "$(jq -c '[.depth, .exceeds_max_depth]' <<<"$output")" '[3,false]'
 }
 
-@test "上限を超えると分かったら、それより上の親はたどらない" {
+@test "上限を超えると分かったら、それより上の親はたどらず、depth は null にする" {
   setup_fake_gh
   set_parent 12 5
   set_parent 5 2
   set_parent 2 1
-  # 上限 3・子だけ：候補の上に親が 2 個あれば超えるので、2 回で止める。depth は上限を超えた値（実際の 5 ではなく 4）
+  # 上限 3・子だけ：候補の上に親が 2 個あれば超えるので、2 回で止める
   run_script parent-candidate.sh --issue 12 --levels 1
   assert_success
-  assert_equal "$(jq -c '[.depth, .exceeds_max_depth, .action]' <<<"$output")" '[4,true,"no_parent"]'
+  assert_equal "$(jq -c '[.depth, .exceeds_max_depth, .action]' <<<"$output")" '[null,true,"no_parent"]'
   assert_equal "$(grep -c '^GetParent ' "$CALLS")" 2
   # 孫まで紐付けるなら、親が 1 個で超えるので 1 回で止める
   : >"$CALLS"
   run_script parent-candidate.sh --issue 12 --levels 2
-  assert_equal "$(jq -c '[.depth, .exceeds_max_depth, .parent.number]' <<<"$output")" '[4,true,5]'
+  assert_success
+  assert_equal "$(jq -c '[.depth, .exceeds_max_depth, .parent.number]' <<<"$output")" '[null,true,5]'
   assert_equal "$(grep -c '^GetParent ' "$CALLS")" 1
   # 紐付ける層だけで上限に届いていても、親の有無を知るために 1 回はたどる
   : >"$CALLS"
   max_depth 1
   run_script parent-candidate.sh --issue 12 --levels 3
-  assert_equal "$(jq -c '[.depth, .has_parent, .exceeds_max_depth]' <<<"$output")" '[5,true,true]'
+  assert_success
+  assert_equal "$(jq -c '[.depth, .has_parent, .exceeds_max_depth]' <<<"$output")" '[null,true,true]'
   assert_equal "$(grep -c '^GetParent ' "$CALLS")" 1
 }
 
@@ -177,15 +187,46 @@ max_depth() { echo "{\"sub_issues\": {\"max_depth\": $1}}" >.claude/dev-workflow
   assert_equal "$(jq -c '[.has_sub_issues, .action, has("sub_issues")]' <<<"$output")" '[true,"no_parent",false]'
 }
 
+@test "サブ Issue の有無は、Issue の応答の sub_issues_summary.total があればそれで決め、サブ Issue を読まない" {
+  setup_fake_gh
+  # 応答の数と、読んだときの結果を食い違わせて、どちらで決めたかを見分ける
+  set_children 12 20
+  for total in 0 2; do
+    jq --argjson t "$total" '. + {sub_issues_summary: {total: $t, completed: 0, percent_completed: 0}}' "$FIX/issue-12.json" >"$FIX/i" \
+      && mv "$FIX/i" "$FIX/issue-12.json"
+    : >"$CALLS"
+    run_script parent-candidate.sh --issue 12 --levels 1
+    assert_success
+    assert_equal "$(jq .has_sub_issues <<<"$output")" "$([ "$total" = 0 ] && echo false || echo true)"
+    assert_equal "$(grep -c '^GetSubIssues ' "$CALLS" || true)" 0
+  done
+}
+
+@test "sub_issues_summary が無いときは1件だけ読み、404 ならサブ Issue なしとする" {
+  setup_fake_gh
+  set_children 12 20
+  run_script parent-candidate.sh --issue 12 --levels 1
+  assert_success
+  assert_equal "$(jq .has_sub_issues <<<"$output")" true
+  assert_equal "$(grep -c '^GetSubIssues ' "$CALLS")" 1
+  touch "$FIX/sub-issues-12.404"
+  run_script parent-candidate.sh --issue 12 --levels 1
+  assert_success
+  assert_equal "$(jq -c '[.has_sub_issues, .action]' <<<"$output")" '[false,"use_as_parent"]'
+}
+
 @test "sub_issues.max_depth に合わせて判定する（上限 2 なら孫まで紐付けると超え、上限 1 なら子も紐付けられない）" {
   setup_fake_gh
   max_depth 2
   run_script parent-candidate.sh --issue 12 --levels 1
+  assert_success
   assert_equal "$(jq -c '[.depth, .max_depth, .action]' <<<"$output")" '[2,2,"use_as_parent"]'
   run_script parent-candidate.sh --issue 12 --levels 2
+  assert_success
   assert_equal "$(jq -c '[.depth, .max_depth, .action]' <<<"$output")" '[3,2,"no_parent"]'
   max_depth 1
   run_script parent-candidate.sh --issue 12 --levels 1
+  assert_success
   assert_equal "$(jq -c '[.depth, .max_depth, .reasons]' <<<"$output")" '[2,1,["exceeds_max_depth"]]'
 }
 
@@ -214,7 +255,7 @@ max_depth() { echo "{\"sub_issues\": {\"max_depth\": $1}}" >.claude/dev-workflow
   setup_fake_gh
   FAKE_FAIL=GetSubIssues run_script parent-candidate.sh --issue 12 --levels 1
   assert_failure
-  assert_output --partial "#12 のサブ Issue を読めませんでした"
+  assert_output --partial "GitHub の API に失敗しました: gh: failed"
   FAKE_FAIL=GetParent FAKE_FAIL_MSG='gh: Server Error (HTTP 500)' run_script parent-candidate.sh --issue 12 --levels 1
   assert_failure
   assert_output --partial "GitHub の API に失敗しました"
