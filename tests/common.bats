@@ -388,3 +388,22 @@ run_common() {
   assert_success
   assert_output ok
 }
+
+@test "dw_json_enum_ok は、null か一覧のどれかの文字列なら 0、それ以外（読めない JSON を含む）は 0 以外を返す" {
+  list='["low", "high"]'
+  for v in null '"low"' '"high"'; do
+    run_common dw_json_enum_ok "$list" "$v"
+    assert_success
+  done
+  for v in '"Low"' '"medium"' '""' 1 true '["low"]' '{"v": "low"}' 'low' ''; do
+    run_common dw_json_enum_ok "$list" "$v"
+    assert_failure
+    assert_output ""
+  done
+}
+
+@test "dw_json_enum_names は、一覧を「・」でつないで出す" {
+  run_common dw_json_enum_names '["low", "medium", "high"]'
+  assert_success
+  assert_output "low・medium・high"
+}

@@ -911,6 +911,19 @@ dw_adr_dir() {
   printf '%s\n' "$d"
 }
 
+# 値が null か、一覧（JSON の文字列の配列）のどれかの文字列かを確かめる。どちらも JSON で渡す（例: '["a", "b"]' "a"）。
+# 当たらなければ 0 以外を返す（読めない JSON も誤りとする）
+# 使い方: dw_json_enum_ok <一覧の JSON> <値の JSON>
+dw_json_enum_ok() {
+  jq -e --argjson v "$2" '$v == null or (($v | type) == "string" and index($v) != null)' <<<"$1" >/dev/null 2>&1
+}
+
+# 一覧（JSON の文字列の配列）を「a・b・c」の形で出力する（エラーのメッセージ用）
+# 使い方: dw_json_enum_names <一覧の JSON>
+dw_json_enum_names() {
+  jq -r 'join("・")' <<<"$1"
+}
+
 # レビューのサブエージェントに指定できるモデル（設定の review.model。Agent ツールの model が受け付ける別名）。
 # 設定が null ならサブエージェントはセッションと同じモデルで動く（設計書 §7）。source した側で使う
 # shellcheck disable=SC2034
@@ -918,14 +931,10 @@ DW_REVIEW_MODELS='["opus", "sonnet", "haiku", "fable"]'
 
 # review.model に書ける値（null か DW_REVIEW_MODELS のどれか）かを確かめる。値は JSON で渡す（例: "opus"・null）
 # 使い方: dw_review_model_ok <値の JSON>
-dw_review_model_ok() {
-  jq -e --argjson v "$1" '$v == null or (($v | type) == "string" and index($v) != null)' <<<"$DW_REVIEW_MODELS" >/dev/null 2>&1
-}
+dw_review_model_ok() { dw_json_enum_ok "$DW_REVIEW_MODELS" "$1"; }
 
 # 使えるモデルの一覧を「opus・sonnet・haiku・fable」の形で出力する（エラーのメッセージ用）
-dw_review_model_names() {
-  jq -r 'join("・")' <<<"$DW_REVIEW_MODELS"
-}
+dw_review_model_names() { dw_json_enum_names "$DW_REVIEW_MODELS"; }
 
 # review スキルが組み込みの /code-review に渡せる effort の段階（設定の review.code_review_effort）。
 # 設定が null なら段階を渡さず、/code-review が最後に打った段階かセッションの effort を使う（設計書 §7）。source した側で使う
@@ -934,14 +943,10 @@ DW_CODE_REVIEW_EFFORTS='["low", "medium", "high", "xhigh", "max"]'
 
 # review.code_review_effort に書ける値（null か DW_CODE_REVIEW_EFFORTS のどれか）かを確かめる。値は JSON で渡す（例: "low"・null）
 # 使い方: dw_code_review_effort_ok <値の JSON>
-dw_code_review_effort_ok() {
-  jq -e --argjson v "$1" '$v == null or (($v | type) == "string" and index($v) != null)' <<<"$DW_CODE_REVIEW_EFFORTS" >/dev/null 2>&1
-}
+dw_code_review_effort_ok() { dw_json_enum_ok "$DW_CODE_REVIEW_EFFORTS" "$1"; }
 
 # 使える段階の一覧を「low・medium・high・xhigh・max」の形で出力する（エラーのメッセージ用）
-dw_code_review_effort_names() {
-  jq -r 'join("・")' <<<"$DW_CODE_REVIEW_EFFORTS"
-}
+dw_code_review_effort_names() { dw_json_enum_names "$DW_CODE_REVIEW_EFFORTS"; }
 
 # リポジトリの個人の上書き（config.local.json）のパスを出力する。今のワークツリーに無ければ、メインのワークツリーのもの。
 # config.sh が読む場所と、setup-models.sh が書く場所を、ここで1つに決める
