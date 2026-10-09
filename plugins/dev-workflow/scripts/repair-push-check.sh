@@ -10,7 +10,7 @@
 #
 # 出力（JSON）: {ok, forbidden（止める理由になるパス）, compared_with（差を取った相手）}
 #
-# 止まるとき: 引数の誤り（終了コード 64）、origin/B が無い（2）
+# 止まるとき: 引数の誤り・detached HEAD で --branch が無い（終了コード 64）、origin/B が無い（2）
 set -euo pipefail
 
 # shellcheck source=lib/common.sh
@@ -33,7 +33,11 @@ while [ $# -gt 0 ]; do
   esac
 done
 [ -n "$base" ] || dw_die "--base-branch は必須です" 64
-[ -n "$branch" ] || branch="$(git rev-parse --abbrev-ref HEAD)"
+if [ -z "$branch" ]; then
+  branch="$(git rev-parse --abbrev-ref HEAD)"
+  # detached HEAD では push するブランチが決まらない
+  [ "$branch" != HEAD ] || dw_die "detached HEAD です。--branch で push するブランチを指定してください" 64
+fi
 
 git rev-parse --verify --quiet "refs/remotes/origin/${base}" >/dev/null \
   || dw_die "origin/${base} がありません（git fetch origin ${base} を先に実行してください）" 2
@@ -52,10 +56,10 @@ while IFS= read -r -d '' path; do
     *) continue ;;
   esac
   # 取り込んだ base_branch と同じ内容なら、このブランチの変更ではない
-  if git diff --quiet "origin/${base}" HEAD -- "$path"; then
+  if git --literal-pathspecs diff --quiet --no-renames "origin/${base}" HEAD -- "$path"; then
     continue
   fi
   forbidden="$(jq -c --arg p "$path" '. + [$p]' <<<"$forbidden")"
-done < <(git diff --name-only -z "$against" HEAD)
+done < <(git diff --name-only --no-renames -z "$against" HEAD)
 
 jq -n --argjson f "$forbidden" --arg c "$against" '{ok: ($f | length == 0), forbidden: $f, compared_with: $c}'

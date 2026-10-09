@@ -72,3 +72,71 @@ commit_file() { mkdir -p "$(dirname "$1")" && echo "$2" >"$1" && git add "$1" &&
   run_script repair-push-check.sh
   assert_failure 64
 }
+
+@test "禁止パスから名前を変えて出したときも、元のパスを返す（名前の変更で漏れない）" {
+  git mv .github/workflows/ci.yml src/ci.yml
+  git commit -q -m rename
+  run_script repair-push-check.sh --base-branch main
+  assert_success
+  assert_equal "$(jq -c '[.ok, (.forbidden | sort)]' <<<"$output")" '[false,[".github/workflows/ci.yml"]]'
+}
+
+@test "パスの [ を glob にしない（main と同じ内容のパスを、別のパスの変更で禁止にしない）" {
+  git push -q origin feat/1-x
+  git checkout -q main
+  commit_file '.claude/[a].txt' same
+  git push -q origin main
+  git checkout -q feat/1-x
+  git fetch -q origin
+  git merge -q --no-edit origin/main
+  commit_file '.claude/a.txt' changed
+  run_script repair-push-check.sh --base-branch main
+  assert_success
+  assert_equal "$(jq -c '[.ok, .forbidden]' <<<"$output")" '[false,[".claude/a.txt"]]'
+}
+
+@test "detached HEAD で --branch が無いと止まる。--branch があれば進む" {
+  commit_file src/b.txt b
+  git checkout -q --detach
+  run_script repair-push-check.sh --base-branch main
+  assert_failure 64
+  run_script repair-push-check.sh --base-branch main --branch feat/1-x
+  assert_success
+  assert_equal "$(jq -r .compared_with <<<"$output")" origin/main
+}
+
+@test "--branch X：origin/X があれば origin/X、無ければ origin/<base> との差を見る" {
+  commit_file src/b.txt b
+  git push -q origin feat/1-x
+  git fetch -q origin
+  run_script repair-push-check.sh --base-branch main --branch feat/1-x
+  assert_success
+  assert_equal "$(jq -r .compared_with <<<"$output")" origin/feat/1-x
+  run_script repair-push-check.sh --base-branch main --branch feat/none
+  assert_success
+  assert_equal "$(jq -r .compared_with <<<"$output")" origin/main
+}
+
+@test "値の無い --base-branch・--branch と、不明な引数は 64 で止まる" {
+  run_script repair-push-check.sh --base-branch
+  assert_failure 64
+  run_script repair-push-check.sh --base-branch main --branch
+  assert_failure 64
+  run_script repair-push-check.sh --base-branch main --nope
+  assert_failure 64
+}
+
+@test "workflows と .claude を同時に変えると forbidden は 2 件" {
+  commit_file .github/workflows/ci.yml changed
+  commit_file .claude/dev-workflow/x.json '{}'
+  run_script repair-push-check.sh --base-branch main
+  assert_success
+  assert_equal "$(jq -c '[.ok, (.forbidden | sort)]' <<<"$output")" '[false,[".claude/dev-workflow/x.json",".github/workflows/ci.yml"]]'
+}
+
+@test ".github/scripts/ だけの変更は ok（禁止は workflows と .claude だけ）" {
+  commit_file .github/scripts/x.sh '#!/bin/sh'
+  run_script repair-push-check.sh --base-branch main
+  assert_success
+  assert_equal "$(jq -c '[.ok, .forbidden]' <<<"$output")" '[true,[]]'
+}
