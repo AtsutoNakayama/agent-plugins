@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# 今のブランチ（作業用のブランチ）が、マージ先のブランチ（base_branch）より遅れているかを調べる。
+# 今のブランチ（作業用のブランチ）が、マージ先のブランチより遅れているかを調べる。マージ先は、開いた PR があれば
+# その PR のマージ先、無ければ設定の base_branch にする。
 # 何も変更しない（fetch だけ行う）。取り込む作業は今のブランチに対して行うので、調べるのも今のブランチだけにする。
 #
 # 使い方: branch-status.sh [--merged-from <sha>] [--pulled-from <sha>]
@@ -12,7 +13,7 @@
 #   ないか、上の祖先の順になっていなければ、終了コード 64 で止まる
 #
 # 出力（JSON）:
-#   branch, base          今のブランチと、取り込み先（base_branch）
+#   branch, base          今のブランチと、取り込み先（開いた PR があればその PR のマージ先、無ければ設定の base_branch）
 #   behind                origin/<base> にあって、ブランチに無いコミットの数
 #   ahead                 ブランチにあって、origin/<base> に無いコミットの数
 #   up_to_date            behind が 0 か（取り込むものが無いか）
@@ -81,6 +82,17 @@ base="$(dw_base_branch "$config")"
 branch="$(git -C "$repo_root" symbolic-ref --short -q HEAD || true)"
 [ -n "$branch" ] || dw_die "ブランチの上にいません。取り込む作業用のブランチに切り替えてください" 64
 [ "$branch" != "$base" ] || dw_die "${base} には取り込めません。作業用のブランチで実行してください" 64
+
+# --head はブランチ名だけで探すので、fork の同じ名前のブランチからの PR を除く
+pr=null pr_base=""
+if command -v gh >/dev/null 2>&1 \
+  && prs="$(gh pr list --head "$branch" --state open --json number,url,mergeStateStatus,isCrossRepository,baseRefName 2>/dev/null)"; then
+  pr="$(jq -c 'map(select(.isCrossRepository | not)) | first // null | if . then {number, url, merge_state: .mergeStateStatus} else null end' <<<"$prs")"
+  pr_base="$(jq -r 'map(select(.isCrossRepository | not)) | first // null | .baseRefName // ""' <<<"$prs")"
+fi
+# 取り込み先は、開いた PR があればその PR のマージ先にする（設定の base_branch と違うことがある。例：release/v1 に向いた PR）。
+# PR が無いか、gh がマージ先を返さないときは、設定の base_branch を使う
+[ -z "$pr_base" ] || base="$pr_base"
 
 git -C "$repo_root" fetch -q origin -- "$base" || dw_die "origin/${base} を取得できませんでした"
 ref="refs/remotes/origin/$base"
@@ -179,13 +191,6 @@ push_commits="$(printf '%s\n' "$commits" "$reach_m" "$reach_p" \
      main: (if $grouped then $c | pick($rm[.full] | not) else null end),
      pull: (if ($grouped | not) then null elif $p == "" then [] else $c | pick($rm[.full] and ($rp[.full] | not)) end),
      own: (if ($grouped | not) then null elif $p == "" then $c | pick($rm[.full]) else $c | pick($rp[.full]) end)}')"
-
-# --head はブランチ名だけで探すので、fork の同じ名前のブランチからの PR を除く
-pr=null
-if command -v gh >/dev/null 2>&1 \
-  && prs="$(gh pr list --head "$branch" --state open --json number,url,mergeStateStatus,isCrossRepository 2>/dev/null)"; then
-  pr="$(jq -c 'map(select(.isCrossRepository | not)) | first // null | if . then {number, url, merge_state: .mergeStateStatus} else null end' <<<"$prs")"
-fi
 
 # マージキューの状態は gh pr list にも REST にも無いので GraphQL で読む（設計書 §10）。PR の URL から引くので、
 # リポジトリの所有者と名前を別に調べなくてよい。取得できなければ merge_queue は null にする。

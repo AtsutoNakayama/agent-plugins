@@ -84,7 +84,42 @@ run_status() {
   run_status
   assert_success
   assert_equal "$(jq -r '.pr | [.number, .merge_state] | map(tostring) | join(" ")' <<<"$output")" "5 BEHIND"
-  assert_equal "$(args pr-list)" "--head feat/17-x --state open --json number,url,mergeStateStatus,isCrossRepository"
+  assert_equal "$(args pr-list)" "--head feat/17-x --state open --json number,url,mergeStateStatus,isCrossRepository,baseRefName"
+}
+
+@test "PR のマージ先が設定の base_branch と違えば、PR のマージ先に対する遅れと衝突を出す（#284）" {
+  setup_branch
+  # origin に release/v1 を作り、1つ進める。main は2つ進める
+  other_clone
+  git -C "$TMP/other" switch -q -c release/v1
+  echo r >"$TMP/other/release.txt"
+  git -C "$TMP/other" add release.txt
+  git -C "$TMP/other" commit -q -m "release 1"
+  git -C "$TMP/other" push -q origin release/v1
+  git -C "$TMP/other" switch -q main
+  advance_main 2
+  echo '[{"number": 5, "url": "u", "mergeStateStatus": "BEHIND", "isCrossRepository": false, "baseRefName": "release/v1"}]' >"$FIX/pr-list.json"
+  run_status
+  assert_success
+  assert_equal "$(jq -r '[.base, .behind, .ahead, .conflicts, .plan.action] | map(tostring) | join(" ")' <<<"$output")" "release/v1 1 1 false merge"
+}
+
+@test "PR がマージ先を返さなければ、設定の base_branch を取り込み先にする" {
+  setup_branch
+  advance_main 2
+  echo '[{"number": 5, "url": "u", "mergeStateStatus": "BEHIND", "isCrossRepository": false, "baseRefName": ""}]' >"$FIX/pr-list.json"
+  run_status
+  assert_success
+  assert_equal "$(jq -r '[.base, .behind] | map(tostring) | join(" ")' <<<"$output")" "main 2"
+}
+
+@test "fork の PR のマージ先は使わない" {
+  setup_branch
+  advance_main 1
+  echo '[{"number": 9, "url": "u", "mergeStateStatus": "CLEAN", "isCrossRepository": true, "baseRefName": "release/v1"}]' >"$FIX/pr-list.json"
+  run_status
+  assert_success
+  assert_equal "$(jq -r '[.base, .behind, .pr] | map(tostring) | join(" ")' <<<"$output")" "main 1 null"
 }
 
 @test "fork の同じ名前のブランチからの PR は除く" {

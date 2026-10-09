@@ -301,6 +301,13 @@ has() {
 }
 
 # shellcheck disable=SC2016 # バッククォートはスキルの本文の文字で、展開させない
+@test "branch-update は、設定の base_branch ではなく、branch-status.sh の取り込み先（開いた PR があればそのマージ先）を取り込む（#284）" {
+  f="$SKILLS/branch-update/SKILL.md"
+  has "branch-update の冒頭" "$(sed -n '/^# /,/^## /p' "$f")" '開いた PR があればその PR のマージ先'
+  ! grep -qF 'origin/<base_branch>' "$f" || fail "branch-update に、設定の base_branch を取り込む手順（origin/<base_branch>）が残っています"
+  has "手順2" "$(step "$f" 2)" '`git merge --no-edit origin/<base>`'
+}
+
 @test "branch-update は、衝突を直すどの場面でも、両立できると判断した衝突も含めて、直す前に直し方の方針の確認を取る（設計書 §8・ADR 000237）" {
   # 両立できると判断した衝突を確かめずに直し、push の前の確認の時点で直したコミットが既にできていた（#237）
   # 文の言い回しに縛られないよう、箇条（見出しの語や選択肢の名前）で場所を決め、その中の要の語だけを確かめる
@@ -312,7 +319,7 @@ has() {
   has "手順2" "$(step "$f" 2)" '「衝突の直し方の確認」'
   has "手順3" "$(step "$f" 3)" '「衝突の直し方の確認」' '「直し方を変えるとき」'
   # 場面：pull・merge・手順3（push として進めたときの前の取り込みの分も）
-  has "節の場面" "$conf" 'git pull --no-rebase' '`origin/<base_branch>`' '`push` として進めた'
+  has "節の場面" "$conf" 'git pull --no-rebase' '`origin/<base>`' '`push` として進めた'
   # 箇条ごとの要の語
   bullet() { grep -e "^- \*\*$1\*\*" <<<"$conf"; }
   option() { grep -e "^ *- 「$1」：" <<<"$conf"; }
@@ -363,7 +370,7 @@ has() {
   # 次にすることは repair-next.sh が決め、SKILL.md には action ごとにすることだけを書く
   nx="$(sed -n '/^### 次にすることの決め方/,/^### 衝突の直し方/p' <<<"$un")"
   has "次にすることの決め方" "$nx" 'repair-next.sh' '`plan.fallback` は使わない' 'キューから外れたとき' '`confirm`・`infer`' '`unconfirmed`' \
-    '"dirty":<branch-status.sh の dirty>' '`push_check_ok` は null に戻す' '`push_check_ok` を null に戻す' 'repair-push-check.sh --base-branch <base_branch>' '通常の `git push origin' '値を組み合わせて決め直さない'
+    '"dirty":<branch-status.sh の dirty>' '`push_check_ok` は null に戻す' '`push_check_ok` を null に戻す' 'repair-push-check.sh --base-branch <base>' '通常の `git push origin' '値を組み合わせて決め直さない'
   for a in finish recheck pull merge checks fix push_check push stop; do
     grep -qF "| \`$a\` |" <<<"$nx" || fail "repair-next.sh の action「$a」のすることが表にありません"
   done

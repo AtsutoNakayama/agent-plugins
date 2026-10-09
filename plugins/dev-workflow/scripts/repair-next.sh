@@ -17,7 +17,7 @@
 #   push_check_ok verify のとき。repair-push-check.sh の ok（まだ実行していないなら null）
 #
 # 出力（JSON）: {action, reason}
-#   action  merge（origin/<base_branch> を merge する）・pull（git pull --no-rebase で origin のブランチを取り込む）・
+#   action  merge（origin/<base>（branch-status.sh の出力の取り込み先）を merge する）・pull（git pull --no-rebase で origin のブランチを取り込む）・
 #           checks（テストとチェックを実行する）・fix（失敗を直す）・push_check（repair-push-check.sh を実行する）・
 #           push（push する）・finish（取り込まずに、何も書き込まずに終える）・recheck（数秒待って branch-status.sh を実行し直す）・
 #           stop（止まる。Issue にコメントして保留の列に移す）

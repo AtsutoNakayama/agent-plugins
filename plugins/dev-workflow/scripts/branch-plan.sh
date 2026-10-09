@@ -8,7 +8,7 @@
 # 出力（JSON）:
 #   action    次にすること。merge（取り込む）・push（手元で取り込み済みの分を push する）・none（取り込まない）・
 #             recheck（GitHub がまだ衝突を調べていて、手元でも確かめられない。待って調べ直す）・
-#             ask_base（GitHub は遅れや衝突があると言うが、手元では base_branch を取り込み済み。マージ先を聞く）
+#             ask_base（GitHub は遅れや衝突があると言うが、手元では取り込み先（base）を取り込み済み。マージ先を聞く）
 #   reason    理由。behind（遅れている）・conflict（main と衝突する）・merged_not_pushed（手元では取り込み済みで、
 #             まだ push していない）・no_conflict（main と衝突しない）・up_to_date（遅れていない）・
 #             merge_state_unknown（衝突するか分からない）・base_mismatch（GitHub と手元で判断が食い違う）
