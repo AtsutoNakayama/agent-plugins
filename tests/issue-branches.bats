@@ -135,6 +135,16 @@ names() { jq -c --arg k "${1:-branches}" '[.[$k][] | [.name, .local, .remote]]' 
   assert_equal "$(jq -c '[.merged_prs[] | [.number, .branch]]' <<<"$json")" '[[6,"b"],[12,"h"]]'
 }
 
+@test "PR のリポジトリの綴りが今のリポジトリと大文字小文字だけ違っても、同じリポジトリの PR として扱う" {
+  git branch fix-foo
+  link_prs 5:OPEN:fix-foo:Me/Demo 6:MERGED:old-work:ME/DEMO 7:OPEN:patch-1:Other/Lib
+  run_branches --issue 17
+  assert_success
+  assert_equal "$(jq -c '[.open_prs[] | [.number, .cross]]' <<<"$json")" '[[5,false],[7,true]]'
+  assert_equal "$(jq -c '[.merged_prs[] | [.number, .branch]]' <<<"$json")" '[[6,"old-work"]]'
+  assert_equal "$(jq -c '[.candidates[] | [.name, .pr]]' <<<"$json")" '[["fix-foo",5]]'
+}
+
 @test "Closes #17, #18 の PR のブランチ（別の Issue の作業）を、#17 の確かなブランチにしない" {
   git worktree add -q -b feat/18-x "$TMP/wt18"
   link_prs 5:OPEN:feat/18-x
