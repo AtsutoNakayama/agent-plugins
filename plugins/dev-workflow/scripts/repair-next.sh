@@ -33,14 +33,15 @@
 #     7. plan.action が push                          → checks（手元で取り込み済み。取り込みは飛ばす）
 #     8. 上のどれでもない（plan.action が未知の値）  → stop（unknown_plan）
 #   step が verify
-#     1. unpulled が 1 以上                           → pull（pull の後は、手順3から進め直す）
+#     1. dirty が true                                → stop（dirty。未コミットの変更の木に pull せず、push にも含めない）
+#     1b. unpulled が 1 以上                          → pull（pull の後は、手順3から進め直す）
 #     2. checks が unconfirmed                        → stop（checks_unconfirmed）
 #     3. checks が pending                            → checks
 #     4. checks が fail で fix_attempts が上限未満    → fix、上限以上 → stop（same_failure）
-#     5. checks が pass で dirty が true              → stop（dirty。未コミットの変更を push に含めない）
-#     6. checks が pass で push_check_ok が null      → push_check
-#     7. checks が pass で push_check_ok が false     → stop（forbidden_paths）
-#     8. checks が pass で push_check_ok が true      → push
+#     5. checks が pass で push_check_ok が null      → push_check
+#     6. checks が pass で push_check_ok が false     → stop（forbidden_paths）
+#     7. checks が pass で push_check_ok が true      → push
+#   pull・fix の後は、push_check_ok を null に戻す（コミットや取り込みで、確かめた内容が変わるため）
 #   入力の型が違うとき（数値でない rechecks・fix_attempts・max_fix_attempts・unpulled、真偽値でない dirty・push_check_ok）は、
 #   終了コード 64 で止まる（null と省略は、既定の値）
 set -euo pipefail
@@ -91,12 +92,12 @@ jq -c '
         elif $plan.action == "merge" then r("merge"; $plan.reason)
         elif $plan.action == "push" then r("checks"; $plan.reason)
         else r("stop"; "unknown_plan") end
+    elif .status.dirty == true then r("stop"; "dirty")
     elif $unpulled >= 1 then r("pull"; "unpulled")
     elif .checks == "unconfirmed" then r("stop"; "checks_unconfirmed")
     elif .checks == "pending" then r("checks"; "not_run")
     elif .checks == "fail" then
       (if (.fix_attempts // 0) < (.max_fix_attempts // 3) then r("fix"; "checks_failed") else r("stop"; "same_failure") end)
-    elif .status.dirty == true then r("stop"; "dirty")
     elif .push_check_ok == null then r("push_check"; "not_checked")
     elif .push_check_ok == false then r("stop"; "forbidden_paths")
     else r("push"; "ready") end' <<<"$input"

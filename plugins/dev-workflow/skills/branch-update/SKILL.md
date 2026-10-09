@@ -161,7 +161,7 @@ PR の見回り（`pr-watch.sh` が `conflict` を返した PR）を無人で直
 次にすることは、`${CLAUDE_PLUGIN_ROOT}/scripts/repair-next.sh` が、値だけから判断の表で決める（組み合わせはテストで確かめてある）。ここで値を組み合わせて決め直さない。入力は標準入力の JSON で、`--help` に入力と表がある。
 
 - 取り込む前：`{"step":"start","status":<branch-status.sh の出力>,"rechecks":<recheck を返された回数>}`
-- 取り込んだ後（テストとチェックを通して push するまで）：`{"step":"verify","status":{"unpulled":<branch-status.sh の unpulled>},"checks":<pending・pass・fail・unconfirmed>,"fix_attempts":<回数>,"max_fix_attempts":<上限。既定 3>,"push_check_ok":<repair-push-check.sh の ok。まだなら null>}`
+- 取り込んだ後（テストとチェックを通して push するまで）：`{"step":"verify","status":{"unpulled":<branch-status.sh の unpulled>,"dirty":<branch-status.sh の dirty>},"checks":<pending・pass・fail・unconfirmed>,"fix_attempts":<回数>,"max_fix_attempts":<上限。既定 3>,"push_check_ok":<repair-push-check.sh の ok。まだなら null>}`
 
 `checks` は、`checks-commands.sh` の `action` が `run`・`none` のとき、実行して通れば `pass`、失敗すれば `fail`、まだ実行していなければ `pending`。`confirm`・`infer` のときは `unconfirmed`（PR の作者が書き換えた任意のコマンドや、推測したコマンドを、無人では実行しない）。
 
@@ -171,10 +171,10 @@ PR の見回り（`pr-watch.sh` が `conflict` を返した PR）を無人で直
 | --- | --- |
 | `finish` | 取り込まずに、何も書き込まずに終える。`reason`（`plan.reason`）と `plan.queue` を結果として返す。`plan.fallback` は使わない（最新の main を求めたユーザーがいないため）。マージキューを使うリポジトリでは、main と衝突していないとき・キューの中で衝突したとき・キューから外れたときがここに当たる |
 | `recheck` | 数秒待って `branch-status.sh` を実行し直し、`rechecks` を 1 増やして、`start` からやり直す |
-| `pull` | `git pull --no-rebase` で origin のブランチを取り込む（別の場所からの push を捨てない）。pull の前の sha を、手順1の「控える sha」のとおり控える。衝突したら、下の「衝突の直し方」に従う。済んだら、`start` なら `branch-status.sh` を実行し直して `start` から、`verify` なら手順3（`checks` は `pending` に戻す）から進め直す |
+| `pull` | `git pull --no-rebase` で origin のブランチを取り込む（別の場所からの push を捨てない）。pull の前の sha を、手順1の「控える sha」のとおり控える。衝突したら、下の「衝突の直し方」に従う。済んだら、`start` なら `branch-status.sh` を実行し直して `start` から、`verify` なら手順3（`checks` は `pending`、`push_check_ok` は null に戻す）から進め直す |
 | `merge` | 手順2の取り込み（控える sha を控えてから `git merge --no-edit origin/<base_branch>`）。衝突したら、下の「衝突の直し方」に従う。済んだら、`verify` で進める（`checks` は `pending`） |
 | `checks` | `start` から来たとき（手元で取り込み済みの分の push）は、手順2を飛ばす。手順3のとおり `checks-commands.sh` でコマンドを決めて実行し、結果を `checks` に入れて `verify` で決め直す |
-| `fix` | 失敗の原因が取り込みとの組み合わせなら直してコミットし（commit スキル）、`fix_attempts` を 1 増やして、`checks` を `pending` に戻す。直し方（衝突の直し方）を変えるときは、変える理由を控えてから変える。原因が取り込みと関係なければ、止まる |
+| `fix` | 失敗の原因が取り込みとの組み合わせなら直してコミットし（commit スキル）、`fix_attempts` を 1 増やして、`checks` を `pending`、`push_check_ok` を null に戻す（コミットで、確かめた内容が変わるため）。直し方（衝突の直し方）を変えるときは、変える理由を控えてから変える。原因が取り込みと関係なければ、止まる |
 | `push_check` | `repair-push-check.sh --base-branch <base_branch>` を実行し、`ok` を `push_check_ok` に入れて `verify` で決め直す |
 | `push` | 下の「PR のコメント」を付けてから、強制のオプションを付けない通常の `git push origin <ブランチ>` で push する。CI は待たない（次の見回りが見る） |
 | `stop` | 下の「止まる」。`reason` と、`forbidden_paths` なら `repair-push-check.sh` の `forbidden` のパスを、止まった理由に書く |

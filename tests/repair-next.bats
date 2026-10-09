@@ -119,11 +119,13 @@ check() {
   assert_equal "$(jq -c 'keys' <<<"$output")" '["action","reason"]'
 }
 
-@test "verify 5：pass でも dirty が true なら push_check に進まず止まる（fail・unpulled・unconfirmed より後）" {
+@test "verify 1・5：dirty が true なら、何より先に止まる（未コミットの変更の木に pull しない。push にも含めない）" {
   check "$VERIFY" '.status.dirty = true' "stop dirty"
   check "$VERIFY" '.status.dirty = true | .push_check_ok = null' "stop dirty"
-  check "$VERIFY" '.status.dirty = true | .checks = "fail"' "fix checks_failed"
-  check "$VERIFY" '.status.dirty = true | .status.unpulled = 1' "pull unpulled"
+  check "$VERIFY" '.status.dirty = true | .checks = "fail"' "stop dirty"
+  check "$VERIFY" '.status.dirty = true | .checks = "unconfirmed"' "stop dirty"
+  check "$VERIFY" '.status.dirty = true | .status.unpulled = 1' "stop dirty"
+  check "$VERIFY" '.status.dirty = false | .status.unpulled = 1' "pull unpulled"
   check "$VERIFY" '.status.dirty = false' "push ready"
 }
 

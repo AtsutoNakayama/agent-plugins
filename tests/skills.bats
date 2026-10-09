@@ -338,7 +338,7 @@ has() {
   # 次にすることは repair-next.sh が決め、SKILL.md には action ごとにすることだけを書く
   nx="$(sed -n '/^### 次にすることの決め方/,/^### 衝突の直し方/p' <<<"$un")"
   has "次にすることの決め方" "$nx" 'repair-next.sh' '`plan.fallback` は使わない' 'キューから外れたとき' '`confirm`・`infer`' '`unconfirmed`' \
-    'repair-push-check.sh --base-branch <base_branch>' '通常の `git push origin' '値を組み合わせて決め直さない'
+    '"dirty":<branch-status.sh の dirty>' '`push_check_ok` は null に戻す' '`push_check_ok` を null に戻す' 'repair-push-check.sh --base-branch <base_branch>' '通常の `git push origin' '値を組み合わせて決め直さない'
   for a in finish recheck pull merge checks fix push_check push stop; do
     grep -qF "| \`$a\` |" <<<"$nx" || fail "repair-next.sh の action「$a」のすることが表にありません"
   done
