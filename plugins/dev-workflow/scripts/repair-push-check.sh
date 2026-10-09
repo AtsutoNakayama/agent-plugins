@@ -10,7 +10,7 @@
 #
 # 出力（JSON）: {ok, forbidden（止める理由になるパス）, compared_with（差を取った相手）}
 #
-# 止まるとき: 引数の誤り・detached HEAD で --branch が無い（終了コード 64）、origin/B が無い（2）
+# 止まるとき: 引数の誤り・detached HEAD で --branch が無い（終了コード 64）、origin/B が無い・git diff に失敗した（2）
 set -euo pipefail
 
 # shellcheck source=lib/common.sh
@@ -49,6 +49,11 @@ else
 fi
 
 forbidden='[]'
+# プロセス置換の中の git diff の失敗は while に伝わらず、空入力（禁止パスなし）と読まれるので、先にファイルへ取って確かめる
+diff_file="$(mktemp "${TMPDIR:-/tmp}/repair-push-check.XXXXXX")"
+trap 'rm -f "$diff_file"' EXIT
+git diff --name-only --no-renames -z "$against" HEAD >"$diff_file" \
+  || dw_die "git diff に失敗しました（${against} と HEAD の差を取れません）" 2
 # パスに改行が入っていても壊れないよう -z で読む
 while IFS= read -r -d '' path; do
   case "$path" in
@@ -60,6 +65,6 @@ while IFS= read -r -d '' path; do
     continue
   fi
   forbidden="$(jq -c --arg p "$path" '. + [$p]' <<<"$forbidden")"
-done < <(git diff --name-only --no-renames -z "$against" HEAD)
+done <"$diff_file"
 
 jq -n --argjson f "$forbidden" --arg c "$against" '{ok: ($f | length == 0), forbidden: $f, compared_with: $c}'

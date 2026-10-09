@@ -140,3 +140,19 @@ commit_file() { mkdir -p "$(dirname "$1")" && echo "$2" >"$1" && git add "$1" &&
   assert_success
   assert_equal "$(jq -c '[.ok, .forbidden]' <<<"$output")" '[true,[]]'
 }
+
+@test "git diff が失敗したら、禁止パスなしと読まずに終了コード 2 で止まる（ok:true を出さない）" {
+  commit_file .github/workflows/ci.yml changed
+  real_git="$(command -v git)"
+  mkdir -p "$TMP/shim"
+  cat >"$TMP/shim/git" <<SHIM
+#!/usr/bin/env bash
+case "\$*" in *"diff --name-only"*) echo "fatal: simulated" >&2; exit 128 ;; esac
+exec "$real_git" "\$@"
+SHIM
+  chmod +x "$TMP/shim/git"
+  PATH="$TMP/shim:$PATH" run_script repair-push-check.sh --base-branch main
+  assert_failure 2
+  refute_output --partial '"ok":true'
+  assert_output --partial "git diff に失敗しました"
+}
