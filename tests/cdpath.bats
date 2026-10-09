@@ -68,17 +68,19 @@ CD_PATHS=(plugins .github/scripts tests/eval tests/test_helper.bash ':!*.md' ':!
 
 # CDPATH='' の無い cd の行を「<ファイル>:<行の中身（前の空白を除く）>」で出力する。コメントの行（行頭の空白の後の #）は除く。
 # シェルのコマンドの位置を正規表現で列挙すると見逃しが残る（case の a) cd・builtin cd・FOO=1 cd など）ので、位置は問わず、
-# 語としての cd（前が行頭か英数字・_・- 以外、後が空白か行末）をすべて見つけ、CDPATH='' cd のものだけを除く。
+# 語としての cd（前が行頭か英数字・_・- 以外、後が空白・行末か ; & | < > )）をすべて見つけ、CDPATH='' cd のものだけを除く
+# （CDPATH の前も変数名の境界にして、XCDPATH='' cd は除かない）。
 # 文字列やメッセージの中に cd が語として現れるだけの行は、テストの許可の一覧に理由を添えて書く。
 # 単語の境界は、macOS の git の ERE で働かない \b を使わずに書く
 # 使い方: bare_cd <git grep の pathspec>...
 bare_cd() {
-  git grep -nE --full-name -e '(^|[^[:alnum:]_-])cd([[:space:]]|$)' -- "$@" \
+  git grep -nE --full-name -e '(^|[^[:alnum:]_-])cd([[:space:];&|<>)]|$)' -- "$@" \
     | awk -F: '{
         f = $1; sub(/^[^:]*:[0-9]+:[[:space:]]*/, "")
         if ($0 ~ /^#/) next
-        l = $0; gsub(/CDPATH='"''"'[[:space:]]+cd([[:space:]]|$)/, "", l)
-        if (l ~ /(^|[^[:alnum:]_-])cd([[:space:]]|$)/) print f ":" $0
+        # 消した所は空白にして、前後の語がくっつかないようにする
+        l = $0; gsub(/(^|[^[:alnum:]_])CDPATH='"''"'[[:space:]]+cd([[:space:];&|<>)]|$)/, " ", l)
+        if (l ~ /(^|[^[:alnum:]_-])cd([[:space:];&|<>)]|$)/) print f ":" $0
       }'
 }
 
@@ -88,13 +90,14 @@ bare_cd() {
   #   dw_abs_dir：相対パスなら基準のディレクトリ（絶対パス）を前に付けてから cd する
   #   dw_physical_path：相対パスなら $PWD を前に付けてから cd する
   #   test_helper_setup：REPO は mktemp -d の実体の絶対パス（pwd -P）の下
-  #   git-command.sh：cd を実行せず、解析するコマンドの名前として case のパターンに書いている
+  #   git-command.sh（2行）：cd を実行せず、解析するコマンドの名前として case のパターンに書いている
   #   guard-git.sh・task-start.sh：cd を実行せず、利用者に伝えるメッセージの中に書いている
   # shellcheck disable=SC2016 # 行の中身をそのまま書く
   allowed='plugins/dev-workflow/scripts/lib/common.sh:(cd "$p" 2>/dev/null && pwd -P)
 plugins/dev-workflow/scripts/lib/common.sh:d="$(cd -P "$p" 2>/dev/null && pwd -P)" || d="$p"
 tests/test_helper.bash:cd "$REPO" || return 1
 plugins/dev-workflow/scripts/lib/git-command.sh:cd | pushd | popd | dirs)
+plugins/dev-workflow/scripts/lib/git-command.sh:cd)
 plugins/dev-workflow/hooks/guard-git.sh:echo "操作の対象のリポジトリが分からないので、${1}は止めます（今のブランチが分からず、base_branch の上かを確かめられません）。cd -- <絶対パス> && git ...、または git -C <絶対パス> ... で対象を書き直してください"
 plugins/dev-workflow/scripts/task-start.sh:dw_warn "サブモジュールを初期化できませんでした。ワークツリーで git submodule update --init --recursive を実行してください（cd ${path}）"'
   found="$(bare_cd "${CD_PATHS[@]}")"
@@ -109,7 +112,7 @@ plugins/dev-workflow/scripts/task-start.sh:dw_warn "サブモジュールを初�
 @test "CDPATH='' の無い cd を足すと、どの位置でも検査で見つかる（語の一部の cd は見ない）" {
   cd "$TMP"
   git init -q -b main probe
-  cd probe
+  CDPATH='' cd probe
   # 見つかるもの
   # shellcheck disable=SC2016 # 試す行をそのまま書く
   printf '%s\n' \
@@ -132,13 +135,19 @@ plugins/dev-workflow/scripts/task-start.sh:dw_warn "サブモジュールを初�
     'command cd "$dir"' \
     'x=`cd "$dir" && pwd`' \
     'FOO=1 cd "$dir"' \
-    'x="$(CDPATH='"''"' cd "$a" && cd "$b")"' >probe.sh
+    'x="$(CDPATH='"''"' cd "$a" && cd "$b")"' \
+    'cd>"$log" "$dir"' \
+    'x="$(cd)"' \
+    'cd;' \
+    'XCDPATH='"''"' cd "$dir"' >probe.sh
   cp probe.sh expected
   # 見つからないもの
   # shellcheck disable=SC2016 # 試す行をそのまま書く
   printf '%s\n' \
     'x="$(CDPATH='"''"' cd "$dir" && pwd)"' \
     'CDPATH='"''"' cd' \
+    'CDPATH='"''"' cd>"$log" "$dir"' \
+    'x=(CDPATH='"''"' cd "$dir")' \
     'ifcd x' \
     'docd x' \
     'abcd x' \
