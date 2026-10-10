@@ -49,18 +49,19 @@ push の回数の数え方
 
 ### 止めるパス
 
-* `repair-push-check.sh` は、push で origin に入る変更に、次のパスがあれば `ok` を false にする。取り込んだ `base_branch` と同じ内容のパスは、今までどおり数えない。
+* `repair-push-check.sh` は、push で origin に入る変更に、次のパスがあれば `ok` を false にする。止めるパスの一覧の正本は `repair-push-check.sh --help` とし、SKILL.md と設計書は、そこを参照する形で書く（書き写して食い違わないように）。取り込んだ `base_branch` と同じ内容のパスは、今までどおり数えない。
   * リポジトリ直下の `.github/` 以下のすべて（`workflows/` だけでなく、`actions/`・`scripts/`・`CODEOWNERS`・`dependabot.yml` なども）
   * どの階層の `.claude/` 以下も（`.claude/…` と `…/.claude/…`）
   * `.github`（直下）・`.claude`（どの階層も）という名前そのもの。ファイル・シンボリックリンク・サブモジュール（gitlink）にすると、中身を差し替えられるため
 * パスは大文字と小文字を区別せずに照らす（`.Claude/`・`.GitHub/` も止める）。大文字と小文字を区別しないファイルシステム（macOS・Windows の既定）では、`.Claude/` も `.claude/` として読まれるため。
 * 入れ子の `.github/`（`docs/.github/` など）は、GitHub が読まないので止めない。名前が似ているだけのパス（`.githubx/`・`.claudex/`・`.claude.md`）も止めない。
-* 衝突の直し方で「直すのに変更が要るなら止まる」とするパスも、同じ範囲にする。
+* 衝突の直し方で「直すのに変更が要るなら止まる」とするパスも、同じ範囲（`repair-push-check.sh` が止めるパス）にする。
 
 ### push の回数の数え方
 
-* `repair-run` のマーカーを `<!-- dev-workflow:repair-run head=<sha> -->` にする。`<sha>` は、fetch・pull を済ませた後の `git rev-parse origin/<ブランチ>`（push で進める前の origin の head。40 桁）。push の直前は手元が origin の先にいる（`unpulled` が 0）ので、PR の head と同じ sha になる。
-* 数えるのは `repair-run-count.sh` で行う。PR のコメント（`gh pr view --json comments` か `gh api` の出力）と今の PR の head の sha を受け取り、値だけで回数を出す。投稿者（`repair.reply_logins`）と再開の起点の時刻でも絞れる。
+* `repair-run` のマーカーを `<!-- dev-workflow:repair-run head=<sha> -->` にする。`<sha>` は、fetch・pull を済ませた後の `git rev-parse origin/<ブランチ>`（push で進める前の origin の head。40 桁）。push の直前は手元が origin の先にいる（`unpulled` が 0）ので、PR の head と同じ sha になる。`origin/<ブランチ>` が無いときは、`gh pr view --json headRefOid` を使う。
+* 数えるのは `repair-run-count.sh` で行う。PR のコメント（`gh api --paginate --slurp repos/{owner}/{repo}/issues/<N>/comments` の出力を勧める。`gh pr view --json comments` は、コメントが多い PR で全部を返さないことがある）と今の PR の head の sha を受け取り、値だけで回数を出す。投稿者（`repair.reply_logins`。大文字小文字と末尾の `[bot]` を除いて比べる）と再開の起点の時刻でも絞れる。日時が読めないコメントは、落とさずに数える側に倒す。
+* sha は、大文字小文字を区別せず、長さが違えば前方一致で比べる。7 文字未満の `head` のマーカーは比べられないので、古い形式と同じく1つを1回と数える。
 * 見回りは、`repair-run` のうち、今の PR の head が `head` の sha と違うもの（head がそこから進んだもの）だけを、`head` の値ごとに1回として数える。無人の push は強制をしない fast-forward だけなので、同じ sha から進める push は1回しか無く、同じ sha で何度試しても1回になる。
 * push に失敗した回、コメントを付けた後に push の前で止まった・落ちた回は、PR の head がその sha のままなので数えない。その後に別の実行が同じ sha から push すれば、その sha が1回と数えられる。
 * 人の push で head が進んだときは、ADR 000285 の「再開の起点」で数え直しになるので、起点より前の `repair-run` は数えない（変えない）。
@@ -70,7 +71,7 @@ push の回数の数え方
 
 ### 止まった理由の種類
 
-* 理由の種類は、`repair-next.sh` が `stop` を返したときは、その `reason`（`base_mismatch`・`recheck_exhausted`・`dirty`・`unknown_plan`・`checks_unconfirmed`・`same_failure`・`forbidden_paths`）をそのまま使う。表の外で止まるとき（止まる衝突・表の `action` で決まらない場面など）は `other` にする。ADR 000285 の `same-failure` は `same_failure` に、`push-limit` は、見回りが上限で止めるときの `push_limit` に、それぞれ書き方をそろえる（英小文字・数字・`_`）。
+* 理由の種類は、`repair-next.sh` が `stop` を返したときは、その `reason`（`repair-next.sh --stop-reasons` の一覧。今は `base_mismatch`・`recheck_exhausted`・`dirty`・`unknown_plan`・`checks_unconfirmed`・`same_failure`・`forbidden_paths`）をそのまま使う。一覧は `repair-next.sh` が返す値だけで、`push_limit` と `other` は入れない（`repair-next.sh` は返さない）。`repair-next.sh` は、一覧に無い値を返そうとしたら、終了コード 2 で止まる。表の外で止まるとき（止まる衝突・表の `action` で決まらない場面など）は `other` にする。ADR 000285 の `same-failure` は `same_failure` に、`push-limit` は、見回りが上限で止めるときの `push_limit` に、それぞれ書き方をそろえる（英小文字・数字・`_`）。
 * 印は、`auto-hold.sh --repair-reason <種類>` が、実行の印（`<!-- dev-workflow:task-auto run=<id> -->`）の次の行に `<!-- dev-workflow:repair-stopped reason=<種類> -->` として足す。止まった理由の本文には書かない。本文の先頭は実行の印のままなので、同じ実行のコメントの見分け方は変わらない。`--repair-reason` は、英小文字で始まり英小文字・数字・`_` だけの値しか受け付けない（印を `-->` で閉じさせない）。
 * 見回りは、Issue のコメントの中の `repair-stopped` の印で、止まった理由を見分ける。
 
@@ -85,10 +86,10 @@ push の回数の数え方
 
 ### 確認
 
-* `tests/repair-push-check.bats` で、`.github/` 以下の workflows 以外のパス・入れ子の `.claude/`・名前が似ているだけのパス・取り込んだ main と同じ内容の入れ子の `.claude/` を確かめる。
-* `tests/auto-hold.bats` で、`--repair-reason` の印の位置・同じ実行の再試行・使えない文字を確かめ、`repair-next.sh --stop-reasons` の一覧のどれも、`auto-hold.sh --repair-reason` に通ることを確かめる。`tests/repair-next.bats` で、`--stop-reasons` の一覧が判断の表（`--help`）の stop の `reason` と一致することを確かめる（`repair-next.sh` は、一覧に無い値で stop を返そうとすると、jq のエラーで止まる）。
+* `tests/repair-push-check.bats` で、`.github/` 以下の workflows 以外のパス・入れ子の `.claude/`・名前が似ているだけのパス・取り込んだ main と同じ内容の入れ子の `.claude/` を確かめる。`.github`・`.claude` という名前そのもの（ファイル・シンボリックリンク・サブモジュール）と、大文字と小文字の違うパス（`.Claude/`・`sub/.CLAUDE/`・`.GitHub/`）を止めることも確かめる。
+* `tests/auto-hold.bats` で、`--repair-reason` の印の位置・同じ実行の再試行・使えない文字を確かめ、`repair-next.sh --stop-reasons` の一覧のどれも、`auto-hold.sh --repair-reason` に通ることを確かめる。`tests/repair-next.bats` で、`--stop-reasons` の一覧が判断の表（`--help`）の stop の `reason` と一致することを確かめる。一覧に無い値で stop を返そうとすると、1行のメッセージと終了コード 2 で止まることも確かめる。
 * `tests/skills.bats` で、branch-update の無人の手順に、`repair-run` の `head`・数え方・`--repair-reason` の渡し方が書かれていることを確かめる。
-* `tests/repair-run-count.bats` で、push していない回（`head` が今の head と同じ）を数えないこと・同じ `head` の重複が1回になること・古い形式を1つ1回と数えること・投稿者と時刻の絞り込み・本文の先頭に無いマーカーを数えないことを確かめる。見回りのワークフロー（#341）は、このスクリプトで数える。
+* `tests/repair-run-count.bats` で、push していない回（`head` が今の head と同じ）を数えないこと・同じ `head` の重複が1回になること・古い形式を1つ1回と数えること・投稿者と時刻の絞り込み・本文の先頭に無いマーカーを数えないことを確かめる。ログイン名の `app` と `app[bot]` の違い・`--logins` の空白・短い sha の前方一致・7 文字未満の sha・小数の秒と時差のある日時・読めない日時も確かめる。見回りのワークフロー（#341）は、このスクリプトで数える。
 
 ## 各案の長所と短所
 

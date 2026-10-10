@@ -368,12 +368,12 @@ has() {
     grep -qF "| \`$a\` |" <<<"$nx" || fail "repair-next.sh の action「$a」のすることが表にありません"
   done
   has "衝突の直し方" "$(sed -n '/^### 衝突の直し方/,/^### PR のコメント/p' <<<"$un")" \
-    '指示役が次のとおりに決める' '止まる衝突' '`.github/` 以下' 'どの階層の `.claude/` 以下'
-  has "PR のコメント" "$(sed -n '/^### PR のコメント/,/^### 止まる/p' <<<"$un")" '<!-- dev-workflow:repair-run head=<head の sha> -->' 'git rev-parse origin/<ブランチ>' 'scripts/repair-run-count.sh' 'PR の head が `head` の sha から進んだもの' '数えない' '代わりに決めたこと' 'issues/comments/<ID>' '-X PATCH' '`--edit-last` は使わない' '追記する'
+    '指示役が次のとおりに決める' '止まる衝突' '`repair-push-check.sh` が止めるパス' '正本は `repair-push-check.sh --help`' '同じ範囲'
+  has "PR のコメント" "$(sed -n '/^### PR のコメント/,/^### 止まる/p' <<<"$un")" '<!-- dev-workflow:repair-run head=<head の sha> -->' 'git rev-parse origin/<ブランチ>' 'refs/remotes/origin/<ブランチ>' 'gh pr view <PR番号> --json headRefOid' 'scripts/repair-run-count.sh' 'gh api --paginate --slurp repos/{owner}/{repo}/issues/<PR番号>/comments' '全部を返さないことがあり' 'PR の head が `head` の sha から進んだもの' '数えない' '代わりに決めたこと' 'issues/comments/<ID>' '-X PATCH' '`--edit-last` は使わない' '追記する'
   has "止まる" "$(sed -n '/^### 止まる$/,/^### 結果を返す/p' <<<"$un")" \
     'git merge --abort' 'auto-hold.sh --issue <番号> --run-id <実行の id> --reason-file <ファイル> --repair-reason <理由の種類>' '`reason`（`dirty`・`same_failure`・`forbidden_paths` など）をそのまま渡し' '`other` を渡す' '本文には書かない' 'push はしない'
-  # repair-run の head は、push 前の origin の head から取る（gh の PR の head は、fetch の後の手元の値と食い違いうる）
-  ! grep -q 'headRefOid' <<<"$un" || fail "repair-run の head を gh の headRefOid から取っています"
+  # repair-run の head は、push 前の origin の head から取る。gh の headRefOid は、origin/<ブランチ> が無いときだけ使う
+  grep -F 'headRefOid' <<<"$un" | grep -qv 'が無い' && fail "origin/<ブランチ> が無いとき以外に、repair-run の head を gh の headRefOid から取っています"
   # 無人で GitHub に書き込まない／resolve しない
   ! grep -q 'resolveReviewThread' <<<"$un" || fail "無人の節で resolveReviewThread を呼ぶ手順があります"
   # description で、無人の使い方に触れている

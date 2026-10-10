@@ -224,3 +224,12 @@ SHIM
   assert_success
   assert_equal "$(jq -c '[.ok, (.forbidden | sort)]' <<<"$output")" '[false,[".Claude/settings.json",".GitHub/x","sub/.CLAUDE/x"]]'
 }
+
+@test "止めるパスの一覧の正本は --help にある（SKILL.md・設計書はここを参照する）" {
+  run_script repair-push-check.sh --help
+  assert_success
+  assert_output --partial "止めるパス（無人で変えてはいけないパス。この一覧が正本"
+  assert_output --partial ".github という名前そのもの"
+  assert_output --partial "どの階層の .claude という名前そのもの"
+  assert_output --partial "大文字と小文字は区別しない"
+}
