@@ -161,11 +161,15 @@ comments_at() {
   count --head "${B:0:12}"
   assert_success
   assert_equal "$(jq -c '[.count, .not_pushed]' <<<"$output")" '[0,1]'
-  # 同じ sha の長さ違いは1回
-  comments "$(run_mark "$A")" "$(run_mark "${A:0:7}")" >"$TMP/in.json"
+}
+
+@test "head の値ごとにまとめるのは完全に一致するものだけ（先頭が同じ別のコミットを1つにまとめない）" {
+  # abcdef1 と、abcdef1 で始まる別の 40 文字の sha は、別のコミットかもしれないので2回と数える
+  other=abcdef1999999999999999999999999999999999
+  comments "$(run_mark abcdef1)" "$(run_mark "$other")" "$(run_mark ABCDEF1)" >"$TMP/in.json"
   count --head "$C"
   assert_success
-  assert_equal "$(jq -c '[.count, .pushed_heads]' <<<"$output")" "[1,[\"$A\"]]"
+  assert_equal "$(jq -c '[.count, .pushed_heads]' <<<"$output")" "[2,[\"abcdef1\",\"$other\"]]"
 }
 
 @test "7 文字未満の sha：--head なら 64 で止まり、マーカーなら1つを1回と数える" {
@@ -198,4 +202,28 @@ comments_at() {
   count --head 1111111111111111111111111111111111111111 --since 2026-10-10T00:00:00Z
   assert_success
   assert_equal "$(jq -c '.pushed_heads' <<<"$output")" "[\"$A\",\"$B\"]"
+}
+
+@test "--since：ありえない日時と、範囲の外の時差は 64 で止まる。範囲の中の時差は読む" {
+  comments >"$TMP/in.json"
+  for t in 2026-13-01T00:00:00Z 2026-00-10T00:00:00Z 2026-10-32T00:00:00Z 2026-10-10T25:00:00Z 2026-10-10T00:60:00Z \
+    2026-10-10T00:00:00+15:00 2026-10-10T00:00:00+09:60 2026-10-10T00:00:00-1500; do
+    count --head "$A" --since "$t"
+    assert_failure 64
+    assert_output --partial "--since は ISO 8601 の時刻"
+  done
+  for t in 2026-10-10T00:00:00+14:00 2026-10-10T00:00:00-1200 2026-10-10T00:00:00+05:45; do
+    count --head "$A" --since "$t"
+    assert_success
+  done
+}
+
+@test "--since：コメントの日時がありえない値（13 月・25 時・範囲の外の時差）でも止まらず、数える側に倒す" {
+  comments_at bot 2026-13-01T00:00:00Z "$(run_mark "$A")" \
+    bot 2026-10-10T25:00:00Z "$(run_mark "$B")" \
+    bot 2026-10-10T00:00:00+15:00 "$(run_mark "$C")" \
+    bot 2026-01-01T00:00:00Z "$(run_mark 1234567890123456789012345678901234567890)" >"$TMP/in.json"
+  count --head 1111111111111111111111111111111111111111 --since 2026-10-10T00:00:00Z
+  assert_success
+  assert_equal "$(jq -c '.pushed_heads' <<<"$output")" "[\"$A\",\"$B\",\"$C\"]"
 }
