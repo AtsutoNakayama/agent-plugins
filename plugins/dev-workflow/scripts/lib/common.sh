@@ -550,6 +550,12 @@ dw_gh_find() {
 DW_JQ_SAME_REPO='def same_repo($a; $b): (($a // "") | ascii_downcase) == (($b // "") | ascii_downcase);'
 dw_same_repo() { [ "$(printf '%s' "$1" | tr '[:upper:]' '[:lower:]')" = "$(printf '%s' "$2" | tr '[:upper:]' '[:lower:]')" ]; }
 
+# GitHub のログイン名を、大文字小文字と末尾の [bot] を除いて比べられる形にする。GitHub App のログインは、gh pr view（GraphQL）では
+# app、gh api（REST）では app[bot] と綴りが違い、設定にはどちらで書かれることもあるため。pr-feedback.sh・pr-watch.sh・
+# repair-run-count.sh で、比べる両側に使う。jq の中では、プログラムの先頭に "$DW_JQ_LOGIN_NORM" を足して <ログイン> | norm を使う。
+# shellcheck disable=SC2034 # source した側で使う
+DW_JQ_LOGIN_NORM='def norm: ascii_downcase | sub("\\[bot\\]$"; "");'
+
 # Issue の親を、近い順に（親、親の親、…）たどって、JSON の配列を出力する。要素は {number, title, state, state_reason}。
 # 親が無ければ []。別のリポジトリの親に当たったら、そこで打ち切る（その親も、さらに上の親も含めない。設計書 §4：親子は同じリポジトリだけ扱う）。
 # GitHub の親子は8層までなので、念のため層の数で打ち切る。

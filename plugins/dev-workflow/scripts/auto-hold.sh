@@ -5,15 +5,20 @@
 # 移さない）ので、途中で止まっても、もう一度実行すれば続きから進む。別の実行で止まったときは、理由が前と同じでもコメントする
 # （コメントの中身では、同じ実行の再試行と、新しく止まったことを区別できないため）。
 #
-# 使い方: auto-hold.sh --issue N --run-id ID --reason-file PATH [--dry-run]
+# 使い方: auto-hold.sh --issue N --run-id ID --reason-file PATH [--repair-reason KIND] [--dry-run]
 #   --issue N           Issue の番号（#N でもよい）
 #   --run-id ID         task-auto の実行ごとの id（英数字と . _ -。例: 20261008T101500-4821）。task-auto が実行の始めに1つ決め、
 #                       その実行の中では同じ値を渡す
 #   --reason-file PATH  コメントの本文（止まった理由とそれまでの判断）のファイル。- なら標準入力。
 #                       本文の先頭に、task-auto のコメントだと分かる、実行の id を入れた印（<!-- dev-workflow:task-auto run=ID -->）を足して投稿する
+#   --repair-reason KIND  無人の修復（branch-update の無人の手順など）が止まるときの、理由の種類（英小文字・数字・_。
+#                       repair-next.sh の stop の reason をそのまま渡す。表の外で止まるときは other）。実行の印の次の行に、
+#                       見回りが理由の種類を見分ける印（<!-- dev-workflow:repair-stopped reason=KIND -->）を足す。
+#                       本文の先頭は実行の印のままなので、同じ実行のコメントの見分け方は変わらない
 #   --dry-run           コメントも列の移動もせず、行う予定の操作とコメントの本文を出力する
 #
-# 止まるとき: 保留の列（status.hold）が設定されていない・本文が空（終了コード 2）、--run-id が無い・使えない文字がある（64）、PR の番号・無い番号（2）、
+# 止まるとき: 保留の列（status.hold）が設定されていない・本文が空（終了コード 2）、--run-id が無い・使えない文字がある・
+#             --repair-reason が英小文字で始まらない・英小文字・数字・_ 以外の文字がある（64）、PR の番号・無い番号（2）、
 #             Issue を読めない・コメントできない・列を移せない（1）
 #
 # 出力: {issue, comment（投稿する本文）, commented（今回コメントしたか。dry-run ではする予定か）,
@@ -27,15 +32,16 @@ dw_require gh jq
 # macOS の BSD sed が日本語で失敗しないよう、バイト列として扱わせる
 usage() { LC_ALL=C sed -n '2,/^[^#]/{/^[^#]/d;s/^# \{0,1\}//;p;}' "$0"; }
 
-issue="" run_id="" reason_file="" dry_run=false
+issue="" run_id="" reason_file="" repair_reason="" dry_run=false
 while [ $# -gt 0 ]; do
   case "$1" in
-    --issue | --run-id | --reason-file)
+    --issue | --run-id | --reason-file | --repair-reason)
       [ $# -ge 2 ] && [ -n "$2" ] || dw_die "$1 に値がありません" 64
       case "$1" in
         --issue) issue="$2" ;;
         --run-id) run_id="$2" ;;
         --reason-file) reason_file="$2" ;;
+        --repair-reason) repair_reason="$2" ;;
       esac
       shift 2
       ;;
@@ -52,6 +58,17 @@ case "$run_id" in *[!A-Za-z0-9._-]*) dw_die "--run-id には英数字と . _ - �
 # task-auto のコメントだと分かる印。人が Issue を読んだときに、自動で書いたコメントと分かるようにする。
 # 実行の id を入れ、同じ実行のコメントがあるかを見分ける
 mark="<!-- dev-workflow:task-auto run=${run_id} -->"
+# 無人の修復の止まった理由の種類の印。印の中に入るので、使える文字を絞る（--> などで印を閉じさせない）
+header="$mark"
+if [ -n "$repair_reason" ]; then
+  # 範囲（a-z）はロケールによって大文字も含むので、文字を並べて書く（bash 3.2）
+  lower=abcdefghijklmnopqrstuvwxyz
+  case "$repair_reason" in
+    [!"$lower"]* | *[!"${lower}"0123456789_]*)
+      dw_die "--repair-reason は、英小文字で始め、英小文字・数字・_ だけにしてください: ${repair_reason}" 64 ;;
+  esac
+  header="$(printf '%s\n%s' "$mark" "<!-- dev-workflow:repair-stopped reason=${repair_reason} -->")"
+fi
 [ -n "$reason_file" ] || dw_die "--reason-file は必須です" 64
 if [ "$reason_file" = - ]; then
   reason="$(cat)"
@@ -66,7 +83,7 @@ hold="$(jq -r '.status.hold // empty' <<<"$config")"
 [ -n "$hold" ] || dw_die "保留の列（status.hold）が設定されていません。repo-setup で保留の列を作ってください" 2
 dw_check_hold_column "$config"
 
-body="$(printf '%s\n\n%s' "$mark" "$reason")"
+body="$(printf '%s\n\n%s' "$header" "$reason")"
 
 # PR の番号なら止まる（dw_read_issue）
 found="$(dw_read_issue "$issue" number,comments)"

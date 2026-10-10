@@ -17,6 +17,12 @@ setup() {
 }
 
 commit_file() { mkdir -p "$(dirname "$1")" && echo "$2" >"$1" && git add "$1" && git commit -q -m "change $1"; }
+# ファイルを書かずに、index に直接パスを入れてコミットする。大文字と小文字を区別しないファイルシステム（macOS）では、
+# .GitHub/x を書くと既にある .github/ に入り、git が .github/x と記録するので、綴りどおりのパスを作るのに使う
+commit_index_only() {
+  local blob
+  blob=$(echo "$2" | git hash-object -w --stdin) && git update-index --add --cacheinfo "100644,$blob,$1" && git commit -q -m "change $1"
+}
 
 @test "通常のファイルだけなら ok" {
   commit_file src/b.txt b
@@ -134,8 +140,42 @@ commit_file() { mkdir -p "$(dirname "$1")" && echo "$2" >"$1" && git add "$1" &&
   assert_equal "$(jq -c '[.ok, (.forbidden | sort)]' <<<"$output")" '[false,[".claude/dev-workflow/x.json",".github/workflows/ci.yml"]]'
 }
 
-@test ".github/scripts/ だけの変更は ok（禁止は workflows と .claude だけ）" {
+@test ".github/ 以下は workflows でなくても止める（actions・scripts・CODEOWNERS。#331）" {
   commit_file .github/scripts/x.sh '#!/bin/sh'
+  commit_file .github/actions/setup/action.yml 'runs: {}'
+  commit_file .github/CODEOWNERS '* @someone'
+  run_script repair-push-check.sh --base-branch main
+  assert_success
+  assert_equal "$(jq -c '[.ok, (.forbidden | sort)]' <<<"$output")" '[false,[".github/CODEOWNERS",".github/actions/setup/action.yml",".github/scripts/x.sh"]]'
+}
+
+@test "入れ子の .claude/ 以下も止める（どの階層でも。#331）" {
+  commit_file packages/app/.claude/settings.json '{}'
+  commit_file a/b/c/.claude/skills/x/SKILL.md x
+  run_script repair-push-check.sh --base-branch main
+  assert_success
+  assert_equal "$(jq -c '[.ok, (.forbidden | sort)]' <<<"$output")" '[false,["a/b/c/.claude/skills/x/SKILL.md","packages/app/.claude/settings.json"]]'
+}
+
+@test "名前が似ているだけのパスと、入れ子の .github/ は止めない" {
+  commit_file src/.claudex/a.txt a
+  commit_file src/x.claude/a.txt a
+  commit_file docs/.github/a.txt a
+  commit_file .githubx/a.txt a
+  commit_file .claude.md a
+  run_script repair-push-check.sh --base-branch main
+  assert_success
+  assert_equal "$(jq -c '[.ok, .forbidden]' <<<"$output")" '[true,[]]'
+}
+
+@test "取り込んだ main が変えた入れ子の .claude/ は数えない（main と同じ内容のパス）" {
+  git checkout -q main
+  commit_file sub/.claude/settings.json from-main
+  git push -q origin main
+  git checkout -q feat/1-x
+  commit_file src/b.txt b
+  git fetch -q origin
+  git merge -q --no-edit origin/main
   run_script repair-push-check.sh --base-branch main
   assert_success
   assert_equal "$(jq -c '[.ok, .forbidden]' <<<"$output")" '[true,[]]'
@@ -155,4 +195,47 @@ SHIM
   assert_failure 2
   refute_output --partial '"ok":true'
   assert_output --partial "git diff に失敗しました"
+}
+
+@test ".github・.claude という名前そのもの（ファイル・シンボリックリンク）も止める" {
+  # 名前をファイルとシンボリックリンクにするため、先にディレクトリを消して push しておく（.claude は追跡していない空のディレクトリ）
+  git rm -q -r .github
+  rm -rf .github .claude
+  git commit -q -m "rm dirs"
+  git push -q origin feat/1-x
+  echo x >.github
+  ln -s /tmp .claude
+  mkdir -p sub && ln -s ../src sub/.claude
+  git add .github .claude sub/.claude && git commit -q -m names
+  git fetch -q origin
+  run_script repair-push-check.sh --base-branch main
+  assert_success
+  assert_equal "$(jq -c '[.ok, (.forbidden | sort)]' <<<"$output")" '[false,[".claude",".github","sub/.claude"]]'
+}
+
+@test ".claude という名前のサブモジュール（gitlink）も止める" {
+  git init -q "$TMP/sub" && git -C "$TMP/sub" commit -q --allow-empty -m s
+  git -c protocol.file.allow=always submodule -q add "$TMP/sub" pkg/.claude
+  git commit -q -m submodule
+  run_script repair-push-check.sh --base-branch main
+  assert_success
+  assert_equal "$(jq -c '[.ok, .forbidden]' <<<"$output")" '[false,["pkg/.claude"]]'
+}
+
+@test "大文字と小文字を区別せずに止める（.Claude/・sub/.CLAUDE/・.GitHub/）" {
+  commit_index_only .Claude/settings.json '{}'
+  commit_index_only sub/.CLAUDE/x x
+  commit_index_only .GitHub/x x
+  run_script repair-push-check.sh --base-branch main
+  assert_success
+  assert_equal "$(jq -c '[.ok, (.forbidden | sort)]' <<<"$output")" '[false,[".Claude/settings.json",".GitHub/x","sub/.CLAUDE/x"]]'
+}
+
+@test "止めるパスの一覧の正本は --help にある（SKILL.md・設計書はここを参照する）" {
+  run_script repair-push-check.sh --help
+  assert_success
+  assert_output --partial "止めるパス（無人で変えてはいけないパス。この一覧が正本"
+  assert_output --partial ".github という名前そのもの"
+  assert_output --partial "どの階層の .claude という名前そのもの"
+  assert_output --partial "大文字と小文字は区別しない"
 }
