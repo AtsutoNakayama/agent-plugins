@@ -401,7 +401,7 @@ has() {
   has "次にすることの決め方" "$nx" 'repair-next.sh' '`plan.fallback` は使わない' 'キューから外れたとき' '`confirm`・`infer`' '`unconfirmed`' \
     '"dirty":<branch-status.sh の dirty>' '`push_check_ok` は null に戻す' '`push_check_ok` を null に戻す' 'repair-push-check.sh --base-branch <base_branch>' '通常の `git push origin' '値を組み合わせて決め直さない'
   for a in finish recheck pull merge checks fix push_check push stop; do
-    grep -qF "| \`$a\` |" <<<"$nx" || fail "repair-next.sh の action「$a」のすることが表にありません"
+    grep -qF "| \`$a\` |" <<<"$nx" || fail "repair-next.sh の action「${a}」のすることが表にありません"
   done
   has "衝突の直し方" "$(sed -n '/^### 衝突の直し方/,/^### PR のコメント/p' <<<"$un")" \
     '指示役が次のとおりに決める' '止まる衝突' '`repair-push-check.sh` が止めるパス' '正本は `repair-push-check.sh --help`' '同じ範囲'

@@ -11,7 +11,7 @@
 #
 # 形は設定の branch.pattern（既定: {type}/{issue_number}-{slug}）。
 # branch.pattern のプレースホルダ: {type} は type ラベル、{issue_number} は Issue の番号、{slug} は英語の短い説明。
-# --check は規約に合わなければ終了コード 1 で、理由を出力する。設定を読めない、または branch.pattern が正規表現として正しくなければ終了コード 2。
+# --check は規約に合わなければ終了コード 1 で、理由を出力する。設定を読めない、または branch.pattern などの設定に誤り（正規表現として正しくない・文字列でない・labels.types が正しくないなど）があれば終了コード 2。
 set -euo pipefail
 
 # shellcheck source=lib/common.sh
@@ -66,13 +66,20 @@ if [ -n "$check" ]; then
   if [ -z "$reason" ]; then
     # 設定を読めないときは、規約に合わない（1）と区別できるよう 2 で終わる
     config="$("$BASH" "$DW_SCRIPTS_DIR/config.sh")" || dw_die "設定を読めません" 2
-    # 正規表現として正しくない branch.pattern は、ブランチ名が合わない（1）ではなく設定の誤り（2）にする
-    msg="$(dw_check_branch_pattern "$config")" || dw_die "$msg" 2
-    # branch.pattern を正規表現にする（lib/common.sh の DW_JQ_BRANCH_RE。dw_parse_branch・dw_issue_branches と同じ）
+    # 設定の検査と、branch.pattern に合うかの判定を、1回の jq で行う（lib/common.sh の DW_JQ_BRANCH_RE。
+    # dw_parse_branch・dw_issue_branches と同じ正規表現）。設定の誤り（正しくない正規表現・文字列でない branch.pattern など）は、
+    # ブランチ名が合わない（1）ではなく設定の誤り（2）にする。誤りは「!」、合わなければ「-」と branch.pattern、合えば「+」を出す
     # shellcheck disable=SC2016 # jq の変数（$b・$re）を bash に展開させない
-    jq -e -n --arg b "$check" --argjson c "$config" "$DW_JQ_BRANCH_RE"'
-      ($c | branch_re) as $re | $b | test($re)' >/dev/null \
-      || reason="branch.pattern（$(jq -r '.branch.pattern' <<<"$config")）の形になっていません"
+    out="$(jq -R -s -r --arg b "$check" "$DW_JQ_BRANCH_RE"'
+      branch_config(false)
+      | if has("e") then "!" + .e
+        elif (.c | branch_re) as $re | $re != null and ($b | test($re)) then "+"
+        else "-" + (.c.branch.pattern | if type == "string" then . else tojson end) end' <<<"$config")" \
+      || dw_die "branch.pattern・labels.types の設定を検査できませんでした（jq が失敗しました）" 2
+    case "$out" in
+      '!'*) dw_die "${out#!}" 2 ;;
+      -*) reason="branch.pattern（${out#-}）の形になっていません" ;;
+    esac
   fi
   jq -n --arg b "$check" --arg r "$reason" '{branch: $b, valid: ($r == ""), reason: (if $r == "" then null else $r end)}'
   [ -z "$reason" ]
@@ -90,6 +97,18 @@ slug="$(printf '%s' "$slug" | LC_ALL=C tr '[:upper:]' '[:lower:]' \
 [ -n "$slug" ] || dw_die "短い説明に英数字がありません。英語で指定してください" 64
 
 config="$("$BASH" "$DW_SCRIPTS_DIR/config.sh")"
+# 設定の誤りは、--check と同じく終了コード 2 で止める（lib/common.sh の DW_JQ_BRANCH_RE の branch_config(true)）。type を
+# 確かめる前に行い、壊れた labels.types を「type は labels.types のどれかに」と取り違えない。ブランチ名を作るには、
+# 検査では通す無い・null の branch.pattern と labels.types も要るので、ここで止める（jq -r が「null」という名前にするため）。
+# 検査と branch.pattern の読み取りは、1回の jq で行う。誤りは「!」、branch.pattern は「=」を先頭に付けて出す
+# shellcheck disable=SC2016 # jq の変数を bash に展開させない
+out="$(jq -R -s -r "$DW_JQ_BRANCH_RE"'
+  branch_config(true) | if has("e") then "!" + .e else "=" + .c.branch.pattern end' <<<"$config")" \
+  || dw_die "branch.pattern・labels.types の設定を検査できませんでした（jq が失敗しました）" 2
+case "$out" in
+  '!'*) dw_die "${out#!}" 2 ;;
+esac
+pattern="${out#=}"
 if [ -z "$type" ]; then
   dw_require gh
   # PR の番号なら止まる（dw_read_issue）
@@ -104,7 +123,6 @@ fi
 jq -e --arg t "$type" '.labels.types | index($t)' <<<"$config" >/dev/null \
   || dw_die "type は labels.types のどれかにしてください: $type" 64
 
-pattern="$(jq -r '.branch.pattern' <<<"$config")"
 branch="$(jq -rn --arg p "$pattern" --arg t "$type" --arg i "$issue" --arg s "$slug" \
   '$p | gsub("\\{type\\}"; $t) | gsub("\\{issue_number\\}"; $i) | gsub("\\{slug\\}"; $s)')"
 reason="$(problem "$branch")"
