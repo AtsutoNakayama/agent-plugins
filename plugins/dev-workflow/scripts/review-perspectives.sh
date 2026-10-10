@@ -9,8 +9,9 @@
 #                                          渡した値で絞り込む（--auto が決める値を自分で渡す）
 #
 #   --auto    次を決めて絞り込み、決めた値を context に出す
-#             - マージ先: origin/<base_branch>（開いた PR があれば、その PR のマージ先。git fetch origin <マージ先> で最新にする。できなければ警告して
-#               手元の origin/<base_branch> を使う。それも無ければ終了コード 2。branch.pattern が正規表現として正しくないときも、設定の誤りとして終了コード 2）
+#             - マージ先: merge-target.sh の ref（開いた PR があればその PR のマージ先、無ければ設定の base_branch。origin から取得し、
+#               できなければ警告して手元のものを使う。PR のマージ先が手元にも無ければ、警告して設定の base_branch に戻す。
+#               どれも無ければ終了コード 2。branch.pattern が正規表現として正しくないときも、設定の誤りとして終了コード 2）
 #             - 基点: git merge-base <マージ先> HEAD
 #             - Issue の番号: ブランチ名（branch.pattern の {issue_number}。先頭の 0 はそろえる）。番号として使えない値（0 など）なら
 #               Issue は無いものとする（警告）。gh で Issue を読み、見つからないか、番号が PR のものなら、Issue は無いものとする（警告）。
@@ -109,20 +110,11 @@ if [ "$auto" = true ]; then
   # review.model もほかの設定と同じく層を合わせた値を使う（ユーザーの層は、導入したリポジトリの中でだけ効く。設計書 §7）
   model="$(jq -c '.review.model' <<<"$config")"
   dw_review_model_ok "$model" || dw_die "review.model は null か $(dw_review_model_names) のどれかにしてください: ${model}" 2
-  base_branch="$(dw_base_branch "$config")"
+  # マージ先は merge-target.sh が決めて取得する（開いた PR があればそのマージ先、無ければ設定の base_branch。取得できなければ
+  # 手元のものを使い、PR のマージ先が手元にも無ければ base_branch に戻す。どれも無ければ終了コード 2）
+  merge_target="$("$BASH" "$DW_SCRIPTS_DIR/merge-target.sh")" || exit $?
+  target="$(jq -r .ref <<<"$merge_target")"
   branch="$(git symbolic-ref --short -q HEAD || true)"
-  # 開いた PR があれば、そのマージ先（設定の base_branch と違うことがある。例：release/v1 に向いた PR）をマージ先にする。
-  # --head はブランチ名だけで探すので、fork の同じ名前のブランチからの PR を除く。gh が無いか読めなければ、設定の base_branch を使う
-  if [ -n "$branch" ] && command -v gh >/dev/null 2>&1 \
-    && prs="$(gh pr list --head "$branch" --state open --json baseRefName,isCrossRepository 2>/dev/null)"; then
-    pr_base="$(jq -r 'map(select(.isCrossRepository | not)) | first // null | .baseRefName // ""' <<<"$prs" 2>/dev/null || true)"
-    [ -z "$pr_base" ] || base_branch="$pr_base"
-  fi
-  target="origin/$base_branch"
-  git fetch -q origin -- "$base_branch" 2>/dev/null \
-    || dw_warn "${target} を最新にできませんでした。手元の ${target} で判断します"
-  git rev-parse --verify --quiet "$target^{commit}" >/dev/null \
-    || dw_die "マージ先が見つかりません: ${target}（git fetch origin ${base_branch} で取得してください）" 2
   base="$(git merge-base "$target" HEAD)" || dw_die "${target} と HEAD の基点が見つかりません" 2
   parsed="$(dw_parse_branch "$config" "$branch")" || exit $?
   IFS='|' read -r branch_type branch_issue <<<"$parsed"
