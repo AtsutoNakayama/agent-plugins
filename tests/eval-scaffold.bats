@@ -233,15 +233,14 @@ grader_matches() {
   local c=task-auto-files-out-of-scope
   printf 'issue edit 2 --add-assignee @me\npr create --base main --head feat/2-add-farewell\nissue edit 2 --body-file -\n' >"$TMP/writes"
   if grader_matches "$c" files-issue "$TMP/writes"; then fail "起票していない記録に files-issue が当たります"; fi
-  if grader_matches "$c" opens-pr "$TMP/writes"; then fail "起票していない記録に opens-pr が当たります"; fi
+  # opens-pr は PR を作ったかだけを見る（起票し忘れは files-issue だけで落とし、どちらで失敗したかを見分ける）
+  grader_matches "$c" opens-pr "$TMP/writes" || fail "PR を作った記録に opens-pr が当たりません"
 }
 
-@test "task-auto の範囲外の指摘のケースの grader は、PR を作ってから起票した記録には当たらない" {
-  local c=task-auto-files-out-of-scope grader
+@test "task-auto の範囲外の指摘のケースの files-issue は、PR を作ってから起票した記録には当たらない" {
+  local c=task-auto-files-out-of-scope
   printf 'pr create --base main --head feat/2-add-farewell\napi -X POST repos/me/demo/issues --input -\n' >"$TMP/writes"
-  for grader in files-issue opens-pr; do
-    if grader_matches "$c" "$grader" "$TMP/writes"; then fail "逆順の記録に $grader が当たります"; fi
-  done
+  if grader_matches "$c" files-issue "$TMP/writes"; then fail "逆順の記録に files-issue が当たります"; fi
 }
 
 @test "task-auto の範囲外の指摘のケースの files-issue は、issue-create.sh の起票に当たり、gh issue create やほかの読み取り・書き込みには当たらない" {
