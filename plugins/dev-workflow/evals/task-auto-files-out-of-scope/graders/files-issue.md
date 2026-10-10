@@ -5,9 +5,10 @@
 # 同じ形）だけにする。gh issue create で起票しても、手順5のとおりではないので数えない。gh api のほかの書き方（メソッドや本文の位置など）は解釈しない（書き込みかどうかの判定は
 # fake-gh.sh にあり、ここで作り直すと、読み取りや別の書き込みに当たったり、偽の応答と食い違って #99 が返らなかったりするため）。
 # 起票せずに PR の本文に「起票した Issue：なし」と書くと、ここで落ちる（#307）
+# 記録全体で、起票の行が PR 作成の行より先にあることも確かめる（間の書き込みは許す）。
 type: regex
 target: { source: file, path: .fake-gh/writes }
-pattern: '^api -X POST repos/me/demo/issues --input( |$)'
+pattern: '^api -X POST repos/me/demo/issues --input( |$)[^\n]*\n[\s\S]*?^pr create( |$)'
 flags: m
 match: contains
 ---

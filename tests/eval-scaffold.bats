@@ -150,6 +150,12 @@ scaffold() {
 # 使い方: grader_pattern <ケース> <grader の名前> → grader の pattern（シングルクォートで囲んだ値）
 grader_pattern() { sed -n "s/^pattern: '\\(.*\\)'\$/\\1/p" "$EVALS/$1/graders/$2.md"; }
 
+# 改行をまたぐ pattern を、grader と同じ m（行ごとの ^・$）で、記録全体に照らす
+# 使い方: grader_matches <ケース> <grader の名前> <記録のパス>
+grader_matches() {
+  perl -0777 -e 'my $pattern = shift; exit((<> =~ /$pattern/m) ? 0 : 1)' "$(grader_pattern "$1" "$2")" "$3"
+}
+
 @test "task-auto の無効のケースの準備の後、auto-check.sh は disabled を返し、何も書き込まない" {
   run "${TEST_BASH:-bash}" "$EVALS/task-auto-disabled-does-nothing/fixture.sh"
   assert_success
@@ -217,20 +223,27 @@ grader_pattern() { sed -n "s/^pattern: '\\(.*\\)'\$/\\1/p" "$EVALS/$1/graders/$2
   assert_success
   assert_equal "$(jq -c '[.created, .draft, .pr.number]' <<<"$output")" '[true,false,98]'
   cd "$WS"
-  grep -qE "$(grader_pattern $c files-issue)" .fake-gh/writes || fail "files-issue に当たりません: $(cat .fake-gh/writes)"
-  grep -qE "$(grader_pattern $c opens-pr)" .fake-gh/writes || fail "opens-pr に当たりません: $(cat .fake-gh/writes)"
+  grader_matches "$c" files-issue .fake-gh/writes || fail "files-issue に当たりません: $(cat .fake-gh/writes)"
+  grader_matches "$c" opens-pr .fake-gh/writes || fail "opens-pr に当たりません: $(cat .fake-gh/writes)"
 }
 
 @test "task-auto の範囲外の指摘のケースの grader は、起票しないで PR を作っただけの記録には当たらない" {
   local c=task-auto-files-out-of-scope
   printf 'issue edit 2 --add-assignee @me\npr create --base main --head feat/2-add-farewell\nissue edit 2 --body-file -\n' >"$TMP/writes"
-  if grep -qE "$(grader_pattern $c files-issue)" "$TMP/writes"; then fail "起票していない記録に files-issue が当たります"; fi
-  grep -qE "$(grader_pattern $c opens-pr)" "$TMP/writes" || fail "opens-pr に当たりません"
+  if grader_matches "$c" files-issue "$TMP/writes"; then fail "起票していない記録に files-issue が当たります"; fi
+  if grader_matches "$c" opens-pr "$TMP/writes"; then fail "起票していない記録に opens-pr が当たります"; fi
+}
+
+@test "task-auto の範囲外の指摘のケースの grader は、PR を作ってから起票した記録には当たらない" {
+  local c=task-auto-files-out-of-scope grader
+  printf 'pr create --base main --head feat/2-add-farewell\napi -X POST repos/me/demo/issues --input -\n' >"$TMP/writes"
+  for grader in files-issue opens-pr; do
+    if grader_matches "$c" "$grader" "$TMP/writes"; then fail "逆順の記録に $grader が当たります"; fi
+  done
 }
 
 @test "task-auto の範囲外の指摘のケースの files-issue は、issue-create.sh の起票に当たり、gh issue create やほかの読み取り・書き込みには当たらない" {
-  local c=task-auto-files-out-of-scope pat
-  pat="$(grader_pattern $c files-issue)"
+  local c=task-auto-files-out-of-scope
   scaffold "eval_repo && fake_gh_defaults"
   assert_success
   # 当たる：手順5のとおり issue-create.sh で起票した記録（偽の gh で実際に動かす）
@@ -239,7 +252,10 @@ grader_pattern() { sed -n "s/^pattern: '\\(.*\\)'\$/\\1/p" "$EVALS/$1/graders/$2
   run "${TEST_BASH:-bash}" -c '"$0" "$1" --title t --type fix --body-file "$2" 2>/dev/null' "${TEST_BASH:-bash}" "$SCRIPTS/issue-create.sh" "$TMP/body.md"
   assert_success
   assert_equal "$(jq -r .number <<<"$output")" 99
-  grep -qE "$pat" .fake-gh/writes || fail "issue-create.sh の記録に files-issue が当たりません: $(cat .fake-gh/writes)"
+  if grader_matches "$c" files-issue .fake-gh/writes; then fail "PR の無い記録に files-issue が当たります"; fi
+  if grader_matches "$c" opens-pr .fake-gh/writes; then fail "PR の無い記録に opens-pr が当たります"; fi
+  printf 'pr create --base main --head feat/2-add-farewell\n' >>.fake-gh/writes
+  grader_matches "$c" files-issue .fake-gh/writes || fail "issue-create.sh の記録に files-issue が当たりません: $(cat .fake-gh/writes)"
   # 当たらない：手順5のとおりでない gh issue create・GET に本文を付けた読み取り・本文の値にパスを含むコメント・一覧の読み取り・
   # 番号付きのパスへの書き込み
   : >.fake-gh/writes
@@ -251,5 +267,6 @@ grader_pattern() { sed -n "s/^pattern: '\\(.*\\)'\$/\\1/p" "$EVALS/$1/graders/$2
   gh api -X POST repos/me/demo/issues/99/sub_issues -F sub_issue_id=1 >/dev/null 2>&1 || true
   gh api repos/me/demo/issues/2/parent >/dev/null 2>&1 || true
   [ "$(wc -l <.fake-gh/writes | tr -d ' ')" -ge 7 ] || fail "当たらない例が記録されていません: $(cat .fake-gh/writes)"
-  if grep -E "$pat" .fake-gh/writes; then fail "当たらない例に files-issue が当たります"; fi
+  printf 'pr create --base main --head feat/2-add-farewell\n' >>.fake-gh/writes
+  if grader_matches "$c" files-issue .fake-gh/writes; then fail "当たらない例に files-issue が当たります"; fi
 }
