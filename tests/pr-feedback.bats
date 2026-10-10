@@ -185,7 +185,7 @@ out_of() { jq -c "$1" <<<"$output"; }
     '[["C1",true,false],["R3",false,false],["R1",true,false],["R2",true,false]]'
 }
 
-@test "変更の要求は、本文が無くても、返事が無ければ対応が要る。返事の後に付いたレビュー・コメントは、新しく対応が要る" {
+@test "変更の要求は、本文が無くても、返事をしていなければ needs_attention が true。返事の後に付いたレビュー・コメントは、新しく返事をしていないものになる" {
   setup_fake_gh
   pr_view '{
     reviews: [
