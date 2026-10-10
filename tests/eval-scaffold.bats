@@ -150,6 +150,12 @@ scaffold() {
 # 使い方: grader_pattern <ケース> <grader の名前> → grader の pattern（シングルクォートで囲んだ値）
 grader_pattern() { sed -n "s/^pattern: '\\(.*\\)'\$/\\1/p" "$EVALS/$1/graders/$2.md"; }
 
+# 改行をまたぐ pattern を、grader と同じ m（行ごとの ^・$）で、記録全体に照らす
+# 使い方: grader_matches <ケース> <grader の名前> <記録のパス>
+grader_matches() {
+  perl -0777 -e 'my $pattern = shift; exit((<> =~ /$pattern/m) ? 0 : 1)' "$(grader_pattern "$1" "$2")" "$3"
+}
+
 @test "task-auto の無効のケースの準備の後、auto-check.sh は disabled を返し、何も書き込まない" {
   run "${TEST_BASH:-bash}" "$EVALS/task-auto-disabled-does-nothing/fixture.sh"
   assert_success
@@ -187,4 +193,94 @@ grader_pattern() { sed -n "s/^pattern: '\\(.*\\)'\$/\\1/p" "$EVALS/$1/graders/$2
   assert_success
   assert_equal "$(jq -c .needs_attention <<<"$output")" true
   [ ! -s .fake-gh/writes ] || fail "書き込みが記録されました: $(cat .fake-gh/writes)"
+}
+
+@test "task-auto の範囲外の指摘のケースの準備の後、着手からレビュー・起票・PR の作成まで、スクリプトが偽の gh で進み、grader に当たる" {
+  local c=task-auto-files-out-of-scope
+  run "${TEST_BASH:-bash}" "$EVALS/$c/fixture.sh"
+  assert_success
+  # 範囲外の指摘のもと（前からある誤字）
+  grep -qF 'Helo, %s!' bin/greet.sh || fail "bin/greet.sh に誤字がありません"
+  # 観点の担当者は差分（git diff）を読むので、差分に無い bin/greet.sh も Read で読むよう、ファイル名を挙げて書く
+  # shellcheck disable=SC2016 # バッククォートは観点の本文の文字で、展開させない
+  grep -qF '`bin/greet.sh`' .claude/dev-workflow/review/typo.md || fail "誤字の観点に bin/greet.sh がありません"
+  grep -qF '差分に無くても必ず Read で読む' .claude/dev-workflow/review/typo.md || fail "誤字の観点に、Read で読むことがありません"
+  run_script auto-check.sh --issue 2
+  assert_success
+  assert_equal "$(jq -c '[.action, .resume]' <<<"$output")" '["proceed",null]'
+  run_script next-tasks.sh --issue 2
+  assert_success
+  assert_equal "$(jq -r .issue.overlap <<<"$output")" none
+  [ ! -s .fake-gh/writes ] || fail "着手の前に書き込みました: $(cat .fake-gh/writes)"
+  run_script task-start.sh --issue 2 --slug add-farewell
+  assert_success
+  assert_equal "$(jq -c '[.status.to, .status.warnings]' <<<"$output")" '["In Progress",[]]'
+  local wt
+  wt="$(jq -r .worktree <<<"$output")"
+  # 作業役の実装の代わり
+  # shellcheck disable=SC2016 # 書き出すスクリプトの中身なので、展開させない
+  printf '#!/usr/bin/env bash\nset -euo pipefail\nprintf "Goodbye, %%s!\\n" "$1"\n' >"$wt/bin/farewell.sh"
+  git -C "$wt" add bin/farewell.sh
+  git -C "$wt" commit -q -m "feat: 別れの挨拶のスクリプトを足す"
+  cd "$wt"
+  # レビューは、リポジトリの誤字の観点だけを使い、1周で終える
+  run_script review-perspectives.sh --auto
+  assert_success
+  assert_equal "$(jq -c '[[.perspectives[].name], .context.max_rounds, .context.issue]' <<<"$output")" '[["typo"],1,2]'
+  printf '## 背景\n#2 の自動のレビューで見つかった指摘\n' >"$TMP/issue.md"
+  run_script issue-create.sh --title "greet.sh の挨拶の誤字を直す" --type fix --body-file "$TMP/issue.md"
+  assert_success
+  assert_equal "$(jq -r .number <<<"$output")" 99
+  printf '## 概要\n別れの挨拶\n\nCloses #2\n' >"$TMP/pr.md"
+  run_script pr-create.sh --issue 2 --body-file "$TMP/pr.md" --no-draft
+  assert_success
+  assert_equal "$(jq -c '[.created, .draft, .pr.number]' <<<"$output")" '[true,false,98]'
+  cd "$WS"
+  grader_matches "$c" files-issue .fake-gh/writes || fail "files-issue に当たりません: $(cat .fake-gh/writes)"
+  grader_matches "$c" opens-pr .fake-gh/writes || fail "opens-pr に当たりません: $(cat .fake-gh/writes)"
+  # PR の本文は、偽の gh が残したものを pr-body-lists-filed が採点する
+  grep -qF 'Closes #2' .fake-gh/pr-body || fail "PR の本文が .fake-gh/pr-body に残っていません"
+}
+
+@test "task-auto の範囲外の指摘のケースの grader は、起票しないで PR を作っただけの記録には当たらない" {
+  local c=task-auto-files-out-of-scope
+  printf 'issue edit 2 --add-assignee @me\npr create --base main --head feat/2-add-farewell\nissue edit 2 --body-file -\n' >"$TMP/writes"
+  if grader_matches "$c" files-issue "$TMP/writes"; then fail "起票していない記録に files-issue が当たります"; fi
+  # opens-pr は PR を作ったかだけを見る（起票し忘れは files-issue だけで落とし、どちらで失敗したかを見分ける）
+  grader_matches "$c" opens-pr "$TMP/writes" || fail "PR を作った記録に opens-pr が当たりません"
+}
+
+@test "task-auto の範囲外の指摘のケースの files-issue は、PR を作ってから起票した記録には当たらない" {
+  local c=task-auto-files-out-of-scope
+  printf 'pr create --base main --head feat/2-add-farewell\napi -X POST repos/me/demo/issues --input -\n' >"$TMP/writes"
+  if grader_matches "$c" files-issue "$TMP/writes"; then fail "逆順の記録に files-issue が当たります"; fi
+}
+
+@test "task-auto の範囲外の指摘のケースの files-issue は、issue-create.sh の起票に当たり、gh issue create やほかの読み取り・書き込みには当たらない" {
+  local c=task-auto-files-out-of-scope
+  scaffold "eval_repo && fake_gh_defaults"
+  assert_success
+  # 当たる：手順5のとおり issue-create.sh で起票した記録（偽の gh で実際に動かす）
+  printf '本文' >"$TMP/body.md"
+  # shellcheck disable=SC2016 # 引数は内側の bash が展開する（空白を含むパスでも割れないように、引数で渡す）
+  run "${TEST_BASH:-bash}" -c '"$0" "$1" --title t --type fix --body-file "$2" 2>/dev/null' "${TEST_BASH:-bash}" "$SCRIPTS/issue-create.sh" "$TMP/body.md"
+  assert_success
+  assert_equal "$(jq -r .number <<<"$output")" 99
+  if grader_matches "$c" files-issue .fake-gh/writes; then fail "PR の無い記録に files-issue が当たります"; fi
+  if grader_matches "$c" opens-pr .fake-gh/writes; then fail "PR の無い記録に opens-pr が当たります"; fi
+  printf 'pr create --base main --head feat/2-add-farewell\n' >>.fake-gh/writes
+  grader_matches "$c" files-issue .fake-gh/writes || fail "issue-create.sh の記録に files-issue が当たりません: $(cat .fake-gh/writes)"
+  # 当たらない：手順5のとおりでない gh issue create・GET に本文を付けた読み取り・本文の値にパスを含むコメント・一覧の読み取り・
+  # 番号付きのパスへの書き込み
+  : >.fake-gh/writes
+  gh issue create --title t --body b >/dev/null 2>&1 || true
+  gh api -X GET repos/me/demo/issues -f state=open >/dev/null 2>&1 || true
+  gh issue comment 2 --body "api -X POST repos/me/demo/issues --input - で起票する" >/dev/null 2>&1 || true
+  gh api repos/me/demo/issues/2/comments -f "body=api -X POST repos/me/demo/issues --input -" >/dev/null 2>&1 || true
+  gh api repos/me/demo/issues >/dev/null 2>&1 || true
+  gh api -X POST repos/me/demo/issues/99/sub_issues -F sub_issue_id=1 >/dev/null 2>&1 || true
+  gh api repos/me/demo/issues/2/parent >/dev/null 2>&1 || true
+  [ "$(wc -l <.fake-gh/writes | tr -d ' ')" -ge 7 ] || fail "当たらない例が記録されていません: $(cat .fake-gh/writes)"
+  printf 'pr create --base main --head feat/2-add-farewell\n' >>.fake-gh/writes
+  if grader_matches "$c" files-issue .fake-gh/writes; then fail "当たらない例に files-issue が当たります"; fi
 }
