@@ -202,17 +202,18 @@ max_depth() { echo "{\"sub_issues\": {\"max_depth\": $1}}" >.claude/dev-workflow
   done
 }
 
-@test "sub_issues_summary が無いときは1件だけ読み、404 ならサブ Issue なしとする" {
+@test "sub_issues_summary が無いときは1件だけ読み、404 でも読めなければ止まる" {
   setup_fake_gh
   set_children 12 20
   run_script parent-candidate.sh --issue 12 --levels 1
   assert_success
   assert_equal "$(jq .has_sub_issues <<<"$output")" true
   assert_equal "$(grep -c '^GetSubIssues ' "$CALLS")" 1
+  # 404 は「無い」とも「読めない」とも取れるので、サブ Issue なしとして親にせず、止まる
   touch "$FIX/sub-issues-12.404"
   run_script parent-candidate.sh --issue 12 --levels 1
-  assert_success
-  assert_equal "$(jq -c '[.has_sub_issues, .action]' <<<"$output")" '[false,"use_as_parent"]'
+  assert_failure 1
+  assert_output --partial "#12 のサブ Issue を読めませんでした"
 }
 
 @test "sub_issues.max_depth に合わせて判定する（上限 2 なら孫まで紐付けると超え、上限 1 なら子も紐付けられない）" {
@@ -255,7 +256,7 @@ max_depth() { echo "{\"sub_issues\": {\"max_depth\": $1}}" >.claude/dev-workflow
   setup_fake_gh
   FAKE_FAIL=GetSubIssues run_script parent-candidate.sh --issue 12 --levels 1
   assert_failure
-  assert_output --partial "GitHub の API に失敗しました: gh: failed"
+  assert_output --partial "#12 のサブ Issue を読めませんでした"
   FAKE_FAIL=GetParent FAKE_FAIL_MSG='gh: Server Error (HTTP 500)' run_script parent-candidate.sh --issue 12 --levels 1
   assert_failure
   assert_output --partial "GitHub の API に失敗しました"

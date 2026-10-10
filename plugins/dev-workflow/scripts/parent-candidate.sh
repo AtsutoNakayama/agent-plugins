@@ -17,7 +17,7 @@
 # 出力: {issue, has_sub_issues, parent（一番近い親の {number, repo} か null）,
 #        depth（紐付けた一番深い Issue の層。上限を超えると分かってたどるのを止めたときは null）, max_depth,
 #        has_parent, exceeds_max_depth, reasons（当てはまった条件の名前の配列。親にするなら []）, action（use_as_parent か no_parent）}
-# 候補が無い・PR の番号なら止まる（終了コード 1）。sub_issues.max_depth が 1・2・3 のどれでもなければ止まる（終了コード 2）。
+# 候補が無い・PR の番号・サブ Issue を読めない（sub_issues_summary が無く、読み出しが 404・410 を含めて失敗した）なら止まる（終了コード 1）。sub_issues.max_depth が 1・2・3 のどれでもなければ止まる（終了コード 2）。
 set -euo pipefail
 
 # shellcheck source=lib/common.sh
@@ -59,11 +59,12 @@ candidate="$(dw_rest_issue "$repo_nwo" "$issue")"
 path="$(jq -r '.url | sub("^.*?/repos/"; "repos/")' <<<"$candidate")"
 
 # サブ Issue があるか。Issue の応答の sub_issues_summary.total で決め、無いときだけ1件だけ読む（全ページは読まない。
-# issue-cancel.sh と同じ読み方）。読むときは dw_gh_find を通し、404・410 はサブ Issue なしとする
+# issue-cancel.sh と同じ読み方）。読めなければ、404・410 も含めて止まる（404 は「無い」とも「読めない（GHES・権限の無いトークン）」とも
+# 取れ、「無い」として親にすると、起票した後の紐付けで失敗して、子が中途半端に残るため。止まれば、スキルは親なしとして扱う）
 has_subs="$(jq '.sub_issues_summary.total // null | if . == null then null else . > 0 end' <<<"$candidate")"
 if [ "$has_subs" = null ]; then
-  subs="$(dw_gh_find gh api "$path/sub_issues?per_page=1")"
-  has_subs="$(jq 'if . == null then false else length > 0 end' <<<"$subs")"
+  has_subs="$(gh api "$path/sub_issues?per_page=1" | jq 'length > 0')" \
+    || dw_die "#${issue} のサブ Issue を読めませんでした"
 fi
 
 # 候補の下に levels 層を紐付けたときの深さ（規則は dw_sub_issue_depth）。親があるかは知りたいので、少なくとも1回はたどる

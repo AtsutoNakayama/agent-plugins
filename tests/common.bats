@@ -456,12 +456,15 @@ SH
   assert_success
   assert_equal "$output" '{"depth":null,"exceeds":true,"first":{"number":10,"repo":"me/demo"}}'
   assert_equal "$(calls)" 1
-  # 上限までに親が尽きれば、深さは最後まで数えた値（10 の上は 5 → 2 で、2 には親が無い）
+  # 連鎖を 17 → 10 → 5（5 には親が無い）にしても、上限 3・下に 1 層では、親を 2 個数えた時点で超えると分かるので、
+  # 5 の上は読まずに打ち切り、depth は null にする
   : >"$FIX/calls"
   rm "$FIX/parent-5.json"
   run_common dw_sub_issue_depth "$issue" 1 3
   assert_success
   assert_equal "$output" '{"depth":null,"exceeds":true,"first":{"number":10,"repo":"me/demo"}}'
+  assert_equal "$(calls)" 2
+  # 連鎖を 17 → 10（10 には親が無い）にすると、上限の手前で親が尽きるので、depth は数えた値（10 が 1 層目、17 が 2 層目、下が 3 層目）
   rm "$FIX/parent-10.json"
   run_common dw_sub_issue_depth "$issue" 1 3
   assert_success

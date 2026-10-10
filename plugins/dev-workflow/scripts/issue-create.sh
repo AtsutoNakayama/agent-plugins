@@ -149,8 +149,10 @@ if [ -n "$parent" ]; then
   [ "$parent_issue" != null ] || dw_die "親にする Issue #${parent} がありません（${repo_nwo}）"
   # 起票する Issue は親の 1 層下。上限を超えると分かったら、それより上はたどらない（深さの規則は dw_sub_issue_depth）
   depth_check="$(dw_sub_issue_depth "$parent_issue" 1 "$max_depth")"
-  depth="$(jq -r '.depth // empty' <<<"$depth_check")"
-  [ "$(jq -r .exceeds <<<"$depth_check")" = false ] \
+  # exceeds と depth（超えるときは空）を、jq を1回だけ起動して読む。空になりうる depth は後ろに置く
+  # （区切りの空白は read が続けて読み飛ばすので、前に置くと exceeds がずれる）
+  read -r exceeds depth <<<"$(jq -r '"\(.exceeds) \(.depth // "")"' <<<"$depth_check")"
+  [ "$exceeds" = false ] \
     || dw_die "#${parent} の子にすると、親子の深さが上限の ${max_depth} 層を超えます（sub_issues.max_depth）" 2
   if [ "$depth" -gt "$DW_SUB_ISSUE_DEPTH_GUIDE" ]; then
     dw_warn "#${parent} の子にすると ${depth} 層目になります（目安は ${DW_SUB_ISSUE_DEPTH_GUIDE} 層まで）"
