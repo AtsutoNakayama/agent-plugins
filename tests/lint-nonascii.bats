@@ -55,3 +55,16 @@ run_check() {
   run_check
   assert_success
 }
+
+@test "バックスラッシュが偶数個の後の \$（展開される）は見つけ、奇数個の後は見逃す" {
+  local d='$'
+  # 二重引用符の中の \\$v は、\\ が1文字の \ になり、$v は展開される
+  printf '%s\n' "echo \"パス（\\\\${d}v）\"" >"$TMP/work/plugins/a.sh"
+  run_check
+  assert_failure 1
+  assert_output --partial 'plugins/a.sh:1:'
+
+  printf '%s\n' "echo \"パス（\\\\\\${d}v）\"" >"$TMP/work/plugins/a.sh"
+  run_check
+  assert_success
+}
