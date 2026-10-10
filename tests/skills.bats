@@ -153,8 +153,11 @@ has() {
   grep -qF "\`no_parent\` なら" <<<"$step2" || fail "action が no_parent のときにすることが書かれていません"
   # 止まったときにユーザーに親にするかを聞くと、issue-create.sh は確かめ直さないので、防ぐはずの紐付けが起きる
   # 一時的な失敗で親の紐付けを失わないよう、1回だけ実行し直してから、親なしにする
-  grep -qF 'スクリプトが止まったら、通信などの一時的な失敗のこともあるので、1回だけ実行し直す' <<<"$step2" || fail "parent-candidate.sh が止まったときに実行し直すことが書かれていません"
-  grep -qF "それでも止まったら、\`no_parent\` と同じに扱い" <<<"$step2" || fail "parent-candidate.sh が止まり続けたときに親なしで起票することが書かれていません"
+  grep -qF '通信などの一時的な失敗のこともあるので、1回だけ実行し直し' <<<"$step2" || fail "parent-candidate.sh が止まったときに実行し直すことが書かれていません"
+  grep -qF "それでも止まったら \`no_parent\` と同じに扱う" <<<"$step2" || fail "parent-candidate.sh が止まり続けたときに親なしで起票することが書かれていません"
+  # 直らない失敗（設定の誤り・引数の誤り）は実行し直さない
+  grep -qF "2（設定の誤り）か 64（引数の誤り）なら、実行し直しても直らないので、実行し直さずに \`no_parent\` と同じに扱う" <<<"$step2" \
+    || fail "parent-candidate.sh が終了コード 2・64 で止まったときに、実行し直さないことが書かれていません"
   grep -qF '後で GitHub の画面などから子を重なる既にある Issue に紐付けられる' <<<"$step2" || fail "親なしで起票したときに、後で紐付けられることを伝えると書かれていません"
   ! grep -qF '親にするかをユーザーに聞く' <<<"$step2" || fail "parent-candidate.sh が止まったときに、親にするかをユーザーに聞くと書かれています"
   [ -x "$BATS_TEST_DIRNAME/../plugins/dev-workflow/scripts/parent-candidate.sh" ] || fail "parent-candidate.sh が実行できません"
