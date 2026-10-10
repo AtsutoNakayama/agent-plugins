@@ -91,9 +91,14 @@ jq -e '
   and ((.status // {}) | type == "object") and (.status.unpulled | num) and (.status.dirty | bool)' <<<"$input" >/dev/null 2>&1 \
   || dw_die "入力の型が違います（rechecks・fix_attempts・max_fix_attempts・status.unpulled は数値、push_check_ok・status.dirty は真偽値）" 64
 
-result="$(jq -c '
+# 一覧に無い stop の reason は返さない（auto-hold.sh と見回りが、理由の種類として受け取れる値だけにする）。判断の表の中で
+# 確かめて jq の error で止め（終了コード 5）、1行のメッセージと終了コード 2 に読み替える
+err_file="$(mktemp "${TMPDIR:-/tmp}/repair-next.XXXXXX")"
+trap 'rm -f "$err_file"' EXIT
+set +e
+result="$(jq -c --argjson stops "$stop_reasons" '
   def r($a; $why): {action: $a, reason: $why};
-  def stop($why): r("stop"; $why);
+  def stop($why): if ($why | IN($stops[])) then r("stop"; $why) else error("unlisted_stop_reason:\($why)") end;
   (.status.unpulled // 0) as $unpulled
   | if .step == "start" then
       .status.plan as $plan
@@ -114,10 +119,12 @@ result="$(jq -c '
       (if (.fix_attempts // 0) < (.max_fix_attempts // 3) then r("fix"; "checks_failed") else stop("same_failure") end)
     elif .push_check_ok == null then r("push_check"; "not_checked")
     elif .push_check_ok == false then stop("forbidden_paths")
-    else r("push"; "ready") end' <<<"$input")"
-
-# 一覧に無い stop の reason は返さない（auto-hold.sh と見回りが、理由の種類として受け取れる値だけにする）
-if jq -e --argjson s "$stop_reasons" '.action == "stop" and ((.reason | IN($s[])) | not)' <<<"$result" >/dev/null; then
-  dw_die "stop の reason が一覧（stop_reasons）にありません: $(jq -r .reason <<<"$result")" 2
+    else r("push"; "ready") end' <<<"$input" 2>"$err_file")"
+status=$?
+set -e
+if [ "$status" -ne 0 ]; then
+  why="$(sed -n 's/.*unlisted_stop_reason:\([A-Za-z0-9_]*\).*/\1/p' "$err_file" | head -n 1)"
+  [ "$status" -eq 5 ] && [ -n "$why" ] && dw_die "stop の reason が一覧（stop_reasons）にありません: ${why}" 2
+  dw_die "次にすることを決められませんでした（jq が終了コード ${status} で失敗しました）" 2
 fi
 printf '%s\n' "$result"
