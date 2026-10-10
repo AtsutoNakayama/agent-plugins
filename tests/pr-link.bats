@@ -27,7 +27,7 @@ shows() {
   local c="$1" want
   shift
   run_hook "$c"
-  [ "$status" -eq 0 ] || fail "止めてしまった（$status）: $c / $output"
+  [ "$status" -eq 0 ] || fail "止めてしまった（${status}）: $c / $output"
   jq -e . <<<"$output" >/dev/null || fail "JSON を出していない: $c / $output"
   assert_equal "$(jq -r .hookSpecificOutput.hookEventName <<<"$output")" PostToolUse
   [[ "$(jq -r .hookSpecificOutput.additionalContext <<<"$output")" == "$(jq -r .systemMessage <<<"$output")"* ]] \
@@ -42,7 +42,7 @@ silent() {
   local c
   for c in "$@"; do
     run_hook "$c"
-    [ "$status" -eq 0 ] || fail "止めてしまった（$status）: $c / $output"
+    [ "$status" -eq 0 ] || fail "止めてしまった（${status}）: $c / $output"
     [ -z "$output" ] || fail "何か出した: $c / $output"
   done
 }
@@ -57,7 +57,7 @@ make_wt() {
 # 使い方: shows_wt <コマンド> [cwd]
 shows_wt() {
   run_hook "$1" "" "${2:-$PWD}"
-  [ "$status" -eq 0 ] || fail "止めてしまった（$status）: $1 / $output"
+  [ "$status" -eq 0 ] || fail "止めてしまった（${status}）: $1 / $output"
   [[ "$(jq -r .systemMessage <<<"$output")" == *"Issue #23: https://github.com/me/demo/issues/23"* ]] || fail "移った先の Issue が無い: $1 / $output"
   [[ "$output" != *"issues/17"* ]] || fail "移る前の Issue を出した: $1 / $output"
 }
@@ -327,7 +327,7 @@ https://github.com/me/demo/pull/42"
   for c in "git commit -m \"$msg\"" "echo $words; git commit -m x" \
     "$(printf 'git commit -F - <<EOF\n%s\nEOF' "$msg")"; do
     { time run_hook "$c"; } 2>>"$TMP/cpu"
-    [ "$status" -eq 0 ] || fail "止めてしまった（$status）: ${c:0:80}"
+    [ "$status" -eq 0 ] || fail "止めてしまった（${status}）: ${c:0:80}"
     [[ "$(jq -r .systemMessage <<<"$output")" == *"Issue #17: https://github.com/me/demo/issues/17"* ]] || fail "Issue が無い: ${c:0:80}"
   done
   cpu="$(awk '{ t += $1 + $2 } END { printf "%.1f", t }' "$TMP/cpu")"

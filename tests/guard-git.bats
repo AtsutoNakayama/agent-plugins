@@ -26,7 +26,7 @@ allowed() {
   local c
   for c in "$@"; do
     run_hook "$c"
-    [ "$status" -eq 0 ] || fail "止めてしまった（$status）: $c / $output"
+    [ "$status" -eq 0 ] || fail "止めてしまった（${status}）: $c / $output"
   done
 }
 
@@ -36,7 +36,7 @@ denied() {
   shift
   for c in "$@"; do
     run_hook "$c"
-    [ "$status" -eq 2 ] || fail "止めなかった（$status）: $c"
+    [ "$status" -eq 2 ] || fail "止めなかった（${status}）: $c"
     assert_output --partial "$msg"
   done
 }
@@ -48,7 +48,7 @@ warned() {
   shift
   for c in "$@"; do
     run_hook "$c"
-    [ "$status" -eq 0 ] || fail "止めてしまった（$status）: $c / $output"
+    [ "$status" -eq 0 ] || fail "止めてしまった（${status}）: $c / $output"
     # 1コマンドごとの jq の起動を減らすため、検査は1回の jq にまとめる（JSON でない出力も、ここで失敗する）
     jq -e --arg n "ブランチ名 ${name} は規約に合いません" '
       .hookSpecificOutput.hookEventName == "PreToolUse"
@@ -64,7 +64,7 @@ silent() {
   local c
   for c in "$@"; do
     run_hook "$c"
-    [ "$status" -eq 0 ] || fail "止めてしまった（$status）: $c / $output"
+    [ "$status" -eq 0 ] || fail "止めてしまった（${status}）: $c / $output"
     [ -z "$output" ] || fail "何か出した: $c / $output"
   done
 }
@@ -368,7 +368,7 @@ silent() {
   for c in "git commit -m \"$msg\"; git push -f" "echo $words; git push -f" \
     "$(printf 'git commit -F - <<EOF\n%s\nEOF\ngit push -f' "$msg")"; do
     { time run_hook "$c"; } 2>>"$TMP/cpu"
-    [ "$status" -eq 2 ] || fail "止めなかった（$status）: ${c:0:80}"
+    [ "$status" -eq 2 ] || fail "止めなかった（${status}）: ${c:0:80}"
     assert_output --partial "強制 push"
   done
   local cpu

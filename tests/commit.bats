@@ -124,7 +124,7 @@ commit_with() {
     echo "{\"commit\": {\"pattern\": $p}}" >.claude/dev-workflow/config.json
     commit_with "feat: ログインを追加する"
     assert_failure 2
-    assert_output --partial "commit.pattern（$p）が文字列ではありません"
+    assert_output --partial "commit.pattern（${p}）が文字列ではありません"
     refute_output --partial "規約に合いません"
   done
   assert_equal "$(git rev-list --count HEAD)" 1
