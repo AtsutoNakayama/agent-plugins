@@ -4,6 +4,10 @@
 # SKILL.md の文章に書くと、テストできず、組み合わせの抜けが残るため（branch-plan.sh と同じ流儀）。
 #
 # 使い方: echo '<入力 JSON>' | repair-next.sh
+#         repair-next.sh --stop-reasons   このスクリプトが返す stop の reason の一覧（JSON の配列）を出力する。
+#                                         止まった理由の種類（auto-hold.sh の --repair-reason）には、この一覧のほかに、
+#                                         見回りが上限で止めるときの push_limit と、この表の外で止まるときの other も使う
+#                                         （どちらもこのスクリプトは返さないので、一覧に入れない。ADR 000339）
 #
 # 入力（JSON）:
 #   step          start（branch-status.sh の出力を見て、取り込みを始めるか決める。手順1）・
@@ -20,7 +24,8 @@
 #   action  merge（origin/<base_branch> を merge する）・pull（git pull --no-rebase で origin のブランチを取り込む）・
 #           checks（テストとチェックを実行する）・fix（失敗を直す）・push_check（repair-push-check.sh を実行する）・
 #           push（push する）・finish（取り込まずに、何も書き込まずに終える）・recheck（数秒待って branch-status.sh を実行し直す）・
-#           stop（止まる。Issue にコメントして保留の列に移す）
+#           stop（止まる。Issue にコメントして保留の列に移す。reason は、auto-hold.sh の --repair-reason にそのまま渡し、
+#           見回りが止まった理由の種類を見分ける印にする）
 #
 # 判断の表（上から順に当てはめる）
 #   step が start
@@ -44,6 +49,7 @@
 #   pull・fix の後は、push_check_ok を null に戻す（コミットや取り込みで、確かめた内容が変わるため）
 #   入力の型が違うとき（数値でない rechecks・fix_attempts・max_fix_attempts・unpulled、真偽値でない dirty・push_check_ok）は、
 #   終了コード 64 で止まる（null と省略は、既定の値）
+#   判断の表が、stop の reason の一覧（stop_reasons）に無い値を返そうとしたら、1行のメッセージを出して終了コード 2 で止まる
 set -euo pipefail
 
 # shellcheck source=lib/common.sh
@@ -53,9 +59,16 @@ dw_require jq
 # macOS の BSD sed が日本語で失敗しないよう、バイト列として扱わせる
 usage() { LC_ALL=C sed -n '2,/^[^#]/{/^[^#]/d;s/^# \{0,1\}//;p;}' "$0"; }
 
+# このスクリプトが返す stop の reason の一覧（--stop-reasons で出力する）。判断の表で stop を返すときは、この中の値だけを使い、
+# 一覧に無い値を返そうとしたら止まる（終了コード 2）。止まった理由の種類（auto-hold.sh の --repair-reason）にはそのまま渡す。
+# 種類には、ほかに push_limit（見回りが push の上限で止める）と other（この表の外で止まる）があるが、このスクリプトは返さないので、
+# ここには入れない（ADR 000339）。英小文字で始め、英小文字・数字・_ だけにする（tests/auto-hold.bats で確かめる）
+stop_reasons='["base_mismatch","recheck_exhausted","dirty","unknown_plan","checks_unconfirmed","same_failure","forbidden_paths"]'
+
 while [ $# -gt 0 ]; do
   case "$1" in
     -h | --help) usage; exit 0 ;;
+    --stop-reasons) jq -c . <<<"$stop_reasons"; exit 0 ;;
     *) dw_die "不明な引数です: $1" 64 ;;
   esac
 done
@@ -78,26 +91,40 @@ jq -e '
   and ((.status // {}) | type == "object") and (.status.unpulled | num) and (.status.dirty | bool)' <<<"$input" >/dev/null 2>&1 \
   || dw_die "入力の型が違います（rechecks・fix_attempts・max_fix_attempts・status.unpulled は数値、push_check_ok・status.dirty は真偽値）" 64
 
-jq -c '
+# 一覧に無い stop の reason は返さない（auto-hold.sh と見回りが、理由の種類として受け取れる値だけにする）。判断の表の中で
+# 確かめて jq の error で止め（終了コード 5）、1行のメッセージと終了コード 2 に読み替える
+err_file="$(mktemp "${TMPDIR:-/tmp}/repair-next.XXXXXX")"
+trap 'rm -f "$err_file"' EXIT
+set +e
+result="$(jq -c --argjson stops "$stop_reasons" '
   def r($a; $why): {action: $a, reason: $why};
+  def stop($why): if ($why | IN($stops[])) then r("stop"; $why) else error("unlisted_stop_reason:\($why)") end;
   (.status.unpulled // 0) as $unpulled
   | if .step == "start" then
       .status.plan as $plan
       | if $plan.action == "none" then r("finish"; $plan.reason)
-        elif $plan.action == "ask_base" then r("stop"; "base_mismatch")
+        elif $plan.action == "ask_base" then stop("base_mismatch")
         elif $plan.action == "recheck" then
-          (if (.rechecks // 0) < 3 then r("recheck"; "merge_state_unknown") else r("stop"; "recheck_exhausted") end)
-        elif .status.dirty == true then r("stop"; "dirty")
+          (if (.rechecks // 0) < 3 then r("recheck"; "merge_state_unknown") else stop("recheck_exhausted") end)
+        elif .status.dirty == true then stop("dirty")
         elif $unpulled >= 1 then r("pull"; "unpulled")
         elif $plan.action == "merge" then r("merge"; $plan.reason)
         elif $plan.action == "push" then r("checks"; $plan.reason)
-        else r("stop"; "unknown_plan") end
-    elif .status.dirty == true then r("stop"; "dirty")
+        else stop("unknown_plan") end
+    elif .status.dirty == true then stop("dirty")
     elif $unpulled >= 1 then r("pull"; "unpulled")
-    elif .checks == "unconfirmed" then r("stop"; "checks_unconfirmed")
+    elif .checks == "unconfirmed" then stop("checks_unconfirmed")
     elif .checks == "pending" then r("checks"; "not_run")
     elif .checks == "fail" then
-      (if (.fix_attempts // 0) < (.max_fix_attempts // 3) then r("fix"; "checks_failed") else r("stop"; "same_failure") end)
+      (if (.fix_attempts // 0) < (.max_fix_attempts // 3) then r("fix"; "checks_failed") else stop("same_failure") end)
     elif .push_check_ok == null then r("push_check"; "not_checked")
-    elif .push_check_ok == false then r("stop"; "forbidden_paths")
-    else r("push"; "ready") end' <<<"$input"
+    elif .push_check_ok == false then stop("forbidden_paths")
+    else r("push"; "ready") end' <<<"$input" 2>"$err_file")"
+status=$?
+set -e
+if [ "$status" -ne 0 ]; then
+  why="$(sed -n 's/.*unlisted_stop_reason:\([A-Za-z0-9_]*\).*/\1/p' "$err_file" | head -n 1)"
+  [ "$status" -eq 5 ] && [ -n "$why" ] && dw_die "stop の reason が一覧（stop_reasons）にありません: ${why}" 2
+  dw_die "次にすることを決められませんでした（jq が終了コード ${status} で失敗しました）" 2
+fi
+printf '%s\n' "$result"

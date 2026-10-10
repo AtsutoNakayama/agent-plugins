@@ -147,6 +147,20 @@ has() {
   grep -q '「このまま設定する」と合わせて4つにする' <<<"$step3" || fail "21/34 の分割の段落に、選択肢を4つに収めることが書かれていません"
   grep -q '外した親の代わりとして使う例外' <<<"$step2" || fail "親を外すときの扱いが書かれていません"
   grep -q '子を親なしで起票し' <<<"$step2" || fail "外した親の代わりの Issue を親にできないときの扱いが書かれていません"
+  # 親にできるかは、スクリプトの出力の action で決める（SKILL.md に条件の組み合わせを書いて判断させない）
+  grep -qF 'parent-candidate.sh --issue <重なる既にある Issue の番号> --levels' <<<"$step2" || fail "外した親の代わりを parent-candidate.sh で判定することが書かれていません"
+  grep -qF "\`use_as_parent\` なら" <<<"$step2" || fail "action が use_as_parent のときにすることが書かれていません"
+  grep -qF "\`no_parent\` なら" <<<"$step2" || fail "action が no_parent のときにすることが書かれていません"
+  # 止まったときにユーザーに親にするかを聞くと、issue-create.sh は確かめ直さないので、防ぐはずの紐付けが起きる
+  # 一時的な失敗で親の紐付けを失わないよう、1回だけ実行し直してから、親なしにする
+  grep -qF '通信などの一時的な失敗のこともあるので、1回だけ実行し直し' <<<"$step2" || fail "parent-candidate.sh が止まったときに実行し直すことが書かれていません"
+  grep -qF "それでも止まったら \`no_parent\` と同じに扱う" <<<"$step2" || fail "parent-candidate.sh が止まり続けたときに親なしで起票することが書かれていません"
+  # 直らない失敗（設定の誤り・引数の誤り）は実行し直さない
+  grep -qF "2（設定の誤り）か 64（引数の誤り）なら、実行し直しても直らないので、実行し直さずに \`no_parent\` と同じに扱う" <<<"$step2" \
+    || fail "parent-candidate.sh が終了コード 2・64 で止まったときに、実行し直さないことが書かれていません"
+  grep -qF '後で GitHub の画面などから子を重なる既にある Issue に紐付けられる' <<<"$step2" || fail "親なしで起票したときに、後で紐付けられることを伝えると書かれていません"
+  ! grep -qF '親にするかをユーザーに聞く' <<<"$step2" || fail "parent-candidate.sh が止まったときに、親にするかをユーザーに聞くと書かれています"
+  [ -x "$BATS_TEST_DIRNAME/../plugins/dev-workflow/scripts/parent-candidate.sh" ] || fail "parent-candidate.sh が実行できません"
   grep -q '外した親のさらに上の親にする' <<<"$step2" || fail "木の途中の親を外すときの扱いが書かれていません"
   grep -qF "依存先を既にある Issue の \`#N\` に付け替え" <<<"$step2" || fail "依存先の付け替えが書かれていません"
 }
@@ -301,6 +315,28 @@ has() {
 }
 
 # shellcheck disable=SC2016 # バッククォートはスキルの本文の文字で、展開させない
+@test "gh-pr-check は、needs_attention が true なら対応なしで終えず、スレッドの件数だけで未解決なしと言わない（#279）" {
+  f="$SKILLS/gh-pr-check/SKILL.md"
+  grep -q '`needs_attention` が true なら.*「対応はありません」で終えない' "$f" \
+    || fail "gh-pr-check に、needs_attention が true なら対応なしで終えないことが書かれていません"
+  grep -q '`feedback` が空で、`checks.state` が `failure` でもなければ、何も変えずに終える' "$f" \
+    || fail "gh-pr-check の終える条件が、feedback が空で CI も失敗していないこと、になっていません"
+  grep -q '`replied` は.*時刻だけで決めた目安' "$f" || fail "gh-pr-check に、replied が時刻だけの目安であることが書かれていません"
+  grep -q '選べる指摘・質問が1つも無ければ.*聞かずに' "$f" \
+    || fail "gh-pr-check に、選べる指摘・質問が無ければ聞かずに進むことが書かれていません"
+  s4="$(sed -n '/^### 4\./,/^### 5\./p' "$f")"
+  grep -q '担当の skill の分があれば、手順8へ進んで任せる' <<<"$s4" || fail "gh-pr-check の手順4に、担当の skill の分があれば手順8へ進むことが書かれていません"
+  grep -q '無ければ、手順9へ進んで結果を伝える' <<<"$s4" || fail "gh-pr-check の手順4に、担当の skill の分が無ければ手順9へ進むことが書かれていません"
+  grep -q '返事をしていないものを対応済みと言わない' <<<"$s4" || fail "gh-pr-check の手順4に、返事をしていない感想・承認を対応済みと数えないことが書かれていません"
+  s9="$(sed -n '/^### 9\./,$p' "$f")"
+  grep -q '手順4で選べる指摘・質問が無くて来たときは.*CI・マージの状態' <<<"$s9" \
+    || fail "gh-pr-check の手順9に、手順4から来たときに件数と CI・マージの状態を伝えることが書かれていません"
+  grep -q 'counts.threads.*だけを見て' "$f" || fail "gh-pr-check に、スレッドの件数だけで未解決なしと言わないことが書かれていません"
+  grep -q '`reviews`・`comments`・`needs_attention`・`counts.unanswered` を落とさない' "$f" \
+    || fail "gh-pr-check に、出力を絞って読むときも reviews・comments を落とさないことが書かれていません"
+}
+
+# shellcheck disable=SC2016 # バッククォートはスキルの本文の文字で、展開させない
 @test "branch-update は、衝突を直すどの場面でも、両立できると判断した衝突も含めて、直す前に直し方の方針の確認を取る（設計書 §8・ADR 000237）" {
   # 両立できると判断した衝突を確かめずに直し、push の前の確認の時点で直したコミットが既にできていた（#237）
   # 文の言い回しに縛られないよう、箇条（見出しの語や選択肢の名前）で場所を決め、その中の要の語だけを確かめる
@@ -368,10 +404,17 @@ has() {
     grep -qF "| \`$a\` |" <<<"$nx" || fail "repair-next.sh の action「$a」のすることが表にありません"
   done
   has "衝突の直し方" "$(sed -n '/^### 衝突の直し方/,/^### PR のコメント/p' <<<"$un")" \
-    '指示役が次のとおりに決める' '止まる衝突' '.github/workflows/' '.claude/'
-  has "PR のコメント" "$(sed -n '/^### PR のコメント/,/^### 止まる/p' <<<"$un")" '<!-- dev-workflow:repair-run -->' '代わりに決めたこと' 'issues/comments/<ID>' '-X PATCH' '`--edit-last` は使わない' '追記する'
+    '指示役が次のとおりに決める' '止まる衝突' '`repair-push-check.sh` が止めるパス' '正本は `repair-push-check.sh --help`' '同じ範囲'
+  has "PR のコメント" "$(sed -n '/^### PR のコメント/,/^### 止まる/p' <<<"$un")" '<!-- dev-workflow:repair-run head=<head の sha> -->' 'git rev-parse origin/<ブランチ>' 'refs/remotes/origin/<ブランチ>' 'gh pr view <PR番号> --json headRefOid' 'scripts/repair-run-count.sh' "gh api --paginate --slurp 'repos/{owner}/{repo}/issues/<PR番号>/comments?per_page=100'" '全部を返さないことがあり' 'PR の head が `head` の sha から進んだもの' '数えない' '代わりに決めたこと' 'issues/comments/<ID>' '-X PATCH' '`--edit-last` は使わない' '追記する'
   has "止まる" "$(sed -n '/^### 止まる$/,/^### 結果を返す/p' <<<"$un")" \
-    'git merge --abort' 'auto-hold.sh --issue <番号> --run-id <実行の id> --reason-file <ファイル>' 'repair-stopped reason=other' 'push はしない'
+    'git merge --abort' 'auto-hold.sh --issue <番号> --run-id <実行の id> --reason-file <ファイル> --repair-reason <理由の種類>' '`reason`（`dirty`・`same_failure`・`forbidden_paths` など）をそのまま渡し' '`other` を渡す' '本文には書かない' 'push はしない'
+  # repair-run の head は、push 前の origin の head から取る。gh の headRefOid は、origin/<ブランチ> が無いときの1か所だけで使う
+  # 1つのコマンド（--json headRefOid --jq .headRefOid）を1か所と数える
+  [ "$(grep -o 'json headRefOid' <<<"$un" | wc -l | tr -d ' ')" = 1 ] || fail "無人の節で headRefOid を使う箇所が1か所ではありません"
+  [ "$(grep -c 'headRefOid' <<<"$un")" = 1 ] || fail "無人の節で headRefOid を書いた行が1行ではありません"
+  line="$(grep -F 'headRefOid' <<<"$un")"
+  sentence="$(grep -F 'headRefOid' <<<"${line//。/$'\n'}")"
+  grep -qF '`origin/<ブランチ>` が無い' <<<"$sentence" || fail "headRefOid を使う文に、origin にブランチが無いときの条件がありません: $sentence"
   # 無人で GitHub に書き込まない／resolve しない
   ! grep -q 'resolveReviewThread' <<<"$un" || fail "無人の節で resolveReviewThread を呼ぶ手順があります"
   # description で、無人の使い方に触れている
@@ -684,15 +727,42 @@ has() {
 # shellcheck disable=SC2016 # バッククォートはスキルの本文の文字で、展開させない
 @test "adr-create は、採択した ADR を書き換えないことと、一部だけ変える ADR の補足に関係を書くことを書く（設計書 §8）" {
   adr="$SKILLS/adr-create/SKILL.md"
-  grep -qF '採択した ADR の本文は書き換えない' "$adr" || fail "adr-create に、採択した ADR を書き換えないことがありません"
+  grep -qF '書き終えた ADR の本文は、後から書き換えない' "$adr" || fail "adr-create に、ADR を書き換えないことがありません"
   grep -qF '「補足」に、その ADR へのリンクと、何を変えるかを書く（MADR の判断 0009）' "$adr" || fail "adr-create に、一部だけ変える ADR の補足の決まりがありません"
   grep -qF '全部を覆すなら `--supersedes` で置き換える' "$adr" || fail "adr-create に、全部を覆すときは置き換えることがありません"
-  grep -qF '採択した ADR の本文は書き換えない' "$BATS_TEST_DIRNAME/../docs/design.md" || fail "設計書に、書き換えないことがありません"
+  grep -qF '書き終えた ADR の本文は、後から書き換えない' "$BATS_TEST_DIRNAME/../docs/design.md" || fail "設計書に、書き換えないことがありません"
   grep -qF '関係を新しい ADR の「補足」に書く' "$BATS_TEST_DIRNAME/../docs/design.md" || fail "設計書に、補足に関係を書くことがありません"
   grep -qF '「補足」に、その ADR へのリンクと、何を変えるかを書きます（MADR の判断 0009）' "$BATS_TEST_DIRNAME/../README.md" || fail "README に、補足に関係を書くことがありません"
   tr="$BATS_TEST_DIRNAME/../plugins/dev-workflow/templates/adr/README.md"
   grep -qF '`date` は、MADR では「判断を最後に更新した日」ですが、書き換えないので、判断をした日にします' "$tr" || fail "テンプレートの README に date の扱いがありません"
-  grep -qF '採択した ADR の本文は書き換えません' "$tr" || fail "テンプレートの README に、編集しないことがありません"
+  grep -qF '書き終えた ADR の本文は、後から書き換えません' "$tr" || fail "テンプレートの README に、編集しないことがありません"
+}
+
+# shellcheck disable=SC2016 # バッククォートはスキルの本文の文字で、展開させない
+@test "proposed の ADR を採択するときは、status を accepted に、date を採択した日に書き換え、それだけを例外にする（#311・ADR 000338）" {
+  adr="$SKILLS/adr-create/SKILL.md"
+  has "adr-create の手順3" "$(step "$adr" 3)" \
+    '`proposed` の ADR を採択するときは、`status` を `accepted` に書き換え、`date` を採択した日に更新する' \
+    '例外は、置き換えたときの status の行と、`proposed` の ADR を採択するときの `status` と `date` の2つの行だけ' \
+    'ADR を書き換えない決まりの例外は、置き換えたときの status の行のほかは、この2つの行の書き換えだけで、ほかの行は書き換えない'
+  has "adr-create の手順4" "$(step "$adr" 4)" '後で採択するときは、手順3のとおり `status` と `date` の行だけを書き換える'
+  grep -qF '`proposed` の ADR を採択するときは、`status` を `accepted` に書き換え、`date` を採択した日に更新する**' "$BATS_TEST_DIRNAME/../docs/design.md" \
+    || fail "設計書に、採択するときの status と date の扱いがありません"
+  grep -qF '例外は、置き換えたときの `status` の行（`superseded by <新しい ADR>` にする。`adr-create.sh --supersedes`）と、下の `proposed` の ADR を採択するときの `status` と `date` の2つの行だけにする' \
+    "$BATS_TEST_DIRNAME/../docs/design.md" || fail "設計書に、書き換えない決まりの例外がありません"
+  grep -qF '例外は、置き換えたときの `status` の行（`superseded by <新しい ADR>` にします）と、`proposed` の ADR を採択するときの `status` と `date` の2つの行だけです' \
+    "$BATS_TEST_DIRNAME/../README.md" || fail "README に、書き換えない決まりの例外がありません"
+  grep -qF 'これを ADR を書き換えない決まりの例外にする' "$BATS_TEST_DIRNAME/../docs/adr/000338-adopt-proposed-adr-in-place.md" \
+    || fail "ADR 000338 に、採択時の書き換えを例外とする判断がありません"
+  grep -qF '`proposed` の ADR を採択するときは、`status` を `accepted` に書き換え、`date` を採択した日に更新します' \
+    "$BATS_TEST_DIRNAME/../plugins/dev-workflow/templates/adr/README.md" || fail "テンプレートの README に、採択するときの扱いがありません"
+}
+
+# shellcheck disable=SC2016 # バッククォートはスキルの本文の文字で、展開させない
+@test "adr-create の重複の確認は、adr-list.sh の cited_in_supplements で、近い ADR を一部だけ変えている ADR も読む（#310）" {
+  adr="$SKILLS/adr-create/SKILL.md"
+  has "adr-create の手順1" "$(step "$adr" 1)" '`cited_in_supplements`' '「補足」も読み' '一部だけ変えていないかを確かめる'
+  grep -qF '`cited_in_supplements`' "$BATS_TEST_DIRNAME/../docs/design.md" || fail "設計書に、補足からの逆引きがありません"
 }
 
 # shellcheck disable=SC2016 # バッククォートはスキルの本文の文字で、展開させない

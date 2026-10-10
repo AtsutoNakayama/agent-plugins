@@ -4,6 +4,7 @@
 #   - base_branch の上での git commit
 #   - base_branch への git push（base_branch の上で push 先を書かずに push するときを含む）
 #   - 強制 push（--force / -f / +<refspec> / --mirror）。--force-with-lease は許可する
+#   - 別のブランチで作った stash の取り出し・破棄（git stash pop / apply / drop / branch）と、git stash clear（check_stash）
 #
 # また、ブランチを作るコマンド（git switch -c / git checkout -b / git branch <名前> / git worktree add -b /
 # commit-ish を書かない git worktree add <パス>（パスの最後の名前でブランチを作る））で、
@@ -12,9 +13,10 @@
 # 標準入力でフックの入力（JSON）を受け取る。止めるときは理由を標準エラーに1行で出し、終了コード 2 で終わる
 # （Claude Code はコマンドを実行せず、理由を Claude に伝える）。警告するときは、フックの出力の JSON を
 # 標準出力に出し、終了コード 0 で終わる。
-# 操作の対象のリポジトリ（cd・pushd・popd・git -C・env -C で移った先、--git-dir・GIT_DIR などで指したリポジトリ）が、導入して
+# 操作の対象のリポジトリ（cd・pushd・popd・git -C・env -C・sudo -D で移った先、--git-dir・GIT_DIR などで指したリポジトリ）が、導入して
 # いないリポジトリなら何もしない（gc_target・target_set_up）。git がリポジトリを見つけられないときは、守りを外さないよう調べる（設計書 §1）。
-# ただし今のブランチを読めないので、コミットと、push 先を書かない push（と HEAD・@ への push）は止める（target_unknown）。
+# ただし今のブランチを読めないので、コミットと、push 先を書かない push（と HEAD・@ への push）と、stash の取り出し・破棄は止める（target_unknown）。
+# 同じコマンドの中で git init で作るリポジトリは、導入していないので何もせず、git clone するリポジトリは、まだ無いので対象が分からないものとする（gc_new_repo）。
 # コマンドの文字列の解析は、pr-link.sh と共有する（scripts/lib/git-command.sh）。timeout・env などの前に付くコマンドは飛ばすが、
 # sh -c・xargs などを通したコマンドや git の別名（alias）を通すと見逃す。
 # 最後の守りは GitHub のルールセット（setup-repo.sh）。
@@ -51,7 +53,7 @@ deny() { dw_die "$1" 2; }
 #   - ルートが分かれば、そこ（かメインのワークツリー）にチームの設定があるか（dw_is_set_up）
 #   - リポジトリは分かるがルートが分からない（bare リポジトリ、外から指した --separate-git-dir のリポジトリなど）ときは、
 #     HEAD にチームの設定がコミットされているか
-#   - git がリポジトリを見つけられない（ディレクトリが分からない cd - の後など）ときは、守りを外さないよう、導入したものとみなす（ただし今のブランチを読めないので、コミットと push 先を書かない push（と HEAD・@ への push）は止める。target_unknown）
+#   - git がリポジトリを見つけられない（ディレクトリが分からない cd - の後など）ときは、守りを外さないよう、導入したものとみなす（ただし今のブランチを読めないので、コミットと push 先を書かない push（と HEAD・@ への push）と stash の取り出し・破棄は止める。target_unknown）
 target_set_up() {
   local w prev wt
   if [ -n "$gc_root" ]; then
@@ -81,11 +83,21 @@ target_set_up() {
 
 # 対象のリポジトリを git が見つけられないとき（ディレクトリが分からない cd - の後など）に成功する。gc_target の後に呼ぶ。
 # このときは HEAD を読めず、今のブランチが分からない。空のブランチを base_branch ではないとみなして通すと守りが外れるので、
-# 今のブランチに頼る操作（コミットと、push 先を書かない push・HEAD や @ への push）は止める。それ以外の、先の名前を書いた push は、書かれた先で判断できるので通す
+# 今のブランチに頼る操作（コミットと、push 先を書かない push・HEAD や @ への push と、stash の取り出し・破棄（pop・apply・drop・branch））は止める。それ以外の、先の名前を書いた push は、書かれた先で判断できるので通す
 target_unknown() { [ -z "$gc_repo" ]; }
 
 # 対象が分からないときに止める理由。使い方: unknown_target_message <止める操作>
+# 同じコマンドの中で git clone するリポジトリ（new_clone）は、まだ無いので、clone と分けるよう案内する
+new_clone=false
 unknown_target_message() {
+  if $new_clone; then
+    echo "同じコマンドの中で git clone するリポジトリは、まだ無くて調べられないので、${1}は止めます（今のブランチが分からず、base_branch の上かを確かめられません）。git clone を先に実行してから、別のコマンドで操作してください"
+    return 0
+  fi
+  if [ -n "$gc_git_dir" ] && [ ! -d "$gc_git_dir" ]; then
+    echo "操作の対象のリポジトリが分からないので、${1}は止めます（移った先 ${gc_git_dir} はまだ無く、git がどのリポジトリを使うか分かりません）。新しいリポジトリなら、git init <ディレクトリ> を先に書いてから、そのディレクトリへ移ってください。既にあるリポジトリなら、ディレクトリを作ってから、別のコマンドで操作してください"
+    return 0
+  fi
   echo "操作の対象のリポジトリが分からないので、${1}は止めます（今のブランチが分からず、base_branch の上かを確かめられません）。cd -- <絶対パス> && git ...、または git -C <絶対パス> ... で対象を書き直してください"
 }
 
@@ -172,6 +184,52 @@ check_push() {
   done
 }
 
+# stash のサブコマンドが、check_stash が調べるもの（取り出し・破棄）なら成功する。使い方: stash_checked <stash のサブコマンド>
+stash_checked() {
+  case "$1" in
+    pop | apply | drop | branch | clear) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+# git stash の取り出し・破棄を調べる。stash は全ワークツリーで共有されるので、別のブランチ（別のワークツリーの作業）で作った
+# stash を取り出す・消すと、その作業の変更が混ざる・失われる。そこで、pop・apply・drop・branch は、対象の stash の件名
+# （「WIP on <ブランチ>: …」「On <ブランチ>: …」）のブランチが今のブランチと違えば止め、clear はいつも止める。
+# 対象の stash を読めない（無い）ときは、git が失敗するので通す。今のブランチを読めないときは止める（target_unknown）
+# 使い方: check_stash <stash のサブコマンド> <引数>...
+check_stash() {
+  local sub="${1:-}" subj from current base head
+  [ $# -eq 0 ] || shift
+  stash_checked "$sub" || return 0
+  [ "$sub" != clear ] \
+    || deny "git stash clear は、全ワークツリーで共有される stash をすべて消すので止めます。消すなら、今のブランチで作った stash を git stash list で探し、git stash drop <stash> で1つずつ消してください"
+  gc_stash_args "$sub" "$@"
+  ! target_unknown || deny "$(unknown_target_message "stash の取り出し・破棄")"
+  case "$gc_stash_ref" in -*) return 0 ;; esac
+  subj="$(gc_git log -1 --format=%s "$gc_stash_ref" --)" || return 0
+  case "$subj" in
+    "WIP on "*:*) from="${subj#WIP on }" ;;
+    "On "*:*) from="${subj#On }" ;;
+    *) from="" ;;
+  esac
+  from="${from%%:*}"
+  current="$(gc_branch)"
+  if [ -n "$current" ]; then
+    [ "$from" != "$current" ] || return 0
+  else
+    # detached HEAD で作った stash は「(no branch)」。別のワークツリーの detached HEAD とも同じ名前になるので、
+    # stash を作ったときの HEAD（stash のコミットの1つ目の親）が、今の HEAD と同じときだけ通す
+    current="(no branch)"
+    if [ "$from" = "$current" ]; then
+      base="$(gc_git rev-parse -q --verify "${gc_stash_ref}^1" || true)"
+      head="$(gc_git rev-parse -q --verify HEAD || true)"
+      [ -z "$base" ] || [ "$base" != "$head" ] || return 0
+      deny "${gc_stash_ref} は別の detached HEAD（${base:0:7}）の上で作られた stash なので、取り出し・破棄はしません（stash は全ワークツリーで共有され、別の作業の変更が混ざるため）。今の HEAD で作った stash を git stash list で探して指定してください"
+    fi
+  fi
+  deny "${gc_stash_ref} は別のブランチ（${from:-不明}）で作られた stash なので、取り出し・破棄はしません（stash は全ワークツリーで共有され、別の作業の変更が混ざるため）。今のブランチ（${current}）で作った stash を git stash list で探して指定してください"
+}
+
 # 作るブランチの名前を branch-name.sh --check で確かめ、規約に合わなければ警告を覚えておく。
 # 名前に展開前の $ や ` があるとき、設定を読めないときなどは何もしない。
 # base_branch や、手元・リモートに既にあるブランチ（-C・-B・-f で合わせ直すとき、他人のブランチを取ってくるとき）は、
@@ -200,10 +258,23 @@ check_branch_name() {
 check_git() {
   local sub="$1" base
   shift
+  # stash は、取り出し・破棄（check_stash）だけを調べる。作る・見るだけの操作では、対象を求めない
+  [ "$sub" != stash ] || stash_checked "${1:-}" || return 0
   case "$sub" in
-    commit | push | switch | checkout | branch | worktree)
-      # 操作の対象を求め、導入していないリポジトリなら何もしない（git がリポジトリを見つけられないときは、今までどおり調べる。ただし今のブランチを読めないので、コミットと push 先を書かない push（と HEAD・@ への push）は止める。target_unknown）
-      gc_target
+    commit | push | switch | checkout | branch | worktree | stash)
+      # 操作の対象を求め、導入していないリポジトリなら何もしない（git がリポジトリを見つけられないときは、今までどおり調べる。ただし今のブランチを読めないので、コミットと push 先を書かない push（と HEAD・@ への push）と stash の取り出し・破棄は止める。target_unknown）。
+      # 同じコマンドの中で git init で作るリポジトリは、まだチームの設定が無い（導入していない）ので何もしない。
+      # git clone するリポジトリは、まだ無く、導入したかもブランチも分からないので、対象が分からないときと同じに扱う（gc_new_repo）
+      gc_new_repo
+      new_clone=false
+      case "$gc_new_kind" in
+        init) return 0 ;;
+        clone)
+          gc_repo="" gc_root=""
+          new_clone=true
+          ;;
+        *) gc_target ;;
+      esac
       target_set_up || return 0
       ;;
     *) return 0 ;;
@@ -218,6 +289,7 @@ check_git() {
         || deny "${base} の上ではコミットしません。作業用のブランチを作ってください（task-start）"
       ;;
     push) check_push "$@" ;;
+    stash) check_stash "$@" ;;
     *) gc_new_branches check_branch_name "$sub" "$@" ;;
   esac
 }

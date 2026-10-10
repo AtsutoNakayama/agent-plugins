@@ -426,3 +426,112 @@ run_common() {
       || fail "${name} が空でない文字列の配列ではありません: ${output}"
   done
 }
+
+# 所有者が repos のリポジトリ（API の URL が .../repos/repos/<名前>）を読む偽の gh を置く。
+# gh api repos/<所有者>/<名前>/issues/<番号>/parent は $TMP/fix/parent-<番号>.json を返し（無ければ 404。FAKE_FAIL_PARENT があれば 500）、
+# 「GetParent <番号>」を $TMP/fix/calls に記録する。
+# gh api --paginate <パス>/items ... は $TMP/fix/items.json を返す
+fake_gh_repos_owner() {
+  mkdir -p "$TMP/bin" "$TMP/fix"
+  cat >"$TMP/bin/gh" <<'SH'
+#!/usr/bin/env bash
+case "$1 $2" in
+  "api repos/"*/parent)
+    n="${2%/parent}"
+    n="${n##*/}"
+    echo "GetParent $n" >>"$FIX/calls"
+    [ -z "${FAKE_FAIL_PARENT:-}" ] || { echo 'gh: Server Error (HTTP 500)' >&2; exit 1; }
+    [ -f "$FIX/parent-$n.json" ] || { echo 'gh: No parent issue found (HTTP 404)' >&2; exit 1; }
+    cat "$FIX/parent-$n.json"
+    ;;
+  "api --paginate") cat "$FIX/items.json" ;;
+  *) echo "gh: unexpected $*" >&2; exit 1 ;;
+esac
+SH
+  chmod +x "$TMP/bin/gh"
+  export PATH="$TMP/bin:$PATH" FIX="$TMP/fix"
+}
+
+@test "dw_issue_parents・dw_sub_issue_depth・dw_project_item は、所有者の名前が repos でもリポジトリを正しく読む" {
+  fake_gh_repos_owner
+  for n in 10 5; do
+    jq -n --argjson n "$n" '{number: $n, title: "親 \($n)", state: "open", url: "https://api.github.com/repos/repos/demo/issues/\($n)",
+      repository_url: "https://api.github.com/repos/repos/demo"}' >"$FIX/parent-$((n == 10 ? 17 : 10)).json"
+  done
+  run_common dw_issue_parents repos/demo 17
+  assert_success
+  assert_equal "$(jq -c 'map(.number)' <<<"$output")" '[10,5]'
+  run_common dw_sub_issue_depth '{"url": "https://api.github.com/repos/repos/demo/issues/17"}' 1 3
+  assert_success
+  assert_equal "$output" '{"depth":null,"exceeds":true,"first":{"number":10,"repo":"repos/demo"}}'
+  jq -n '[{node_id: "IT12", content: {number: 12, repository_url: "https://api.github.com/repos/repos/demo"}}]' >"$FIX/items.json"
+  run_common dw_project_item users/me/projectsV2/4 repos/demo 12
+  assert_success
+  assert_equal "$(jq -r .node_id <<<"$output")" IT12
+}
+
+@test "dw_sub_issue_depth は、下に付ける層を含めた深さを数え、上限を超えると分かったらたどるのを止めて depth を null にする" {
+  fake_gh_repos_owner
+  for c in 17:10 10:5 5:2; do
+    jq -n --argjson n "${c#*:}" '{number: $n, url: "https://api.github.com/repos/me/demo/issues/\($n)",
+      repository_url: "https://api.github.com/repos/me/demo"}' >"$FIX/parent-${c%%:*}.json"
+  done
+  issue='{"url": "https://api.github.com/repos/me/demo/issues/17"}'
+  calls() { grep -c '^GetParent ' "$FIX/calls" || true; }
+  # 17 の上に親が 3 個。上限 3・下に 1 層なら、親を 2 個数えたところで超えると分かる
+  : >"$FIX/calls"
+  run_common dw_sub_issue_depth "$issue" 1 3
+  assert_success
+  assert_equal "$output" '{"depth":null,"exceeds":true,"first":{"number":10,"repo":"me/demo"}}'
+  assert_equal "$(calls)" 2
+  # 下の層だけで上限に届けば、たどらない。<最低の回数> を渡せば、その回数はたどる
+  : >"$FIX/calls"
+  run_common dw_sub_issue_depth "$issue" 3 3
+  assert_success
+  assert_equal "$output" '{"depth":null,"exceeds":true,"first":null}'
+  assert_equal "$(calls)" 0
+  run_common dw_sub_issue_depth "$issue" 3 3 1
+  assert_success
+  assert_equal "$output" '{"depth":null,"exceeds":true,"first":{"number":10,"repo":"me/demo"}}'
+  assert_equal "$(calls)" 1
+  # 連鎖を 17 → 10 → 5（5 には親が無い）にしても、上限 3・下に 1 層では、親を 2 個数えた時点で超えると分かるので、
+  # 5 の上は読まずに打ち切り、depth は null にする
+  : >"$FIX/calls"
+  rm "$FIX/parent-5.json"
+  run_common dw_sub_issue_depth "$issue" 1 3
+  assert_success
+  assert_equal "$output" '{"depth":null,"exceeds":true,"first":{"number":10,"repo":"me/demo"}}'
+  assert_equal "$(calls)" 2
+  # 連鎖を 17 → 10（10 には親が無い）にすると、上限の手前で親が尽きるので、depth は数えた値（10 が 1 層目、17 が 2 層目、下が 3 層目）
+  rm "$FIX/parent-10.json"
+  run_common dw_sub_issue_depth "$issue" 1 3
+  assert_success
+  assert_equal "$output" '{"depth":3,"exceeds":false,"first":{"number":10,"repo":"me/demo"}}'
+  rm "$FIX/parent-17.json"
+  run_common dw_sub_issue_depth "$issue" 2 3
+  assert_success
+  assert_equal "$output" '{"depth":3,"exceeds":false,"first":null}'
+  run_common dw_sub_issue_depth "$issue" 1 1
+  assert_success
+  assert_equal "$output" '{"depth":null,"exceeds":true,"first":null}'
+}
+
+@test "dw_sub_issue_depth の親の repo は、repository_url があればそこから作り、無ければ url から作る" {
+  fake_gh_repos_owner
+  # url と repository_url を食い違わせて、どちらから作ったかを見分ける
+  jq -n '{number: 10, url: "https://api.github.com/repos/me/demo/issues/10", repository_url: "https://api.github.com/repos/Me/Demo"}' >"$FIX/parent-17.json"
+  run_common dw_sub_issue_depth '{"url": "https://api.github.com/repos/me/demo/issues/17"}' 1 3
+  assert_success
+  assert_equal "$(jq -c .first <<<"$output")" '{"number":10,"repo":"Me/Demo"}'
+  jq -n '{number: 10, url: "https://api.github.com/repos/me/demo/issues/10"}' >"$FIX/parent-17.json"
+  run_common dw_sub_issue_depth '{"url": "https://api.github.com/repos/me/demo/issues/17"}' 1 3
+  assert_success
+  assert_equal "$(jq -c .first <<<"$output")" '{"number":10,"repo":"me/demo"}'
+}
+
+@test "dw_sub_issue_depth は、親を読めなければ（404 以外）失敗する" {
+  fake_gh_repos_owner
+  FAKE_FAIL_PARENT=1 run_common dw_sub_issue_depth '{"url": "https://api.github.com/repos/me/demo/issues/17"}' 1 3
+  assert_failure
+  assert_output --partial "GitHub の API に失敗しました"
+}
