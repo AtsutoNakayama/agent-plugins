@@ -235,6 +235,7 @@ grader_pattern() { sed -n "s/^pattern: '\\(.*\\)'\$/\\1/p" "$EVALS/$1/graders/$2
   assert_success
   # 当たる：手順5のとおり issue-create.sh で起票した記録（偽の gh で実際に動かす）
   printf '本文' >"$TMP/body.md"
+  # shellcheck disable=SC2016 # 引数は内側の bash が展開する（空白を含むパスでも割れないように、引数で渡す）
   run "${TEST_BASH:-bash}" -c '"$0" "$1" --title t --type fix --body-file "$2" 2>/dev/null' "${TEST_BASH:-bash}" "$SCRIPTS/issue-create.sh" "$TMP/body.md"
   assert_success
   assert_equal "$(jq -r .number <<<"$output")" 99
