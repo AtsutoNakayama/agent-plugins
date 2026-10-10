@@ -19,34 +19,26 @@ dw_warn() {
 
 # 標準入力の全体を、JSON の文字列にして出力する（jq の入力の `.` がその文字列になる）。
 # 長くなりうる文を `jq -R`・`jq -R -s` で読むと、1行が約 4096 バイトを超えるとき、その区切りにかかった BMP の外の文字（絵文字など）が壊れる
-# （jq の既知の不具合）。--rawfile（一時ファイル経由）なら壊れないので、文を jq に渡すときは、`jq -R` を使わずに、これを通す
+# （jq の既知の不具合）。--rawfile なら壊れないので、文を jq に渡すときは、`jq -R` を使わずに、これを通す。
+# 標準入力は一時ファイルではなくプロセス置換（<(cat)）で渡すので、割り込みで残るファイルが無い
 # 使い方: text="$(printf '%s' "$x" | dw_json_str | jq -r 'ascii_downcase')"
 dw_json_str() {
-  local tmp rc=0
-  tmp="$(mktemp)" || return
-  cat >"$tmp" || rc=$?
-  [ "$rc" -ne 0 ] || jq -n --rawfile s "$tmp" '$s' || rc=$?
-  rm -f "$tmp"
-  return "$rc"
+  jq -n --rawfile s <(cat) '$s'
 }
 
-# 標準入力の全体を、jq の変数 $dw_in（文字列）にして、jq を1回だけ起動する（jq -n --rawfile dw_in <一時ファイル> に引数を足す）。
+# 標準入力の全体を、jq の変数 $dw_in（文字列）にして、jq を1回だけ起動する（jq -n --rawfile dw_in に引数を足す）。
 # 入力の文字列を、`.` ではなく `$dw_in` で読む以外は、dw_json_str と同じ（壊れない）。jq の起動の回数を増やしたくないときに使う
 # 使い方: dw_jq_text -r --arg b "$x" '$dw_in | split("\n") | .[0]' <<<"$text"
 dw_jq_text() {
-  local tmp rc=0
-  tmp="$(mktemp)" || return
-  cat >"$tmp" || rc=$?
-  [ "$rc" -ne 0 ] || jq -n --rawfile dw_in "$tmp" "$@" || rc=$?
-  rm -f "$tmp"
-  return "$rc"
+  jq -n --rawfile dw_in <(cat) "$@"
 }
 
 # 標準入力の各行を、JSON の文字列の配列にして1行で出力する（`jq -R . | jq -sc .` と同じ。空行も1つと数える。
-# 最後の改行の後ろの空の行は数えない）。dw_json_str を通すので、絵文字が壊れない
+# 最後の改行の後ろの空の行は数えない）。dw_jq_text を通すので、絵文字が壊れない
 # 使い方: arr="$(printf '%s\n' "$a" "$b" | dw_json_lines)"
 dw_json_lines() {
-  dw_json_str | jq -c 'split("\n") | if .[-1] == "" then .[:-1] else . end'
+  # shellcheck disable=SC2016 # jq の変数（$dw_in）を bash に展開させない
+  dw_jq_text -c '$dw_in | split("\n") | if .[-1] == "" then .[:-1] else . end'
 }
 
 # 必要なコマンドが無ければ終了する。
@@ -1252,6 +1244,7 @@ DW_JQ_ISSUE_TYPES='
 # コメントを閉じる行の --> の後ろの文字は、GitHub に表示されるので、lines の行にする。ただし HTML ブロックの続きとして
 # そのまま表示される（Markdown としては読まれない）ので、項目にも見出しにもしない。その後ろに閉じない <!-- があれば、GitHub は
 # 文書の最後までを隠すので、以降の行は読まない。
+# --> の後ろの文字は、ほかの本文の行と同じく、前後の空白を外さずに残す（lines の行は \r だけを外す）。
 # 項目の文は、前後の空白を外す。source した側で使う
 # 使い方: jq "$DW_JQ_MD_SCAN"' .body | md_scan | .items'
 # shellcheck disable=SC2016,SC2034 # jq のプログラムなので、$ は展開しない

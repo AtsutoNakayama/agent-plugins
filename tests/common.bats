@@ -464,7 +464,6 @@ run_common() {
 @test "設定の値の一覧の定数（DW_REVIEW_MODELS・DW_CODE_REVIEW_EFFORTS）は、空でない文字列の配列" {
   for name in DW_REVIEW_MODELS DW_CODE_REVIEW_EFFORTS; do
     # shellcheck disable=SC2016 # 引数は、起動した bash の中で展開させる
-    # shellcheck disable=SC2016 # 引数は、起動した bash の中で展開させる
     run "${TEST_BASH:-bash}" -c '. "$1"; printf "%s" "${!2}"' _ "$SCRIPTS/lib/common.sh" "$name"
     assert_success
     jq -s -e 'length == 1 and (.[0] | type == "array" and length > 0 and all(.[]; type == "string" and . != ""))' <<<"$output" >/dev/null \
@@ -659,10 +658,34 @@ SH
   assert_equal "$(jq -c --arg t "$text" '. == [$t, $t]' <<<"$output")" true
 }
 
-@test "scripts/ と hooks/ に、標準入力の jq -R・-R -s（--raw-input）が残っていない（絵文字が壊れるため。dw_json_str を使う）" {
-  run grep -rnE 'jq( +-[A-Za-z-]+)* +(-[A-Za-z]*R[A-Za-z]*|--raw-input)( |$)' "$SCRIPTS" "$SCRIPTS/../hooks"
-  # コメントの行（# で始まる行）は除く
-  hits="$(grep -vE '^[^:]+:[0-9]+:[[:space:]]*#' <<<"$output" || true)"
+# 標準入力のスクリプトから、jq に -R（-Rs・-sR・--raw-input など。ほかの引数を挟んでもよい）を渡している行を出す。
+# 行末の \ で続く行は1行につなぎ、コメントの行（# で始まる行）は除く。パイプ・; ・& ・括弧の手前までを1つのコマンドとみなす
+raw_jq_hits() {
+  awk '{ if (sub(/\\$/, "")) { buf = buf $0; next } print buf $0; buf = "" }' \
+    | grep -vE '^[[:space:]]*#' \
+    | grep -E '(^|[^[:alnum:]_.-])jq( +[^|;&)<>]*)? +(-[A-Za-z]*R[A-Za-z]*|--raw-input)( |$)' || true
+}
+
+@test "raw_jq_hits は、jq -R の書き方（ほかの引数を挟む・継続行にある）を拾い、コメントや jq でないコマンドは拾わない" {
+  hit() { assert_equal "$(printf '%s\n' "$1" | raw_jq_hits)" "$1"; }
+  hit "x=\$(printf a | jq -R -s .)"
+  hit "jq -Rs ."
+  hit "jq -sR ."
+  hit "jq --raw-input ."
+  hit "jq -r --arg x \"\$y\" -R '.'"
+  hit "jq --arg a b -Rs '.'"
+  hit "jq -c --argjson e \"\$extra\" -R -s 'split(1)'"
+  assert_equal "$(printf '%s\n' $'jq -r \\' $'  -R "$p"' | raw_jq_hits)" $'jq -r   -R "$p"'
+  assert_equal "$(printf '%s\n' $'jq -r --arg a b \\' $'  --arg c d \\' $'  -Rs "$p"' | raw_jq_hits | grep -c -- -Rs)" 1
+  assert_equal "$(printf '%s\n' '# jq -R は使わない' '  # jq -Rs' 'jq -r .a' 'sort -R' 'jq .a | sort -R' 'jq --arg r "x" .a' 'ls -R | jq .' | raw_jq_hits)" ""
+}
+
+@test "scripts/ と hooks/ に、標準入力の jq -R・-R -s（--raw-input）が残っていない（絵文字が壊れるため。dw_json_str・dw_jq_text を使う）" {
+  hits=""
+  while IFS= read -r f; do
+    h="$(raw_jq_hits <"$f")"
+    [ -z "$h" ] || hits="${hits}${f}: ${h}"$'\n'
+  done < <(find "$SCRIPTS" "$SCRIPTS/../hooks" -type f -name '*.sh')
   assert_equal "$hits" ""
 }
 

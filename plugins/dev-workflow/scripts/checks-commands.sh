@@ -193,7 +193,8 @@ if [ "$commands" = null ]; then
     scripts="$(jq -c '((.scripts // {}) | if type == "object" then . else {} end) | with_entries(select(.key | test("^(test|lint|check|typecheck|build|verify|ci)")))' "$repo_root/package.json" 2>/dev/null)" \
       || dw_die "package.json を JSON として読めません" 2
   fi
-  lines() { printf '%s' "$1" | dw_json_lines | jq -c 'map(select(. != ""))'; }
+  # shellcheck disable=SC2016 # jq の変数（$dw_in）を bash に展開させない
+  lines() { printf '%s' "$1" | dw_jq_text -c '$dw_in | split("\n") | map(select(. != ""))'; }
   hints="$(jq -nc --arg c "$contributing" --argjson s "$scripts" --argjson t "$(lines "$targets")" \
     --argjson w "$(lines "$ci")" --argjson p "$(lines "$proj")" \
     '{contributing: (if $c == "" then null else $c end), package_scripts: $s, makefile_targets: $t, ci_workflows: $w, project_files: $p}')"

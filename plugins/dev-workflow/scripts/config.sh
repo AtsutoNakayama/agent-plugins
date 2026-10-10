@@ -99,7 +99,8 @@ for dir in "$user_dir" "$team_dir"; do
   done
 done
 
-sources_json="$(printf '%s\n' ${sources[@]+"${sources[@]}"} | dw_json_lines | jq -c 'map(select(. != ""))')"
+# shellcheck disable=SC2016 # jq の変数（$dw_in）を bash に展開させない
+sources_json="$(printf '%s\n' ${sources[@]+"${sources[@]}"} | dw_jq_text -c '$dw_in | split("\n") | map(select(. != ""))')"
 
 printf '%s\n' "${layers[@]}" \
   | jq -s --argjson guides "$guides" --argjson sources "$sources_json" --argjson set_up "$set_up" \
