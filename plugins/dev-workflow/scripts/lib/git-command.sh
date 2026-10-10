@@ -61,25 +61,10 @@ gc_expand_home() {
 }
 
 # 基準のディレクトリからの相対パスを絶対パスにする（先頭の ~・$HOME は gc_expand_home で展開する）。分からなければ空を出力する。
-# まだ無いディレクトリへは、シェルの cd も失敗して移れないので、空（不明）にする。ただし、同じコマンドの中で前に git init・
-# git clone が作ると覚えた場所（gc_note_new_repo）と、ちょうど同じパスなら、実行するときにはあるので、そのパスを出力する
+# まだ無いディレクトリは、文字の上のパス（gc_path_key）にする。&& でつないだ後ろは、cd が成功したときしか動かないので、
+# そのパスで追い続ける。cd が失敗しても動く後ろ（; ・ || ・改行など）では、gc_settle_dir が、そのパスを不明に戻す
 # 使い方: gc_resolve_dir <基準のディレクトリ（空なら不明）> <パス> [no-tilde]
 gc_resolve_dir() {
-  local d n=$'\n'
-  d="$(gc_abs_path "$@")"
-  [ -n "$d" ] || return 0
-  if [ ! -d "$d" ]; then
-    case "$n${new_repos:-}" in
-      *"$n"[ic]"$d$n"*) ;;
-      *) return 0 ;;
-    esac
-  fi
-  printf '%s\n' "$d"
-}
-
-# gc_resolve_dir と同じく絶対パスにするが、まだ無いパスも出力する（gc_path_key）。git init・git clone が作る場所を求めるのに使う
-# 使い方: gc_abs_path <基準のディレクトリ（空なら不明）> <パス> [no-tilde]
-gc_abs_path() {
   local p
   p="$(gc_expand_home "$2" "${3:-}")"
   case "$p" in
@@ -89,7 +74,7 @@ gc_abs_path() {
       p="$1/$p"
       ;;
   esac
-  dw_abs_dir / "$p" || gc_path_key "$p"
+  dw_abs_dir / "$p" || gc_path_key "$p" || true
 }
 
 # まだ無いパスを、作る場所と比べられる形にする。. と .. を、シェルの cd（-L）と同じく文字の上で解いてから、
@@ -1157,7 +1142,7 @@ gc_command() {
 # --- 同じコマンドの中で作るリポジトリ ------------------------------------------------------
 # フック（PreToolUse）はコマンドを実行する前に動くので、同じコマンドの中で git init・git clone で作るリポジトリは、まだ無く、
 # git が見つけられない。そこで、作る場所を gc_scan の作業用の変数 new_repos に、1行ずつ「<種類><場所>」（i は init、c は clone）で覚え、
-# その場所へのまだ無いディレクトリへの cd などを移れたものとし（gc_resolve_dir）、ちょうどその場所で動く git を gc_new_repo で見分ける。
+# ちょうどその場所で動く git を gc_new_repo で見分ける。cd が失敗しても動く後ろ（gc_settle_dir）でも、その場所は実行するときにはあるので、不明に戻さない。
 # 配下の場所は見分けない（作った場所の下に、既にある別のリポジトリがあるかもしれず、その場所の git は新しいリポジトリを使うとは限らないため）
 
 # git init・git clone の引数から、作るリポジトリの場所を覚える。gc_command から呼ぶ。
@@ -1173,7 +1158,7 @@ gc_note_new_repo() {
     clone) gc_args gc_note_new_repo_on objuc "--origin= --branch= --upload-pack= --reference= --reference-if-able= --separate-git-dir= --depth= --shallow-since= --shallow-exclude= --config= --template= --jobs= --filter= --server-option= --bundle-uri= --ref-format= --revision= --bare --mirror" "$@" ;;
   esac
   if [ "$sub" = init ]; then
-    if [ "$npos" -eq 0 ]; then d="$gc_git_dir"; else d="$(gc_abs_path "$gc_git_dir" "$first")"; fi
+    if [ "$npos" -eq 0 ]; then d="$gc_git_dir"; else d="$(gc_resolve_dir "$gc_git_dir" "$first")"; fi
     [ -n "$d" ] || return 0
     if [ -d "$d" ]; then
       { IFS= read -r gd; IFS= read -r c; IFS= read -r top; } <<<"$(dw_repo_paths "$d" || true)" || true
@@ -1196,7 +1181,7 @@ gc_note_new_repo() {
       [ -n "$d" ] || return 0
       ! $bare || d="$d.git"
     fi
-    d="$(gc_abs_path "$gc_git_dir" "$d")"
+    d="$(gc_resolve_dir "$gc_git_dir" "$d")"
     [ -z "$d" ] || new_repos+="c$d$nl"
   fi
 }
@@ -1215,28 +1200,42 @@ gc_note_new_repo_on() {
   esac
 }
 
-# 操作の対象（gc_git_dir）が、同じコマンドの中で前に作ったリポジトリ（gc_note_new_repo）の場所と、ちょうど同じなら、
-# gc_new_kind に、作った方法（init・clone）を入れる。違えば空にする。後で覚えたものほど優先する。コールバックの中で呼ぶ。
-# --git-dir・--work-tree・GIT_DIR などがあれば、git はその場所のリポジトリを使わないので、見分けない（空にする）
+# <パス> が、同じコマンドの中で前に作ると覚えた場所（gc_note_new_repo）と、ちょうど同じなら、gc_new_kind に、作った方法
+# （init・clone）を入れる。違えば空にする。後で覚えたものほど優先する。gc_scan の中で呼ぶ
+# 使い方: gc_new_repo_at <パス>
 gc_new_kind=""
-# shellcheck disable=SC2034 # gc_new_kind は呼び出し側（フック）が読む
-gc_new_repo() {
+gc_new_repo_at() {
   local s="$new_repos" e
   gc_new_kind=""
-  [ -n "$gc_git_dir" ] || return 0
-  [ "${#gc_gopts[@]}" -eq 0 ] && [ "${#gc_genv[@]}" -eq 0 ] || return 0
+  [ -n "$1" ] || return 0
   while [ -n "$s" ]; do
     e="${s%%"$nl"*}"
     s="${s#*"$nl"}"
-    case "${e#?}" in
-      "$gc_git_dir")
-        case "$e" in
-          i*) gc_new_kind=init ;;
-          *) gc_new_kind=clone ;;
-        esac
-        ;;
+    [ "${e#?}" = "$1" ] || continue
+    case "$e" in
+      i*) gc_new_kind=init ;;
+      *) gc_new_kind=clone ;;
     esac
   done
+}
+
+# 操作の対象（gc_git_dir）が、作ると覚えた場所とちょうど同じなら、gc_new_kind に作った方法を入れる（gc_new_repo_at）。コールバックの中で呼ぶ。
+# --git-dir・--work-tree・GIT_DIR などがあれば、git はその場所のリポジトリを使わないので、見分けない（空にする）
+# shellcheck disable=SC2034 # gc_new_kind は呼び出し側（フック）が読む
+gc_new_repo() {
+  gc_new_kind=""
+  [ "${#gc_gopts[@]}" -eq 0 ] && [ "${#gc_genv[@]}" -eq 0 ] || return 0
+  gc_new_repo_at "$gc_git_dir"
+}
+
+# cd が失敗しても動く後ろ（; ・ || ・ | ・ & ・改行）に入る前に呼ぶ。今の場所がまだ無いディレクトリなら、その前の cd は
+# 失敗して移らなかったかもしれないので、不明に戻す。ただし、同じコマンドの中で前に git init・git clone が作ると覚えた場所は、
+# 実行するときにはあるので戻さない（作るのに失敗したときは、その git も失敗する）。&& の後ろでは呼ばない。
+# after（コマンドの後）では、まだ無い場所への cd は失敗しているので、その後ろの git も、その場所では動いていない
+gc_settle_dir() {
+  [ -n "$gc_dir" ] && [ ! -d "$gc_dir" ] || return 0
+  gc_new_repo_at "$gc_dir"
+  [ -n "$gc_new_kind" ] || gc_dir=""
 }
 
 # --- コマンドの文字列を単語に分ける ------------------------------------------------
@@ -1688,6 +1687,7 @@ gc_scan() {
         gc_end_command
         # &&・||・| の後ろの改行では、並びが続く
         if ! $joined; then
+          gc_settle_dir
           gc_end_pipe
           gc_mark_list
         fi
@@ -1695,6 +1695,7 @@ gc_scan() {
         ;;
       ';')
         gc_end_command
+        gc_settle_dir
         gc_end_pipe
         gc_mark_list
         joined=false
@@ -1721,6 +1722,7 @@ gc_scan() {
           *)
             # 並びごとバックグラウンド（サブシェル）で動くので、並びの始まりへ戻す
             gc_end_command
+            gc_settle_dir
             gc_end_pipe
             gc_restore "${lv_ld[lvl]}" "${lv_lp[lvl]}" "${lv_la[lvl]}"
             gc_mark_list
@@ -1735,6 +1737,8 @@ gc_scan() {
           # case のパターンの a|b) の | は、パイプではない
           i=$((i + 1))
         elif [ "${rest:1:1}" = '|' ]; then
+          # || の後ろは、前が失敗したときに動く
+          gc_settle_dir
           gc_end_pipe
           gc_mark_elem
           joined=true

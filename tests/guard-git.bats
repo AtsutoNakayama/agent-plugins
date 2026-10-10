@@ -441,9 +441,22 @@ silent() {
 @test "mkdir だけで git init の無いディレクトリへの cd の後は、どのリポジトリに入るか分からないので、コミットを止める" {
   denied "対象のリポジトリが分からない" "mkdir d && cd d && git commit -m x" "mkdir -p a/b && cd a/b && git commit -m x" \
     "git init proj && cd proj2 && git commit -m x"
-  # まだ無いディレクトリへの cd は、シェルでは失敗して移らないことがある（cd /x/nope; git init は、今のリポジトリを作り直す）。
-  # そのため、前に git init・git clone が作ると覚えた場所でなければ、git init の後でも分からないものとする
-  denied "対象のリポジトリが分からない" "mkdir d && cd d && git init && git commit -m x" "cd $TMP/nope; git init; git commit -m x"
+  # 移った先がまだ無いことを、理由で伝える
+  denied "はまだ無く" "mkdir d && cd d && git commit -m x"
+  # まだ無いディレクトリへの cd が失敗しても動く後ろ（; ・ || ・改行）では、cd は移らなかったかもしれない
+  # （cd /x/nope; git init は、今のリポジトリを作り直す）ので、git init の後でも分からないものとする
+  denied "対象のリポジトリが分からない" "cd $TMP/nope; git init; git commit -m x" "mkdir d && cd d; git init && git commit -m x" \
+    "cd $TMP/nope || git init && git commit -m x" "$(printf 'cd %s\ngit init && git commit -m x' "$TMP/nope")"
+}
+
+@test "まだ無いディレクトリへの cd の後も、&& でつないだ後ろでは、文字の上のパスで追い続ける" {
+  git checkout -q -b feat/1-x
+  # cd .. で既にある場所へ戻れば、そのリポジトリで判断する
+  allowed "mkdir build && cd build && cd .. && git commit -m x" "mkdir -p a/b && cd a/b && cd ../.. && git commit -m x"
+  # git init が作る場所へ、途中のディレクトリを通って移っても、新しいリポジトリとみなす
+  silent "git init a/b && cd a && cd b && git commit -m x" "mkdir -p $TMP/z && cd $TMP/z && git init && git commit -m x" \
+    "mkdir d && cd d && git init && git commit -m x" "git init proj; cd proj; git commit -m x"
+  denied "main へは push しません" "mkdir build && cd build && cd .. && git push origin main"
 }
 
 @test "対象のリポジトリが分からないときも、コミット・push 以外は止めない" {
