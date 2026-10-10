@@ -640,6 +640,33 @@ dw_base_branch() {
   printf '%s\n' "$b"
 }
 
+# gh pr list --head <ブランチ> の応答（JSON の配列）から、このブランチの開いた PR と、そのマージ先を選ぶ（#284）。
+# --head はブランチ名だけで探すので、fork の同じ名前のブランチからの PR（isCrossRepository が true）は除き、残りの最初の PR を選ぶ。
+# 1行目にマージ先、2行目に選んだ PR（応答のオブジェクトのまま1行の JSON。無ければ null）を出力する。
+# マージ先は PR の baseRefName（設定の base_branch と違うことがある。例：release/v1 に向いた PR）。PR が無い・baseRefName が
+# 無いか空なら、既定の base_branch にする。git のブランチ名として使えない値（dw_valid_branch_name。-x・+x・HEAD など。
+# git fetch がオプションや refspec として読む）も使わず、警告して既定の base_branch にする（取り込み先として使えないため）。
+# 応答を JSON の配列として読めなければ（gh が JSON でない出力を返したなど）1 を返す。呼ぶ側は gh が失敗したときと同じに扱う。
+# 応答は1回だけ jq で読む。
+# 使い方: dw_pr_pick <gh pr list の応答（--json に baseRefName・isCrossRepository を含める）> <既定の base_branch>
+dw_pr_pick() {
+  local out base="" pr=""
+  # マージ先に改行などの制御文字があると行で分けられないので、それを含む値は使えない値（\u0001。check-ref-format が拒否する）にする
+  out="$(jq -r 'if type == "array" then . else error end
+    | (map(select(type == "object" and (.isCrossRepository | not))) | first // null) as $p
+    | ($p.baseRefName // "" | if type != "string" then "" elif explode | any(. < 32 or . == 127) then "\u0001" else . end),
+      ($p | tojson)' <<<"$1" 2>/dev/null)" || return 1
+  { IFS= read -r base; IFS= read -r pr; } <<<"$out" || true
+  [ -n "$pr" ] || return 1
+  if [ -z "$base" ]; then
+    base="$2"
+  elif ! dw_valid_branch_name "$base"; then
+    dw_warn "PR のマージ先（${base}）は git のブランチ名として使えないので、設定の base_branch（${2}）をマージ先にします"
+    base="$2"
+  fi
+  printf '%s\n%s\n' "$base" "$pr"
+}
+
 # チームの設定から項目を1つ選び、{"<キー>": <値>} の形（1行）で出力する。設定のファイルが無いか、項目が無い（null）なら
 # プラグインの既定を使う（// と違い、false は値として保つ）。ファイルを JSON のオブジェクト1つとして読めなければ
 # （DW_JQ_ONE_OBJECT。空のファイルを含む）1 を返す。jq は1回だけ動かす（フックからも呼ぶため）。

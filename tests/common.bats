@@ -388,3 +388,47 @@ run_common() {
   assert_success
   assert_output ok
 }
+
+@test "dw_pr_pick は、fork を除いた最初の PR とそのマージ先を出し、無い・空・使えない値なら既定の base_branch に戻し、JSON でなければ 1 を返す（#284）" {
+  # 応答 → 1行目（マージ先）と2行目（選んだ PR）
+  pick() {
+    run_common dw_pr_pick "$1" main
+    assert_success
+    assert_equal "$(sed -n 1p <<<"$output")" "$2"
+    assert_equal "$(sed -n 2p <<<"$output")" "$3"
+  }
+  # PR が無い
+  pick '[]' main null
+  # 同じリポジトリの PR
+  pick '[{"number": 5, "baseRefName": "release/v1", "isCrossRepository": false}]' release/v1 '{"number":5,"baseRefName":"release/v1","isCrossRepository":false}'
+  # fork の PR は除き、同じリポジトリの PR を選ぶ
+  pick '[{"number": 9, "baseRefName": "fork/x", "isCrossRepository": true}, {"number": 5, "baseRefName": "release/v1", "isCrossRepository": false}]' release/v1 '{"number":5,"baseRefName":"release/v1","isCrossRepository":false}'
+  # fork の PR だけ
+  pick '[{"number": 9, "baseRefName": "release/v1", "isCrossRepository": true}]' main null
+  # マージ先が無いか空
+  pick '[{"number": 5, "isCrossRepository": false}]' main '{"number":5,"isCrossRepository":false}'
+  pick '[{"number": 5, "baseRefName": "", "isCrossRepository": false}]' main '{"number":5,"baseRefName":"","isCrossRepository":false}'
+  # 日本語のブランチ名は使える
+  pick '[{"number": 5, "baseRefName": "feat/日本語", "isCrossRepository": false}]' feat/日本語 '{"number":5,"baseRefName":"feat/日本語","isCrossRepository":false}'
+  # git のブランチ名として使えない値は、警告して既定の base_branch に戻す
+  for b in -x +x HEAD @ 'a..b' 'a b'; do
+    # shellcheck disable=SC2016 # 引数は、起動した bash の中で展開させる
+    run "${TEST_BASH:-bash}" -c '. "$1"; dw_pr_pick "$2" main 2>"$3"' _ "$SCRIPTS/lib/common.sh" \
+      "$(jq -nc --arg b "$b" '[{number: 5, baseRefName: $b, isCrossRepository: false}]')" "$TMP/err"
+    assert_success
+    assert_equal "$(sed -n 1p <<<"$output")" main
+    assert_equal "$(sed -n 2p <<<"$output" | jq -r .baseRefName)" "$b"
+    assert_equal "$(cat "$TMP/err")" "warn: PR のマージ先（${b}）は git のブランチ名として使えないので、設定の base_branch（main）をマージ先にします"
+  done
+  # 改行を含む値も、行がずれずに既定の base_branch に戻す
+  run_common dw_pr_pick '[{"number": 5, "baseRefName": "a\nb", "isCrossRepository": false}]' main
+  assert_success
+  assert_equal "$(grep -v '^warn:' <<<"$output" | sed -n 1p)" main
+  assert_equal "$(grep -v '^warn:' <<<"$output" | sed -n 2p | jq .number)" 5
+  # JSON の配列として読めない応答
+  for r in 'not json' '' '{}' '"x"'; do
+    run_common dw_pr_pick "$r" main
+    assert_failure 1
+    assert_output ""
+  done
+}

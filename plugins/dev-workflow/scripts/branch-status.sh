@@ -83,16 +83,16 @@ branch="$(git -C "$repo_root" symbolic-ref --short -q HEAD || true)"
 [ -n "$branch" ] || dw_die "ブランチの上にいません。取り込む作業用のブランチに切り替えてください" 64
 [ "$branch" != "$base" ] || dw_die "${base} には取り込めません。作業用のブランチで実行してください" 64
 
-# --head はブランチ名だけで探すので、fork の同じ名前のブランチからの PR を除く
-pr=null pr_base=""
-if command -v gh >/dev/null 2>&1 \
-  && prs="$(gh pr list --head "$branch" --state open --json number,url,mergeStateStatus,isCrossRepository,baseRefName 2>/dev/null)"; then
-  pr="$(jq -c 'map(select(.isCrossRepository | not)) | first // null | if . then {number, url, merge_state: .mergeStateStatus} else null end' <<<"$prs")"
-  pr_base="$(jq -r 'map(select(.isCrossRepository | not)) | first // null | .baseRefName // ""' <<<"$prs")"
-fi
 # 取り込み先は、開いた PR があればその PR のマージ先にする（設定の base_branch と違うことがある。例：release/v1 に向いた PR）。
-# PR が無いか、gh がマージ先を返さないときは、設定の base_branch を使う
-[ -z "$pr_base" ] || base="$pr_base"
+# PR の選び方（fork の PR を除く）と、マージ先が無い・空・使えない値のときに設定の base_branch に戻すことは、dw_pr_pick が決める。
+# gh が無いか、失敗したか、JSON でない応答を返したときは、pr は null で、設定の base_branch を使う
+pr=null
+if command -v gh >/dev/null 2>&1 \
+  && prs="$(gh pr list --head "$branch" --state open --json number,url,mergeStateStatus,isCrossRepository,baseRefName 2>/dev/null)" \
+  && picked="$(dw_pr_pick "$prs" "$base")"; then
+  { IFS= read -r base; IFS= read -r pr; } <<<"$picked"
+  [ "$pr" = null ] || pr="$(jq -c '{number, url, merge_state: .mergeStateStatus}' <<<"$pr")"
+fi
 
 git -C "$repo_root" fetch -q origin -- "$base" || dw_die "origin/${base} を取得できませんでした"
 ref="refs/remotes/origin/$base"

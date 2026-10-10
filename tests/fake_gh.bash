@@ -8,7 +8,7 @@
 # - gh issue edit N ...             引数を「edit N ...」として $CALLS に記録する。--body-file - なら標準入力を $TMP/issue-edit-body に写す
 # - gh issue comment N --body-file -  「issue-comment N」を $CALLS に記録し、標準入力を $TMP/issue-comment-body に写す
 # - gh issue close N ...            引数を「issue-close N ...」として $CALLS に記録する
-# - gh pr list ...                  $FIX/pr-list.json（無ければ []）を返し、引数を「pr-list ...」として $CALLS に記録する
+# - gh pr list ...                  $FIX/pr-list.json（無ければ []。$FIX/pr-list.raw があれば、その中身をそのまま）を返し、引数を「pr-list ...」として $CALLS に記録する
 # - gh pr view <URL か番号> ...     $FIX/pr-<番号>.json を返す（番号は URL の最後の部分）。「pr-view <番号>」を $CALLS に記録する
 # - gh pr create ...                引数を「pr-create ...」として $CALLS に記録し、--body-file の中身を $TMP/pr-body に写して、
 #                                   https://github.com/me/demo/pull/42 を返す
@@ -134,7 +134,9 @@ case "$1 $2" in
     shift 2
     echo "pr-list $*" >>"$CALLS"
     fail pr-list
-    if [ -f "$FIX/pr-list.json" ]; then jq -r "$q" "$FIX/pr-list.json"; else echo '[]' | jq -r "$q"; fi
+    # $FIX/pr-list.raw があれば、そのまま返す（JSON でない応答を exit 0 で返す gh の役）
+    if [ -f "$FIX/pr-list.raw" ]; then cat "$FIX/pr-list.raw"
+    elif [ -f "$FIX/pr-list.json" ]; then jq -r "$q" "$FIX/pr-list.json"; else echo '[]' | jq -r "$q"; fi
     ;;
   "pr view")
     n="${3##*/}"

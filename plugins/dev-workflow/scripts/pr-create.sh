@@ -19,7 +19,8 @@
 #                     --draft と同時には指定できない
 #                     --draft・--no-draft とも、既にある PR では下書きかどうかを変えない（出力の draft は、その PR の今の状態）
 #   --dry-run         push も PR の作成も Issue のチェックと項目の追加もせず、行う予定の操作と PR のタイトル・本文、
-#                     Issue のチェックリストの項目（tasks）・チェックを付ける項目（checked）・足す項目（added）を出力する
+#                     Issue のチェックリストの項目（tasks）・チェックを付ける項目（checked）・足す項目（added）を出力する。
+#                     マージ先の取得（git fetch。手元の origin/<マージ先> を更新するだけ）は、dry-run でも行う
 #
 # 行うこと:
 #   1. タイトルを設定の pr.title_pattern で検証する。type は Issue の type ラベルと同じにする。
@@ -153,16 +154,17 @@ to_add="$(printf '%s\n' "$adds" "$tasks" | jq -sc '.[1] as $t | .[0] | '"$missin
 
 # --- 既にある PR ----------------------------------------------------------------
 # --head はブランチ名だけで探すので、fork の同じ名前のブランチからの PR を除く
-existing="$(gh pr list --head "$branch" --state open --json number,url,title,body,isCrossRepository,isDraft,baseRefName \
-  | jq -c 'map(select(.isCrossRepository | not))')" \
+# PR のマージ先（pr_base）。新しく作る PR は base_branch に向ける。既にある PR はマージ先を変えていることがあるので、
+# その PR のマージ先にする。PR の選び方（fork の PR を除く）と、マージ先が無い・空・使えない値のときに base_branch に戻すことは
+# dw_pr_pick が決める。push の前の確認（マージ先に無いコミットがあるか）も、PR を出した後の案内も、このマージ先で行う
+prs="$(gh pr list --head "$branch" --state open --json number,url,title,body,isCrossRepository,isDraft,baseRefName)" \
   || dw_die "${branch} の PR を取得できませんでした"
+picked="$(dw_pr_pick "$prs" "$base")" || dw_die "${branch} の PR を取得できませんでした（gh の応答を JSON として読めません）"
+{ IFS= read -r pr_base; IFS= read -r existing; } <<<"$picked"
+# 以下は、既にある PR を配列（無ければ空）として読む
+existing="$(jq -c 'if . == null then [] else [.] end' <<<"$existing")"
 pr_number="$(jq -r '.[0].number // empty' <<<"$existing")"
 pr_url="$(jq -r '.[0].url // empty' <<<"$existing")"
-# PR のマージ先。新しく作る PR は base_branch に向ける。既にある PR はマージ先を変えていることがあるので、
-# その PR のマージ先にする（gh が返さないか空のときだけ base_branch とみなす）。push の前の確認（マージ先に無いコミットが
-# あるか）も、PR を出した後の案内も、このマージ先で行う
-pr_base="$base"
-[ -z "$pr_number" ] || pr_base="$(jq -r --arg b "$base" '(.[0].baseRefName // "") | if . == "" then $b else . end' <<<"$existing")"
 # 既にある PR のタイトルと本文は変えないので、PR を出した後に breaking ラベルを付けたときは、
 # ! と BREAKING CHANGE の無いままマージされないよう、push の前に止める
 if [ -n "$pr_number" ] && $breaking; then
@@ -210,8 +212,12 @@ trap 'rm -f "$body_tmp"' EXIT
 printf '%s' "$body" >"$body_tmp"
 
 # --- 3. push --------------------------------------------------------------------
-if ! $dry_run; then
-  git -C "$repo_root" fetch -q origin -- "$pr_base" || dw_die "origin/${pr_base} を取得できませんでした"
+# マージ先を取得する。fetch は手元の origin/<マージ先> を更新するだけで GitHub には書き込まないので、dry-run でも行う
+# （既にある PR のマージ先（release/v1 など）を手元で一度も取得していなくても、dry-run で確かめられるように）。
+# dry-run で取得できなければ、警告して手元の origin/<マージ先> で確かめる
+if ! git -C "$repo_root" fetch -q origin -- "$pr_base"; then
+  $dry_run || dw_die "origin/${pr_base} を取得できませんでした"
+  dw_warn "origin/${pr_base} を取得できませんでした。手元の origin/${pr_base} で確かめます"
 fi
 git -C "$repo_root" rev-parse -q --verify "refs/remotes/origin/$pr_base" >/dev/null \
   || dw_die "origin/${pr_base} がありません（git fetch origin ${pr_base} を実行してください）"

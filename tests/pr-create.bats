@@ -833,6 +833,59 @@ fake_issue_tasks() {
   assert_output ""
 }
 
+@test "dry-run でも、既にある PR のマージ先を取得して確かめる（手元で一度も取得していなくても止まらない。#284）" {
+  setup_branch
+  fake_issue 17 '["feat"]'
+  # origin に release/v1 を作るが、手元では取得しない（origin/release/v1 が手元に無い）
+  git push -q origin main:refs/heads/release/v1
+  git update-ref -d refs/remotes/origin/release/v1
+  run git rev-parse -q --verify refs/remotes/origin/release/v1
+  assert_failure
+  echo '[{"number": 7, "url": "https://github.com/me/demo/pull/7", "isCrossRepository": false, "baseRefName": "release/v1"}]' >"$FIX/pr-list.json"
+  run_pr --issue 17 --body-file "$TMP/body.md" --dry-run
+  assert_success
+  assert_equal "$(jq -c '[.dry_run, .pr_base]' <<<"$json")" '[true,"release/v1"]'
+  assert_equal "$(jq -r '.actions[0]' <<<"$json")" "feat/17-x を origin に push する（origin/release/v1 より 1 個先のコミット）"
+  # push はしない
+  run git ls-remote --heads origin feat/17-x
+  assert_output ""
+}
+
+@test "dry-run でマージ先を取得できなくても、手元の origin/<マージ先> があれば、警告してそれで確かめる（#284）" {
+  setup_branch
+  fake_issue 17 '["feat"]'
+  git fetch -q origin
+  git remote set-url origin "$TMP/no-such.git"
+  run bash -c "${TEST_BASH:-bash} '$SCRIPTS/pr-create.sh' --issue 17 --body-file '$TMP/body.md' --dry-run 2>'$TMP/err'"
+  assert_success
+  assert_equal "$(jq -r .pr_base <<<"$output")" main
+  grep -qF "origin/main を取得できませんでした。手元の origin/main で確かめます" "$TMP/err" || fail "$(cat "$TMP/err")"
+}
+
+@test "gh pr list が JSON でない応答を返したら、PR を作らずに止まる（既にある PR を見落として二重に作らない。#284）" {
+  setup_branch
+  fake_issue 17 '["feat"]'
+  echo 'not json' >"$FIX/pr-list.raw"
+  run_pr --issue 17 --body-file "$TMP/body.md"
+  assert_failure
+  assert_output --partial "feat/17-x の PR を取得できませんでした（gh の応答を JSON として読めません）"
+  assert_equal "$(called pr-create)" 0
+  run git ls-remote --heads origin feat/17-x
+  assert_output ""
+}
+
+@test "既にある PR のマージ先が git のブランチ名として使えない値なら、警告して設定の base_branch で確かめる（#284）" {
+  setup_branch
+  fake_issue 17 '["feat"]'
+  for b in -x +x HEAD; do
+    jq -nc --arg b "$b" '[{number: 7, url: "https://github.com/me/demo/pull/7", isCrossRepository: false, baseRefName: $b}]' >"$FIX/pr-list.json"
+    run bash -c "${TEST_BASH:-bash} '$SCRIPTS/pr-create.sh' --issue 17 --body-file '$TMP/body.md' --dry-run 2>'$TMP/err'"
+    assert_success
+    assert_equal "$(jq -c '[.pr.number, .pr_base]' <<<"$output")" '[7,"main"]'
+    grep -qF "PR のマージ先（${b}）は git のブランチ名として使えない" "$TMP/err" || fail "$(cat "$TMP/err")"
+  done
+}
+
 @test "既にある PR の応答にマージ先（baseRefName）が無いか空なら、pr_base とマージキューの判定は設定の base_branch にする（#178）" {
   setup_branch
   fake_issue 17 '["feat"]'

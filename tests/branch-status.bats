@@ -113,6 +113,25 @@ run_status() {
   assert_equal "$(jq -r '[.base, .behind] | map(tostring) | join(" ")' <<<"$output")" "main 2"
 }
 
+@test "gh が JSON でない応答を返しても止まらず、pr は null で、設定の base_branch を取り込み先にする（#284）" {
+  setup_branch
+  advance_main 1
+  echo 'not json' >"$FIX/pr-list.raw"
+  run_status
+  assert_success
+  assert_equal "$(jq -r '[.base, .behind, .pr] | map(tostring) | join(" ")' <<<"$output")" "main 1 null"
+}
+
+@test "PR のマージ先が git のブランチ名として使えない値なら、警告して設定の base_branch を取り込み先にする（#284）" {
+  setup_branch
+  advance_main 1
+  echo '[{"number": 5, "url": "u", "mergeStateStatus": "BEHIND", "isCrossRepository": false, "baseRefName": "-x"}]' >"$FIX/pr-list.json"
+  run bash -c "${TEST_BASH:-bash} '$SCRIPTS/branch-status.sh' 2>'$TMP/err'"
+  assert_success
+  assert_equal "$(jq -r '[.base, .behind, .pr.number] | map(tostring) | join(" ")' <<<"$output")" "main 1 5"
+  grep -qF "PR のマージ先（-x）は git のブランチ名として使えない" "$TMP/err" || fail "$(cat "$TMP/err")"
+}
+
 @test "fork の PR のマージ先は使わない" {
   setup_branch
   advance_main 1
