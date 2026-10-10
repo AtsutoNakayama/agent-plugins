@@ -225,6 +225,8 @@ grader_matches() {
   cd "$WS"
   grader_matches "$c" files-issue .fake-gh/writes || fail "files-issue に当たりません: $(cat .fake-gh/writes)"
   grader_matches "$c" opens-pr .fake-gh/writes || fail "opens-pr に当たりません: $(cat .fake-gh/writes)"
+  # PR の本文は、偽の gh が残したものを pr-body-lists-filed が採点する
+  grep -qF 'Closes #2' .fake-gh/pr-body || fail "PR の本文が .fake-gh/pr-body に残っていません"
 }
 
 @test "task-auto の範囲外の指摘のケースの grader は、起票しないで PR を作っただけの記録には当たらない" {
