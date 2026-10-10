@@ -315,6 +315,28 @@ has() {
 }
 
 # shellcheck disable=SC2016 # バッククォートはスキルの本文の文字で、展開させない
+@test "gh-pr-check は、needs_attention が true なら対応なしで終えず、スレッドの件数だけで未解決なしと言わない（#279）" {
+  f="$SKILLS/gh-pr-check/SKILL.md"
+  grep -q '`needs_attention` が true なら.*「対応はありません」で終えない' "$f" \
+    || fail "gh-pr-check に、needs_attention が true なら対応なしで終えないことが書かれていません"
+  grep -q '`feedback` が空で、`checks.state` が `failure` でもなければ、何も変えずに終える' "$f" \
+    || fail "gh-pr-check の終える条件が、feedback が空で CI も失敗していないこと、になっていません"
+  grep -q '`replied` は.*時刻だけで決めた目安' "$f" || fail "gh-pr-check に、replied が時刻だけの目安であることが書かれていません"
+  grep -q '選べる指摘・質問が1つも無ければ.*聞かずに' "$f" \
+    || fail "gh-pr-check に、選べる指摘・質問が無ければ聞かずに進むことが書かれていません"
+  s4="$(sed -n '/^### 4\./,/^### 5\./p' "$f")"
+  grep -q '担当の skill の分があれば、手順8へ進んで任せる' <<<"$s4" || fail "gh-pr-check の手順4に、担当の skill の分があれば手順8へ進むことが書かれていません"
+  grep -q '無ければ、手順9へ進んで結果を伝える' <<<"$s4" || fail "gh-pr-check の手順4に、担当の skill の分が無ければ手順9へ進むことが書かれていません"
+  grep -q '返事をしていないものを対応済みと言わない' <<<"$s4" || fail "gh-pr-check の手順4に、返事をしていない感想・承認を対応済みと数えないことが書かれていません"
+  s9="$(sed -n '/^### 9\./,$p' "$f")"
+  grep -q '手順4で選べる指摘・質問が無くて来たときは.*CI・マージの状態' <<<"$s9" \
+    || fail "gh-pr-check の手順9に、手順4から来たときに件数と CI・マージの状態を伝えることが書かれていません"
+  grep -q 'counts.threads.*だけを見て' "$f" || fail "gh-pr-check に、スレッドの件数だけで未解決なしと言わないことが書かれていません"
+  grep -q '`reviews`・`comments`・`needs_attention`・`counts.unanswered` を落とさない' "$f" \
+    || fail "gh-pr-check に、出力を絞って読むときも reviews・comments を落とさないことが書かれていません"
+}
+
+# shellcheck disable=SC2016 # バッククォートはスキルの本文の文字で、展開させない
 @test "branch-update は、衝突を直すどの場面でも、両立できると判断した衝突も含めて、直す前に直し方の方針の確認を取る（設計書 §8・ADR 000237）" {
   # 両立できると判断した衝突を確かめずに直し、push の前の確認の時点で直したコミットが既にできていた（#237）
   # 文の言い回しに縛られないよう、箇条（見出しの語や選択肢の名前）で場所を決め、その中の要の語だけを確かめる
