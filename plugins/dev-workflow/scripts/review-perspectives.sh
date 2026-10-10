@@ -111,10 +111,10 @@ if [ "$auto" = true ]; then
   esac
   # review.model もほかの設定と同じく層を合わせた値を使う（ユーザーの層は、導入したリポジトリの中でだけ効く。設計書 §7）
   model="$(jq -c '.review.model' <<<"$config")"
-  dw_review_model_ok "$model" || dw_die "review.model は null か $(dw_review_model_names) のどれかにしてください: ${model}" 2
+  dw_json_enum_ok "$DW_REVIEW_MODELS" "$model" || dw_die "review.model は null か $(dw_json_enum_names "$DW_REVIEW_MODELS") のどれかにしてください: ${model}" 2
   code_review_effort="$(jq -c '.review.code_review_effort' <<<"$config")"
-  dw_code_review_effort_ok "$code_review_effort" \
-    || dw_die "review.code_review_effort は null か $(dw_code_review_effort_names) のどれかにしてください: ${code_review_effort}" 2
+  dw_json_enum_ok "$DW_CODE_REVIEW_EFFORTS" "$code_review_effort" \
+    || dw_die "review.code_review_effort は null か $(dw_json_enum_names "$DW_CODE_REVIEW_EFFORTS") のどれかにしてください: ${code_review_effort}" 2
   base_branch="$(dw_base_branch "$config")"
   target="origin/$base_branch"
   git fetch -q origin "$base_branch" 2>/dev/null \

@@ -389,7 +389,7 @@ run_common() {
   assert_output ok
 }
 
-@test "dw_json_enum_ok は、null か一覧のどれかの文字列なら 0、それ以外（読めない JSON を含む）は 0 以外を返す" {
+@test "dw_json_enum_ok は、null か一覧のどれかの文字列なら 0、それ以外（読めない JSON を含む）は 1 を返す" {
   list='["low", "high"]'
   for v in null '"low"' '"high"'; do
     run_common dw_json_enum_ok "$list" "$v"
@@ -397,7 +397,7 @@ run_common() {
   done
   for v in '"Low"' '"medium"' '""' 1 true '["low"]' '{"v": "low"}' 'low' ''; do
     run_common dw_json_enum_ok "$list" "$v"
-    assert_failure
+    assert_failure 1
     assert_output ""
   done
 }
@@ -406,4 +406,20 @@ run_common() {
   run_common dw_json_enum_names '["low", "medium", "high"]'
   assert_success
   assert_output "low・medium・high"
+}
+
+@test "dw_json_enum_ok・dw_json_enum_names は、一覧が文字列の配列でなければ当てず、一覧の誤りを値の誤りと分けて知らせる" {
+  # 一覧が文字列だと、jq の index が部分文字列で当たってしまう（"slow" の中の "low"）
+  for list in '"slow"' '{"low": 1}' '["low", 1]' '[low' ''; do
+    run_common dw_json_enum_ok "$list" '"low"'
+    assert_failure 2
+    assert_output "error: 一覧が JSON の文字列の配列ではありません: ${list}"
+    run_common dw_json_enum_names "$list"
+    assert_failure 2
+    assert_output "error: 一覧が JSON の文字列の配列ではありません: ${list}"
+  done
+  # 値の誤りは、メッセージを出さずに 1 を返す
+  run_common dw_json_enum_ok '["low"]' '"slow"'
+  assert_failure 1
+  assert_output ""
 }
