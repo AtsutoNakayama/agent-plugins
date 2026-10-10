@@ -623,7 +623,7 @@ SH
 }
 
 # 1行が約 4096 バイトを超え、その区切りに絵文字がかかる入力を、標準入力の jq -R・-R -s で読むと、絵文字が壊れる（jq の不具合）。
-# 文を jq に渡すには、dw_json_str・dw_json_lines（--rawfile 経由）を使う
+# 文を jq に渡すには、dw_jq_text・dw_json_lines・dw_json_lines_nonempty（--rawfile 経由）を使う
 @test "dw_json_lines_nonempty は、空行を除いた行の配列にし、フィルターと jq の引数を受け取り、4096 バイトの区切りに絵文字がかかっても壊さない" {
   # shellcheck disable=SC2016 # 引数は、起動した bash の中で展開させる
   nonempty() { run "${TEST_BASH:-bash}" -c '. "$1"; shift; printf "$1" | { shift; dw_json_lines_nonempty "$@"; }' _ "$SCRIPTS/lib/common.sh" "$@"; }
