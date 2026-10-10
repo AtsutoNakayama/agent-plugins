@@ -11,11 +11,12 @@
 # front matter（先頭の --- から次の --- まで）の issue・status と、最初のレベル1の見出しを読む。行末の CR と先頭の BOM は外して読む。
 # 見出しと補足は、front matter の後の本文を、Issue の本文と同じ md_scan（lib/common.sh）で読み、コードブロックの中と
 # 複数行の HTML のコメントの中の行は除く（コードブロックの中の「# 」の行は見出しにしない）。見出しは md_scan の headings で、
-# 見出しの文字は auto-check.sh と同じく、行の中の HTML のコメントと閉じの # と後ろの空白を外して読む。
-# 「補足」の節（見出しが「補足」か、MADR の元の「More Information」（大文字・小文字は問わない）の節。次の同じか上のレベルの
-# 見出しまで）からは、インラインのリンク [文](先) の先と、参照形式のリンク [文][ref]・[ref][]・[ref] をファイル全体の定義
-# [ref]: 先 で引いた先を読み、リンクしている ADR を求める。リンクの文には、入れ子の角括弧（1段）と \ のエスケープを許す。
-# 画像のリンク ![文](先)、行の中の HTML のコメントとインラインのコードの中のリンク、定義の行そのもの、脚注 [^1] は数えない。
+# 見出しの文字の読み方は、下の jq の heading に書く（auto-check.sh と同じところと違うところ）。title は最初の空でないレベル1の見出し。
+# 「補足」の節（レベル2の見出しが「補足」か、MADR の元の「More Information」（大文字・小文字と、後ろの :・：・全角の空白は問わない）
+# の節。次のレベル2以上の見出しまで）からは、インラインのリンク [文](先) の先と、参照形式のリンク [文][ref]・[ref][]・[ref] を
+# ファイル全体の定義 [ref]: 先（同じ名前なら先の定義）で引いた先を読み、リンクしている ADR を求める。リンクの文には、入れ子の
+# 角括弧（1段）と \ のエスケープを許す。画像のリンク ![文](先)、エスケープした \[、行の中の HTML のコメントとインラインのコードの
+# 中のリンク、定義の行そのもの、脚注 [^1]、タスクリストのチェックボックス [x] は数えない。
 # リンクの先は、その ADR のファイルからの相対パス（/ で始まればリポジトリのルートからのパス）として解き、#・? からの後ろは
 # 外す。URL（https: など）と、置き場所の直下の ADR でない先と、自分へのリンクは数えない。パスは . と .. と重なった / を
 # 解いて比べる（adr.dir が ./docs/adr のようでも当たる）。
@@ -135,23 +136,38 @@ res="$(jq -n -r --rawfile files "$tmp_dir/files" --rawfile row_lines "$tmp_dir/r
   def normpath: reduce (split("/")[] | select(. != "" and . != ".")) as $x ([];
       if . == null then null elif $x == ".." then (if length > 0 then .[:-1] else null end) else . + [$x] end)
     | if . == null then null else join("/") end;
-  # 見出しは md_scan の headings から読み、文字は auto-check.sh と同じく、行の中の HTML のコメント・閉じの #・後ろの空白を外す
+  # 見出しの行（md_scan の headings の行）を、レベルと文字にする。auto-check.sh の「やること」などの見出しの読み方を写したもの
+  # （共通の関数にはしていない）。auto-check.sh と同じなのは、見出しの形（^ {0,3}#{1,6}）と、文字から行の中の HTML のコメント・
+  # 閉じの #（前に空白がある #...）・後ろの空白を外すこと。違うのは次の2つ。
+  #   - 「# #」「##」のように閉じの # だけの見出しは、文字を空にする（GitHub でも空の見出しになる）。auto-check.sh は節の名前と
+  #     比べるだけなので「#」のまま残っても当たらずに済むが、ここでは文字を title に使うので、空の見出しを title にしないため
+  #   - 小文字にするのは、補足の節かを比べるとき（sup_name）だけ。title には元の文字を使う
   def heading($l): $l | capture("^ {0,3}(?<h>#{1,6})\\s*(?<t>.*)$")
     | {level: (.h | length), text: (.t | gsub("<!--.*?-->"; "") | sub("\\s+#+\\s*$"; "") | sub("^#+\\s*$"; "") | sub("\\s+$"; ""))};
-  # リンクの文（入れ子の角括弧を1段と、\ のエスケープを許す）と、インラインのリンクの先
+  # 補足の節かを比べる名前。後ろの :・：・全角の空白も外し、小文字にする
+  def sup_name: sub("[:：\\s　]+$"; "") | ascii_downcase;
+  # 逆スラッシュを2つ並べた \\（逆スラッシュそのもの）を、逆スラッシュでない文字の組にしておく。直前の逆スラッシュが奇数個の
+  # 角括弧（\[）だけをエスケープとして読むため（後読みは長さが決まっていないと書けないので、先に組を置き換える）
+  def unesc_pairs: gsub("\\\\\\\\"; "\u0001\u0001");
+  def restore_pairs: gsub("\u0001"; "\\");
+  # リンクの文（入れ子の角括弧を1段と、\ のエスケープを許す）と、インラインのリンクの先（空白か ) まで。<先> の形も読む）
   def link_text: "(?:[^\\[\\]\\\\]|\\\\.|\\[(?:[^\\[\\]\\\\]|\\\\.)*\\])*";
   def dest: "[ \t]*(?:<(?<a>[^>]*)>|(?<b>[^)\\s]*))";
   # 参照の名前は、大文字・小文字と空白の違いを区別しない
-  def ref_key: ascii_downcase | gsub("\\s+"; " ") | sub("^ "; "") | sub(" $"; "");
-  # 参照形式のリンクの定義の行（[ref]: 先。脚注の定義 [^1]: は除く）
-  def ref_def: "^ {0,3}\\[(?<k>(?!\\^)" + link_text + ")\\]:" + dest;
+  def ref_key: unesc_pairs | ascii_downcase | gsub("\\s+"; " ") | sub("^ "; "") | sub(" $"; "");
+  # 参照形式のリンクの定義の行（[ref]: 先。先は空白まで読み、( も含める。<先> の形も読む。脚注の定義 [^1]: は除く）
+  def ref_def: "^ {0,3}\\[(?<k>(?!\\^)" + link_text + ")\\]:[ \t]*(?:<(?<a>[^>]*)>|(?<b>\\S+))";
+  # 行の頭のタスクリストのチェックボックス（- [x] …・1. [ ] …。md_scan の項目と同じ形）。参照の省略形 [x] と読まないよう外す
+  def drop_checkbox: sub("^(?<m>\\s*(?:[-*+]|[0-9]+[.)])\\s+)\\[[ xX]\\]"; "\(.m)");
   # 補足の行から、リンクの先を出す。インラインのリンク [文](先) はその先、参照形式のリンク（[文][ref]・[ref][]・[ref]）は
-  # ファイル全体の定義 $defs で引いた先。画像 ![文](先)、行の中の HTML のコメントとインラインのコードの中、定義の行そのものは読まない
+  # ファイル全体の定義 $defs で引いた先（[文][ref] の ref が無ければ、CommonMark と同じく [文] を省略形として引く）。
+  # 画像 ![文](先)、エスケープした \[、行の中の HTML のコメントとインラインのコードの中、定義の行そのものは読まない
   def link_targets($defs):
     select(test(ref_def) | not)
-    | gsub("<!--.*?-->"; "") | gsub("(?<c>`+).*?\\k<c>"; "")
+    | drop_checkbox | gsub("<!--.*?-->"; "") | gsub("(?<c>`+).*?\\k<c>"; "") | unesc_pairs
     | capture("(?<![!\\\\])\\[(?<t>" + link_text + ")\\](?:\\(" + dest + "[^)]*\\)|\\[(?<r>[^\\[\\]]*)\\])?"; "g")
-    | if .a != null or .b != null then (.a // .b) else $defs[(if (.r // "") != "" then .r else .t end) | ref_key] // empty end
+    | if .a != null or .b != null then (.a // .b | restore_pairs)
+      else (if (.r // "") != "" then $defs[.r | ref_key] else null end) // $defs[.t | ref_key] // empty end
     | sub("[#?].*$"; "") | select(. != "");
   [$row_lines | split("\n")[] | select(. != "") | split("\t")] as $lines
   | (reduce ($lines[] | select(.[0] == "A")) as $r ({}; .[$r[1]] = $r[1:])) as $rows
@@ -160,11 +176,12 @@ res="$(jq -n -r --rawfile files "$tmp_dir/files" --rawfile row_lines "$tmp_dir/r
   | ([$lines[] | select(.[0] == "B")] | group_by(.[1])
      | map({key: .[0][1], value: (map(.[2:] | join("\t")) as $l | ($l | join("\n") | md_scan) as $m
          | [$m.headings[] as $i | heading($l[$i]) + {line: $i}] as $hs
-         # 補足の節は、見出しが「補足」か MADR の元の「More Information」（大文字・小文字は問わない）の節。次の同じか上のレベルの
-         # 見出しまで（下のレベルの見出しの節も含む）
-         | [range(0; $hs | length) as $k | $hs[$k] | select(.text | ascii_downcase | IN("補足", "more information")) | . as $h
-             | {from: $h.line, to: ([$hs[$k + 1:][] | select(.level <= $h.level) | .line] | first // ($l | length))}] as $sups
-         | {title: (first($hs[] | select(.level == 1) | .text | gsub("\t"; " ")) // null),
+         # 補足の節は、レベル2の見出しが「補足」か MADR の元の「More Information」（大文字・小文字は問わない）の節（MADR の
+         # テンプレートと同じレベル）。次のレベル2以上の見出しまで（### などの小見出しの節も含む）
+         | [range(0; $hs | length) as $k | $hs[$k] | select(.level == 2 and (.text | sup_name | IN("補足", "more information")))
+             | {from: .line, to: ([$hs[$k + 1:][] | select(.level <= 2) | .line] | first // ($l | length))}] as $sups
+         # title は、最初の空でないレベル1の見出し
+         | {title: (first($hs[] | select(.level == 1 and .text != "") | .text | gsub("\t"; " ")) // null),
             defs: (reduce ($m.lines[].text | select(test(ref_def)) | capture(ref_def)) as $d ({};
               ($d.k | ref_key) as $k | if has($k) then . else .[$k] = ($d.a // $d.b // "") end)),
             sup: [$m.lines[] | . as $x | select(any($sups[]; $x.line > .from and $x.line < .to)) | .text]})})
