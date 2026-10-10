@@ -16,7 +16,7 @@ PR を出した後の任意の寄り道で、マージや task-finish はこの�
 
 スクリプト（どれも JSON を出力する）:
 
-- `${CLAUDE_PLUGIN_ROOT}/scripts/pr-feedback.sh`：PR の状態（CI・レビュー・マージできるか）と、resolved でないスレッド・レビュー本文・PR のコメントを投稿者ごとにまとめ、担当の skill（設定の `pr_check.handlers`）を添えて出力する。対応が要るか（返事の無いスレッド・レビュー本文・PR のコメントがあるか）も、`needs_attention`・`counts.unanswered`・各項目の `needs_attention` で決めて出す。何も変えない（`--help` で使い方）
+- `${CLAUDE_PLUGIN_ROOT}/scripts/pr-feedback.sh`：PR の状態（CI・レビュー・マージできるか）と、resolved でないスレッド・レビュー本文・PR のコメントを投稿者ごとにまとめ、担当の skill（設定の `pr_check.handlers`）を添えて出力する。返事をしていないもの（スレッド・レビュー本文・PR のコメント）があるかの目印も、`needs_attention`・`counts.unanswered`・各項目の `needs_attention` に出す（true なら対応なしで終えない。false でも、対応が要らないとは限らない）。何も変えない（`--help` で使い方）
 
 ## 手順
 
@@ -31,7 +31,7 @@ PR を出した後の任意の寄り道で、マージや task-finish はこの�
 - レビュー：`pr.review_decision`（`APPROVED`・`CHANGES_REQUESTED`・`REVIEW_REQUIRED`、無ければ null）
 - マージできるか：`pr.mergeable`・`pr.merge_state`（`CLEAN` ならマージできる。`BLOCKED` はチェックの失敗・承認待ち・未解決のスレッドなど、`BEHIND` は base_branch の取り込み待ち、`DIRTY` はコンフリクト。`BEHIND`・`DIRTY` なら branch-update スキルを案内する）
 
-`needs_attention` が true なら、返事をしていないものがあるので、「対応はありません」で終えない（true の項目は手順3で必ず一覧に入れる）。`needs_attention` が false でも、対応が要らないとは限らない。`replied` は、PR の作者が後から書いたかを時刻だけで決めた目安で、誰への返事かは見ていない（対応済みにするかは、手順3で `own_comments` と照らして決める）。
+`needs_attention` が true なら、返事をしていないものがあるので、「対応はありません」で終えない（true の項目は手順3で必ず一覧に入れる）。`needs_attention` が false でも、対応が要らないとは限らない。PR のコメント・レビュー本文の `replied` は、その後に PR の作者が PR のコメントを書いたかを時刻だけで決めた目安で、誰への返事かは見ていない（対応済みにするかは、手順3で `own_comments` と照らして決める。スレッドの `replied` は、スレッドの持ち主の最後のコメントの後に作者が書いたかで決まり、手順3で対応済みにする）。
 
 - スレッドの件数（`counts.threads`）だけを見て「未解決なし」「対応はありません」と言わない。diff の外の指摘はレビュー本文に、質問は PR のコメントにあり、スレッドが無いので `counts.threads` に現れない
 - 出力を `jq` で絞って読むときも、`threads` だけを取り出さず、`reviews`・`comments`・`needs_attention`・`counts.unanswered` を落とさない
@@ -58,7 +58,7 @@ PR を出した後の任意の寄り道で、マージや task-finish はこの�
 `needs_attention` が true の項目（スレッド・レビュー本文・PR のコメント）は、必ず一覧に入れる。次のものは、対応済みとして一覧の下に分けて見せ、選ばせない。
 
 - スレッドの `replied` が true（スレッドの持ち主の最後のコメントの後に PR の作者が書いていて、持ち主の返事待ち）
-- PR のコメント・レビュー本文で、その後の `own_comments` に、それへの返信と分かるもの（引用・リンク・内容）がある。`replied` が true（その後に PR の作者の PR のコメントがある）でも、それだけで対応済みにしない。`replied` は時刻だけで決めた目安で、後の作者のコメントが別の相手への返事なら、対応済みにしない
+- PR のコメント・レビュー本文で、その後の `own_comments` に、それへの返信と分かるもの（引用・リンク・内容）がある。`replied` が true（その後に PR の作者の PR のコメントがある）でも、それだけで対応済みにしない。PR のコメント・レビュー本文の `replied` は時刻だけで決めた目安で、後の作者のコメントが別の相手への返事なら、対応済みにしない
 
 `outdated` が true のスレッドは、指摘のあった行がその後の push で変わっている。今のコードで直っているかを確かめ、直っていれば、直したコミットを添えて返信する候補にする。
 

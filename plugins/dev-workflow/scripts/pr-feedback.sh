@@ -14,13 +14,14 @@
 #   feedback   投稿者ごとの配列。author・handler（担当する skill。無ければ null）・threads・reviews・comments
 #     threads   resolved でないスレッド。id（先頭のコメントの ID。返信に使う）・path・line・outdated・url・
 #               comments（author・body・created_at・url）・replied（スレッドの持ち主の最後のコメントの後に、
-#               PR の作者が書いたか。持ち主の返事待ち）・needs_attention（replied でない。対応が要る）
+#               PR の作者が書いたか。持ち主の返事待ち）・needs_attention（replied でない。返事をしていない）
 #     reviews   レビュー。本文のあるものと、承認（APPROVED）・変更の要求（CHANGES_REQUESTED）。id・state・body・submitted_at・commit・
-#               replied（その後に PR の作者の PR のコメントがあるか）・needs_attention（replied でなく、本文があるか変更の要求）
+#               replied（その後に PR の作者の PR のコメントがあるか）・needs_attention（replied でなく、本文があるか変更の要求。返事をしていない）
 #     comments  PR のコメント（スレッドの外）。id・body・created_at・url・replied（reviews と同じ）・needs_attention（replied でない）
 #   own_comments  PR の作者の PR のコメント（id・body・created_at・url）。どのコメントに返信済みかの判断に使う
 #   counts     threads・reviews・comments の合計と、unanswered（needs_attention が true のものの、threads・reviews・comments の件数）
-#   needs_attention  対応が要るものが1つでもあるか（counts.unanswered のどれかが 1 以上）。CI の失敗は含めない（checks を見る）
+#   needs_attention  返事をしていないものが1つでもあるか（counts.unanswered のどれかが 1 以上）。true なら対応なしで終えない目印で、
+#                    false でも対応が要らないとは限らない（下の決まり）。CI の失敗は含めない（checks を見る）
 #
 # 決まり:
 #   - PR の作者のレビュー・コメントは feedback に数えない（自分の返信やメモなので。コメントは own_comments に出す）。
@@ -29,10 +30,11 @@
 #     （書いた順番によらない。bot のスレッドに人が質問を書いたとき、bot の担当の skill は人のコメントを扱わないので、
 #     bot の分にすると誰も答えない）。作者以外の書き手がすべて担当のある投稿者なら、その中で最後に書いた人の分にする
 #   - 投稿者と handlers のキーは、大文字と小文字、末尾の [bot] を区別せずに照らす（gh は some-bot[bot] を some-bot と返す）
-#   - 対応が要るか（needs_attention）は、投稿者の名前によらず、時刻だけで決める。diff の外の指摘はレビュー本文にあってスレッドが無く、
+#   - 返事をしていないか（needs_attention）は、投稿者の名前によらず、時刻だけで決める。diff の外の指摘はレビュー本文にあってスレッドが無く、
 #     counts.threads に現れないので、スレッドの件数だけで「未解決なし」と決めない（#279）。レビュー本文・PR のコメントは、
-#     その後に PR の作者が PR のコメントを書いていれば返事済みとする（誰への返事かは見ない。見分けは AI が own_comments で行う）。
-#     変更の要求は、本文が無くてもマージを妨げるので、返事が無ければ対応が要るとする。本文の無い承認は対応が要らない
+#     その後に PR の作者が PR のコメントを書いていれば返事済み（replied）とする（時刻だけの目安で、誰への返事かは見ない。
+#     対応済みかの見分けは AI が own_comments で行う）。変更の要求は、本文が無くてもマージを妨げるので、返事が無ければ
+#     needs_attention を true にする。本文の無い承認は数えない
 #   - スレッドの resolved の状態は gh にも REST にも無いので、そこだけ GraphQL で読む（設計書 §10）。
 #     1つのスレッドのコメントは先頭の 100 件まで読む
 set -euo pipefail
