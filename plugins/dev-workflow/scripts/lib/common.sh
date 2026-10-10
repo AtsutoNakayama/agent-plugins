@@ -704,7 +704,7 @@ dw_merge_queue_enabled() {
 }
 
 # PR のブランチに、<時刻> より後の push（push・force_push）があるかを、true か false で出力する。マージキューから
-# 外れた後に push したか（直して、まだ入れ直していないか）を見分けるのに使う（pr-merge-status.sh・branch-status.sh。ADR 000323）。
+# 外れたままか（キューに入れた後に push して、まだ入れ直していないか）を見分けるのに使う（dw_merge_queue_state。ADR 000323）。
 # GitHub には PR のコミットを push した時刻が無く（Commit.pushedDate は廃止。コミットの時刻は手元でコミットした時刻）、
 # リポジトリの activity（REST）がブランチへの push の時刻を返すので、それで見る。新しい順に返るので、最初のページだけ見ればよい。
 # フォークからの PR（<フォークか> が true）は、push がこのリポジトリの activity に無いので、読まずに false を出力する。
@@ -719,6 +719,65 @@ dw_pushed_since() {
     || { printf '%s\n' "$out" >&2; return 1; }
   jq -e 'type == "array"' >/dev/null 2>&1 <<<"$out" || { printf '%s\n' "$out" >&2; return 1; }
   jq --arg t "$4" 'any(.[]; (.activity_type == "push" or .activity_type == "force_push") and ((.timestamp // "") > $t))' <<<"$out"
+}
+
+# PR のマージキューの状態を読んで、判定した結果を JSON で出力する（pr-merge-status.sh・branch-status.sh が共通に使う。ADR 000323）。
+# キューに並んでいるか（mergeQueueEntry）とキューの出入りのイベント（タイムラインの AddedToMergeQueueEvent・
+# RemovedFromMergeQueueEvent）は、gh pr view にも REST にも無いので GraphQL で読む（設計書 §10）。PR は URL で引く。
+# 衝突で外れた PR はすぐに mergeQueueEntry が null になり CI の実行も作られないので、外れたことは最後のイベントで見る。
+#
+# 出力: {enabled, state, position, queued, removed, before_commit}
+#   enabled        PR のマージ先でキューが有効か（isMergeQueueEnabled）
+#   state・position  キューに並んでいるときの状態（QUEUED・AWAITING_CHECKS・MERGEABLE・UNMERGEABLE・LOCKED）と順番。並んでいなければ null
+#   queued         キューの中か。mergeQueueEntry があるか、最後のイベントが入れたもの（入れた直後で、まだ mergeQueueEntry に
+#                  出ていない）か、最後が merged の理由で外れたもの（マージの直前で、PR の state がまだ MERGED でない）なら true
+#   removed        キューから外れたまま（{reason, at}）。最後が merged 以外の理由で外れたイベントで、最後にキューに入れた時刻
+#                  （入れたイベントが読めなければ外れた時刻）より後に PR のブランチへの push が無いとき。キューに並んでいる間の
+#                  push もそれ自体で PR をキューから外すので、外れた時刻ではなく入れた時刻と比べる。push があれば、直して
+#                  まだ入れ直していないので null（キューに入っていない）。フォークからの PR は push を読まない（外れたまま）。
+#                  push を読めなければ、warn を出して、外れたままとみなす（キューの状態は捨てない）
+#   before_commit  removed のときの、外れたイベントのコミット（キューの一時的なブランチのコミット。そのキューの CI の実行の
+#                  headSha）。CI を動かす前に外れた（衝突など）ときや、removed でなければ null
+# 読めなければ、理由を標準出力に出して非0を返す（どう扱うかは呼び出し側で決める）。
+# 使い方: dw_merge_queue_state <PR の URL> <PR のブランチ> <フォークか（true・false）>
+dw_merge_queue_state() {
+  local res q pushed
+  # shellcheck disable=SC2016 # GraphQL の変数（$url）を bash に展開させないため、シングルクォートで書く
+  res="$(dw_gql 'query PrQueue($url: URI!) {
+      resource(url: $url) {
+        ... on PullRequest {
+          isMergeQueueEnabled
+          mergeQueueEntry { state position }
+          timelineItems(itemTypes: [ADDED_TO_MERGE_QUEUE_EVENT, REMOVED_FROM_MERGE_QUEUE_EVENT], last: 2) {
+            nodes {
+              __typename
+              ... on AddedToMergeQueueEvent { createdAt }
+              ... on RemovedFromMergeQueueEvent { reason createdAt beforeCommit { oid } }
+            }
+          }
+        }
+      }
+    }' "$(jq -nc --arg u "$1" '{url: $u}')" 2>&1)" || { printf '%s\n' "$res"; return 1; }
+  q="$(jq -c '.data.resource | select(type == "object" and has("mergeQueueEntry"))
+    | (.timelineItems.nodes // []) as $n | ($n | last) as $ev
+    | ([$n[] | select(.__typename == "AddedToMergeQueueEvent")] | last) as $added
+    | ($ev.__typename == "RemovedFromMergeQueueEvent") as $was_removed
+    | (.mergeQueueEntry != null or $ev.__typename == "AddedToMergeQueueEvent"
+       or ($was_removed and $ev.reason == "merged")) as $queued
+    | {enabled: (.isMergeQueueEnabled == true), state: .mergeQueueEntry.state, position: .mergeQueueEntry.position,
+       queued: $queued,
+       removed: (if ($queued | not) and $was_removed then {reason: $ev.reason, at: $ev.createdAt} else null end),
+       before_commit: (if ($queued | not) and $was_removed then $ev.beforeCommit.oid else null end),
+       since: (if $added != null then $added.createdAt else $ev.createdAt end)}' <<<"$res" 2>/dev/null)" || q=""
+  [ -n "$q" ] || { printf '%s\n' "$res"; return 1; }
+  if [ "$(jq -r '.removed != null' <<<"$q")" = true ]; then
+    if pushed="$(dw_pushed_since "$1" "$2" "$3" "$(jq -r .since <<<"$q")" 2>&1)"; then
+      [ "$pushed" != true ] || q="$(jq -c '.removed = null | .before_commit = null' <<<"$q")"
+    else
+      dw_warn "PR のブランチへの push を読めないので、マージキューから外れたままとみなします: $(printf '%s' "$pushed" | tail -n 1)"
+    fi
+  fi
+  jq -c 'del(.since)' <<<"$q"
 }
 
 # 古いブランチ保護（ルールセットでない）が求める必須のチェックの名前の一覧（JSON の配列）を出力する。

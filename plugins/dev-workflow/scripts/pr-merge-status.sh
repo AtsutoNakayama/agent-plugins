@@ -13,34 +13,34 @@
 # 出力（JSON）:
 #   pr          number・url・state（OPEN・MERGED・CLOSED）・base（マージ先）・branch
 #   status      merged       マージ済み
-#               removed      キューから外れたまま（PR は OPEN のまま。外れた後に push も入れ直しもしていない）。
+#               removed      キューから外れたまま（PR は OPEN のまま。キューに入れた後に push も、入れ直しもしていない）。
 #                            理由は removed.reason（CI の失敗なら failed_checks、衝突なら merge_conflict など GitHub の値）
-#               waiting      キューに並んでいる（CI が動いている、または通ってマージを待っている）
-#               not_queued   キューに入っていない（OPEN の PR で、並んでおらず、外れた後に push した、または一度も入れていない）、
+#               waiting      キューの中（並んでいる（CI がまだ動いていない・動いている・通ってマージを待っている）、入れた直後、
+#                            またはマージの直前）
+#               not_queued   キューに入っていない（OPEN の PR で、キューの中でなく、入れた後に push した、または一度も入れていない）、
 #                            または PR が閉じている
 #   merge_queue base ブランチへのマージがマージキューを通すか（true・false）
 #   queue       キューに並んでいるときの状態（state・position）。state は GitHub の値（QUEUED・AWAITING_CHECKS・
-#               MERGEABLE・UNMERGEABLE・LOCKED）で、AWAITING_CHECKS は CI が動いている、MERGEABLE は通ってマージを待っている。
-#               並んでいなければ null
+#               MERGEABLE・UNMERGEABLE・LOCKED）で、QUEUED は入れた直後で CI がまだ動いていない、AWAITING_CHECKS は CI が
+#               動いている、MERGEABLE は通ってマージを待っている。waiting でも、入れた直後でまだ並びに出ていないときや、
+#               マージの直前（merged の理由で外れた直後）は null。waiting でなければ null
 #   removed     status が removed のときの、外れた理由と時刻（{reason, at}）。それ以外は null
 #   queue_runs  status が removed のときの、外れる原因になったキューの CI の実行のチェック（name・conclusion・status・url）。
 #               それ以外や、CI を動かす前に外れた（衝突など）ときは空
 #   failed      キューの CI で失敗したチェック（name・url）。status が removed のときだけ入る
 #   timed_out   --wait が時間切れで終わったときだけ true（status は waiting のまま）
 #
-# 判定（branch-status.sh・pr-watch.sh と同じく、キューの状態は GraphQL で読む。ADR 000323）:
+# 判定（キューの状態は GraphQL で読む。読み方と、並んでいる・外れたままの判定は branch-status.sh と共通で、common.sh の
+# dw_merge_queue_state にある。ADR 000323）:
 #   - PR の state が MERGED なら merged。CLOSED なら not_queued
 #   - base ブランチへのマージがマージキューを通さない（ブランチに効いているルールに merge_queue が無い。読めないときも同じ）なら、
 #     OPEN の PR は not_queued。キューを使わないリポジトリ（strict と branch-update の方式）の動きを変えないため
-#   - キューを使うとき、PR の mergeQueueEntry があれば（並んでいる。入れた直後で CI がまだ動いていなくても）waiting
-#   - 並んでいなければ、タイムラインのキューの出入りのイベントの最後を見る
-#     - 最後が外れたイベント（RemovedFromMergeQueueEvent）で、理由が merged なら waiting（PR の state が MERGED に
-#       変わる直前。次に確かめれば merged になる）
-#     - それ以外の理由で、外れた後に PR のブランチへの push（リポジトリの activity の push・force_push。common.sh の
-#       dw_pushed_since。branch-status.sh と共通）が無ければ removed。push があれば、直して入れ直す前なので not_queued。
-#       フォークからの PR は push を読めないので、removed のまま
-#     - 最後が入れたイベント（AddedToMergeQueueEvent）なら waiting（並んだ直後で、まだ mergeQueueEntry に出ていない）
-#     - イベントが無ければ not_queued
+#   - キューを使うとき、キューの中（mergeQueueEntry がある。入れた直後で、まだ mergeQueueEntry に出ていない、または
+#     merged の理由で外れた直後（マージの直前）も含む）なら waiting。並んでいれば queue に state・position を入れる
+#   - キューから外れたまま（最後が merged 以外の理由で外れたイベントで、最後にキューに入れた時刻より後に PR のブランチへの
+#     push（リポジトリの activity の push・force_push）が無い）なら removed。push があれば、直して入れ直す前なので
+#     not_queued。フォークからの PR は push を読めないので removed のまま。push を読めなければ、warn を出して removed
+#   - それ以外（イベントが無いなど）は not_queued
 #   - removed のとき、外れたイベントのコミット（beforeCommit。キューの一時的なブランチのコミット）の merge_group の実行を、
 #     gh run list --commit で読み、queue_runs と failed に入れる（衝突などで CI を動かす前に外れたときは、コミットが無いので空）
 set -euo pipefail
@@ -82,7 +82,7 @@ done
 
 # 1回確かめる。結果の JSON を標準出力に出す
 check_once() {
-  local view base queue res q pushed run_json sha
+  local view base queue ms run_json sha
   view="$(gh pr view ${pr:+"$pr"} ${branch:+"$branch"} --json number,url,state,baseRefName,headRefName,isCrossRepository 2>&1)" \
     || dw_die "PR を読めません: $view"
   jq -e 'type == "object" and has("number") and has("state")' >/dev/null 2>&1 <<<"$view" \
@@ -93,75 +93,40 @@ check_once() {
   if [ "$(jq -r .state <<<"$view")" = OPEN ]; then
     queue="$(dw_merge_queue_enabled '{owner}/{repo}' "$base")" || queue=false
   fi
-  # キューの状態は、OPEN でキューを使うときだけ読む（MERGED・CLOSED やキューを使わないリポジトリでは、読めなくても動きを変えない）
-  q='{"entry": null, "event": null}'
-  pushed=false
+  # キューの状態は、OPEN でキューを使うときだけ読む（MERGED・CLOSED やキューを使わないリポジトリでは、読めなくても動きを変えない）。
+  # 読み方と判定（並んでいる・外れたまま・入っていない）は branch-status.sh と共通（common.sh の dw_merge_queue_state）
+  ms='{"queued": false, "removed": null, "before_commit": null}'
   run_json='[]'
   if [ "$queue" = true ]; then
-    # キューに並んでいるか（mergeQueueEntry）とキューから外れたイベント（RemovedFromMergeQueueEvent）は、gh pr view にも
-    # REST にも無いので GraphQL で読む（設計書 §10・ADR 000323。branch-status.sh と同じ読み方）。PR は URL で引く。
-    # 外れたことはタイムラインの最後のキューの出入りのイベントで見る（衝突で外れると CI の実行が作られず、
-    # mergeQueueEntry もすぐに null になるため）
-    # shellcheck disable=SC2016 # GraphQL の変数（$url）を bash に展開させないため、シングルクォートで書く
-    res="$(dw_gql 'query PrMergeStatus($url: URI!) {
-        resource(url: $url) {
-          ... on PullRequest {
-            mergeQueueEntry { state position }
-            timelineItems(itemTypes: [ADDED_TO_MERGE_QUEUE_EVENT, REMOVED_FROM_MERGE_QUEUE_EVENT], last: 1) {
-              nodes {
-                __typename
-                ... on AddedToMergeQueueEvent { createdAt }
-                ... on RemovedFromMergeQueueEvent { reason createdAt beforeCommit { oid } }
-              }
-            }
-          }
-        }
-      }' "$(jq -c '{url}' <<<"$view")" 2>&1)" \
-      || dw_die "マージキューの状態を読めません: $res"
-    q="$(jq -c '.data.resource | select(type == "object" and has("mergeQueueEntry"))
-      | {entry: .mergeQueueEntry, event: (.timelineItems.nodes[0] // null)}' <<<"$res" 2>/dev/null)" || q=""
-    [ -n "$q" ] || dw_die "マージキューの状態を読めません: $res"
-
-    # 外れたまま（並んでおらず、最後が merged 以外の理由で外れたイベント）のときだけ、外れた後の push と失敗した CI を読む
-    if jq -e '.entry == null and .event.__typename == "RemovedFromMergeQueueEvent" and .event.reason != "merged"' >/dev/null <<<"$q"; then
-      # 外れた後に push したか（直して、まだ入れ直していないか）は、PR のブランチへの push の時刻で見る（branch-status.sh と共通。
-      # フォークからの PR は読まずに false）
-      pushed="$(dw_pushed_since "$(jq -r .url <<<"$view")" "$(jq -r .headRefName <<<"$view")" \
-        "$(jq -r .isCrossRepository <<<"$view")" "$(jq -r .event.createdAt <<<"$q")" 2>&1)" \
-        || dw_die "PR のブランチへの push を読めません: $pushed"
-      # 外れる原因になったキューの CI は、外れたイベントのコミット（キューの一時的なブランチのコミット）で絞って読む。
-      # リポジトリ全体の merge_group の実行の新しい方から数えると、忙しいリポジトリでは自分の実行が窓から外れうるため
-      sha="$(jq -r '.event.beforeCommit.oid // empty' <<<"$q")"
-      if [ -n "$sha" ]; then
-        run_json="$(gh run list --event merge_group --commit "$sha" --limit 100 --json name,workflowName,status,conclusion,url 2>&1)" \
-          || dw_die "マージキューの CI の実行を読めません: $run_json"
-        jq -e 'type == "array"' >/dev/null 2>&1 <<<"$run_json" \
-          || dw_die "マージキューの CI の実行を読めません: $run_json"
-      fi
+    ms="$(dw_merge_queue_state "$(jq -r .url <<<"$view")" "$(jq -r .headRefName <<<"$view")" \
+      "$(jq -r .isCrossRepository <<<"$view")")" || dw_die "マージキューの状態を読めません: $ms"
+    # 外れる原因になったキューの CI は、外れたイベントのコミット（キューの一時的なブランチのコミット）で絞って読む。
+    # リポジトリ全体の merge_group の実行の新しい方から数えると、忙しいリポジトリでは自分の実行が窓から外れうるため
+    sha="$(jq -r '.before_commit // empty' <<<"$ms")"
+    if [ -n "$sha" ]; then
+      run_json="$(gh run list --event merge_group --commit "$sha" --limit 100 --json name,workflowName,status,conclusion,url 2>&1)" \
+        || dw_die "マージキューの CI の実行を読めません: $run_json"
+      jq -e 'type == "array"' >/dev/null 2>&1 <<<"$run_json" \
+        || dw_die "マージキューの CI の実行を読めません: $run_json"
     fi
   fi
 
   # jq の変数（$v など）を bash に展開させないため、シングルクォートで書く
   # shellcheck disable=SC2016
-  printf '%s\n' "$view" "$q" "$run_json" | jq -s --argjson qe "$queue" --argjson pushed "$pushed" '
+  printf '%s\n' "$view" "$ms" "$run_json" | jq -s --argjson qe "$queue" '
     def failed: . as $r | ["failure", "cancelled", "timed_out", "startup_failure"] | index($r.conclusion // "") != null;
-    .[0] as $v | .[1] as $q | .[2] as $runs
-    | ($q.event // null) as $ev
-    | ($ev != null and $ev.__typename == "RemovedFromMergeQueueEvent") as $was_removed
+    .[0] as $v | .[1] as $m | .[2] as $runs
     | (if $v.state == "MERGED" then "merged"
        elif $v.state != "OPEN" or $qe != true then "not_queued"
-       elif $q.entry != null then "waiting"
-       elif $was_removed and $ev.reason == "merged" then "waiting"
-       elif $was_removed and ($pushed | not) then "removed"
-       elif $was_removed then "not_queued"
-       elif $ev != null and $ev.__typename == "AddedToMergeQueueEvent" then "waiting"
+       elif $m.queued then "waiting"
+       elif $m.removed != null then "removed"
        else "not_queued" end) as $s
     | ([$runs[] | {name: (if (.workflowName // "") != "" then .workflowName else .name end),
                    conclusion: (.conclusion // null), status, url}]) as $checks
     | {pr: {number: $v.number, url: $v.url, state: $v.state, base: $v.baseRefName, branch: $v.headRefName},
        status: $s, merge_queue: ($qe == true),
-       queue: (if $s == "waiting" and $q.entry != null then {state: $q.entry.state, position: $q.entry.position} else null end),
-       removed: (if $s == "removed" then {reason: $ev.reason, at: $ev.createdAt} else null end),
+       queue: (if $s == "waiting" and $m.state != null then {state: $m.state, position: $m.position} else null end),
+       removed: (if $s == "removed" then $m.removed else null end),
        queue_runs: (if $s == "removed" then $checks else [] end),
        failed: (if $s == "removed" then [$checks[] | select(failed) | {name, url}] else [] end)}'
 }

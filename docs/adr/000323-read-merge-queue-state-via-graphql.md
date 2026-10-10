@@ -38,24 +38,25 @@ issue: 323
 
 選んだ案：「キューの状態を GraphQL で読み、外れた後の push をリポジトリの activity で見て、失敗した CI は外れたイベントのコミットで絞って読む」。外れた後の push の判定は、`branch-status.sh` にも入れて、2つのスクリプトの「外れたまま」をそろえる。理由は、決め手のうち、4つの取りこぼしをすべて直し、2つのスクリプトの判定を食い違わせない唯一の案だから。
 
-* 並んでいるかは `mergeQueueEntry` で見る。入れた直後で CI の実行が無くても `waiting` になる
-* 外れたことは、タイムラインの最後のキューの出入りのイベント（`ADDED_TO_MERGE_QUEUE_EVENT`・`REMOVED_FROM_MERGE_QUEUE_EVENT`）で見る（`branch-status.sh` と同じ）。衝突で外れて CI の実行が無くても `removed` になり、理由（`reason`）も返す
-* 外れた後に push したかは、リポジトリの activity（`GET /repos/{owner}/{repo}/activity?ref=refs/heads/<ブランチ>`）の `push`・`force_push` の時刻で見る。GitHub の GraphQL には、PR のコミットを push した時刻が無い（`Commit.pushedDate` は廃止。コミットの時刻は手元でコミットした時刻）が、activity は REST で push の時刻を返す。push があれば、直して入れ直す前なので `not_queued` にする。フォークからの PR は、push がこのリポジトリの activity に無いので読まず、`removed` のままにする
-* この push の判定は `common.sh` の `dw_pushed_since` 1つにまとめ、`branch-status.sh` も使う。`branch-status.sh` は、外れた後に push していれば `merge_queue.removed` を null にする（`pr-merge-status.sh` の `not_queued` に当たる）。push を読めなければ、キューの状態を取得できないときと同じく `merge_queue` を null にする。`branch-status.sh` はフォークからの PR を対象にしない（同じ名前のブランチの PR を除いている）ので、push を読むのはこのリポジトリのブランチだけになる
+* キューの状態の問い合わせと判定（キューの中か・外れたままか）は、`common.sh` の `dw_merge_queue_state` 1つにまとめ、`pr-merge-status.sh` と `branch-status.sh` の両方が使う。2つのスクリプトで別々に読むと、同じ PR の判定が食い違うため
+* キューの中か（`queued`）は、`mergeQueueEntry` があるか、タイムラインの最後のキューの出入りのイベント（`ADDED_TO_MERGE_QUEUE_EVENT`・`REMOVED_FROM_MERGE_QUEUE_EVENT`）が入れたもの（入れた直後で、まだ `mergeQueueEntry` に出ていない）か、merged の理由で外れたもの（マージの直前で、PR の state がまだ MERGED でない）かで見る。入れた直後で CI の実行が無くても、`pr-merge-status.sh` は `waiting`、`branch-status.sh` は `queued` になる
+* 外れたままか（`removed`）は、最後のイベントが merged 以外の理由で外れたもので、その後に push していないかで見る。衝突で外れて CI の実行が無くても外れたままになり、理由（`reason`）も返す
+* push したかは、リポジトリの activity（`GET /repos/{owner}/{repo}/activity?ref=refs/heads/<ブランチ>`）の `push`・`force_push` の時刻で見る。GitHub の GraphQL には、PR のコミットを push した時刻が無い（`Commit.pushedDate` は廃止。コミットの時刻は手元でコミットした時刻）が、activity は REST で push の時刻を返す。比べるのは、外れた時刻ではなく、最後にキューに入れた時刻（`AddedToMergeQueueEvent` の時刻。タイムラインの最後の2つのイベントから読む）。キューに並んでいる間の push は、それ自体で PR をキューから外すので、push の時刻が外れた時刻より前になるため。push があれば、直して入れ直す前なので、外れたままとはしない（`pr-merge-status.sh` は `not_queued`、`branch-status.sh` は `merge_queue.removed` が null）。フォークからの PR は、push がこのリポジトリの activity に無いので読まず、外れたままとする（`branch-status.sh` はフォークからの PR をもともと対象にしない）
+* push を読めなければ、push は分からないものとして、warn を出して外れたままとみなす。キューの状態は捨てない（`branch-status.sh` が `merge_queue` を null にすると、`branch-plan.sh` がキューを使わないリポジトリとみなし、遅れていれば main を取り込んでしまう。ADR 000210 に反する）。`pr-merge-status.sh` も止まらない（`--wait` の途中でも待ちを続けられる）
 * 外れる原因になった CI の実行は、`RemovedFromMergeQueueEvent` の `beforeCommit`（キューの一時的なブランチのコミット）で `gh run list --commit` を絞って読む。リポジトリ全体の実行を新しい方から数えないので、窓から外れない
 
 ### 結果として起きること
 
-* 良い点：`pr-merge-status.sh` と `branch-status.sh` で、キューから外れたままか（`removed`）の判定がそろう。外れた後の push の扱いも同じ関数で決まる
+* 良い点：`pr-merge-status.sh` と `branch-status.sh` で、キューの中か・外れたままかの判定がそろう（入れた直後・マージの直前・外れた後の push の扱いも、同じ関数で決まる）
 * 良い点：branch-update が、修正を push した後に「外れたまま」と案内しなくなる
 * 良い点：task-finish が、キューに入れた直後でも待つかを聞けるようになり、修正を push した後に古い失敗を伝えなくなる
 * 悪い点：GraphQL を使う箇所が1つ増える（設計書 §10 の、GraphQL を残している箇所の一覧に足す）。偽の gh のテストでは、`gh api graphql` の答えを用意する
-* 悪い点：外れた後の push を見るために、REST の呼び出しが1回増える（外れたままのときだけ）。activity を読めない権限では、`pr-merge-status.sh` は止まり、`branch-status.sh` は `merge_queue` を null にする
+* 悪い点：外れた後の push を見るために、REST の呼び出しが1回増える（外れたままのときだけ）。activity を読めない権限では、push したかが分からず、warn を出して外れたままとみなす（push していても「外れたまま」と案内することがある）
 * 悪い点：`autoMergeRequest` は使わなくなる（キューを使うリポジトリでは、キューに並んでいるかは `mergeQueueEntry` で分かるため）
 
 ### 確認
 
-`tests/pr-merge-status.bats` の判定の表で、キューに入れた直後（実行も予約も無い）・コンフリクトで外れた・外れた後に push した・入れ直した後に古い失敗の実行が残っている・実行をコミットで絞って読む、のそれぞれを確かめる。`tests/branch-status.bats` で、外れた後に push した・していない・push を読めない・フォークの PR のそれぞれを確かめる。
+`tests/pr-merge-status.bats` の判定の表で、キューに入れた直後（実行も予約も無い）・コンフリクトで外れた・外れた後に push した・入れ直した後に古い失敗の実行が残っている・実行をコミットで絞って読む、のそれぞれを確かめる。`tests/branch-status.bats` で、外れた後に push した・並んでいる間に push して外れた・入れる前の push・push を読めない・入れた直後・merged の理由で外れた直後・フォークの PR のそれぞれを確かめる。両方のテストで、並んでいる間の push と、push を読めないときの扱いが同じになることを確かめる。
 
 ## 各案の長所と短所
 

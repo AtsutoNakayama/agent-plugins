@@ -13,13 +13,15 @@ load test_helper
 #   OPEN でも、マージキューを使わない（ルールに merge_queue が無い）      not_queued  キューの状態を読まない
 #   キューに並んでいる（mergeQueueEntry がある）                    waiting     queue に state・position。入れた直後で実行が無くても
 #   並んでおらず、最後が外れたイベントで理由が merged               waiting     （PR が MERGED に変わる直前）
-#   並んでおらず、最後が外れたイベントで、その後に push が無い      removed     removed に reason・at。CI の失敗なら failed に
+#   並んでおらず、最後が外れたイベントで、入れた後に push が無い    removed     removed に reason・at。CI の失敗なら failed に
 #                                                                               失敗したチェック（外れたイベントのコミットの実行）。
 #                                                                               衝突（merge_conflict）なら failed は空
-#   並んでおらず、最後が外れたイベントで、その後に push がある      not_queued  （直して、まだ入れ直していない）
+#   並んでおらず、最後が外れたイベントで、入れた後に push がある    not_queued  （直して、まだ入れ直していない。並んでいる間の
+#                                                                               push で外れたときも。push は外れた時刻より前になる）
 #   並んでおらず、最後が入れたイベント                              waiting     （並んだ直後）
 #   並んでおらず、イベントも無い                                    not_queued
 #   フォークからの PR は push を読まない（外れたままなら removed）
+#   push を読めなければ、warn を出して removed（止まらない）
 #
 # 偽の gh。
 # - gh pr view ... --json ...   $FIX/pr-<n>.json（n は pr view の呼び出し回数。無ければ $FIX/pr.json）を返す
@@ -88,6 +90,14 @@ removed_ev() {
   jq -n --arg r "$1" --arg t "$2" --arg o "${3:-}" '{data: {resource: {mergeQueueEntry: null, timelineItems: {nodes: [
     {__typename: "RemovedFromMergeQueueEvent", reason: $r, createdAt: $t,
      beforeCommit: (if $o == "" then null else {oid: $o} end)}]}}}}' >"$FIX/${4:-gql.json}"
+}
+
+# キューに入れた（00:05）後に外れた。使い方: added_removed_ev <reason> <外れた時刻> [beforeCommit の oid]
+added_removed_ev() {
+  jq -n --arg r "$1" --arg t "$2" --arg o "${3:-}" '{data: {resource: {mergeQueueEntry: null, timelineItems: {nodes: [
+    {__typename: "AddedToMergeQueueEvent", createdAt: "2026-10-01T00:05:00Z"},
+    {__typename: "RemovedFromMergeQueueEvent", reason: $r, createdAt: $t,
+     beforeCommit: (if $o == "" then null else {oid: $o} end)}]}}}}' >"$FIX/gql.json"
 }
 
 # PR のブランチへの push の activity を作る。使い方: activity <activity_type> <時刻>...（2つずつ）
@@ -279,11 +289,27 @@ teardown() { rm -rf "$TMP"; }
   assert_equal "$(st)" not_queued
 }
 
-@test "表: 外れる前の push や、push 以外の activity では removed のまま" {
-  removed_ev merge_conflict 2026-10-01T00:10:00Z
-  activity push 2026-10-01T00:00:00Z branch_creation 2026-10-01T00:20:00Z
+@test "表: キューに入れる前の push や、push 以外の activity では removed のまま" {
+  added_removed_ev merge_conflict 2026-10-01T00:10:00Z
+  activity push 2026-10-01T00:04:00Z branch_creation 2026-10-01T00:20:00Z
   run_script pr-merge-status.sh --pr 5
   assert_equal "$(st)" removed
+}
+
+@test "表: キューに並んでいる間の push で外れた（push の時刻が外れた時刻より前）ときも、入れた時刻より後の push として not_queued（#323）" {
+  added_removed_ev dequeued 2026-10-01T00:10:00Z
+  activity push 2026-10-01T00:07:00Z
+  run_script pr-merge-status.sh --pr 5
+  assert_success
+  assert_equal "$(st)" not_queued
+}
+
+@test "外れた後の push を読めなければ、warn を出して removed を返す（--wait でも止まらない。#323）" {
+  added_removed_ev merge_conflict 2026-10-01T00:10:00Z
+  echo 'activity を読めない' >"$FIX/activity-fail"
+  out="$(DW_WAIT_SLEEP=0 "${TEST_BASH:-bash}" "$SCRIPTS/pr-merge-status.sh" --pr 5 --wait 2>"$TMP/err")"
+  assert_equal "$(jq -c '[.status, .removed.reason]' <<<"$out")" '["removed","merge_conflict"]'
+  grep -q '^warn: PR のブランチへの push を読めないので' "$TMP/err" || fail "warn がありません: $(cat "$TMP/err")"
 }
 
 @test "表: 直して入れ直したら、古い失敗の実行が残っていても waiting（#323）" {
@@ -393,7 +419,7 @@ teardown() { rm -rf "$TMP"; }
   assert_failure 64
 }
 
-@test "PR・キューの状態・push・実行を読めなければ失敗する" {
+@test "PR・キューの状態・実行を読めなければ失敗する" {
   rm "$FIX/pr.json"
   run_script pr-merge-status.sh --pr 5
   assert_failure
@@ -403,11 +429,6 @@ teardown() { rm -rf "$TMP"; }
   assert_failure
   assert_output --partial "マージキューの状態を読めません"
   removed_ev failed_checks 2026-10-01T00:10:00Z sha1
-  echo '{"message": "x"}' >"$FIX/activity.json"
-  run_script pr-merge-status.sh --pr 5
-  assert_failure
-  assert_output --partial "push を読めません"
-  echo '[]' >"$FIX/activity.json"
   echo '{"message": "x"}' >"$FIX/runs.json"
   run_script pr-merge-status.sh --pr 5
   assert_failure
