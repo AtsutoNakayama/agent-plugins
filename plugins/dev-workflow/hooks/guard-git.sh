@@ -15,7 +15,7 @@
 # 標準出力に出し、終了コード 0 で終わる。
 # 操作の対象のリポジトリ（cd・pushd・popd・git -C・env -C・sudo -D で移った先、--git-dir・GIT_DIR などで指したリポジトリ）が、導入して
 # いないリポジトリなら何もしない（gc_target・target_set_up）。git がリポジトリを見つけられないときは、守りを外さないよう調べる（設計書 §1）。
-# ただし今のブランチを読めないので、コミットと、push 先を書かない push（と HEAD・@ への push）は止める（target_unknown）。
+# ただし今のブランチを読めないので、コミットと、push 先を書かない push（と HEAD・@ への push）と、stash の取り出し・破棄は止める（target_unknown）。
 # 同じコマンドの中で git init で作るリポジトリは、導入していないので何もせず、git clone するリポジトリは、まだ無いので対象が分からないものとする（gc_new_repo）。
 # コマンドの文字列の解析は、pr-link.sh と共有する（scripts/lib/git-command.sh）。timeout・env などの前に付くコマンドは飛ばすが、
 # sh -c・xargs などを通したコマンドや git の別名（alias）を通すと見逃す。
@@ -53,7 +53,7 @@ deny() { dw_die "$1" 2; }
 #   - ルートが分かれば、そこ（かメインのワークツリー）にチームの設定があるか（dw_is_set_up）
 #   - リポジトリは分かるがルートが分からない（bare リポジトリ、外から指した --separate-git-dir のリポジトリなど）ときは、
 #     HEAD にチームの設定がコミットされているか
-#   - git がリポジトリを見つけられない（ディレクトリが分からない cd - の後など）ときは、守りを外さないよう、導入したものとみなす（ただし今のブランチを読めないので、コミットと push 先を書かない push（と HEAD・@ への push）は止める。target_unknown）
+#   - git がリポジトリを見つけられない（ディレクトリが分からない cd - の後など）ときは、守りを外さないよう、導入したものとみなす（ただし今のブランチを読めないので、コミットと push 先を書かない push（と HEAD・@ への push）と stash の取り出し・破棄は止める。target_unknown）
 target_set_up() {
   local w prev wt
   if [ -n "$gc_root" ]; then
@@ -237,9 +237,16 @@ check_branch_name() {
 check_git() {
   local sub="$1" base
   shift
+  # stash は、取り出し・破棄（check_stash）だけを調べる。作る・見るだけの操作では、対象を求めない
+  if [ "$sub" = stash ]; then
+    case "${1:-}" in
+      pop | apply | drop | branch | clear) ;;
+      *) return 0 ;;
+    esac
+  fi
   case "$sub" in
     commit | push | switch | checkout | branch | worktree | stash)
-      # 操作の対象を求め、導入していないリポジトリなら何もしない（git がリポジトリを見つけられないときは、今までどおり調べる。ただし今のブランチを読めないので、コミットと push 先を書かない push（と HEAD・@ への push）は止める。target_unknown）。
+      # 操作の対象を求め、導入していないリポジトリなら何もしない（git がリポジトリを見つけられないときは、今までどおり調べる。ただし今のブランチを読めないので、コミットと push 先を書かない push（と HEAD・@ への push）と stash の取り出し・破棄は止める。target_unknown）。
       # 同じコマンドの中で git init で作るリポジトリは、まだチームの設定が無い（導入していない）ので何もしない。
       # git clone するリポジトリは、まだ無く、導入したかもブランチも分からないので、対象が分からないときと同じに扱う（gc_new_repo）
       gc_new_repo

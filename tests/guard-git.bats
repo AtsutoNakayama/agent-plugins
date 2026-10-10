@@ -479,6 +479,18 @@ make_stash() {
   allowed "git stash pop"
 }
 
+@test "detached HEAD で作った stash は、detached HEAD のまま取り出せ、ブランチで作った stash は止める" {
+  make_stash
+  git checkout -q --detach
+  denied "別のブランチ（main）で作られた stash" "git stash pop"
+  make_stash
+  allowed "git stash pop" "git stash apply stash@{0}"
+  denied "別のブランチ（main）で作られた stash" "git stash pop 1"
+  # detached HEAD で作った stash を、ブランチの上で取り出すときも止める
+  git checkout -q main
+  denied "別のブランチ（(no branch)）で作られた stash" "git stash pop"
+}
+
 @test "git stash clear は、どのブランチの上でも止める" {
   denied "git stash clear" "git stash clear"
   git checkout -q -b feat/1-x
