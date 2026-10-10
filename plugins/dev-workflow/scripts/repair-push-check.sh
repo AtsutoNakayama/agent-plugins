@@ -1,10 +1,15 @@
 #!/usr/bin/env bash
 # 無人で push する前に、push で origin に入る変更のパスを機械的に確かめる（ADR 000285「無人で push する条件」）。
-# push の対象に、リポジトリ直下の .github/ 以下か、どの階層の .claude/ 以下の変更が含まれていたら、push してはいけない（ok が false）。
-# .github/ は workflows だけでなく、workflow が呼ぶ actions・scripts や CODEOWNERS などで CI と権限に影響し、
-# 入れ子の .claude/ も、そのディレクトリで動く Claude の権限と設定に影響するため（#331）。
-# .github・.claude という名前そのもの（シンボリックリンク・ファイル・サブモジュール）も止める（中身を差し替えられるため）。
-# 大文字と小文字は区別しない（大文字と小文字を区別しないファイルシステムでは .Claude/ も .claude/ として読まれるため）。
+#
+# 止めるパス（無人で変えてはいけないパス。この一覧が正本で、SKILL.md・設計書は、ここを参照する。ADR 000339）:
+#   - リポジトリ直下の .github という名前そのものと、.github/ 以下のすべて（workflows だけでなく、workflow が呼ぶ
+#     actions・scripts や CODEOWNERS などでも、CI と権限に影響するため）
+#   - どの階層の .claude という名前そのものと、どの階層の .claude/ 以下も（入れ子の .claude/ も、そのディレクトリで動く
+#     Claude の権限と設定に影響するため）
+#   - 名前そのもの（ファイル・シンボリックリンク・サブモジュール）も止めるのは、中身を差し替えられるため
+#   - 大文字と小文字は区別しない（区別しないファイルシステムでは、.Claude/ も .claude/ として読まれるため）
+#   - 入れ子の .github/（docs/.github/ など）は、GitHub が読まないので止めない
+# push の対象に、止めるパスの変更が含まれていたら、push してはいけない（ok が false）。
 # 何も変えない（読むだけ。push もしない）。
 #
 # 使い方: repair-push-check.sh --base-branch B [--branch X]
@@ -55,13 +60,16 @@ fi
 forbidden='[]'
 # プロセス置換の中の git diff の失敗は while に伝わらず、空入力（禁止パスなし）と読まれるので、先にファイルへ取って確かめる
 diff_file="$(mktemp "${TMPDIR:-/tmp}/repair-push-check.XXXXXX")"
-trap 'rm -f "$diff_file"' EXIT
+lower_file="$(mktemp "${TMPDIR:-/tmp}/repair-push-check.XXXXXX")"
+trap 'rm -f "$diff_file" "$lower_file"' EXIT
 git diff --name-only --no-renames -z "$against" HEAD >"$diff_file" \
   || dw_die "git diff に失敗しました（${against} と HEAD の差を取れません）" 2
-# パスに改行が入っていても壊れないよう -z で読む
-while IFS= read -r -d '' path; do
-  # bash 3.2 には ${var,,} が無いので tr で小文字にする。LC_ALL=C で、ASCII の英字だけを変える
-  lower="$(printf '%s' "$path" | LC_ALL=C tr 'ABCDEFGHIJKLMNOPQRSTUVWXYZ' 'abcdefghijklmnopqrstuvwxyz')"
+# 照らすための、小文字にした写し。bash 3.2 には ${var,,} が無いので、全体を1回の tr で変える（NUL の区切りはそのまま残る）。
+# LC_ALL=C で、ASCII の英字だけを変える（バイト数が変わらず、元のパスと1対1に並ぶ）
+LC_ALL=C tr 'ABCDEFGHIJKLMNOPQRSTUVWXYZ' 'abcdefghijklmnopqrstuvwxyz' <"$diff_file" >"$lower_file" \
+  || dw_die "パスを小文字にできませんでした" 2
+# パスに改行が入っていても壊れないよう -z で読む。元のパス（出力に使う）と、小文字の写し（照らすのに使う）を並べて読む
+while IFS= read -r -d '' path && IFS= read -r -d '' lower <&3; do
   case "$lower" in
     .github | .github/* | .claude | .claude/* | */.claude | */.claude/*) ;;
     *) continue ;;
@@ -71,6 +79,6 @@ while IFS= read -r -d '' path; do
     continue
   fi
   forbidden="$(jq -c --arg p "$path" '. + [$p]' <<<"$forbidden")"
-done <"$diff_file"
+done <"$diff_file" 3<"$lower_file"
 
 jq -n --argjson f "$forbidden" --arg c "$against" '{ok: ($f | length == 0), forbidden: $f, compared_with: $c}'
