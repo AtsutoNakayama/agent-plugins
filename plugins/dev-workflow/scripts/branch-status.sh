@@ -40,10 +40,12 @@
 #                         キューに並んだ PR は、merge_state が CLEAN でも、先に並んだ PR と衝突すると state が UNMERGEABLE になり、
 #                         すぐにキューから外れる。queued はキューの中か（並んでいる、入れた直後でまだ state に出ていない、
 #                         または merged の理由で外れた直後（マージの直前）なら true）。removed は、PR がキューから外れたままの
-#                         ときの、外れた理由と時刻（{reason, at}。reason は GitHub の値で、衝突なら merge_conflict）。
+#                         ときの、外れた理由と時刻と、push したかを確かめられなかったか（{reason, at, push_unknown}。
+#                         reason は GitHub の値で、衝突なら merge_conflict）。
 #                         外れた後にキューへ入れ直していれば null。キューに入れた後に PR のブランチへ push していれば（直して、
 #                         まだ入れ直していない）、removed は null。push は、リポジトリの activity の push・force_push の時刻で
-#                         見る。push を読めなければ、warn を出して外れたままとみなす。判定は pr-merge-status.sh と共通
+#                         見る。push を読めなければ、warn を出して外れたままとみなす（push_unknown が true）。
+#                         enabled が false なら、queued は false・removed は null で、push は読まない。判定は pr-merge-status.sh と共通
 #                         （common.sh の dw_merge_queue_state）。キューの状態を取得できなければ merge_queue は null になる
 #   push_commits          push で origin に入るコミット（どれも {sha, subject} の配列。新しい順）
 #                           to       数える基準。origin にブランチがあれば origin/<ブランチ>、無ければ（初回の push）origin/<base>。
@@ -198,9 +200,13 @@ fi
 # 遅れていれば取り込んでしまうため）。fork の PR は上で除いているので、push を読むのはこのリポジトリのブランチだけになる
 if [ "$pr" != null ]; then
   queue=null
-  if ms="$(dw_merge_queue_state "$(jq -r .url <<<"$pr")" "$branch" false)"; then
+  # 標準エラーは分けて受け、成功したときだけ（warn を）出す。失敗したときの理由は出さない（取得できなければ null にする）
+  qerr="$(mktemp)"
+  if ms="$(dw_merge_queue_state "$(jq -r .url <<<"$pr")" "$branch" false 2>"$qerr")"; then
     queue="$(jq -c 'del(.before_commit)' <<<"$ms")"
+    cat "$qerr" >&2
   fi
+  rm -f "$qerr"
   pr="$(jq -c --argjson q "$queue" '. + {merge_queue: $q}' <<<"$pr")"
 fi
 

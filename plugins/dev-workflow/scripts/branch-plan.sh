@@ -33,7 +33,7 @@
 #     9. behind が 1 以上                                        → merge（behind）
 #    10. merge_state が BEHIND か DIRTY（behind は 0）           → ask_base
 #    11. それ以外                                                → none（up_to_date）
-#   queue（3・7 のとき）: キューでの状態が UNMERGEABLE なら conflict、ほかの状態か、キューの中（queued。入れた直後で
+#   queue（3・7 のとき）: キューでの状態が UNMERGEABLE なら conflict、キューの中（queued。並んでいる・入れた直後で
 #   まだ状態に出ていない・マージの直前）なら queued、外れたまま（removed）なら removed、どれでもなければ not_queued
 set -euo pipefail
 
@@ -61,7 +61,7 @@ jq -c '
   | ((.pr.merge_queue.enabled // false) == true) as $queue
   | (.behind == 0 and (.pushed_behind // 0) >= 1) as $merged_not_pushed
   | (if .pr.merge_queue.state == "UNMERGEABLE" then "conflict"
-     elif .pr.merge_queue.state != null or .pr.merge_queue.queued == true then "queued"
+     elif .pr.merge_queue.queued == true then "queued"
      elif .pr.merge_queue.removed != null then "removed"
      else "not_queued" end) as $guide
   | if $queue then

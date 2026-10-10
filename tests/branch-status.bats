@@ -8,6 +8,8 @@ load fake_gh
 # origin 役の bare リポジトリに main を push し、feat/17-x を作って1つコミットしておく
 setup_branch() {
   setup_fake_gh
+  # キューに入れた直後かの判定に使う今の時刻（2026-10-04T16:05:00Z。ADDED の5分後）
+  export DW_QUEUE_NOW=1791129900
   git add .claude/dev-workflow/config.json
   git commit -q -m config
   git init -q --bare -b main "$TMP/origin.git"
@@ -239,7 +241,7 @@ ADDED='{"__typename": "AddedToMergeQueueEvent", "createdAt": "2026-10-04T16:00:0
   run_status
   assert_success
   assert_equal "$(jq -c '.pr | [.merge_state, .merge_queue]' <<<"$output")" \
-    '["CLEAN",{"enabled":true,"state":null,"position":null,"queued":false,"removed":{"reason":"merge_conflict","at":"2026-10-04T16:36:30Z"}}]'
+    '["CLEAN",{"enabled":true,"state":null,"position":null,"queued":false,"removed":{"reason":"merge_conflict","at":"2026-10-04T16:36:30Z","push_unknown":false}}]'
 }
 
 # PR のブランチへの activity を作る。使い方: activity_fixture <activity_type> <時刻>...（2つずつ）
@@ -293,7 +295,7 @@ activity_fixture() {
   # merge_queue を null にすると、branch-plan.sh がキューを使わないリポジトリとみなし、遅れていれば取り込んでしまう
   advance_main 1
   out="$(FAKE_FAIL=api-activity "${TEST_BASH:-bash}" "$SCRIPTS/branch-status.sh" 2>"$TMP/err")"
-  assert_equal "$(jq -c '.pr.merge_queue | [.enabled, .removed.reason]' <<<"$out")" '[true,"merge_conflict"]'
+  assert_equal "$(jq -c '.pr.merge_queue | [.enabled, .removed.reason, .removed.push_unknown]' <<<"$out")" '[true,"merge_conflict",true]'
   assert_equal "$(jq -c '[.plan.action, .plan.queue]' <<<"$out")" '["none","removed"]'
   grep -q '^warn: PR のブランチへの push を読めないので' "$TMP/err" || fail "warn がありません: $(cat "$TMP/err")"
 }
@@ -324,6 +326,35 @@ activity_fixture() {
   run_status
   assert_equal "$(jq -c '.pr.merge_queue | [.state, .queued, .removed]' <<<"$output")" '[null,true,null]'
   assert_equal "$(jq -r .plan.queue <<<"$output")" queued
+}
+
+@test "入れたイベントから10分を過ぎても state に出なければ、並んでいないとみなす（queued は false。#323）" {
+  setup_branch
+  queue_removed_fixture "$ADDED"
+  # 2026-10-04T16:10:00Z（ADDED のちょうど10分後）
+  DW_QUEUE_NOW=1791130200 run_status
+  assert_equal "$(jq -c '.pr.merge_queue | [.queued, .removed]' <<<"$output")" '[false,null]'
+  assert_equal "$(jq -r .plan.queue <<<"$output")" not_queued
+}
+
+@test "キューが無効（enabled が false）なら、外れたイベントが残っていても push は読まず、queued・removed も出さない" {
+  setup_branch
+  queue_removed_fixture "$ADDED" '{"__typename": "RemovedFromMergeQueueEvent", "reason": "merge_conflict", "createdAt": "2026-10-04T16:36:30Z"}'
+  jq '.data.resource.isMergeQueueEnabled = false' "$FIX/PrQueue.json" >"$FIX/q" && mv "$FIX/q" "$FIX/PrQueue.json"
+  run_status
+  assert_success
+  assert_equal "$(jq -c .pr.merge_queue <<<"$output")" '{"enabled":false,"state":null,"position":null,"queued":false,"removed":null}'
+  assert_equal "$(grep -c '^api-activity ' "$CALLS")" 0
+}
+
+@test "gh が成功しても標準エラーに何か出すときに、JSON と混ぜずに読む（merge_queue を null にしない。#323）" {
+  setup_branch
+  queue_removed_fixture "$ADDED" '{"__typename": "RemovedFromMergeQueueEvent", "reason": "merge_conflict", "createdAt": "2026-10-04T16:36:30Z"}'
+  activity_fixture push 2026-10-04T16:20:00Z
+  out="$(FAKE_GH_STDERR='A new release of gh is available' "${TEST_BASH:-bash}" "$SCRIPTS/branch-status.sh" 2>"$TMP/err")"
+  assert_equal "$(jq -c '.pr.merge_queue | [.enabled, .queued, .removed]' <<<"$out")" '[true,false,null]'
+  # push を読めたので、warn は出さない
+  if grep -q '^warn:' "$TMP/err"; then fail "warn を出しています: $(cat "$TMP/err")"; fi
 }
 
 @test "merged の理由で外れた直後（マージの直前）は、外れたままとせず queued（pr-merge-status.sh の waiting と同じ。#323）" {

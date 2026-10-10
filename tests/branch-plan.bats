@@ -83,10 +83,10 @@ check_plan() {
 }
 
 @test "キューの案内：キューでの状態に合わせて queue を出す" {
-  check_plan '.pr.merge_queue.state = "UNMERGEABLE" | .pr.merge_queue.position = 2' "none no_conflict conflict -"
+  check_plan '.pr.merge_queue.state = "UNMERGEABLE" | .pr.merge_queue.position = 2 | .pr.merge_queue.queued = true' "none no_conflict conflict -"
   local s
   for s in QUEUED AWAITING_CHECKS MERGEABLE LOCKED; do
-    check_plan ".pr.merge_queue.state = \"$s\" | .pr.merge_queue.position = 1" "none no_conflict queued -"
+    check_plan ".pr.merge_queue.state = \"$s\" | .pr.merge_queue.position = 1 | .pr.merge_queue.queued = true" "none no_conflict queued -"
   done
   # 入れた直後でまだ state に出ていない・マージの直前（queued が true で state は null）も queued（#323）
   check_plan '.pr.merge_queue.queued = true' "none no_conflict queued -"

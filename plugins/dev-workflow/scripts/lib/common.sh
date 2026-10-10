@@ -707,43 +707,61 @@ dw_merge_queue_enabled() {
 # 外れたままか（キューに入れた後に push して、まだ入れ直していないか）を見分けるのに使う（dw_merge_queue_state。ADR 000323）。
 # GitHub には PR のコミットを push した時刻が無く（Commit.pushedDate は廃止。コミットの時刻は手元でコミットした時刻）、
 # リポジトリの activity（REST）がブランチへの push の時刻を返すので、それで見る。新しい順に返るので、最初のページだけ見ればよい。
-# フォークからの PR（<フォークか> が true）は、push がこのリポジトリの activity に無いので、読まずに false を出力する。
+# gh の標準エラーは、JSON と混ざらないよう分けて受ける（成功しても gh がお知らせを出すことがある）。
 # 読めなければ、理由を標準エラーに出して非0を返す（どう扱うかは呼び出し側で決める）。
-# 使い方: dw_pushed_since <PR の URL> <PR のブランチ> <フォークか（true・false）> <時刻（ISO 8601）>
+# 使い方: dw_pushed_since <PR の URL> <PR のブランチ> <時刻（ISO 8601）>
 dw_pushed_since() {
-  local repo out
-  if [ "$3" = true ]; then echo false; return 0; fi
+  local repo out err
   repo="$(jq -rn --arg u "$1" '$u | capture("^https?://[^/]+/(?<r>[^/]+/[^/]+)/pull/").r // empty' 2>/dev/null || true)"
   [ -n "$repo" ] || { echo "PR の URL からリポジトリが分かりません: $1" >&2; return 1; }
-  out="$(gh api "repos/$repo/activity?ref=$(jq -rn --arg r "refs/heads/$2" '$r | @uri')&per_page=100" 2>&1)" \
-    || { printf '%s\n' "$out" >&2; return 1; }
+  err="$(mktemp)"
+  if ! out="$(gh api "repos/$repo/activity?ref=$(jq -rn --arg r "refs/heads/$2" '$r | @uri')&per_page=100" 2>"$err")"; then
+    cat "$err" >&2
+    rm -f "$err"
+    return 1
+  fi
+  rm -f "$err"
   jq -e 'type == "array"' >/dev/null 2>&1 <<<"$out" || { printf '%s\n' "$out" >&2; return 1; }
-  jq --arg t "$4" 'any(.[]; (.activity_type == "push" or .activity_type == "force_push") and ((.timestamp // "") > $t))' <<<"$out"
+  jq --arg t "$3" 'any(.[]; (.activity_type == "push" or .activity_type == "force_push") and ((.timestamp // "") > $t))' <<<"$out"
 }
 
+# キューに入れたイベント（AddedToMergeQueueEvent）の後、mergeQueueEntry が出るのを待つ時間（分）。入れた直後は、
+# mergeQueueEntry が出るまでに少し時間がかかるので、その間はキューの中とみなす。この時間を過ぎても出ないのは、
+# 外れたイベントの欠けなど、キューの中ではない状態なので、並んでいないとみなす（いつまでも待ち続けないため）
+DW_QUEUE_ADDED_GRACE_MINUTES=10
+
 # PR のマージキューの状態を読んで、判定した結果を JSON で出力する（pr-merge-status.sh・branch-status.sh が共通に使う。ADR 000323）。
-# キューに並んでいるか（mergeQueueEntry）とキューの出入りのイベント（タイムラインの AddedToMergeQueueEvent・
-# RemovedFromMergeQueueEvent）は、gh pr view にも REST にも無いので GraphQL で読む（設計書 §10）。PR は URL で引く。
-# 衝突で外れた PR はすぐに mergeQueueEntry が null になり CI の実行も作られないので、外れたことは最後のイベントで見る。
+# キューが有効か（isMergeQueueEnabled）、キューに並んでいるか（mergeQueueEntry）とキューの出入りのイベント（タイムラインの
+# AddedToMergeQueueEvent・RemovedFromMergeQueueEvent）は、gh pr view にも REST にも無いので GraphQL で読む（設計書 §10）。
+# PR は URL で引く。isMergeQueueEnabled は、ルールセットでも古いブランチ保護でもキューが有効なら true になる
+# （REST の rules/branches はルールセットだけを返す）。衝突で外れた PR はすぐに mergeQueueEntry が null になり、
+# CI の実行も作られないので、外れたことは最後のイベントで見る。
 #
 # 出力: {enabled, state, position, queued, removed, before_commit}
-#   enabled        PR のマージ先でキューが有効か（isMergeQueueEnabled）
+#   enabled        PR のマージ先でキューが有効か（isMergeQueueEnabled）。false なら、queued は false、removed は null で、
+#                  push は読まない
 #   state・position  キューに並んでいるときの状態（QUEUED・AWAITING_CHECKS・MERGEABLE・UNMERGEABLE・LOCKED）と順番。並んでいなければ null
 #   queued         キューの中か。mergeQueueEntry があるか、最後のイベントが入れたもの（入れた直後で、まだ mergeQueueEntry に
-#                  出ていない）か、最後が merged の理由で外れたもの（マージの直前で、PR の state がまだ MERGED でない）なら true
-#   removed        キューから外れたまま（{reason, at}）。最後が merged 以外の理由で外れたイベントで、最後にキューに入れた時刻
-#                  （入れたイベントが読めなければ外れた時刻）より後に PR のブランチへの push が無いとき。キューに並んでいる間の
-#                  push もそれ自体で PR をキューから外すので、外れた時刻ではなく入れた時刻と比べる。push があれば、直して
-#                  まだ入れ直していないので null（キューに入っていない）。フォークからの PR は push を読まない（外れたまま）。
-#                  push を読めなければ、warn を出して、外れたままとみなす（キューの状態は捨てない）
+#                  出ていない。DW_QUEUE_ADDED_GRACE_MINUTES 分まで）か、最後が merged の理由で外れたもの（マージの直前で、
+#                  PR の state がまだ MERGED でない）なら true
+#   removed        キューから外れたまま（{reason, at, push_unknown}）。最後が merged 以外の理由で外れたイベントで、最後にキューに
+#                  入れた時刻（入れたイベントが読めなければ外れた時刻）より後に PR のブランチへの push が無いとき。キューに
+#                  並んでいる間の push もそれ自体で PR をキューから外すので、外れた時刻ではなく入れた時刻と比べる。push があれば、
+#                  直してまだ入れ直していないので null（キューに入っていない）。push_unknown は、push したかを確かめられなかったか
+#                  （フォークからの PR は push がこのリポジトリの activity に無いので読まない。activity を読めなければ warn を出す）。
+#                  確かめられなければ、外れたままとみなす（キューの状態は捨てない）
 #   before_commit  removed のときの、外れたイベントのコミット（キューの一時的なブランチのコミット。そのキューの CI の実行の
 #                  headSha）。CI を動かす前に外れた（衝突など）ときや、removed でなければ null
-# 読めなければ、理由を標準出力に出して非0を返す（どう扱うかは呼び出し側で決める）。
+# gh の標準エラーは、JSON と混ざらないよう分けて受ける（成功しても gh がお知らせを出すことがある）。
+# 読めなければ、理由を標準エラーに出して非0を返す（どう扱うかは呼び出し側で決める）。warn も標準エラーに出るので、
+# 呼び出し側は、成功したときの標準エラーをそのまま出し、失敗したときの標準エラーを理由として使う。
+# テストのため、環境変数 DW_QUEUE_NOW（UNIX 秒）で今の時刻を差し替えられる（pr-watch.sh の PR_WATCH_NOW と同じ形）
 # 使い方: dw_merge_queue_state <PR の URL> <PR のブランチ> <フォークか（true・false）>
 dw_merge_queue_state() {
-  local res q pushed
+  local res q pushed err
+  err="$(mktemp)"
   # shellcheck disable=SC2016 # GraphQL の変数（$url）を bash に展開させないため、シングルクォートで書く
-  res="$(dw_gql 'query PrQueue($url: URI!) {
+  if ! res="$(dw_gql 'query PrQueue($url: URI!) {
       resource(url: $url) {
         ... on PullRequest {
           isMergeQueueEnabled
@@ -757,24 +775,41 @@ dw_merge_queue_state() {
           }
         }
       }
-    }' "$(jq -nc --arg u "$1" '{url: $u}')" 2>&1)" || { printf '%s\n' "$res"; return 1; }
-  q="$(jq -c '.data.resource | select(type == "object" and has("mergeQueueEntry"))
+    }' "$(jq -nc --arg u "$1" '{url: $u}')" 2>"$err")"; then
+    cat "$err" >&2
+    rm -f "$err"
+    return 1
+  fi
+  rm -f "$err"
+  q="$(jq -c --argjson now "${DW_QUEUE_NOW:-$(date -u +%s)}" --argjson grace "$DW_QUEUE_ADDED_GRACE_MINUTES" '
+    .data.resource | select(type == "object" and has("mergeQueueEntry"))
+    | (.isMergeQueueEnabled == true) as $enabled
     | (.timelineItems.nodes // []) as $n | ($n | last) as $ev
     | ([$n[] | select(.__typename == "AddedToMergeQueueEvent")] | last) as $added
     | ($ev.__typename == "RemovedFromMergeQueueEvent") as $was_removed
-    | (.mergeQueueEntry != null or $ev.__typename == "AddedToMergeQueueEvent"
-       or ($was_removed and $ev.reason == "merged")) as $queued
-    | {enabled: (.isMergeQueueEnabled == true), state: .mergeQueueEntry.state, position: .mergeQueueEntry.position,
+    | ($ev.__typename == "AddedToMergeQueueEvent"
+       and (($now - (($ev.createdAt // "1970-01-01T00:00:00Z") | fromdateiso8601)) < ($grace * 60))) as $just_added
+    | ($enabled and (.mergeQueueEntry != null or $just_added or ($was_removed and $ev.reason == "merged"))) as $queued
+    | ($enabled and ($queued | not) and $was_removed) as $removed
+    | {enabled: $enabled, state: .mergeQueueEntry.state, position: .mergeQueueEntry.position,
        queued: $queued,
-       removed: (if ($queued | not) and $was_removed then {reason: $ev.reason, at: $ev.createdAt} else null end),
-       before_commit: (if ($queued | not) and $was_removed then $ev.beforeCommit.oid else null end),
+       removed: (if $removed then {reason: $ev.reason, at: $ev.createdAt, push_unknown: false} else null end),
+       before_commit: (if $removed then $ev.beforeCommit.oid else null end),
        since: (if $added != null then $added.createdAt else $ev.createdAt end)}' <<<"$res" 2>/dev/null)" || q=""
-  [ -n "$q" ] || { printf '%s\n' "$res"; return 1; }
+  [ -n "$q" ] || { printf '%s\n' "$res" >&2; return 1; }
   if [ "$(jq -r '.removed != null' <<<"$q")" = true ]; then
-    if pushed="$(dw_pushed_since "$1" "$2" "$3" "$(jq -r .since <<<"$q")" 2>&1)"; then
-      [ "$pushed" != true ] || q="$(jq -c '.removed = null | .before_commit = null' <<<"$q")"
+    if [ "$3" = true ]; then
+      # フォークのブランチへの push は、このリポジトリの activity に無いので読まない
+      q="$(jq -c '.removed.push_unknown = true' <<<"$q")"
     else
-      dw_warn "PR のブランチへの push を読めないので、マージキューから外れたままとみなします: $(printf '%s' "$pushed" | tail -n 1)"
+      err="$(mktemp)"
+      if pushed="$(dw_pushed_since "$1" "$2" "$(jq -r .since <<<"$q")" 2>"$err")"; then
+        [ "$pushed" != true ] || q="$(jq -c '.removed = null | .before_commit = null' <<<"$q")"
+      else
+        q="$(jq -c '.removed.push_unknown = true' <<<"$q")"
+        dw_warn "PR のブランチへの push を読めないので、マージキューから外れたままとみなします: $(tail -n 1 "$err")"
+      fi
+      rm -f "$err"
     fi
   fi
   jq -c 'del(.since)' <<<"$q"

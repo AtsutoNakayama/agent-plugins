@@ -25,12 +25,12 @@ load fake_gh
 #   push を読めなければ、warn を出して removed（止まらない）
 #
 # 偽の gh。PR・キューの状態・キューの実行は、呼び出し回数ごとに答えを変える（--wait を試す）ので、ここで答える。
-# ルールと activity は、共通の偽の gh（tests/fake_gh.bash）に任せる（失敗させるのは FAKE_FAIL=api-rules・api-activity）。
+# activity は、共通の偽の gh（tests/fake_gh.bash）に任せる（失敗させるのは FAKE_FAIL=api-activity）。
+# FAKE_GH_STDERR があれば、どの呼び出しも成功したうえで標準エラーにそれを出す（gh のお知らせの代わり）。
 # - gh pr view ... --json ...   $FIX/pr-<n>.json（n は pr view の呼び出し回数。無ければ $FIX/pr.json）を返す
 # - gh api graphql --input -    $FIX/gql-<n>.json（無ければ $FIX/gql.json）を返す。$FIX/gql-fail があれば失敗する
 # - gh run list ...             $FIX/runs.json を返す。引数に --event merge_group が無ければ失敗する
 # - gh api repos/<owner>/<repo>/activity?...  fake_gh.bash の api-activity（$FIX/activity.json。$CALLS に「api-activity <パス>」）
-# - gh api --paginate repos/.../rules/branches/...  fake_gh.bash の api-rules（$FIX/rules.json。既定は merge_queue のルールあり）
 # - それ以外（書き込みを含む）は、$CALLS に「WRITE <引数>」を記録して失敗する
 setup_merge_status_gh() {
   setup_fake_gh
@@ -42,6 +42,8 @@ pick() { # pick <名前>: 呼び出し回数に合うファイルを選ぶ
   n="$(grep -c "^READ $1 " "$CALLS" || true)"
   if [ -f "$FIX/$1-$n.json" ]; then cat "$FIX/$1-$n.json"; else cat "$FIX/$1.json"; fi
 }
+# FAKE_GH_STDERR があれば、成功しても標準エラーに出す（gh のお知らせ・警告の代わり）
+[ -z "${FAKE_GH_STDERR:-}" ] || echo "$FAKE_GH_STDERR" >&2
 case "$1 $2" in
   "pr view") pick pr; echo "READ pr $*" >>"$CALLS" ;;
   "api graphql")
@@ -52,12 +54,6 @@ case "$1 $2" in
     case " $* " in *" --event merge_group "*) ;; *) echo "gh: --event merge_group が無い" >&2; exit 1 ;; esac
     cat "$FIX/runs.json"; echo "READ runs $*" >>"$CALLS"
     ;;
-  "api --paginate")
-    case "$3" in
-      repos/*/rules/branches/*) exec "$(dirname "$0")/gh-common" "$@" ;;
-    esac
-    echo "WRITE $*" >>"$CALLS"; echo "gh: 想定外の呼び出し: $*" >&2; exit 1
-    ;;
   "api repos/"*/activity\?*) exec "$(dirname "$0")/gh-common" "$@" ;;
   *) echo "WRITE $*" >>"$CALLS"; echo "gh: 想定外の呼び出し: $*" >&2; exit 1 ;;
 esac
@@ -67,7 +63,8 @@ SH
   pr_json '{}'
   gql_json '{}'
   echo '[]' >"$FIX/runs.json"
-  echo '[{"type": "merge_queue"}, {"type": "pull_request"}]' >"$FIX/rules.json"
+  # 入れた直後の判定に使う今の時刻（2026-10-01T00:05:00Z）
+  export DW_QUEUE_NOW=1790813100
 }
 
 # PR の JSON を作る。使い方: pr_json <既定の値に上書きするオブジェクト（jq の式）> [ファイル名（既定 pr.json）]
@@ -77,9 +74,9 @@ pr_json() {
 }
 
 # GraphQL の答えを作る。使い方: gql_json <PR の既定の値に上書きするオブジェクト（jq の式）> [ファイル名（既定 gql.json）]
-# 既定はキューに並んでおらず、キューの出入りのイベントも無い
+# 既定はキューが有効で、キューに並んでおらず、キューの出入りのイベントも無い
 gql_json() {
-  jq -n "$1 as \$o | "'{data: {resource: ({mergeQueueEntry: null, timelineItems: {nodes: []}} + $o)}}' >"$FIX/${2:-gql.json}"
+  jq -n "$1 as \$o | "'{data: {resource: ({isMergeQueueEnabled: true, mergeQueueEntry: null, timelineItems: {nodes: []}} + $o)}}' >"$FIX/${2:-gql.json}"
 }
 
 # キューに並んでいる。使い方: queued <state> [ファイル名]
@@ -87,14 +84,14 @@ queued() { gql_json "{mergeQueueEntry: {state: \"$1\", position: 1}, timelineIte
 
 # 最後のイベントがキューから外れたイベント。使い方: removed_ev <reason> <時刻> [beforeCommit の oid] [ファイル名]
 removed_ev() {
-  jq -n --arg r "$1" --arg t "$2" --arg o "${3:-}" '{data: {resource: {mergeQueueEntry: null, timelineItems: {nodes: [
+  jq -n --arg r "$1" --arg t "$2" --arg o "${3:-}" '{data: {resource: {isMergeQueueEnabled: true, mergeQueueEntry: null, timelineItems: {nodes: [
     {__typename: "RemovedFromMergeQueueEvent", reason: $r, createdAt: $t,
      beforeCommit: (if $o == "" then null else {oid: $o} end)}]}}}}' >"$FIX/${4:-gql.json}"
 }
 
 # キューに入れた（00:05）後に外れた。使い方: added_removed_ev <reason> <外れた時刻> [beforeCommit の oid]
 added_removed_ev() {
-  jq -n --arg r "$1" --arg t "$2" --arg o "${3:-}" '{data: {resource: {mergeQueueEntry: null, timelineItems: {nodes: [
+  jq -n --arg r "$1" --arg t "$2" --arg o "${3:-}" '{data: {resource: {isMergeQueueEnabled: true, mergeQueueEntry: null, timelineItems: {nodes: [
     {__typename: "AddedToMergeQueueEvent", createdAt: "2026-10-01T00:05:00Z"},
     {__typename: "RemovedFromMergeQueueEvent", reason: $r, createdAt: $t,
      beforeCommit: (if $o == "" then null else {oid: $o} end)}]}}}}' >"$FIX/gql.json"
@@ -145,16 +142,22 @@ teardown() { rm -rf "$TMP"; }
   assert_equal "$(st)" not_queued
 }
 
-@test "表: キューを使わないリポジトリでは、キューに並んでいても OPEN は not_queued" {
-  echo '[{"type": "pull_request"}]' >"$FIX/rules.json"
+@test "表: キューを使わないリポジトリ（isMergeQueueEnabled が false）では、OPEN は not_queued で、push を読まない" {
+  added_removed_ev merge_conflict 2026-10-01T00:10:00Z
+  jq '.data.resource.isMergeQueueEnabled = false' "$FIX/gql.json" >"$FIX/g" && mv "$FIX/g" "$FIX/gql.json"
+  run_script pr-merge-status.sh --pr 5
+  assert_success
+  assert_equal "$(st)" not_queued
+  assert_equal "$(grep -c '^api-activity ' "$CALLS")" 0
   queued AWAITING_CHECKS
+  jq '.data.resource.isMergeQueueEnabled = false' "$FIX/gql.json" >"$FIX/g" && mv "$FIX/g" "$FIX/gql.json"
   run_script pr-merge-status.sh --pr 5
   assert_success
   assert_equal "$(st)" not_queued
   assert_equal "$(jq -r .merge_queue <<<"$output")" false
 }
 
-@test "キューの状態は、OPEN でキューを使うときだけ読む（MERGED・CLOSED・キューを使わないときは GraphQL が失敗しても動きを変えない）" {
+@test "キューの状態は、OPEN の PR だけ読む（MERGED・CLOSED では GraphQL が失敗しても動きを変えない。OPEN で読めなければ失敗する）" {
   echo 'GraphQL を呼んだ' >"$FIX/gql-fail"
   pr_json '{state: "MERGED"}'
   run_script pr-merge-status.sh --pr 5
@@ -163,31 +166,31 @@ teardown() { rm -rf "$TMP"; }
   pr_json '{state: "CLOSED"}'
   run_script pr-merge-status.sh --pr 5
   assert_equal "$(st)" not_queued
-  pr_json '{}'
-  echo '[]' >"$FIX/rules.json"
-  run_script pr-merge-status.sh --pr 5
-  assert_success
-  assert_equal "$(st)" not_queued
   if grep -q '^READ gql' "$CALLS"; then fail "GraphQL を呼んでいます"; fi
-  # キューを使うときは読み、読めなければ失敗する
-  echo '[{"type": "merge_queue"}]' >"$FIX/rules.json"
+  pr_json '{}'
   run_script pr-merge-status.sh --pr 5
   assert_failure
+  assert_output --partial "マージキューの状態を読めません: gh: GraphQL が失敗しました"
 }
 
-@test "表: ルールを読めないときは、キューを使わないものとして not_queued" {
-  export FAKE_FAIL=api-rules
+@test "キューを使うかは GraphQL の isMergeQueueEnabled で決め、ブランチのルール（REST）は読まない（古いブランチ保護のキューも含むため）" {
   queued AWAITING_CHECKS
   run_script pr-merge-status.sh --pr 5
   assert_success
-  assert_equal "$(st)" not_queued
+  assert_equal "$(jq -c '[.status, .merge_queue]' <<<"$output")" '["waiting",true]'
+  if grep -q '^api-rules' "$CALLS"; then fail "ルールを読んでいます"; fi
 }
 
-@test "表: キューを使わなくても MERGED は merged" {
-  echo '[]' >"$FIX/rules.json"
-  pr_json '{state: "MERGED"}'
-  run_script pr-merge-status.sh --pr 5
-  assert_equal "$(st)" merged
+@test "gh が成功しても標準エラーに何か出すときに、JSON と混ぜずに読む（#323）" {
+  added_removed_ev failed_checks 2026-10-01T00:10:00Z sha1
+  runs_file runs.json "$(qrun $Q5 completed failure test 2026-10-01T00:00:00Z)"
+  activity push 2026-10-01T00:20:00Z
+  out="$(FAKE_GH_STDERR='A new release of gh is available' "${TEST_BASH:-bash}" "$SCRIPTS/pr-merge-status.sh" --pr 5 2>"$TMP/err")"
+  assert_equal "$(jq -r .status <<<"$out")" not_queued
+  added_removed_ev failed_checks 2026-10-01T00:10:00Z sha1
+  echo '[]' >"$FIX/activity.json"
+  out="$(FAKE_GH_STDERR='A new release of gh is available' "${TEST_BASH:-bash}" "$SCRIPTS/pr-merge-status.sh" --pr 5 2>"$TMP/err")"
+  assert_equal "$(jq -c '[.status, .failed[0].name]' <<<"$out")" '["removed","test"]'
 }
 
 @test "表: キューに並んでいれば waiting で、キューでの状態と順番を返す" {
@@ -222,6 +225,15 @@ teardown() { rm -rf "$TMP"; }
   assert_equal "$(jq -c .queue <<<"$output")" null
 }
 
+@test "表: 入れたイベントから10分を過ぎても mergeQueueEntry が無ければ、並んでいないとみなして not_queued（#323）" {
+  gql_json '{timelineItems: {nodes: [{__typename: "AddedToMergeQueueEvent", createdAt: "2026-10-01T00:00:00Z"}]}}'
+  # 10分ちょうどは過ぎている（00:10:00）。9分59秒（00:09:59）はまだ入れた直後
+  DW_QUEUE_NOW=1790813400 run_script pr-merge-status.sh --pr 5
+  assert_equal "$(st)" not_queued
+  DW_QUEUE_NOW=1790813399 run_script pr-merge-status.sh --pr 5
+  assert_equal "$(st)" waiting
+}
+
 @test "表: 最後が merged で外れたイベントなら（PR が MERGED に変わる直前）waiting" {
   removed_ev merged 2026-10-01T00:00:00Z sha1
   run_script pr-merge-status.sh --pr 5
@@ -242,7 +254,7 @@ teardown() { rm -rf "$TMP"; }
   run_script pr-merge-status.sh --pr 5
   assert_success
   assert_equal "$(st)" removed
-  assert_equal "$(jq -c .removed <<<"$output")" '{"reason":"failed_checks","at":"2026-10-01T00:10:00Z"}'
+  assert_equal "$(jq -c .removed <<<"$output")" '{"reason":"failed_checks","at":"2026-10-01T00:10:00Z","push_unknown":false}'
   assert_equal "$(jq -c .failed <<<"$output")" '[{"name":"test","url":"https://github.com/me/demo/actions/runs/test-2026-10-01T00:00:00Z"}]'
   assert_equal "$(jq -r '.queue_runs | length' <<<"$output")" 2
 }
@@ -307,7 +319,7 @@ teardown() { rm -rf "$TMP"; }
 @test "外れた後の push を読めなければ、warn を出して removed を返す（--wait でも止まらない。#323）" {
   added_removed_ev merge_conflict 2026-10-01T00:10:00Z
   out="$(FAKE_FAIL=api-activity DW_WAIT_SLEEP=0 "${TEST_BASH:-bash}" "$SCRIPTS/pr-merge-status.sh" --pr 5 --wait 2>"$TMP/err")"
-  assert_equal "$(jq -c '[.status, .removed.reason]' <<<"$out")" '["removed","merge_conflict"]'
+  assert_equal "$(jq -c '[.status, .removed.reason, .removed.push_unknown]' <<<"$out")" '["removed","merge_conflict",true]'
   grep -q '^warn: PR のブランチへの push を読めないので' "$TMP/err" || fail "warn がありません: $(cat "$TMP/err")"
 }
 
@@ -327,6 +339,8 @@ teardown() { rm -rf "$TMP"; }
   run_script pr-merge-status.sh --pr 5
   assert_success
   assert_equal "$(st)" removed
+  # フォークの PR は push を確かめられない
+  assert_equal "$(jq -r .removed.push_unknown <<<"$output")" true
   if grep -q '^api-activity' "$CALLS"; then fail "フォークの PR で activity を読んでいます"; fi
 }
 
