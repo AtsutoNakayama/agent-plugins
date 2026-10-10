@@ -637,6 +637,25 @@ EOF"
   [[ "$output" == *"issues/17"* ]] || fail "sudo cd で移ったと読んだ: $output"
 }
 
+@test "sudo -i・-R と、sudo の前の GIT_DIR では、git を実行する場所が分からないので出さない。exec -c は前の GIT_DIR を使わない" {
+  make_wt
+  silent "sudo -i git commit -m x" "sudo -R / git push" "sudo -D $TMP/wt -i git commit -m x"
+  run_hook "sudo -i git commit -m x" "" "$TMP/wt"
+  assert_success
+  assert_output ""
+  # 導入した other（Issue 24 のブランチ）
+  fake_issue 24 '["feat"]'
+  git init -q -b feat/24-y "$TMP/other"
+  git -C "$TMP/other" commit -q --allow-empty -m init
+  mark_set_up "$TMP/other"
+  silent "GIT_DIR=$TMP/other/.git sudo git commit -m x"
+  # sudo の後ろに書いた代入は、そのコマンドに渡る
+  shows "sudo GIT_DIR=$TMP/other/.git git commit -m x" "Issue #24: https://github.com/me/demo/issues/24"
+  # exec -c は環境変数を消すので、今のリポジトリ（feat/17-demo）で判断する
+  shows "GIT_DIR=$TMP/other/.git exec -c git commit -m x" "Issue #17: https://github.com/me/demo/issues/17"
+  [[ "$output" != *"issues/24"* ]] || fail "exec -c で消えた GIT_DIR を使った: $output"
+}
+
 @test "git commit の略した --dry-run（--dry）も dry-run とみなし、-m などの値は --dry-run と読まない" {
   silent "git commit --dry -m x" "git commit -a --dry-r"
   shows "git commit -m --dry-run" "Issue #17: https://github.com/me/demo/issues/17"
