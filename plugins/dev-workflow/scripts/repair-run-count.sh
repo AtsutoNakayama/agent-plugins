@@ -2,23 +2,28 @@
 # 無人の push の回数（repair.max_pushes_per_pr と比べる値）を、PR のコメントの repair-run のマーカーから数えて JSON で出力する
 # （ADR 000339「push の回数の数え方」）。判断は入力の値だけで決める（git も GitHub も使わない）。
 #
-# 使い方: gh pr view <PR番号> --json comments | repair-run-count.sh --head SHA [--logins L1,L2] [--since TIME]
-#   標準入力  PR のコメント。`gh pr view --json comments` の出力（{comments: [...]}）か、
-#             `gh api repos/{owner}/{repo}/issues/<PR番号>/comments` の出力（配列。--paginate --slurp の配列の配列も可）
-#   --head SHA    今の PR の head の sha（16 進）
-#   --logins L    数える投稿者のログイン名（, 区切り。repair.reply_logins）。省略すると投稿者を問わない
-#   --since TIME  この時刻（ISO 8601。例: 2026-10-10T01:02:03Z）より後のコメントだけを数える（再開の起点。ADR 000285）
+# 使い方: gh api --paginate --slurp repos/{owner}/{repo}/issues/<PR番号>/comments | repair-run-count.sh --head SHA [--logins L1,L2] [--since TIME]
+#   標準入力  PR のコメント。`gh api --paginate --slurp repos/{owner}/{repo}/issues/<PR番号>/comments` の出力（配列の配列。
+#             --slurp の無い配列も可）を勧める。`gh pr view <PR番号> --json comments` の出力（{comments: [...]}）も読めるが、
+#             コメントが多い PR では全部を返さないことがあり、数え落とす
+#   --head SHA    今の PR の head の sha（16 進で 7 文字以上）
+#   --logins L    数える投稿者のログイン名（, 区切り。区切りの前後の空白は除く。repair.reply_logins）。省略すると投稿者を問わない。
+#                 大文字小文字と末尾の [bot] を除いて比べる（gh pr view では app、gh api では app[bot] と綴りが違うため）
+#   --since TIME  この時刻（ISO 8601。例: 2026-10-10T01:02:03Z。小数の秒・+09:00 などの時差も可）より後のコメントだけを
+#                 数える（再開の起点。ADR 000285）。日時が読めないコメントは、落とさずに数える側に倒す
 #
 # 数え方:
 #   - 本文の先頭が <!-- dev-workflow:repair-run head=<sha> --> のコメントは、<sha> が今の head と違うもの（PR の head が
 #     そこから進んだもの）だけを、<sha> の値ごとに1回と数える。<sha> が今の head と同じもの（push に失敗した・push の前に
-#     止まった回）は数えない。sha は大文字と小文字を区別しない
-#   - 本文の先頭が <!-- dev-workflow:repair-run --> の古い形式（head が無い）は、1つを1回と数える（ADR 000285）
+#     止まった回）は数えない。sha は大文字と小文字を区別せず、長さが違えば、短い方が長い方の先頭と一致すれば同じとみなす
+#   - 本文の先頭が <!-- dev-workflow:repair-run --> の古い形式（head が無い）と、<sha> が 7 文字未満で比べられないものは、
+#     1つを1回と数える（少なく数えて上限を超えないように、多い側に倒す。ADR 000285）
 #
-# 出力（JSON）: {count（数えた回数）, pushed_heads（数えた head の sha）, legacy（古い形式の数）,
+# 出力（JSON）: {count（数えた回数）, pushed_heads（数えた head の sha）, legacy（head が無いか短すぎて1つ1回と数えた数）,
 #               not_pushed（head が今の head と同じで数えなかった数）, runs（対象の repair-run の数）}
 #
-# 止まるとき: --head が無い・16 進でない・--since が ISO 8601 でない・不明な引数・入力が JSON のコメントの一覧でない（64）
+# 止まるとき: --head が無い・16 進で 7 文字以上でない・--since が読める ISO 8601 でない・不明な引数・
+#             入力が JSON のコメントの一覧でない（64）
 set -euo pipefail
 
 # shellcheck source=lib/common.sh
@@ -45,9 +50,26 @@ while [ $# -gt 0 ]; do
   esac
 done
 [ -n "$head_sha" ] || dw_die "--head は必須です" 64
-case "$head_sha" in *[!0123456789abcdefABCDEF]*) dw_die "--head は 16 進の sha にしてください: ${head_sha}" 64 ;; esac
+case "$head_sha" in
+  *[!0123456789abcdefABCDEF]* | ?????? | ????? | ???? | ??? | ?? | ?)
+    dw_die "--head は 16 進で 7 文字以上の sha にしてください: ${head_sha}" 64 ;;
+esac
+
+# ISO 8601 の日時を UNIX 秒にする。jq の fromdateiso8601 は小数の秒と時差を読めないので、先に分けて整える。読めなければ null
+# shellcheck disable=SC2016 # jq の変数を bash に展開させない
+jq_epoch='def epoch:
+  (if type == "string" then (first(capture("^(?<d>[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2})(?<f>\\.[0-9]+)?(?<z>Z|z|[+-][0-9]{2}:?[0-9]{2})$")) // null) else null end) as $m
+  | if $m == null then null
+    else (($m.d + "Z") | fromdateiso8601) as $base
+      | (if $m.f == null then 0 else ("0" + $m.f | tonumber) end) as $frac
+      | (if ($m.z | ascii_upcase) == "Z" then 0
+         else ($m.z | gsub(":"; "")) as $o
+           | (if ($o[0:1]) == "-" then -1 else 1 end) * (($o[1:3] | tonumber) * 3600 + ($o[3:5] | tonumber) * 60)
+         end) as $off
+      | $base + $frac - $off
+    end;'
 if [ -n "$since" ]; then
-  jq -en --arg t "$since" '$t | fromdateiso8601' >/dev/null 2>&1 \
+  jq -en --arg t "$since" "$jq_epoch"'$t | epoch | . != null' >/dev/null 2>&1 \
     || dw_die "--since は ISO 8601 の時刻（例: 2026-10-10T01:02:03Z）にしてください: ${since}" 64
 fi
 
@@ -58,26 +80,32 @@ cat >"$input_file"
 jq -e '(type == "object" and (.comments | type) == "array") or type == "array"' "$input_file" >/dev/null 2>&1 \
   || dw_die "入力は、gh pr view --json comments か gh api の issues/<番号>/comments の出力（JSON）にしてください" 64
 
-jq -c --arg head "$head_sha" --arg logins "$logins" --arg since "$since" '
+jq -c --arg head "$head_sha" --arg logins "$logins" --arg since "$since" "$DW_JQ_LOGIN_NORM$jq_epoch"'
+  # 長さの違う sha は、短い方が長い方の先頭と一致すれば同じ（どちらも小文字にしてある）
+  def same_sha($a; $b): ($a | startswith($b)) or ($b | startswith($a));
   (if type == "object" then .comments else . end | flatten) as $all
-  | ($logins | split(",") | map(select(. != ""))) as $allowed
+  | ($logins | split(",") | map(gsub("^\\s+|\\s+$"; "") | select(. != "") | norm)) as $allowed
+  | (if $since == "" then null else ($since | epoch) end) as $from
   | [ $all[]
       | select(type == "object")
-      | (.author.login // .user.login // "") as $who
-      | (.createdAt // .created_at // "") as $at
+      | ((.author.login // .user.login // "") | norm) as $who
+      | ((.createdAt // .created_at) | epoch) as $at
       | select(($allowed | length) == 0 or ($who | IN($allowed[])))
-      | select($since == "" or (($at | fromdateiso8601? // 0) > ($since | fromdateiso8601)))
-      | (.body // "") | capture("^\\s*<!-- dev-workflow:repair-run(?: head=(?<sha>[0-9A-Fa-f]+))? -->")
+      # 日時が読めないコメントは、落とさずに数える側に倒す
+      | select($from == null or $at == null or $at > $from)
+      | (.body // "") | strings | capture("^\\s*<!-- dev-workflow:repair-run(?: head=(?<sha>[0-9A-Fa-f]+))? -->")
       | .sha
     ] as $runs
   | ($head | ascii_downcase) as $now
-  | [ $runs[] | select(. != null) | ascii_downcase ] as $with_head
-  | ([ $with_head[] | select(. != $now) ] | unique) as $pushed
-  | ([ $runs[] | select(. == null) ] | length) as $legacy
+  | [ $runs[] | select(. != null and length >= 7) | ascii_downcase ] as $with_head
+  | ([ $runs[] | select(. == null or length < 7) ] | length) as $legacy
+  | [ $with_head[] | select(same_sha(.; $now) | not) ] as $moved
+  # 同じ sha の長さ違いは1回にする（長い方を残す）
+  | (reduce ($moved | unique | sort_by(-length))[] as $s ([]; if any(.[]; startswith($s)) then . else . + [$s] end) | sort) as $pushed
   | {
       count: (($pushed | length) + $legacy),
       pushed_heads: $pushed,
       legacy: $legacy,
-      not_pushed: ([ $with_head[] | select(. == $now) ] | length),
+      not_pushed: ([ $with_head[] | select(same_sha(.; $now)) ] | length),
       runs: ($runs | length)
     }' "$input_file"

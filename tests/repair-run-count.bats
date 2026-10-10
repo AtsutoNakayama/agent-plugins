@@ -121,3 +121,81 @@ count() { run_script repair-run-count.sh "$@" <"$TMP/in.json"; }
   count --head "$A"
   assert_failure 64
 }
+
+# 使い方: comments_at <ログイン> <時刻> <本文> [<ログイン> <時刻> <本文>]... → gh pr view の形（GraphQL の形）
+comments_at() {
+  jq -n '{comments: [$ARGS.positional as $p | range(0; $p | length; 3) | $p[.:.+3] | {author: {login: .[0]}, createdAt: .[1], body: .[2]}]}' --args "$@"
+}
+
+@test "--logins は、app と app[bot] の綴りの違いと大文字小文字を問わずに照らす（gh pr view と gh api の両方の形）" {
+  # gh pr view（GraphQL）では login が app
+  comments_at app 2026-10-10T00:00:00Z "$(run_mark "$A")" >"$TMP/view.json"
+  # gh api（REST）では login が app[bot]
+  jq -n --arg a "$(run_mark "$A")" '[[{user: {login: "app[bot]"}, body: $a, created_at: "2026-10-10T00:00:00Z"}]]' >"$TMP/api.json"
+  for f in view api; do
+    for l in 'app[bot]' app 'App[Bot]'; do
+      run_script repair-run-count.sh --head "$B" --logins "$l" <"$TMP/$f.json"
+      assert_success
+      assert_equal "$(jq -r .count <<<"$output")" 1
+    done
+  done
+  run_script repair-run-count.sh --head "$B" --logins 'other[bot]' <"$TMP/api.json"
+  assert_equal "$(jq -r .count <<<"$output")" 0
+}
+
+@test "--logins の区切りの前後の空白は除く" {
+  comments_at app 2026-10-10T00:00:00Z "$(run_mark "$A")" >"$TMP/in.json"
+  count --head "$B" --logins 'other,  app ,x'
+  assert_success
+  assert_equal "$(jq -r .count <<<"$output")" 1
+}
+
+@test "短い sha と長い sha は、前方一致で同じとみなす" {
+  # マーカーが短く、今の head が長い → push していない回
+  comments "$(run_mark "${B:0:7}")" >"$TMP/in.json"
+  count --head "$B"
+  assert_success
+  assert_equal "$(jq -c '[.count, .not_pushed]' <<<"$output")" '[0,1]'
+  # マーカーが長く、--head が短い
+  comments "$(run_mark "$B")" >"$TMP/in.json"
+  count --head "${B:0:12}"
+  assert_success
+  assert_equal "$(jq -c '[.count, .not_pushed]' <<<"$output")" '[0,1]'
+  # 同じ sha の長さ違いは1回
+  comments "$(run_mark "$A")" "$(run_mark "${A:0:7}")" >"$TMP/in.json"
+  count --head "$C"
+  assert_success
+  assert_equal "$(jq -c '[.count, .pushed_heads]' <<<"$output")" "[1,[\"$A\"]]"
+}
+
+@test "7 文字未満の sha：--head なら 64 で止まり、マーカーなら1つを1回と数える" {
+  comments >"$TMP/in.json"
+  count --head abcdef
+  assert_failure 64
+  comments "$(run_mark "${B:0:6}")" "$(run_mark "${B:0:6}")" >"$TMP/in.json"
+  count --head "$B"
+  assert_success
+  assert_equal "$(jq -c '[.count, .legacy, .not_pushed]' <<<"$output")" '[2,2,0]'
+}
+
+@test "--since：小数の秒と時差のある日時を読んで比べる" {
+  comments_at bot 2026-10-10T08:59:59.5+09:00 "$(run_mark "$A")" \
+    bot 2026-10-10T00:00:00.250Z "$(run_mark "$B")" \
+    bot 2026-10-09T19:30:01-0430 "$(run_mark "$C")" >"$TMP/in.json"
+  # 起点 2026-10-10T00:00:00Z：A は 23:59:59.5Z（前）、B は 00:00:00.25Z（後）、C は 00:00:01Z（後）
+  count --head 1111111111111111111111111111111111111111 --since 2026-10-10T09:00:00+09:00
+  assert_success
+  assert_equal "$(jq -c '.pushed_heads' <<<"$output")" "[\"$B\",\"$C\"]"
+  count --head 1111111111111111111111111111111111111111 --since 2026-10-10T00:00:00.1Z
+  assert_equal "$(jq -c '.pushed_heads' <<<"$output")" "[\"$B\",\"$C\"]"
+}
+
+@test "--since：日時が読めない・欠けているコメントは、落とさずに数える" {
+  jq -n --arg a "$(run_mark "$A")" --arg b "$(run_mark "$B")" --arg c "$(run_mark "$C")" '{comments: [
+    {author: {login: "bot"}, body: $a, createdAt: "yesterday"},
+    {author: {login: "bot"}, body: $b},
+    {author: {login: "bot"}, body: $c, createdAt: "2026-01-01T00:00:00Z"}]}' >"$TMP/in.json"
+  count --head 1111111111111111111111111111111111111111 --since 2026-10-10T00:00:00Z
+  assert_success
+  assert_equal "$(jq -c '.pushed_heads' <<<"$output")" "[\"$A\",\"$B\"]"
+}
