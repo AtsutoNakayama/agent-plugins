@@ -258,7 +258,7 @@ ADDED='{"__typename": "AddedToMergeQueueEvent", "createdAt": "2026-10-04T16:00:0
 
 @test "衝突してキューから外れたままの PR は、外れた理由と時刻を removed に出す（state は null でも見分けられる）" {
   setup_branch
-  queue_removed_fixture '{"__typename": "RemovedFromMergeQueueEvent", "reason": "merge_conflict", "createdAt": "2026-10-04T16:36:30Z"}'
+  queue_removed_fixture "$ADDED" '{"__typename": "RemovedFromMergeQueueEvent", "reason": "merge_conflict", "createdAt": "2026-10-04T16:36:30Z"}'
   run_status
   assert_success
   assert_equal "$(jq -c '.pr | [.merge_state, .merge_queue]' <<<"$output")" \
@@ -277,7 +277,7 @@ activity_fixture() {
 
 @test "キューから外れた後に PR のブランチへ push していれば、removed は null（直して、まだ入れ直していない。#323）" {
   setup_branch
-  queue_removed_fixture '{"__typename": "RemovedFromMergeQueueEvent", "reason": "failed_checks", "createdAt": "2026-10-04T16:36:30Z"}'
+  queue_removed_fixture "$ADDED" '{"__typename": "RemovedFromMergeQueueEvent", "reason": "failed_checks", "createdAt": "2026-10-04T16:36:30Z"}'
   activity_fixture push 2026-10-04T17:00:00Z
   run_status
   assert_success
@@ -310,9 +310,23 @@ activity_fixture() {
   assert_equal "$(jq -r .pr.merge_queue.removed.reason <<<"$output")" merge_conflict
 }
 
+@test "入れたイベントが読めない（外れたイベントだけ）ときは、push が見つからなければ push_unknown は true、見つかれば外れたままとしない（#323）" {
+  setup_branch
+  # タイムラインの最後の2つに入れたイベントが無いので、外れた時刻と比べる。並んでいる間の push（外れた時刻より前）は見えない
+  queue_removed_fixture '{"__typename": "RemovedFromMergeQueueEvent", "reason": "failed_checks", "createdAt": "2026-10-04T16:36:30Z"}' \
+    '{"__typename": "RemovedFromMergeQueueEvent", "reason": "dequeued", "createdAt": "2026-10-04T16:40:00Z"}'
+  activity_fixture push 2026-10-04T16:38:00Z
+  run_status
+  assert_success
+  assert_equal "$(jq -c '.pr.merge_queue.removed | [.reason, .push_unknown]' <<<"$output")" '["dequeued",true]'
+  activity_fixture push 2026-10-04T16:45:00Z
+  run_status
+  assert_equal "$(jq -c .pr.merge_queue.removed <<<"$output")" null
+}
+
 @test "外れた後の push を読めなければ、warn を出して外れたままとみなす（キューの状態は捨てない。#323）" {
   setup_branch
-  queue_removed_fixture '{"__typename": "RemovedFromMergeQueueEvent", "reason": "merge_conflict", "createdAt": "2026-10-04T16:36:30Z"}'
+  queue_removed_fixture "$ADDED" '{"__typename": "RemovedFromMergeQueueEvent", "reason": "merge_conflict", "createdAt": "2026-10-04T16:36:30Z"}'
   # merge_queue を null にすると、branch-plan.sh がキューを使わないリポジトリとみなし、遅れていれば取り込んでしまう
   advance_main 1
   out="$(FAKE_FAIL=api-activity "${TEST_BASH:-bash}" "$SCRIPTS/branch-status.sh" 2>"$TMP/err")"
@@ -332,7 +346,7 @@ activity_fixture() {
 
 @test "フォークからの同じ名前のブランチの PR は、キューの状態も push も読まない（pr-merge-status.sh と同じく、フォークの push は見ない）" {
   setup_branch
-  queue_removed_fixture '{"__typename": "RemovedFromMergeQueueEvent", "reason": "merge_conflict", "createdAt": "2026-10-04T16:36:30Z"}'
+  queue_removed_fixture "$ADDED" '{"__typename": "RemovedFromMergeQueueEvent", "reason": "merge_conflict", "createdAt": "2026-10-04T16:36:30Z"}'
   # queue_removed_fixture は同じ名前のブランチの PR を作るので、フォークからの PR に置き換える
   echo '[{"number": 5, "url": "https://github.com/me/demo/pull/5", "mergeStateStatus": "CLEAN", "isCrossRepository": true}]' >"$FIX/pr-list.json"
   run_status

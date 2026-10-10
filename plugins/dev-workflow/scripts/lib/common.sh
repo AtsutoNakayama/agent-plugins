@@ -802,7 +802,9 @@ dw_check_queue_now() {
 #                  入れた時刻（入れたイベントが読めなければ外れた時刻）より後に PR のブランチへの push が無いとき。キューに
 #                  並んでいる間の push もそれ自体で PR をキューから外すので、外れた時刻ではなく入れた時刻と比べる。push があれば、
 #                  直してまだ入れ直していないので null（キューに入っていない）。push_unknown は、push したかを確かめられなかったか
-#                  （フォークからの PR は push がこのリポジトリの activity に無いので読まない。activity を読めなければ warn を出す）。
+#                  （フォークからの PR は push がこのリポジトリの activity に無いので読まない。activity を読めなければ warn を出す。
+#                  入れたイベントが読めず、外れた時刻と比べたときは、並んでいる間の push が見えないので、push が見つからなくても
+#                  true）。
 #                  確かめられなければ、外れたままとみなす（キューの状態は捨てない）
 #   before_commit  removed のときの、外れたイベントのコミット（キューの一時的なブランチのコミット。そのキューの CI の実行の
 #                  headSha）。CI を動かす前に外れた（衝突など）ときや、removed でなければ null
@@ -851,6 +853,7 @@ dw_merge_queue_state() {
        removed: (if $removed then {reason: $ev.reason, at: $ev.createdAt, push_unknown: false} else null end),
        before_commit: (if $removed then $ev.beforeCommit.oid else null end),
        since: (if $added != null then $added.createdAt else $ev.createdAt end),
+       since_is_added: ($added != null),
        stale_added: ($enabled and $added_no_entry and ($just_added | not))}' <<<"$res" 2>/dev/null)" || q=""
   if [ -z "$q" ]; then
     # 成功しても errors を返すことがあるので、あればその本文を、無ければ応答の先頭を、1行で理由にする
@@ -871,7 +874,13 @@ dw_merge_queue_state() {
     else
       err="$(mktemp)"
       if pushed="$(dw_pushed_since "$1" "$2" "$(jq -r .since <<<"$q")" 2>"$err")"; then
-        [ "$pushed" != true ] || q="$(jq -c '.removed = null | .before_commit = null' <<<"$q")"
+        if [ "$pushed" = true ]; then
+          q="$(jq -c '.removed = null | .before_commit = null' <<<"$q")"
+        elif [ "$(jq -r .since_is_added <<<"$q")" != true ]; then
+          # 入れたイベントが読めず、外れた時刻と比べた。並んでいる間の push（外れた時刻より前）は見えないので、
+          # push が見つからなくても、push したかは確かめられなかったものとする
+          q="$(jq -c '.removed.push_unknown = true' <<<"$q")"
+        fi
       else
         q="$(jq -c '.removed.push_unknown = true' <<<"$q")"
         dw_warn "PR のブランチへの push を読めないので、マージキューから外れたままとみなします: $(tail -n 1 "$err")"
@@ -879,7 +888,7 @@ dw_merge_queue_state() {
       rm -f "$err"
     fi
   fi
-  jq -c 'del(.since, .stale_added)' <<<"$q"
+  jq -c 'del(.since, .since_is_added, .stale_added)' <<<"$q"
 }
 
 # 古いブランチ保護（ルールセットでない）が求める必須のチェックの名前の一覧（JSON の配列）を出力する。

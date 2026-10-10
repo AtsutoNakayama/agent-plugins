@@ -101,9 +101,11 @@ gql_json() {
 # キューに並んでいる。使い方: queued <state> [ファイル名]
 queued() { gql_json "{mergeQueueEntry: {state: \"$1\", position: 1}, timelineItems: {nodes: [{__typename: \"AddedToMergeQueueEvent\", createdAt: \"2026-10-01T00:00:00Z\"}]}}" "${2:-gql.json}"; }
 
-# 最後のイベントがキューから外れたイベント。使い方: removed_ev <reason> <時刻> [beforeCommit の oid] [ファイル名]
+# キューに入れた（2026-09-30T23:59、どの外れた時刻よりも前）後に外れた。実際の GitHub では、外れる前に必ず入れたイベントがある。
+# 使い方: removed_ev <reason> <時刻> [beforeCommit の oid] [ファイル名]
 removed_ev() {
   jq -n --arg r "$1" --arg t "$2" --arg o "${3:-}" '{data: {resource: {isMergeQueueEnabled: true, mergeQueueEntry: null, timelineItems: {nodes: [
+    {__typename: "AddedToMergeQueueEvent", createdAt: "2026-09-30T23:59:00Z"},
     {__typename: "RemovedFromMergeQueueEvent", reason: $r, createdAt: $t,
      beforeCommit: (if $o == "" then null else {oid: $o} end)}]}}}}' >"$FIX/${4:-gql.json}"
 }
@@ -371,6 +373,20 @@ teardown() { rm -rf "$TMP"; }
   activity push 2026-10-01T00:07:00Z
   run_script pr-merge-status.sh --pr 5
   assert_success
+  assert_equal "$(st)" not_queued
+}
+
+@test "入れたイベントが読めない（外れたイベントだけ）ときは、push が見つからなければ push_unknown は true、見つかれば not_queued（#323）" {
+  # タイムラインの最後の2つに入れたイベントが無いので、外れた時刻と比べる。並んでいる間の push（外れた時刻より前）は見えない
+  gql_json '{timelineItems: {nodes: [
+    {__typename: "RemovedFromMergeQueueEvent", reason: "failed_checks", createdAt: "2026-10-01T00:08:00Z", beforeCommit: null},
+    {__typename: "RemovedFromMergeQueueEvent", reason: "dequeued", createdAt: "2026-10-01T00:10:00Z", beforeCommit: null}]}}'
+  activity push 2026-10-01T00:09:00Z
+  run_script pr-merge-status.sh --pr 5
+  assert_success
+  assert_equal "$(jq -c '[.status, .removed.reason, .removed.push_unknown]' <<<"$output")" '["removed","dequeued",true]'
+  activity push 2026-10-01T00:11:00Z
+  run_script pr-merge-status.sh --pr 5
   assert_equal "$(st)" not_queued
 }
 
