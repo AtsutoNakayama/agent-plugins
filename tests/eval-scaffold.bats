@@ -228,7 +228,7 @@ grader_pattern() { sed -n "s/^pattern: '\\(.*\\)'\$/\\1/p" "$EVALS/$1/graders/$2
   grep -qE "$(grader_pattern $c opens-pr)" "$TMP/writes" || fail "opens-pr に当たりません"
 }
 
-@test "task-auto の範囲外の指摘のケースの files-issue は、issue-create.sh の起票と gh issue create に当たり、ほかの読み取りや書き込みには当たらない" {
+@test "task-auto の範囲外の指摘のケースの files-issue は、issue-create.sh の起票に当たり、gh issue create やほかの読み取り・書き込みには当たらない" {
   local c=task-auto-files-out-of-scope pat
   pat="$(grader_pattern $c files-issue)"
   scaffold "eval_repo && fake_gh_defaults"
@@ -240,18 +240,16 @@ grader_pattern() { sed -n "s/^pattern: '\\(.*\\)'\$/\\1/p" "$EVALS/$1/graders/$2
   assert_success
   assert_equal "$(jq -r .number <<<"$output")" 99
   grep -qE "$pat" .fake-gh/writes || fail "issue-create.sh の記録に files-issue が当たりません: $(cat .fake-gh/writes)"
-  # 当たる：gh issue create
+  # 当たらない：手順5のとおりでない gh issue create・GET に本文を付けた読み取り・本文の値にパスを含むコメント・一覧の読み取り・
+  # 番号付きのパスへの書き込み
   : >.fake-gh/writes
-  gh issue create --title t --body b >/dev/null
-  grep -qE "$pat" .fake-gh/writes || fail "gh issue create の記録に files-issue が当たりません: $(cat .fake-gh/writes)"
-  # 当たらない：GET に本文を付けた読み取り・本文の値にパスを含むコメント・一覧の読み取り・番号付きのパスへの書き込み
-  : >.fake-gh/writes
+  gh issue create --title t --body b >/dev/null 2>&1 || true
   gh api -X GET repos/me/demo/issues -f state=open >/dev/null 2>&1 || true
   gh issue comment 2 --body "api -X POST repos/me/demo/issues --input - で起票する" >/dev/null 2>&1 || true
   gh api repos/me/demo/issues/2/comments -f "body=api -X POST repos/me/demo/issues --input -" >/dev/null 2>&1 || true
   gh api repos/me/demo/issues >/dev/null 2>&1 || true
   gh api -X POST repos/me/demo/issues/99/sub_issues -F sub_issue_id=1 >/dev/null 2>&1 || true
   gh api repos/me/demo/issues/2/parent >/dev/null 2>&1 || true
-  [ "$(wc -l <.fake-gh/writes | tr -d ' ')" -ge 6 ] || fail "当たらない例が記録されていません: $(cat .fake-gh/writes)"
+  [ "$(wc -l <.fake-gh/writes | tr -d ' ')" -ge 7 ] || fail "当たらない例が記録されていません: $(cat .fake-gh/writes)"
   if grep -E "$pat" .fake-gh/writes; then fail "当たらない例に files-issue が当たります"; fi
 }
