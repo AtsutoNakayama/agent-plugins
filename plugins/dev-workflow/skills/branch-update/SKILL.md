@@ -198,7 +198,7 @@ PR の見回り（`pr-watch.sh` が `conflict` を返した PR）を無人で直
 <!-- dev-workflow:repair-run head=<head の sha> -->
 ```
 
-見回りは、push の回数を `${CLAUDE_PLUGIN_ROOT}/scripts/repair-run-count.sh` で数える（入力は `gh api --paginate --slurp repos/{owner}/{repo}/issues/<PR番号>/comments` の出力を勧める。`gh pr view --json comments` は、コメントが多い PR で全部を返さないことがあり、数え落とす）。`repair-run` のうち、PR の head が `head` の sha から進んだもの（今の PR の head が `head` と違うもの）だけを、`head` の値ごとに1回として数える。push に失敗した回や、コメントを付けた後に push せずに止まった・落ちた回は、PR の head が進んでいないので数えない（ADR 000339。ADR 000285 の数え方を変えた）。
+見回りは、push の回数を `${CLAUDE_PLUGIN_ROOT}/scripts/repair-run-count.sh` で数える（入力は `gh api --paginate --slurp 'repos/{owner}/{repo}/issues/<PR番号>/comments?per_page=100'` の出力を勧める。`gh pr view --json comments` は、コメントが多い PR で全部を返さないことがあり、数え落とす）。`repair-run` のうち、PR の head が `head` の sha から進んだもの（今の PR の head が `head` と違うもの）だけを、`head` の値ごとに1回として数える。push に失敗した回や、コメントを付けた後に push せずに止まった・落ちた回は、PR の head が進んでいないので数えない（ADR 000339。ADR 000285 の数え方を変えた）。
 
 push が失敗したか、拒否されたら（強制はしない）、控えた ID の `repair-run` のコメントに、失敗と拒否のメッセージを追記する。`--edit-last` は使わない（本文を置き換え、最後のコメントが `repair-run` とは限らないため）。`gh api repos/{owner}/{repo}/issues/comments/<ID> --jq .body` で今の本文を読み、末尾に失敗の節を足した本文で `gh api -X PATCH repos/{owner}/{repo}/issues/comments/<ID> -f body=<本文>` を実行して更新する（先頭のマーカーは残す）。追記できなければ、失敗したことを別のコメントで残す。PR を読む人が、push していない回だと分かるようにするため（回数は、追記が無くても `head` で数え分ける）。保留の列には移さない（次の見回りでもう一度判定する）。衝突が無く、取り込みだけで済んだときも、取り込んだコミット数とテストの結果を残す。
 

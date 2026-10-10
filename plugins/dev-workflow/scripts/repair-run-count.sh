@@ -2,8 +2,8 @@
 # 無人の push の回数（repair.max_pushes_per_pr と比べる値）を、PR のコメントの repair-run のマーカーから数えて JSON で出力する
 # （ADR 000339「push の回数の数え方」）。判断は入力の値だけで決める（git も GitHub も使わない）。
 #
-# 使い方: gh api --paginate --slurp repos/{owner}/{repo}/issues/<PR番号>/comments | repair-run-count.sh --head SHA [--logins L1,L2] [--since TIME]
-#   標準入力  PR のコメント。`gh api --paginate --slurp repos/{owner}/{repo}/issues/<PR番号>/comments` の出力（配列の配列。
+# 使い方: gh api --paginate --slurp 'repos/{owner}/{repo}/issues/<PR番号>/comments?per_page=100' | repair-run-count.sh --head SHA [--logins L1,L2] [--since TIME]
+#   標準入力  PR のコメント。`gh api --paginate --slurp 'repos/{owner}/{repo}/issues/<PR番号>/comments?per_page=100'` の出力（配列の配列。
 #             --slurp の無い配列も可）を勧める。`gh pr view <PR番号> --json comments` の出力（{comments: [...]}）も読めるが、
 #             コメントが多い PR では全部を返さないことがあり、数え落とす
 #   --head SHA    今の PR の head の sha（16 進で 7 文字以上）
