@@ -4,7 +4,10 @@
 # SKILL.md の文章に書くと、テストできず、組み合わせの抜けが残るため（branch-plan.sh と同じ流儀）。
 #
 # 使い方: echo '<入力 JSON>' | repair-next.sh
-#         repair-next.sh --stop-reasons   stop の reason になりうる値の一覧（JSON の配列）を出力する
+#         repair-next.sh --stop-reasons   このスクリプトが返す stop の reason の一覧（JSON の配列）を出力する。
+#                                         止まった理由の種類（auto-hold.sh の --repair-reason）には、この一覧のほかに、
+#                                         見回りが上限で止めるときの push_limit と、この表の外で止まるときの other も使う
+#                                         （どちらもこのスクリプトは返さないので、一覧に入れない。ADR 000339）
 #
 # 入力（JSON）:
 #   step          start（branch-status.sh の出力を見て、取り込みを始めるか決める。手順1）・
@@ -46,6 +49,7 @@
 #   pull・fix の後は、push_check_ok を null に戻す（コミットや取り込みで、確かめた内容が変わるため）
 #   入力の型が違うとき（数値でない rechecks・fix_attempts・max_fix_attempts・unpulled、真偽値でない dirty・push_check_ok）は、
 #   終了コード 64 で止まる（null と省略は、既定の値）
+#   判断の表が、stop の reason の一覧（stop_reasons）に無い値を返そうとしたら、1行のメッセージを出して終了コード 2 で止まる
 set -euo pipefail
 
 # shellcheck source=lib/common.sh
@@ -55,8 +59,10 @@ dw_require jq
 # macOS の BSD sed が日本語で失敗しないよう、バイト列として扱わせる
 usage() { LC_ALL=C sed -n '2,/^[^#]/{/^[^#]/d;s/^# \{0,1\}//;p;}' "$0"; }
 
-# stop の reason になりうる値の一覧。判断の表で stop を返すときは、この中の値だけを使う（一覧に無い値は jq のエラーで止まる）。
-# auto-hold.sh の --repair-reason にそのまま渡すので、英小文字で始め、英小文字・数字・_ だけにする（tests/auto-hold.bats で確かめる）
+# このスクリプトが返す stop の reason の一覧（--stop-reasons で出力する）。判断の表で stop を返すときは、この中の値だけを使い、
+# 一覧に無い値を返そうとしたら止まる（終了コード 2）。止まった理由の種類（auto-hold.sh の --repair-reason）にはそのまま渡す。
+# 種類には、ほかに push_limit（見回りが push の上限で止める）と other（この表の外で止まる）があるが、このスクリプトは返さないので、
+# ここには入れない（ADR 000339）。英小文字で始め、英小文字・数字・_ だけにする（tests/auto-hold.bats で確かめる）
 stop_reasons='["base_mismatch","recheck_exhausted","dirty","unknown_plan","checks_unconfirmed","same_failure","forbidden_paths"]'
 
 while [ $# -gt 0 ]; do
@@ -85,9 +91,9 @@ jq -e '
   and ((.status // {}) | type == "object") and (.status.unpulled | num) and (.status.dirty | bool)' <<<"$input" >/dev/null 2>&1 \
   || dw_die "入力の型が違います（rechecks・fix_attempts・max_fix_attempts・status.unpulled は数値、push_check_ok・status.dirty は真偽値）" 64
 
-jq -c --argjson stops "$stop_reasons" '
+result="$(jq -c '
   def r($a; $why): {action: $a, reason: $why};
-  def stop($why): if ($why | IN($stops[])) then r("stop"; $why) else error("stop の reason が一覧にありません: \($why)") end;
+  def stop($why): r("stop"; $why);
   (.status.unpulled // 0) as $unpulled
   | if .step == "start" then
       .status.plan as $plan
@@ -108,4 +114,10 @@ jq -c --argjson stops "$stop_reasons" '
       (if (.fix_attempts // 0) < (.max_fix_attempts // 3) then r("fix"; "checks_failed") else stop("same_failure") end)
     elif .push_check_ok == null then r("push_check"; "not_checked")
     elif .push_check_ok == false then stop("forbidden_paths")
-    else r("push"; "ready") end' <<<"$input"
+    else r("push"; "ready") end' <<<"$input")"
+
+# 一覧に無い stop の reason は返さない（auto-hold.sh と見回りが、理由の種類として受け取れる値だけにする）
+if jq -e --argjson s "$stop_reasons" '.action == "stop" and ((.reason | IN($s[])) | not)' <<<"$result" >/dev/null; then
+  dw_die "stop の reason が一覧（stop_reasons）にありません: $(jq -r .reason <<<"$result")" 2
+fi
+printf '%s\n' "$result"

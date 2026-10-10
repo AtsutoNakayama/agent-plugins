@@ -171,3 +171,15 @@ check() {
     jq -e --argjson s "$stops" '.reason | IN($s[])' <<<"$output" >/dev/null || fail "一覧に無い reason: $output"
   done
 }
+
+@test "一覧（stop_reasons）に無い stop の reason を返そうとしたら、1行のメッセージを出して終了コード 2 で止まる" {
+  # 一覧から dirty を外した写しで、dirty の stop を返させる
+  mkdir -p "$TMP/s"
+  cp -R "$SCRIPTS/lib" "$TMP/s/"
+  sed 's/"dirty",//' "$SCRIPTS/repair-next.sh" >"$TMP/s/repair-next.sh"
+  run "${TEST_BASH:-bash}" "$TMP/s/repair-next.sh" <<<'{"step":"verify","status":{"dirty":true},"checks":"pass"}'
+  assert_failure 2
+  assert_output --partial "stop の reason が一覧（stop_reasons）にありません: dirty"
+  assert_equal "${#lines[@]}" 1
+  refute_output --partial '"action"'
+}
