@@ -228,36 +228,29 @@ grader_pattern() { sed -n "s/^pattern: '\\(.*\\)'\$/\\1/p" "$EVALS/$1/graders/$2
   grep -qE "$(grader_pattern $c opens-pr)" "$TMP/writes" || fail "opens-pr に当たりません"
 }
 
-@test "task-auto の範囲外の指摘のケースの files-issue は、Issue を作る REST の書き方（メソッドや本文の位置・書き方）によらず当たり、一覧の読み取りや番号付きのパスには当たらない" {
+@test "task-auto の範囲外の指摘のケースの files-issue は、issue-create.sh の起票と gh issue create に当たり、ほかの読み取りや書き込みには当たらない" {
   local c=task-auto-files-out-of-scope pat
   pat="$(grader_pattern $c files-issue)"
   scaffold "eval_repo && fake_gh_defaults"
   assert_success
-  printf '{"title": "t"}' >"$TMP/issue.json"
-  # 偽の gh に実際に記録させ、その行に当てる（記録の形は fake-gh.sh が決める）
-  local args
-  for args in "api -X POST repos/me/demo/issues --input $TMP/issue.json" \
-    "api --method POST repos/me/demo/issues --input $TMP/issue.json" \
-    "api --method=post repos/me/demo/issues -f title=t" \
-    "api -XPOST repos/me/demo/issues -f title=t" \
-    "api repos/me/demo/issues -X POST --input $TMP/issue.json" \
-    "api repos/me/demo/issues --method POST -f title=t" \
-    "api /repos/me/demo/issues -f title=t" \
-    "api repos/me/demo/issues -F title=t" \
-    "issue create --title t --body b"; do
-    : >.fake-gh/writes
-    # shellcheck disable=SC2086 # 引数に分けるため、クォートしない
-    gh $args >/dev/null
-    grep -qE "$pat" .fake-gh/writes || fail "「gh ${args}」の記録に files-issue が当たりません: $(cat .fake-gh/writes)"
-  done
-  for args in "api repos/me/demo/issues" \
-    "api -X POST repos/me/demo/issues/99/sub_issues -F sub_issue_id=1" \
-    "api repos/me/demo/issues/2/parent" \
-    "api -X POST repos/me/demo/issues/99/dependencies/blocked_by -F issue_id=1" \
-    "issue edit 2 --add-assignee @me"; do
-    : >.fake-gh/writes
-    # shellcheck disable=SC2086 # 引数に分けるため、クォートしない
-    gh $args >/dev/null 2>&1 || true
-    if grep -qE "$pat" .fake-gh/writes; then fail "「gh ${args}」の記録に files-issue が当たります: $(cat .fake-gh/writes)"; fi
-  done
+  # 当たる：手順5のとおり issue-create.sh で起票した記録（偽の gh で実際に動かす）
+  printf '本文' >"$TMP/body.md"
+  run "${TEST_BASH:-bash}" -c '"$0" "$1" --title t --type fix --body-file "$2" 2>/dev/null' "${TEST_BASH:-bash}" "$SCRIPTS/issue-create.sh" "$TMP/body.md"
+  assert_success
+  assert_equal "$(jq -r .number <<<"$output")" 99
+  grep -qE "$pat" .fake-gh/writes || fail "issue-create.sh の記録に files-issue が当たりません: $(cat .fake-gh/writes)"
+  # 当たる：gh issue create
+  : >.fake-gh/writes
+  gh issue create --title t --body b >/dev/null
+  grep -qE "$pat" .fake-gh/writes || fail "gh issue create の記録に files-issue が当たりません: $(cat .fake-gh/writes)"
+  # 当たらない：GET に本文を付けた読み取り・本文の値にパスを含むコメント・一覧の読み取り・番号付きのパスへの書き込み
+  : >.fake-gh/writes
+  gh api -X GET repos/me/demo/issues -f state=open >/dev/null 2>&1 || true
+  gh issue comment 2 --body "api -X POST repos/me/demo/issues --input - で起票する" >/dev/null 2>&1 || true
+  gh api repos/me/demo/issues/2/comments -f "body=api -X POST repos/me/demo/issues --input -" >/dev/null 2>&1 || true
+  gh api repos/me/demo/issues >/dev/null 2>&1 || true
+  gh api -X POST repos/me/demo/issues/99/sub_issues -F sub_issue_id=1 >/dev/null 2>&1 || true
+  gh api repos/me/demo/issues/2/parent >/dev/null 2>&1 || true
+  [ "$(wc -l <.fake-gh/writes | tr -d ' ')" -ge 6 ] || fail "当たらない例が記録されていません: $(cat .fake-gh/writes)"
+  if grep -E "$pat" .fake-gh/writes; then fail "当たらない例に files-issue が当たります"; fi
 }

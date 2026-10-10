@@ -1,13 +1,13 @@
 ---
-# 範囲外の指摘を起票したか。偽の gh（tests/eval/bin/fake-gh.sh）は、書き込みを引数を空白でつないだ1行で .fake-gh/writes に記録する。
-# 起票は、Issue を作る REST（repos/me/demo/issues への POST）か gh issue create。REST は、メソッド（-X POST・-XPOST・
-# --method POST・--method=POST）か本文（-f・-F・--field・--raw-field・--input。gh は POST で送る）が、パスの前でも後でも当たる
-# （issue-create.sh は「api -X POST repos/me/demo/issues --input -」）。メソッドも本文も無い呼び出し（一覧の読み取り）と、
-# repos/me/demo/issues/<番号>/… への書き込み（親子・依存など）には当たらない。
+# 範囲外の指摘を起票したか（偽の gh が、書き込みを引数を空白でつないだ1行で .fake-gh/writes に記録する）。
+# task-auto の手順5は issue-create.sh で起票すると決めているので、手順どおりに issue-create.sh で起票したかを見る。
+# 数えるのは、issue-create.sh が出す形（scaffold.bash の fake_gh_defaults が #99 を返す偽の応答「api -X POST repos/me/demo/issues --input*」と
+# 同じ形）と gh issue create だけにする。gh api のほかの書き方（メソッドや本文の位置など）は解釈しない（書き込みかどうかの判定は
+# fake-gh.sh にあり、ここで作り直すと、読み取りや別の書き込みに当たったり、偽の応答と食い違って #99 が返らなかったりするため）。
 # 起票せずに PR の本文に「起票した Issue：なし」と書くと、ここで落ちる（#307）
 type: regex
 target: { source: file, path: .fake-gh/writes }
-pattern: '^(api( .*)? /?repos/me/demo/issues( .*)? ((-X ?|--method[ =])[Pp][Oo][Ss][Tt]|-f|-F|--field|--raw-field|--input)( |=|$)|api( .*)? ((-X ?|--method[ =])[Pp][Oo][Ss][Tt]|-f|-F|--field|--raw-field|--input)( .*)? /?repos/me/demo/issues( |$)|issue create( |$))'
+pattern: '^(api -X POST repos/me/demo/issues --input( |$)|issue create( |$))'
 flags: m
 match: contains
 ---
