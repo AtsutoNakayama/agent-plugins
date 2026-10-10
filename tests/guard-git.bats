@@ -404,7 +404,7 @@ silent() {
 
 @test "同じコマンドの中で git init で作るリポジトリは、導入していないので、cd・-C で移った後のコミットを止めない" {
   silent "git init proj && cd proj && git commit -m x" "git init -q -b main proj; cd proj; git commit -m x" \
-    "git init $TMP/new && cd $TMP/new && git commit -m x" "mkdir d && cd d && git init && git commit -m x" \
+    "git init $TMP/new && cd $TMP/new && git commit -m x" \
     "git init proj && git -C proj commit -m x" "git init proj && cd proj/ && git push -f origin main" \
     "git -C $TMP init --template=x new && cd $TMP/new && git commit -m x" "git init proj && cd proj && mkdir a && cd a/.. && git commit -m x"
   # 既にあるディレクトリでも、リポジトリのルートでなければ、git init は新しいリポジトリを作る
@@ -414,6 +414,19 @@ silent() {
   denied "main の上ではコミットしません" "git init && git commit -m x" "git init . && git commit -m x" "git init $REPO && cd $REPO && git commit -m x"
   # git init で作った場所と関係のない場所は、今までどおり判断する
   denied "main の上ではコミットしません" "git init proj && git commit -m x" "git init proj && cd proj && cd $REPO && git commit -m x"
+}
+
+@test "git init した場所の配下や、--git-dir・GIT_DIR で別のリポジトリを指した git は、新しいリポジトリとみなさない" {
+  # 外側に git init しても、内側の既にあるリポジトリ（main の上）の git は、そのリポジトリを使う
+  denied "main の上ではコミットしません" "git init .. && git commit -m x" "git init $TMP && git commit -m x" \
+    "git init $TMP && cd $TMP/repo && git commit -m x"
+  denied "強制 push" "git init .. && git push --force origin main"
+  denied "main へは push しません" "git init $TMP && git push"
+  # まだ無い場所の配下は、作る場所と同じではないので、分からないものとする
+  denied "対象のリポジトリが分からない" "git init proj && cd proj/sub && git commit -m x"
+  # 作った場所でも、--git-dir・GIT_DIR で別のリポジトリを指せば、そのリポジトリを使う（作る前なので、場所が分からない）
+  denied "コミットは止めます" "git init $TMP/n && git -C $TMP/n --git-dir=$REPO/.git commit -m x" \
+    "git init $TMP/n && cd $TMP/n && GIT_DIR=$REPO/.git git commit -m x"
 }
 
 @test "同じコマンドの中で git clone するリポジトリは、まだ無くて調べられないので、cd・-C で移った後のコミットを止める" {
@@ -428,6 +441,9 @@ silent() {
 @test "mkdir だけで git init の無いディレクトリへの cd の後は、どのリポジトリに入るか分からないので、コミットを止める" {
   denied "対象のリポジトリが分からない" "mkdir d && cd d && git commit -m x" "mkdir -p a/b && cd a/b && git commit -m x" \
     "git init proj && cd proj2 && git commit -m x"
+  # まだ無いディレクトリへの cd は、シェルでは失敗して移らないことがある（cd /x/nope; git init は、今のリポジトリを作り直す）。
+  # そのため、前に git init・git clone が作ると覚えた場所でなければ、git init の後でも分からないものとする
+  denied "対象のリポジトリが分からない" "mkdir d && cd d && git init && git commit -m x" "cd $TMP/nope; git init; git commit -m x"
 }
 
 @test "対象のリポジトリが分からないときも、コミット・push 以外は止めない" {
