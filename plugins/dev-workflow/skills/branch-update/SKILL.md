@@ -187,31 +187,33 @@ PR の見回り（`pr-watch.sh` が `conflict` を返した PR）を無人で直
 衝突したら、上の「衝突の直し方の確認」の「読む」と同じに、衝突したファイルごとに両側の変更の意図を読む。ただし、方針の確認と、判断できない衝突の質問は、指示役が次のとおりに決める。
 
 - **決める基準**：Issue（PR が閉じる Issue。PR の `Closes #N` が1つに決まらないときは、止まる）と、周りのコード・`git log` から、両側の意図が分かり、両立できる（上の「よくある衝突と直し方の例」に当たるものなど）なら、両立するように直す方針にする。どちらかを採る衝突は、Issue の目的と、周りのコードの書き方に合う方を採る
-- **止まる衝突**：どちらの意図を残すか Issue と周りのコードから判断できない、両立のさせ方が要件・設計の判断になる、直すのに `.github/workflows/` か `.claude/` の変更が要る、のどれかなら止まる（推し量って直さない）
+- **止まる衝突**：どちらの意図を残すか Issue と周りのコードから判断できない、両立のさせ方が要件・設計の判断になる、直すのに `repair-push-check.sh` が止めるパス（`.github`・`.claude` の名前そのもの・`.github/` 以下・どの階層の `.claude/` 以下。大文字と小文字は区別しない。正本は `repair-push-check.sh --help`）の変更が要る（push の前の検査と同じ範囲）、のどれかなら止まる（推し量って直さない）
 - **控える**：衝突ごとに、ファイル・両側の変更の要点・どう直したか・その理由を覚えておく。PR のコメント（下）に書く
 - 直したら、上の「コミットする」のとおり merge を完了する。直している途中で、方針のとおりには直せないと分かったら、方針を決め直す（決め直しても決められなければ止まる）
 
 ### PR のコメント
 
-代わりに決めたこと（衝突ごとのファイル・直し方・理由、pull で取り込んだこと、テストの失敗を直したときの変えた点、実行したテストとチェックとその結果）を、push の前に PR のコメントに残す（`gh pr comment <PR番号> --body-file -`。出力される URL の末尾 `#issuecomment-<ID>` から、コメントの ID を控える）。本文の先頭に、次のマーカーを入れる。1回の push につき1つ（push の回数の数え方。ADR 000285）。
+代わりに決めたこと（衝突ごとのファイル・直し方・理由、pull で取り込んだこと、テストの失敗を直したときの変えた点、実行したテストとチェックとその結果）を、push の前に PR のコメントに残す（`gh pr comment <PR番号> --body-file -`。出力される URL の末尾 `#issuecomment-<ID>` から、コメントの ID を控える）。本文の先頭に、次のマーカーを入れる。1回の push につき1つ。`<head の sha>` は、push で進める前の origin のブランチの head の sha（fetch・pull を済ませた後の `git rev-parse origin/<ブランチ>` の出力。40 桁のまま）にする。PR の head は、push が通るまでこの sha のまま。`origin/<ブランチ>` が無い（`git rev-parse --verify --quiet refs/remotes/origin/<ブランチ>` が失敗する）ときは、代わりに `gh pr view <PR番号> --json headRefOid --jq .headRefOid` の出力を使う（`repair-push-check.sh` が、`origin/<ブランチ>` が無いときに `origin/<base_branch>` に倒すのと同じく、無いときの取り方を決めておく）。
 
 ```
-<!-- dev-workflow:repair-run -->
+<!-- dev-workflow:repair-run head=<head の sha> -->
 ```
 
-push が失敗したか、拒否されたら（強制はしない）、控えた ID の `repair-run` のコメントに、失敗と拒否のメッセージを追記する。`--edit-last` は使わない（本文を置き換え、最後のコメントが `repair-run` とは限らないため）。`gh api repos/{owner}/{repo}/issues/comments/<ID> --jq .body` で今の本文を読み、末尾に失敗の節を足した本文で `gh api -X PATCH repos/{owner}/{repo}/issues/comments/<ID> -f body=<本文>` を実行して更新する（先頭のマーカーは残す）。追記できなければ、失敗したことを別のコメントで残す。push の回数を数え落とさず、上限を誤判定しないため。保留の列には移さない（次の見回りでもう一度判定する）。衝突が無く、取り込みだけで済んだときも、取り込んだコミット数とテストの結果を残す。
+見回りは、push の回数を `${CLAUDE_PLUGIN_ROOT}/scripts/repair-run-count.sh` で数える（入力は `gh api --paginate --slurp 'repos/{owner}/{repo}/issues/<PR番号>/comments?per_page=100'` の出力を勧める。`gh pr view --json comments` は、コメントが多い PR で全部を返さないことがあり、数え落とす）。`repair-run` のうち、PR の head が `head` の sha から進んだもの（今の PR の head が `head` と違うもの）だけを、`head` の値ごとに1回として数える。push に失敗した回や、コメントを付けた後に push せずに止まった・落ちた回は、PR の head が進んでいないので数えない（ADR 000339。ADR 000285 の数え方を変えた）。
+
+push が失敗したか、拒否されたら（強制はしない）、控えた ID の `repair-run` のコメントに、失敗と拒否のメッセージを追記する。`--edit-last` は使わない（本文を置き換え、最後のコメントが `repair-run` とは限らないため）。`gh api repos/{owner}/{repo}/issues/comments/<ID> --jq .body` で今の本文を読み、末尾に失敗の節を足した本文で `gh api -X PATCH repos/{owner}/{repo}/issues/comments/<ID> -f body=<本文>` を実行して更新する（先頭のマーカーは残す）。追記できなければ、失敗したことを別のコメントで残す。PR を読む人が、push していない回だと分かるようにするため（回数は、追記が無くても `head` で数え分ける）。保留の列には移さない（次の見回りでもう一度判定する）。衝突が無く、取り込みだけで済んだときも、取り込んだコミット数とテストの結果を残す。
 
 ### 止まる
 
 止まるのは、上の表と節で「止まる」とされた場面と、スクリプトが手順に直し方の無いエラーを返したとき。止まるときは、次の順に行う。
 
 1. 取り込みの途中（衝突を直し終えていない）なら、`git merge --abort`（pull の途中なら、同じく取り込む前に戻す）で取り込む前の状態に戻す。直し終えてコミットした分（テストが通らないなど）は、手元に残す。push はしない
-2. Issue（PR が閉じる Issue。1つに決まらなければ、コメントも列の移動もせず、止まった理由を結果として返すだけにする）に付けるコメントの本文を一時ファイルに書く。言語は設定の `language` に従う。1行目に `<!-- dev-workflow:repair-stopped reason=other -->` を入れ、次を見出しごとに書く
+2. Issue（PR が閉じる Issue。1つに決まらなければ、コメントも列の移動もせず、止まった理由を結果として返すだけにする）に付けるコメントの本文を一時ファイルに書く。言語は設定の `language` に従う。止まった理由の種類の印（`repair-stopped`）は、手順3で `auto-hold.sh` が足すので、本文には書かない。次を見出しごとに書く
    - **止まった理由**：当たった条件と中身（衝突したファイルと、両側の変更の要点。どちらの意図を残すか決められなかった理由。落ちたテストの名前とエラーの要点など）
    - **それまでの判断**：控えた、衝突ごとの直し方
    - **残したもの**：ブランチ名・ワークツリーの場所・手元に残るコミット（`branch-status.sh` の `push_commits`。取り込みの途中で戻したなら、無いと書く）。push していないこと
    - **続けるには**：人が決めること・直すこと（例：「main とコンフリクトしています。〜のどちらを残すか決めて、`/dev-workflow:branch-update` で取り込んでください」）
-3. `${CLAUDE_PLUGIN_ROOT}/scripts/auto-hold.sh --issue <番号> --run-id <実行の id> --reason-file <ファイル>` を実行する。Issue にコメントが付き、保留の列に移る。実行の id は、英数字と `.` `_` `-` だけで、実行ごとに1つ決める（見回りが渡す。無ければ `date -u +%Y%m%dT%H%M%S` に `-` と4桁の乱数を付けて決める）。同じ実行の再試行では、同じ id を渡す
+3. `${CLAUDE_PLUGIN_ROOT}/scripts/auto-hold.sh --issue <番号> --run-id <実行の id> --reason-file <ファイル> --repair-reason <理由の種類>` を実行する。Issue にコメントが付き、保留の列に移る。理由の種類は、`repair-next.sh` が `stop` を返して止まるときは、その `reason`（`dirty`・`same_failure`・`forbidden_paths` など）をそのまま渡し、それ以外（止まる衝突・表の `action` で決まらない場面・`fix` の原因が取り込みと関係ないなど）で止まるときは `other` を渡す。`auto-hold.sh` が、実行の印の次の行に `<!-- dev-workflow:repair-stopped reason=<理由の種類> -->` を足し、見回りはこの印で止まった理由を見分ける（ADR 000339）。実行の id は、英数字と `.` `_` `-` だけで、実行ごとに1つ決める（見回りが渡す。無ければ `date -u +%Y%m%dT%H%M%S` に `-` と4桁の乱数を付けて決める）。同じ実行の再試行では、同じ id を渡す
 4. 結果として、止まった理由・Issue の URL・残したものを返す
 
 ### 結果を返す

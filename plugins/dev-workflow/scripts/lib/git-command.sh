@@ -7,7 +7,9 @@
 # cd で移った先、pushd・popd で積んだ・戻った場所（シェルと同じく、dirs のスタックを追う）、git -C・env -C で指した先を追う
 # （( ) の中で移った・積んだ分は外に効かない）。case の枝はすべて順に動いたものとして、関数の定義の本体はその場で
 # 動いたものとして読む。cd - の後は、移った先を不明とする。前に付くコマンド（builtin・command・exec・time・nohup・
-# env・timeout・nice）は、そのオプションとともに飛ばす（env -S の値は env と同じく語に分ける）。$( ) の中のコマンドは調べない。
+# env・timeout・nice・sudo・stdbuf・setsid・ionice・chrt・taskset・flock）は、そのオプションと位置引数（timeout の時間、
+# chrt の優先度、taskset のマスク、flock のファイル）とともに飛ばす（env -S の値は env と同じく語に分ける。env -C・sudo -D は
+# git -C と同じに扱う）。$( ) の中のコマンドは調べない。
 # sh -c・xargs などや git の別名（alias）を通すと見逃す。パイプラインの各コマンドと、& でバックグラウンドで動かす並びも、
 # ( ) と同じくサブシェルとして扱う（gc_restore の前のコメント）。読み方は bash の振る舞い（版で違うところは 4.3 以降）に合わせる
 # （zsh などでは、パイプラインの最後のコマンドが今のシェルで動くなど、移った先を誤ることがある）。
@@ -15,7 +17,7 @@
 # 使い方:
 #   gc_scan <コールバック> <コマンドの文字列> <始めのディレクトリ（空なら不明）> [after [<戻す先>]]
 #   git の呼び出しごとに「<コールバック> <サブコマンド> <残りの引数>...」を呼ぶ。呼ぶ前に、次の変数を設定する。
-#     gc_git_dir  git を実行するディレクトリ（cd・pushd・popd で移った先、git -C・env -C で指した先。分からなければ空）
+#     gc_git_dir  git を実行するディレクトリ（cd・pushd・popd で移った先、git -C・env -C・sudo -D で指した先。分からなければ空）
 #     gc_gopts    git のグローバルオプションのうち、対象を変えるもの（--git-dir・--work-tree）。配列
 #     gc_genv     先頭の代入のうち、対象を変えるもの（GIT_DIR・GIT_WORK_TREE・GIT_COMMON_DIR）。配列
 #   コールバックの中では、gc_git でその対象に対して git を実行できる。
@@ -59,21 +61,46 @@ gc_expand_home() {
 }
 
 # 基準のディレクトリからの相対パスを絶対パスにする（先頭の ~・$HOME は gc_expand_home で展開する）。分からなければ空を出力する。
+# まだ無いディレクトリは、文字の上のパス（gc_path_key）にする。&& でつないだ後ろは、cd が成功したときしか動かないので、
+# そのパスで追い続ける。cd が失敗しても動く後ろ（; ・ || ・改行など）では、gc_settle_dir が、そのパスを不明に戻す
 # 使い方: gc_resolve_dir <基準のディレクトリ（空なら不明）> <パス> [no-tilde]
 gc_resolve_dir() {
   local p
   p="$(gc_expand_home "$2" "${3:-}")"
   case "$p" in
-    /*) dw_abs_dir / "$p" || true ;;
-    *) [ -z "$1" ] || dw_abs_dir "$1" "$p" || true ;;
+    /*) ;;
+    *)
+      [ -n "$1" ] || return 0
+      p="$1/$p"
+      ;;
   esac
+  dw_abs_dir / "$p" || gc_path_key "$p" || true
+}
+
+# まだ無いパスを、作る場所と比べられる形にする。. と .. を、シェルの cd（-L）と同じく文字の上で解いてから、
+# あるところまでを実体にする（dw_physical_path）。dw_physical_path は .. を解かない（ユーザーの層の置き場所を比べるのに、
+# 文字の上で解くと、シンボリックリンクの先と食い違うため）ので、ここで先に解く
+# 使い方: gc_path_key <絶対パス>
+gc_path_key() {
+  local rest="${1#/}" out="" c
+  while [ -n "$rest" ]; do
+    c="${rest%%/*}"
+    if [ "$c" = "$rest" ]; then rest=""; else rest="${rest#*/}"; fi
+    case "$c" in
+      '' | .) ;;
+      ..) out="${out%/*}" ;;
+      *) out="$out/$c" ;;
+    esac
+  done
+  dw_physical_path "${out:-/}"
 }
 
 # git の操作の対象（ディレクトリと、git のグローバルオプション・対象を変える環境変数）で git を実行する。
 # 使い方: gc_git <コマンド>...   （gc_git_dir と gc_gopts と gc_genv を参照する）
 gc_git() {
   [ -n "$gc_git_dir" ] || return 1
-  (CDPATH='' cd "$gc_git_dir" && env ${gc_genv[@]+"${gc_genv[@]}"} git ${gc_gopts[@]+"${gc_gopts[@]}"} "$@" 2>/dev/null)
+  # まだ無いディレクトリ（gc_resolve_dir）では、cd が失敗する。そのエラーは出さない
+  (CDPATH='' cd "$gc_git_dir" 2>/dev/null && env ${gc_genv[@]+"${gc_genv[@]}"} git ${gc_gopts[@]+"${gc_gopts[@]}"} "$@" 2>/dev/null)
 }
 
 # 操作の対象（gc_git_dir・gc_gopts・gc_genv）のリポジトリを求めて、gc_repo と gc_root に入れる。コールバックの中で呼ぶ。
@@ -503,6 +530,33 @@ gc_commit_args_on() {
   esac
 }
 
+# git stash pop・apply・drop・branch の引数から、取り出す・消す stash を gc_stash_ref に入れる。guard-git.sh が使う。
+# 書かなければ stash@{0}、数だけなら stash@{<数>}（git と同じ）。branch は、1つ目の位置引数がブランチの名前で、2つ目が stash。
+# オプション（--index・-q）は値を取らない。-- の後ろは、すべて位置引数
+# 使い方: gc_stash_args <サブコマンド（pop・apply・drop・branch）> <引数>...
+gc_stash_ref=""
+# shellcheck disable=SC2034 # gc_stash_ref は呼び出し側（フック）が読む
+gc_stash_args() {
+  local want=1 pos=0
+  [ "$1" != branch ] || want=2
+  shift
+  gc_stash_ref=""
+  gc_args gc_stash_args_on "" "--index --quiet" "$@"
+  [ -n "$gc_stash_ref" ] || gc_stash_ref=0
+  case "$gc_stash_ref" in
+    *[!0-9]*) ;;
+    *) gc_stash_ref="stash@{$gc_stash_ref}" ;;
+  esac
+}
+gc_stash_args_on() {
+  [ "$1" = arg ] || return 0
+  pos=$((pos + 1))
+  if [ "$pos" -eq "$want" ]; then
+    gc_stash_ref="$2"
+    gc_stop=true
+  fi
+}
+
 # --- コマンドごとの解析 -------------------------------------------------------------
 
 # cd で移る。after のときの外側の相対パスの扱いは、先頭のコメント。gc_scan の中から呼ぶ。
@@ -510,6 +564,7 @@ gc_commit_args_on() {
 # 使い方: gc_cd [<行き先（- なら前の場所）>]
 gc_cd() {
   local target="${1:-}" to
+  ! $cd_failed || return 0
   if [ $# -eq 0 ]; then
     target="$HOME"
   elif [ -z "$target" ]; then
@@ -530,6 +585,12 @@ gc_cd() {
         esac
       fi
       to="$(gc_resolve_dir "$gc_dir" "$target")"
+      # after（コマンドの後）では、まだ無いディレクトリへの cd は失敗していて、&& でつないだ後ろも動いていない。
+      # 移った先を不明とし、cd が失敗しても動く後ろ（gc_settle_dir）まで、後ろのコマンドを調べない（cd_failed）
+      if $after && [ -n "$to" ] && [ ! -d "$to" ]; then
+        to=""
+        cd_failed=true
+      fi
       ;;
   esac
   [ "$dn" -gt 0 ] || anchored=true
@@ -800,21 +861,46 @@ gc_unset_genv() {
   gc_genv=(${kept[@]+"${kept[@]}"})
 }
 
+# env -C・sudo -D の値（gc_skip_opts で読んだ <番号> のオプション）を、<基準のディレクトリ> から解決して、呼び出し元（gc_command）の
+# cdir に入れる。値をくっつけて書いたとき（-C~/x・--chdir=~/x）は、シェルは ~ を展開しない
+# 使い方: gc_set_cdir <基準のディレクトリ> <番号>
+gc_set_cdir() {
+  if [ "${gc_optk[$2]}" = attached ]; then
+    cdir="$(gc_resolve_dir "$1" "${gc_optv[$2]}" no-tilde)"
+  else
+    cdir="$(gc_resolve_dir "$1" "${gc_optv[$2]}")"
+  fi
+  has_cdir=true
+}
+
+# ! の付いた cd・pushd（gc_command の negated）が、まだ無いディレクトリを指したら、失敗したかもしれないので、今の場所を不明とする
+gc_negated_dir() {
+  if $negated && [ -n "$gc_dir" ] && [ ! -d "$gc_dir" ]; then gc_dir=""; fi
+}
+
 # 1つのコマンド（単語の並び）を調べる。cd・pushd・popd・dirs なら場所とスタックを変え、git ならコールバックを呼ぶ。
 # gc_scan の中から呼ぶ。
 # 使い方: gc_command <単語>...
 gc_command() {
-  local cdir="" has_cdir=false envbase ext=false k split=()
+  local cdir="" has_cdir=false envbase ext=false k split=() lost=false login negated=false
   # 先頭の環境変数の代入（FOO=1 git push）、前に付くコマンドとそのオプション、予約語（then git push）を飛ばす。
   # 操作の対象を変える代入（GIT_DIR など）は、対象のリポジトリを求めるときに使う。
-  # 外部のコマンド（env・nohup・timeout・nice・exec）として実行する cd などは、シェルの場所を変えない（ext）。
+  # 外部のコマンド（env・nohup・timeout・nice・exec・sudo・stdbuf・setsid・ionice・chrt・taskset・flock。builtin・command・time
+  # 以外の前に付くコマンドすべて）として実行する cd などは、シェルの場所を変えない（ext）。
   # builtin・command・time の後ろの cd などは、シェルの組み込みのコマンドとして実行する
   gc_genv=()
+  # after で、前の cd が失敗していて動いていないコマンドは調べない（gc_cd）
+  ! $cd_failed || return 0
   while [ $# -gt 0 ]; do
     case "$1" in
       GIT_DIR=* | GIT_WORK_TREE=* | GIT_COMMON_DIR=*) gc_genv+=("${1%%=*}=$(gc_expand_home "${1#*=}")"); shift ;;
       [A-Za-z_]*=*) shift ;;
-      if | then | elif | else | while | until | do | '{' | '!') shift ;;
+      if | then | elif | else | while | until | do | '{') shift ;;
+      # ! の付いたコマンドは、失敗しても後ろ（&&）が動くので、その cd が成功したとは言えない（negated）
+      '!')
+        negated=true
+        shift
+        ;;
       # function f { git …; } の本体の git も調べる
       function)
         shift
@@ -855,6 +941,10 @@ gc_command() {
         shift
         gc_skip_opts a "" "$@"
         shift "$gc_nopt"
+        # exec -c は、環境変数をすべて消してから実行するので、前の代入（GIT_DIR=x exec -c git）は効かない（env -i と同じ）
+        for k in ${gc_optn[@]+"${gc_optn[@]}"}; do
+          [ "$k" != -c ] || gc_genv=()
+        done
         ;;
       timeout)
         # timeout [オプション] <時間> <コマンド>
@@ -870,6 +960,93 @@ gc_command() {
         shift
         gc_skip_opts n --adjustment= "$@"
         shift "$gc_nopt"
+        ;;
+      sudo)
+        # sudo [オプション] [代入] <コマンド>。-D <dir>（--chdir）は、env -C と同じく、このコマンドだけをその場所で実行する。
+        # -h は、値をくっつけたときだけ値（ホスト）を取るので、値を取らないものとして読む（-hx の x などは、オプションとして飛ぶ）。
+        # -e（sudoedit）・-l・-v・-K・-V は、コマンドを実行しない（-e の後ろはファイル）。
+        # -i（--login）は対象のユーザーのホームで、-R（--chroot）は別のルートの下で動くので、場所を分からないものとする（-D より優先する）。
+        # sudo は既定で環境変数を消す（env_reset）が、sudoers の env_keep や -E で残ることもあるので、sudo の前の GIT_DIR などが
+        # 効くかは決められない。そのときは、git を実行する場所を分からないものとし（lost。止める側に倒す）、その値も使わない。
+        # sudo の後ろに書いた代入（sudo GIT_DIR=x git）は、そのコマンドに渡るので、今までどおり使う
+        ext=true
+        shift
+        if [ "${#gc_genv[@]}" -gt 0 ]; then
+          lost=true
+          gc_genv=()
+        fi
+        gc_skip_opts aCcDgpRrTtUu "--close-from= --login-class= --chdir= --group= --host= --prompt= --chroot= --role= --type= --command-timeout= --other-user= --user= --edit --list --validate --remove-timestamp --version --login" "$@"
+        shift "$gc_nopt"
+        if $has_cdir; then envbase="$cdir"; else envbase="$gc_dir"; fi
+        login=false
+        k=0
+        while [ "$k" -lt "${#gc_optn[@]}" ]; do
+          case "${gc_optn[k]}" in
+            -e | --edit | -l | --list | -v | --validate | -K | --remove-timestamp | -V | --version) return 0 ;;
+            -D | --chdir) gc_set_cdir "$envbase" "$k" ;;
+            -i | --login | -R | --chroot) login=true ;;
+          esac
+          k=$((k + 1))
+        done
+        if $login; then
+          cdir="" has_cdir=true
+        fi
+        ;;
+      stdbuf)
+        # stdbuf -i <モード>・-o <モード>・-e <モード>
+        ext=true
+        shift
+        gc_skip_opts ioe "--input= --output= --error=" "$@"
+        shift "$gc_nopt"
+        ;;
+      setsid)
+        # setsid -c・-f・-w（値を取らない）
+        ext=true
+        shift
+        gc_skip_opts "" "" "$@"
+        shift "$gc_nopt"
+        ;;
+      ionice)
+        # ionice -c <クラス>・-n <レベル>・-t。-p・-P・-u は、動いているプロセスを変えるだけで、コマンドを実行しない
+        ext=true
+        shift
+        gc_skip_opts cnpPu "--class= --classdata= --pid= --pgid= --uid= --ignore" "$@"
+        shift "$gc_nopt"
+        for k in ${gc_optn[@]+"${gc_optn[@]}"}; do
+          case "$k" in -p | -P | -u | --pid | --pgid | --uid) return 0 ;; esac
+        done
+        ;;
+      chrt)
+        # chrt [オプション] <優先度> <コマンド>。-T・-P・-D は値（ナノ秒）を取る。-p・-m は、コマンドを実行しない。
+        # 優先度を省ける版もあるので、優先度は数のときだけ飛ばす
+        ext=true
+        shift
+        gc_skip_opts TPD "--sched-runtime= --sched-period= --sched-deadline= --pid --max" "$@"
+        shift "$gc_nopt"
+        for k in ${gc_optn[@]+"${gc_optn[@]}"}; do
+          case "$k" in -p | --pid | -m | --max) return 0 ;; esac
+        done
+        case "${1:-}" in '' | *[!0-9]*) ;; *) shift ;; esac
+        ;;
+      taskset)
+        # taskset [オプション] <マスク> <コマンド>。-p は、動いているプロセスを変えるだけで、コマンドを実行しない
+        ext=true
+        shift
+        gc_skip_opts "" "--all-tasks --cpu-list --pid" "$@"
+        shift "$gc_nopt"
+        for k in ${gc_optn[@]+"${gc_optn[@]}"}; do
+          case "$k" in -p | --pid) return 0 ;; esac
+        done
+        [ $# -eq 0 ] || shift
+        ;;
+      flock)
+        # flock [オプション] <ファイル> <コマンド>。-w・-E は値を取る。ファイルの後ろの -c <文字列> は sh -c と同じで、中は調べない
+        ext=true
+        shift
+        gc_skip_opts wEc "--timeout= --conflict-exit-code= --command=" "$@"
+        shift "$gc_nopt"
+        [ $# -eq 0 ] || shift
+        case "${1:-}" in -c | --command | --command=*) return 0 ;; esac
         ;;
       env)
         ext=true
@@ -888,14 +1065,7 @@ gc_command() {
           case "${gc_optn[k]}" in
             # -C <dir> は、このコマンドだけを、その場所で実行する（git -C と同じに扱う）。
             # 値をくっつけて書いたとき（-C~/x・--chdir=~/x）は、シェルは ~ を展開しない
-            -C | --chdir)
-              if [ "${gc_optk[k]}" = attached ]; then
-                cdir="$(gc_resolve_dir "$envbase" "${gc_optv[k]}" no-tilde)"
-              else
-                cdir="$(gc_resolve_dir "$envbase" "${gc_optv[k]}")"
-              fi
-              has_cdir=true
-              ;;
+            -C | --chdir) gc_set_cdir "$envbase" "$k" ;;
             # -S <文字列> は、値を env と同じく語に分けて、続きの引数の前に置く
             -S | --split-string)
               gc_split_s "${gc_optv[k]}"
@@ -934,11 +1104,13 @@ gc_command() {
         esac
       done
       if [ $# -gt 0 ]; then gc_cd "$1"; else gc_cd; fi
+      gc_negated_dir
       return 0
       ;;
     pushd)
       shift
       gc_pushd "$@"
+      gc_negated_dir
       return 0
       ;;
     popd)
@@ -979,7 +1151,141 @@ gc_command() {
     esac
   done
   [ $# -gt 0 ] || return 0
+  # sudo の前の GIT_DIR などが効くか決められないときは、git を実行する場所を分からないものとする（sudo の枝）
+  ! $lost || gc_git_dir=""
+  # 同じコマンドの中で作るリポジトリを覚える（gc_new_repo）。--git-dir・GIT_DIR などがあると、作る場所が変わるので覚えない。
+  # after（コマンドの後）では、作ったリポジトリは既にあり、git が見つけられるので要らない
+  # sudo の前の GIT_DIR などが効くかを決められないとき（lost）も、作る場所が分からないので覚えない
+  if ! $after && ! $lost && [ "${#gc_gopts[@]}" -eq 0 ] && [ "${#gc_genv[@]}" -eq 0 ]; then
+    case "$1" in
+      init | clone) gc_note_new_repo "$@" ;;
+    esac
+  fi
   "$callback" "$@"
+}
+
+# --- 同じコマンドの中で作るリポジトリ ------------------------------------------------------
+# フック（PreToolUse）はコマンドを実行する前に動くので、同じコマンドの中で git init・git clone で作るリポジトリは、まだ無く、
+# git が見つけられない。そこで、作る場所を gc_scan の作業用の変数 new_repos に、1行ずつ「<種類><場所>」（i は init、c は clone）で覚え、
+# ちょうどその場所で動く git を gc_new_repo で見分ける。cd が失敗しても動く後ろ（gc_settle_dir）でも、その場所は実行するときにはあるので、不明に戻さない。
+# ただし、まだ無いディレクトリへの cd の後ろ（同じ && の並び）で覚えた作る場所は、その cd が成功したという確かめられない前提の上にあるので、
+# 「前提つき」（I・C）として覚え、cd が失敗しても動く後ろに入るところ（gc_settle_dir）で外す。
+# 既にあるリポジトリの配下への init も、失敗すると親のリポジトリを使うので、成功した前提の同じ && の並びでだけ覚える（I）。
+# 配下の場所は見分けない（作った場所の下に、既にある別のリポジトリがあるかもしれず、その場所の git は新しいリポジトリを使うとは限らないため）
+
+# git init・git clone の引数から、作るリポジトリの場所を覚える。gc_command から呼ぶ。
+# git init [<ディレクトリ>] は、ディレクトリ（無ければ git を実行する場所）に作る。ただし、既にリポジトリのルート（bare なら
+# git のディレクトリ）なら、作り直すだけで中身は変わらないので覚えない（今までどおり、そのリポジトリで判断する）。
+# git clone <リポジトリ> [<ディレクトリ>] は、ディレクトリ（無ければ、リポジトリの名前の最後の部分。--bare・--mirror なら .git を足す）に作る
+# 使い方: gc_note_new_repo <init か clone> <引数>...
+gc_note_new_repo() {
+  local sub="$1" npos=0 first="" second="" bare=false d gd c top i=i k=c
+  shift
+  # git を実行する場所がまだ無く、前提の無い作る場所でもなければ、そこへの cd が成功した前提の上にあるので、前提つきにする
+  if [ -n "$gc_git_dir" ] && [ ! -d "$gc_git_dir" ]; then
+    gc_new_repo_at "$gc_git_dir" solid
+    [ -n "$gc_new_kind" ] || i=I k=C
+  fi
+  case "$sub" in
+    init) gc_args gc_note_new_repo_on b "--template= --separate-git-dir= --object-format= --ref-format= --initial-branch= --bare --quiet --shared" "$@" ;;
+    clone) gc_args gc_note_new_repo_on objuc "--origin= --branch= --upload-pack= --reference= --reference-if-able= --separate-git-dir= --depth= --shallow-since= --shallow-exclude= --config= --template= --jobs= --filter= --server-option= --bundle-uri= --ref-format= --revision= --bare --mirror" "$@" ;;
+  esac
+  if [ "$sub" = init ]; then
+    if [ "$npos" -eq 0 ]; then d="$gc_git_dir"; else d="$(gc_resolve_dir "$gc_git_dir" "$first")"; fi
+    [ -n "$d" ] || return 0
+    if [ -d "$d" ]; then
+      { IFS= read -r gd; IFS= read -r c; IFS= read -r top; } <<<"$(dw_repo_paths "$d" || true)" || true
+      [ "${top:-}" != "$d" ] && [ "${gd:-}" != "$d" ] || return 0
+      [ -z "${gd:-}" ] || i=I
+    fi
+    new_repos+="$i$d$nl"
+  else
+    [ "$npos" -ge 1 ] || return 0
+    if [ "$npos" -ge 2 ]; then
+      d="$second"
+    else
+      # git と同じく、末尾の / と /.git を除き、最後の / か : の後ろから .git・.bundle を除いた名前にする
+      d="${first%"${first##*[!/]}"}"
+      d="${d%/.git}"
+      d="${d%"${d##*[!/]}"}"
+      d="${d##*/}"
+      d="${d##*:}"
+      d="${d%.git}"
+      d="${d%.bundle}"
+      [ -n "$d" ] || return 0
+      ! $bare || d="$d.git"
+    fi
+    d="$(gc_resolve_dir "$gc_git_dir" "$d")"
+    [ -z "$d" ] || new_repos+="$k$d$nl"
+  fi
+}
+gc_note_new_repo_on() {
+  case "$1" in
+    opt)
+      case "$2" in --bare | --mirror) bare=true ;; esac
+      ;;
+    arg)
+      npos=$((npos + 1))
+      case "$npos" in
+        1) first="$2" ;;
+        2) second="$2" ;;
+      esac
+      ;;
+  esac
+}
+
+# <パス> が、同じコマンドの中で前に作ると覚えた場所（gc_note_new_repo）と、ちょうど同じなら、gc_new_kind に、作った方法
+# （init・clone）を入れる。違えば空にする。後で覚えたものほど優先する。solid を付けると、前提つきのもの（I・C）は見ない。gc_scan の中で呼ぶ
+# 使い方: gc_new_repo_at <パス> [solid]
+gc_new_kind=""
+gc_new_repo_at() {
+  local s="$new_repos" e
+  gc_new_kind=""
+  [ -n "$1" ] || return 0
+  while [ -n "$s" ]; do
+    e="${s%%"$nl"*}"
+    s="${s#*"$nl"}"
+    [ "${e#?}" = "$1" ] || continue
+    case "$e" in
+      [IC]*) [ "${2:-}" != solid ] || continue ;;
+    esac
+    case "$e" in
+      [iI]*) gc_new_kind=init ;;
+      *) gc_new_kind=clone ;;
+    esac
+  done
+}
+
+# 操作の対象（gc_git_dir）が、作ると覚えた場所とちょうど同じなら、gc_new_kind に作った方法を入れる（gc_new_repo_at）。コールバックの中で呼ぶ。
+# --git-dir・--work-tree・GIT_DIR などがあれば、git はその場所のリポジトリを使わないので、見分けない（空にする）
+# shellcheck disable=SC2034 # gc_new_kind は呼び出し側（フック）が読む
+gc_new_repo() {
+  gc_new_kind=""
+  [ "${#gc_gopts[@]}" -eq 0 ] && [ "${#gc_genv[@]}" -eq 0 ] || return 0
+  gc_new_repo_at "$gc_git_dir"
+}
+
+# cd が失敗しても動く後ろ（; ・ || ・ & ・改行）に入る前に呼ぶ。&& の後ろでは呼ばない。| の後ろは、パイプラインの各コマンドが
+# サブシェルで、gc_restore で始まりの場所へ戻すので呼ばない。
+# まず、前提つきの作る場所（cd や、既にあるリポジトリの配下への init が成功した前提で覚えたもの）を外す。そのうえで、今の場所がまだ無い
+# ディレクトリなら、その前の cd は失敗して移らなかったかもしれないので、不明に戻す。ただし、残った作る場所とちょうど同じなら、
+# 実行するときにはあるので戻さない（作るのに失敗したときは、その git も失敗する）。
+# after（コマンドの後）では、まだ無い場所への cd は gc_cd が不明にし、その後ろを調べないようにしている（cd_failed）。ここで戻す
+gc_settle_dir() {
+  local s="$new_repos" e solid=""
+  cd_failed=false
+  while [ -n "$s" ]; do
+    e="${s%%"$nl"*}"
+    s="${s#*"$nl"}"
+    case "$e" in
+      [IC]*) ;;
+      *) solid+="$e$nl" ;;
+    esac
+  done
+  new_repos="$solid"
+  [ -n "$gc_dir" ] && [ ! -d "$gc_dir" ] || return 0
+  gc_new_repo_at "$gc_dir"
+  [ -n "$gc_new_kind" ] || gc_dir=""
 }
 
 # --- コマンドの文字列を単語に分ける ------------------------------------------------
@@ -1404,6 +1710,10 @@ gc_scan() {
   local hd_delims=() hd_strip=() hd_n=0
   # pushd で積んだ場所（gc_pushd の前のコメント）
   local pstack="" dl=() entry="" idx=0
+  # 同じコマンドの中で作るリポジトリ（gc_note_new_repo）
+  local new_repos=""
+  # after で、まだ無いディレクトリへの cd が失敗していて、後ろ（&& の並び）が動いていないか（gc_cd）
+  local cd_failed=false
   local arith_i=0
   # 入れ子の段と、段ごとの情報（gc_restore の前のコメント）。dn は開いている ( ) の数。&&・||・| の後ろか（joined）
   local lvl=0 dn=0 lv_kind=(top) lv_pat=(false) lv_pipe=(false) lv_sd=() lv_sp=() joined=false
@@ -1429,6 +1739,7 @@ gc_scan() {
         gc_end_command
         # &&・||・| の後ろの改行では、並びが続く
         if ! $joined; then
+          gc_settle_dir
           gc_end_pipe
           gc_mark_list
         fi
@@ -1436,6 +1747,7 @@ gc_scan() {
         ;;
       ';')
         gc_end_command
+        gc_settle_dir
         gc_end_pipe
         gc_mark_list
         joined=false
@@ -1460,8 +1772,10 @@ gc_scan() {
           # &> と &>> は、リダイレクト
           '>') i=$((i + 1)) ;;
           *)
-            # 並びごとバックグラウンド（サブシェル）で動くので、並びの始まりへ戻す
+            # 並びごとバックグラウンド（サブシェル）で動くので、並びの始まりへ戻す。並びの中の cd が成功したかは分からないので、
+            # 前提つきの作る場所を外す（gc_settle_dir。今の場所は、すぐ後の gc_restore が戻す）
             gc_end_command
+            gc_settle_dir
             gc_end_pipe
             gc_restore "${lv_ld[lvl]}" "${lv_lp[lvl]}" "${lv_la[lvl]}"
             gc_mark_list
@@ -1476,6 +1790,8 @@ gc_scan() {
           # case のパターンの a|b) の | は、パイプではない
           i=$((i + 1))
         elif [ "${rest:1:1}" = '|' ]; then
+          # || の後ろは、前が失敗したときに動く
+          gc_settle_dir
           gc_end_pipe
           gc_mark_elem
           joined=true
