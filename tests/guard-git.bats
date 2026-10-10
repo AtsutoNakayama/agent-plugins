@@ -991,6 +991,11 @@ make_stash() {
   silent "sudo GIT_DIR=$TMP/other/.git git commit -m x"
 }
 
+@test "sudo の前の GIT_DIR などがあるときの git init・git clone は、作る場所が分からないので覚えない" {
+  git init -q -b main "$TMP/other"
+  denied "対象のリポジトリが分からない" "GIT_DIR=$TMP/other/.git sudo git init $TMP/n && cd $TMP/n && git commit -m x"
+}
+
 @test "sudo -D <dir> で移った先で、そのコマンドの git を判断する" {
   git worktree add -q -b feat/21-x "$TMP/wt"
   allowed "sudo -D $TMP/wt git commit -m x" "sudo -D ../wt git commit -m x" "sudo --chdir=$TMP/wt git commit -m x" \

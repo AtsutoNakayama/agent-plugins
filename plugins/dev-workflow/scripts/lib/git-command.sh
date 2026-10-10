@@ -1134,7 +1134,8 @@ gc_command() {
   ! $lost || gc_git_dir=""
   # 同じコマンドの中で作るリポジトリを覚える（gc_new_repo）。--git-dir・GIT_DIR などがあると、作る場所が変わるので覚えない。
   # after（コマンドの後）では、作ったリポジトリは既にあり、git が見つけられるので要らない
-  if ! $after && [ "${#gc_gopts[@]}" -eq 0 ] && [ "${#gc_genv[@]}" -eq 0 ]; then
+  # sudo の前の GIT_DIR などが効くかを決められないとき（lost）も、作る場所が分からないので覚えない
+  if ! $after && ! $lost && [ "${#gc_gopts[@]}" -eq 0 ] && [ "${#gc_genv[@]}" -eq 0 ]; then
     case "$1" in
       init | clone) gc_note_new_repo "$@" ;;
     esac
