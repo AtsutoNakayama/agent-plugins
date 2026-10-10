@@ -654,27 +654,33 @@ has() {
 # shellcheck disable=SC2016 # バッククォートはスキルの本文の文字で、展開させない
 @test "adr-create は、採択した ADR を書き換えないことと、一部だけ変える ADR の補足に関係を書くことを書く（設計書 §8）" {
   adr="$SKILLS/adr-create/SKILL.md"
-  grep -qF '採択した ADR の本文は書き換えない' "$adr" || fail "adr-create に、採択した ADR を書き換えないことがありません"
+  grep -qF '書き終えた ADR の本文は、後から書き換えない' "$adr" || fail "adr-create に、ADR を書き換えないことがありません"
   grep -qF '「補足」に、その ADR へのリンクと、何を変えるかを書く（MADR の判断 0009）' "$adr" || fail "adr-create に、一部だけ変える ADR の補足の決まりがありません"
   grep -qF '全部を覆すなら `--supersedes` で置き換える' "$adr" || fail "adr-create に、全部を覆すときは置き換えることがありません"
-  grep -qF '採択した ADR の本文は書き換えない' "$BATS_TEST_DIRNAME/../docs/design.md" || fail "設計書に、書き換えないことがありません"
+  grep -qF '書き終えた ADR の本文は、後から書き換えない' "$BATS_TEST_DIRNAME/../docs/design.md" || fail "設計書に、書き換えないことがありません"
   grep -qF '関係を新しい ADR の「補足」に書く' "$BATS_TEST_DIRNAME/../docs/design.md" || fail "設計書に、補足に関係を書くことがありません"
   grep -qF '「補足」に、その ADR へのリンクと、何を変えるかを書きます（MADR の判断 0009）' "$BATS_TEST_DIRNAME/../README.md" || fail "README に、補足に関係を書くことがありません"
   tr="$BATS_TEST_DIRNAME/../plugins/dev-workflow/templates/adr/README.md"
   grep -qF '`date` は、MADR では「判断を最後に更新した日」ですが、書き換えないので、判断をした日にします' "$tr" || fail "テンプレートの README に date の扱いがありません"
-  grep -qF '採択した ADR の本文は書き換えません' "$tr" || fail "テンプレートの README に、編集しないことがありません"
+  grep -qF '書き終えた ADR の本文は、後から書き換えません' "$tr" || fail "テンプレートの README に、編集しないことがありません"
 }
 
 # shellcheck disable=SC2016 # バッククォートはスキルの本文の文字で、展開させない
-@test "proposed の ADR を採択するときは、status を accepted に、date を採択した日に書き換え、ほかの行は書き換えない（#311・ADR 000338）" {
+@test "proposed の ADR を採択するときは、status を accepted に、date を採択した日に書き換え、それだけを例外にする（#311・ADR 000338）" {
   adr="$SKILLS/adr-create/SKILL.md"
   has "adr-create の手順3" "$(step "$adr" 3)" \
     '`proposed` の ADR を採択するときは、`status` を `accepted` に書き換え、`date` を採択した日に更新する' \
-    '採択した ADR の本文は書き換えない（`accepted` 以降の ADR。`proposed` の ADR はまだ採択していない）。採択した後に変えてよいのは、置き換えたときの status の行だけ' \
-    '採択のときに書き換えるのはこの2つの行だけで、ほかの行は書き換えない'
+    '例外は、置き換えたときの status の行と、`proposed` の ADR を採択するときの `status` と `date` の2つの行だけ' \
+    'ADR を書き換えない決まりの例外は、置き換えたときの status の行のほかは、この2つの行の書き換えだけで、ほかの行は書き換えない'
   has "adr-create の手順4" "$(step "$adr" 4)" '後で採択するときは、手順3のとおり `status` と `date` の行だけを書き換える'
   grep -qF '`proposed` の ADR を採択するときは、`status` を `accepted` に書き換え、`date` を採択した日に更新する**' "$BATS_TEST_DIRNAME/../docs/design.md" \
     || fail "設計書に、採択するときの status と date の扱いがありません"
+  grep -qF '例外は、置き換えたときの `status` の行（`superseded by <新しい ADR>` にする。`adr-create.sh --supersedes`）と、下の `proposed` の ADR を採択するときの `status` と `date` の2つの行だけにする' \
+    "$BATS_TEST_DIRNAME/../docs/design.md" || fail "設計書に、書き換えない決まりの例外がありません"
+  grep -qF '例外は、置き換えたときの `status` の行（`superseded by <新しい ADR>` にします）と、`proposed` の ADR を採択するときの `status` と `date` の2つの行だけです' \
+    "$BATS_TEST_DIRNAME/../README.md" || fail "README に、書き換えない決まりの例外がありません"
+  grep -qF 'これを ADR を書き換えない決まりの例外にする' "$BATS_TEST_DIRNAME/../docs/adr/000338-adopt-proposed-adr-in-place.md" \
+    || fail "ADR 000338 に、採択時の書き換えを例外とする判断がありません"
   grep -qF '`proposed` の ADR を採択するときは、`status` を `accepted` に書き換え、`date` を採択した日に更新します' \
     "$BATS_TEST_DIRNAME/../plugins/dev-workflow/templates/adr/README.md" || fail "テンプレートの README に、採択するときの扱いがありません"
 }
