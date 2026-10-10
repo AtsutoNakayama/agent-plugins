@@ -25,7 +25,7 @@ review_body='**Actionable comments posted: 0**
 <details>
 <summary>⚠️ Outside diff range comments (1)</summary>
 
-`bin/greet.sh` (line 3): `name=$1` の `$1` を引用符で囲んでいないため、引数が無いときに set -u で分かりにくいエラーになり、空白を含む名前の扱いも意図と違います。`name="${1:?名前を指定してください}"` のようにしてください。
+`bin/greet.sh` (line 3): `name=$1` は、引数が無いときに set -u で分かりにくいエラーになります。`name="${1:?名前を指定してください}"` のようにしてください。
 
 </details>'
 pr="$(jq -n --arg body "$review_body" '{number: 5, url: "https://github.com/me/demo/pull/5", title: "docs: 使い方を書く",
