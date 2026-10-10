@@ -885,10 +885,11 @@ gc_set_cdir() {
 # gc_scan の中から呼ぶ。
 # 使い方: gc_command <単語>...
 gc_command() {
-  local cdir="" has_cdir=false envbase ext=false k split=()
+  local cdir="" has_cdir=false envbase ext=false k split=() lost=false login
   # 先頭の環境変数の代入（FOO=1 git push）、前に付くコマンドとそのオプション、予約語（then git push）を飛ばす。
   # 操作の対象を変える代入（GIT_DIR など）は、対象のリポジトリを求めるときに使う。
-  # 外部のコマンド（env・nohup・timeout・nice・exec）として実行する cd などは、シェルの場所を変えない（ext）。
+  # 外部のコマンド（env・nohup・timeout・nice・exec・sudo・stdbuf・setsid・ionice・chrt・taskset・flock。builtin・command・time
+  # 以外の前に付くコマンドすべて）として実行する cd などは、シェルの場所を変えない（ext）。
   # builtin・command・time の後ろの cd などは、シェルの組み込みのコマンドとして実行する
   gc_genv=()
   while [ $# -gt 0 ]; do
@@ -936,6 +937,10 @@ gc_command() {
         shift
         gc_skip_opts a "" "$@"
         shift "$gc_nopt"
+        # exec -c は、環境変数をすべて消してから実行するので、前の代入（GIT_DIR=x exec -c git）は効かない（env -i と同じ）
+        for k in ${gc_optn[@]+"${gc_optn[@]}"}; do
+          [ "$k" != -c ] || gc_genv=()
+        done
         ;;
       timeout)
         # timeout [オプション] <時間> <コマンド>
@@ -955,20 +960,30 @@ gc_command() {
       sudo)
         # sudo [オプション] [代入] <コマンド>。-D <dir>（--chdir）は、env -C と同じく、このコマンドだけをその場所で実行する。
         # -h は、値をくっつけたときだけ値（ホスト）を取るので、値を取らないものとして読む（-hx の x などは、オプションとして飛ぶ）。
-        # -e（sudoedit）・-l・-v・-K・-V は、コマンドを実行しない（-e の後ろはファイル）
+        # -e（sudoedit）・-l・-v・-K・-V は、コマンドを実行しない（-e の後ろはファイル）。
+        # -i（--login）は対象のユーザーのホームで、-R（--chroot）は別のルートの下で動くので、場所を分からないものとする（-D より優先する）。
+        # sudo は既定で環境変数を消す（env_reset）が、sudoers の env_keep や -E で残ることもあるので、sudo の前の GIT_DIR などが
+        # 効くかは決められない。そのときは、git を実行する場所を分からないものとする（lost。止める側に倒す）。
+        # sudo の後ろに書いた代入（sudo GIT_DIR=x git）は、そのコマンドに渡るので、今までどおり使う
         ext=true
         shift
-        gc_skip_opts aCcDgpRrTtUu "--close-from= --login-class= --chdir= --group= --host= --prompt= --chroot= --role= --type= --command-timeout= --other-user= --user= --edit --list --validate --remove-timestamp --version" "$@"
+        [ "${#gc_genv[@]}" -eq 0 ] || lost=true
+        gc_skip_opts aCcDgpRrTtUu "--close-from= --login-class= --chdir= --group= --host= --prompt= --chroot= --role= --type= --command-timeout= --other-user= --user= --edit --list --validate --remove-timestamp --version --login" "$@"
         shift "$gc_nopt"
         if $has_cdir; then envbase="$cdir"; else envbase="$gc_dir"; fi
+        login=false
         k=0
         while [ "$k" -lt "${#gc_optn[@]}" ]; do
           case "${gc_optn[k]}" in
             -e | --edit | -l | --list | -v | --validate | -K | --remove-timestamp | -V | --version) return 0 ;;
             -D | --chdir) gc_set_cdir "$envbase" "$k" ;;
+            -i | --login | -R | --chroot) login=true ;;
           esac
           k=$((k + 1))
         done
+        if $login; then
+          cdir="" has_cdir=true
+        fi
         ;;
       stdbuf)
         # stdbuf -i <モード>・-o <モード>・-e <モード>
@@ -1127,6 +1142,8 @@ gc_command() {
     esac
   done
   [ $# -gt 0 ] || return 0
+  # sudo の前の GIT_DIR などが効くか決められないときは、git を実行する場所を分からないものとする（sudo の枝）
+  ! $lost || gc_git_dir=""
   # 同じコマンドの中で作るリポジトリを覚える（gc_new_repo）。--git-dir・GIT_DIR などがあると、作る場所が変わるので覚えない。
   # after（コマンドの後）では、作ったリポジトリは既にあり、git が見つけられるので要らない
   if ! $after && [ "${#gc_gopts[@]}" -eq 0 ] && [ "${#gc_genv[@]}" -eq 0 ]; then

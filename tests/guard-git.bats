@@ -945,6 +945,20 @@ make_stash() {
     "taskset -p 1 git" "taskset -cp 0 1 git" "flock -u 3"
 }
 
+@test "sudo -i・-R は別の場所で動き、sudo の前の GIT_DIR などは効くか決められないので、git を実行する場所を分からないものとする" {
+  git worktree add -q -b feat/21-x "$TMP/wt"
+  cd "$TMP/wt"
+  denied "対象のリポジトリが分からない" "sudo -i git commit -m x" "sudo -iu root git commit -m x" "sudo --login git commit -m x" \
+    "sudo -D $TMP/wt -i git commit -m x" "sudo -R / git commit -m x"
+  # 絶対パスの git -C なら、場所が分かる
+  allowed "sudo -i git -C $TMP/wt commit -m x"
+  # sudo の前の GIT_DIR は、env_reset で消えるかもしれず、env_keep・-E で残るかもしれない
+  git init -q -b main "$TMP/other"
+  denied "対象のリポジトリが分からない" "GIT_DIR=$TMP/other/.git sudo git commit -m x" "GIT_WORK_TREE=$TMP/other sudo -E git commit -m x"
+  # sudo の後ろに書いた代入は、そのコマンドに渡る（導入していない other を指すので、何もしない）
+  silent "sudo GIT_DIR=$TMP/other/.git git commit -m x"
+}
+
 @test "sudo -D <dir> で移った先で、そのコマンドの git を判断する" {
   git worktree add -q -b feat/21-x "$TMP/wt"
   allowed "sudo -D $TMP/wt git commit -m x" "sudo -D ../wt git commit -m x" "sudo --chdir=$TMP/wt git commit -m x" \
@@ -981,6 +995,8 @@ EOF
   denied "main の上ではコミットしません" "GIT_DIR=$TMP/other/.git env -i git commit -m x" \
     "GIT_DIR=$TMP/other/.git env - git commit -m x" "GIT_DIR=$TMP/other/.git env -u GIT_DIR git commit -m x" \
     "GIT_DIR=$TMP/other/.git env --unset=GIT_DIR git commit -m x" "GIT_DIR=$TMP/other/.git env --ignore-env git commit -m x"
+  # exec -c も、環境変数をすべて消してから実行する
+  denied "main の上ではコミットしません" "GIT_DIR=$TMP/other/.git exec -c git commit -m x" "GIT_DIR=$TMP/other/.git exec -cl git commit -m x"
   # 消した後の代入と、ほかの変数を消すときは、GIT_DIR が効く
   silent "env -i GIT_DIR=$TMP/other/.git git commit -m x" "GIT_DIR=$TMP/other/.git env -u FOO git commit -m x"
 }
