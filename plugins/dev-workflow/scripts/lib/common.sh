@@ -512,10 +512,13 @@ dw_config_regex_test() {
 # labels.types が無いときは空の配列とみなす。type は正規表現の記号を含んでいても、文字どおりに照合する（branch_literal）。
 #   branch_error   設定（入力）を検査し、誤りがあれば設定の誤りと分かる1行のメッセージを、無ければ null を返す。
 #                  branch.pattern が無い・null なら、組み立てられないだけで誤りではないので null。文字列でない型、
-#                  文字列の配列でない labels.types、正規表現としての誤りを、それぞれの原因で報告する。ほかの jq の失敗は「検査できません」と理由を添える
+#                  文字列の配列でない labels.types、正規表現としての誤りを、それぞれの原因で報告する。
+#                  キーを読めない（上のキーがオブジェクトでない）ときは、読めないキーを名指しする（branch_read）
 #   branch_config  入力（設定の JSON の文字列。jq -R -s で読む）を {c: 設定} にする。JSON として読めなければ、
 #                  {e: メッセージ}。読めても branch_error が誤りを返せば {e: メッセージ}。jq の起動 1 回で、
 #                  JSON の読み取り・検査・解析までできるようにする
+#   branch_error_strict・branch_config_strict  ブランチ名を作るとき（branch-name.sh）の厳しい版。無い・null の
+#                  branch.pattern と labels.types も、ブランチ名を作れないので誤りにする（それ以外の規則は同じ）
 # jq の変数（$t など）を bash に展開させないため、シングルクォートで書く
 # shellcheck disable=SC2016
 DW_JQ_BRANCH_RE="$DW_JQ_REGEX_FAILURE"'def branch_literal: gsub("(?<c>[][\\\\^$.|?*+(){}])"; "\\\(.c)");
@@ -527,21 +530,29 @@ def branch_re: if (.branch.pattern | type) != "string" then null
     | gsub("\\{issue_number\\}"; "(?<issue>[0-9]+)")
     | gsub("\\{slug\\}"; "[a-z0-9]+(?:-[a-z0-9]+)*")
     | "^" + . + "$" end;
-def branch_error: try (
-    .branch.pattern as $p | (.labels.types // []) as $t
-    | if $p == null then null
-      elif ($p | type) != "string" then $p | branch_pattern_not_string
-      elif ($t | type) != "array" or any($t[]; type != "string") then $t | branch_types_not_strings
-      else branch_re as $re
-        | try ("" | test($re) | null)
-          catch (if regex_failure then
-              "branch.pattern（\($p | tojson)）が正規表現として正しくありません。設定を直してください"
-            else error end)
-      end)
-  catch "branch.pattern を検査できません（\(tostring | gsub("\n"; " "))）。設定を直してください";
-def branch_config: (try {c: fromjson}
+def branch_read($k): try {v: getpath($k | split("."))}
+  catch {e: "\($k) を読めません（\(tostring | gsub("\n"; " "))）。設定を直してください"};
+def branch_error_by($strict): try (
+    branch_read("branch.pattern") as $pr | branch_read("labels.types") as $tr
+    | if $pr.e then $pr.e elif $tr.e then $tr.e
+      else $pr.v as $p | ($tr.v // (if $strict then null else [] end)) as $t
+      | if $p == null and ($strict | not) then null
+        elif ($p | type) != "string" then $p | branch_pattern_not_string
+        elif ($t | type) != "array" or any($t[]; type != "string") then $t | branch_types_not_strings
+        else branch_re as $re
+          | try ("" | test($re) | null)
+            catch (if regex_failure then
+                "branch.pattern（\($p | tojson)）が正規表現として正しくありません。設定を直してください"
+              else error end)
+        end end)
+  catch "branch.pattern・labels.types の設定を検査できません（\(tostring | gsub("\n"; " "))）。設定を直してください";
+def branch_error: branch_error_by(false);
+def branch_error_strict: branch_error_by(true);
+def branch_config_by(check): (try {c: fromjson}
     catch {e: "設定を JSON として読めません（\(tostring | gsub("\n"; " "))）。設定を直してください"})
-  | if has("e") then . else (.c | branch_error) as $e | if $e then {e: $e} else . end end;'
+  | if has("e") then . else (.c | check) as $e | if $e then {e: $e} else . end end;
+def branch_config: branch_config_by(branch_error);
+def branch_config_strict: branch_config_by(branch_error_strict);'
 
 # 設定の branch.pattern を検査する（DW_JQ_BRANCH_RE の branch_error）。誤りがあれば、設定の誤りと分かる1行を出力して 1 を返す
 # （jq の test は正しくない正規表現で失敗し、ブランチ名が合わないのと区別できないため、先に確かめる）
@@ -550,7 +561,7 @@ def branch_config: (try {c: fromjson}
 dw_check_branch_pattern() {
   local msg
   msg="$(jq -R -s -r "$DW_JQ_BRANCH_RE"'branch_config | .e // empty' <<<"$1")" \
-    || msg="branch.pattern を検査できませんでした（jq が失敗しました）"
+    || msg="branch.pattern・labels.types の設定を検査できませんでした（jq が失敗しました）"
   [ -z "$msg" ] || { printf '%s\n' "$msg"; return 1; }
 }
 
@@ -569,7 +580,7 @@ dw_parse_branch() {
       else .c | branch_re as $re
         | (try ($b | capture($re)) catch null) // {}
         | "=\(.type // "")|\(.issue // "")" end' <<<"$1")" \
-    || dw_die "branch.pattern を検査できませんでした（jq が失敗しました）" 2
+    || dw_die "branch.pattern・labels.types の設定を検査できませんでした（jq が失敗しました）" 2
   case "$out" in
     '!'*) dw_die "${out#!}" 2 ;;
   esac

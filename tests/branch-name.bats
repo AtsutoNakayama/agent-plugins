@@ -353,11 +353,11 @@ assert_config_error() {
   done
 }
 
-@test "設定がオブジェクトでないなど、ほかの理由で検査できないときは、正規表現の誤りではなく、検査できない理由を報告する" {
-  for c in '[]' '{"branch":"x"}' '{"branch":{"pattern":"{type}"},"labels":"x"}'; do
+@test "設定のキーを読めない（上のキーがオブジェクトでない）ときは、読めないキーを名指しして報告する" {
+  for c in '[]' '{"branch":"x"}'; do
     run_common dw_check_branch_pattern "$c"
     assert_failure 1
-    assert_output --partial "branch.pattern を検査できません"
+    assert_output --partial "branch.pattern を読めません"
     refute_output --partial "正規表現として正しくありません"
     assert_equal "${#lines[@]}" 1
   done
@@ -369,6 +369,22 @@ assert_config_error() {
     assert_success
     assert_output "|"
   done
+  # labels がオブジェクトでなければ、branch.pattern ではなく labels.types を名指しする
+  run_common dw_check_branch_pattern '{"branch":{"pattern":"{type}"},"labels":"x"}'
+  assert_failure 1
+  assert_output --partial "labels.types を読めません"
+  refute_output --partial "branch.pattern"
+  assert_equal "${#lines[@]}" 1
+  run_common dw_parse_branch '{"branch":{"pattern":"{type}"},"labels":"x"}' feat/17-x
+  assert_failure 2
+  assert_output --partial "labels.types を読めません"
+  echo '{"labels": "x"}' >.claude/dev-workflow/config.json
+  run_script branch-name.sh --check feat/17-add-login
+  assert_failure 2
+  assert_output --partial "labels.types を読めません"
+  run_script branch-name.sh --issue 17 --type feat --slug x
+  assert_failure 2
+  assert_output --partial "labels.types を読めません"
 }
 
 # jq を、呼ばれるたびに $TMP/jq.log に1行を足してから本物の jq を実行するものに置き換える。
