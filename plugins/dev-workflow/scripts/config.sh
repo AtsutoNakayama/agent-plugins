@@ -99,7 +99,6 @@ for dir in "$user_dir" "$team_dir"; do
   done
 done
 
-# shellcheck disable=SC2016 # jq の変数（$dw_in）を bash に展開させない
 # shellcheck disable=SC2119 # 引数（フィルター）は省く
 sources_json="$(printf '%s\n' ${sources[@]+"${sources[@]}"} | dw_json_lines_nonempty)"
 

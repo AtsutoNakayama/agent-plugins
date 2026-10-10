@@ -624,18 +624,25 @@ SH
 
 # 1行が約 4096 バイトを超え、その区切りに絵文字がかかる入力を、標準入力の jq -R・-R -s で読むと、絵文字が壊れる（jq の不具合）。
 # 文を jq に渡すには、dw_json_str・dw_json_lines（--rawfile 経由）を使う
-@test "dw_json_str は、4096 バイトの区切りに絵文字がかかる文を、そのまま JSON の文字列にする" {
-  for pad in 4093 4094 4095 4096; do
+@test "dw_json_lines_nonempty は、空行を除いた行の配列にし、フィルターと jq の引数を受け取り、4096 バイトの区切りに絵文字がかかっても壊さない" {
+  # shellcheck disable=SC2016 # 引数は、起動した bash の中で展開させる
+  nonempty() { run "${TEST_BASH:-bash}" -c '. "$1"; shift; printf "$1" | { shift; dw_json_lines_nonempty "$@"; }' _ "$SCRIPTS/lib/common.sh" "$@"; }
+  nonempty 'a\n\nb\n'
+  assert_output '["a","b"]'
+  nonempty ''
+  assert_output '[]'
+  nonempty 'b\na\nb\n' 'unique'
+  assert_output '["a","b"]'
+  # shellcheck disable=SC2016 # jq の変数は bash に展開させない
+  nonempty 'a\n' '. + $e | map(select(. != "")) | unique' --argjson e '["z",""]'
+  assert_output '["a","z"]'
+  for pad in 4092 4093 4094; do
     text="$(head -c "$pad" /dev/zero | tr '\0' a)😀tail"
     # shellcheck disable=SC2016 # 引数は、起動した bash の中で展開させる
-    run "${TEST_BASH:-bash}" -c '. "$1"; printf "%s" "$2" | dw_json_str' _ "$SCRIPTS/lib/common.sh" "$text"
+    run "${TEST_BASH:-bash}" -c '. "$1"; printf "%s\n\n%s\n" "$2" "$2" | dw_json_lines_nonempty' _ "$SCRIPTS/lib/common.sh" "$text"
     assert_success
-    assert_equal "$(jq -r . <<<"$output")" "$text"
+    assert_equal "$(jq -c --arg t "$text" '. == [$t, $t]' <<<"$output")" true
   done
-  # shellcheck disable=SC2016 # 引数は、起動した bash の中で展開させる
-  run "${TEST_BASH:-bash}" -c '. "$1"; printf "" | dw_json_str' _ "$SCRIPTS/lib/common.sh"
-  assert_success
-  assert_output '""'
 }
 
 @test "dw_json_lines は、jq -R . | jq -sc . と同じ行の配列にする（最後の改行の後ろの空は数えず、空行は数える）" {
@@ -725,7 +732,7 @@ raw_jq_hits() {
   assert_equal "$(printf '%s\n' '# jq -R は使わない' '  # jq -Rs' 'jq -r .a' 'sort -R' 'jq .a | sort -R' 'jq --arg r "x" .a' 'ls -R | jq .' 'jq -r --arg x "$(foo -R)" .a' "jq -r '-R' .a" 'myjq -R .' 'jq -n --rawfile s /dev/stdin "$s"' | raw_jq_hits)" ""
 }
 
-@test "scripts/ と hooks/ に、標準入力の jq -R・-R -s（--raw-input）が残っていない（絵文字が壊れるため。dw_json_str・dw_jq_text を使う）" {
+@test "scripts/ と hooks/ に、標準入力の jq -R・-R -s（--raw-input）が残っていない（絵文字が壊れるため。dw_jq_text を使う）" {
   hits=""
   while IFS= read -r f; do
     h="$(raw_jq_hits <"$f")"
