@@ -23,7 +23,7 @@ push と PR の作成は GitHub に残るので、必ず手順5でユーザー�
 `config.sh` で次を読む。
 
 - `language`：本文を書く言語
-- `base_branch`：PR のマージ先
+- `base_branch`：新しく作る PR のマージ先（このブランチの PR が既にあれば、そのマージ先は手順2の `merge-target.sh` で決める）
 - `pr.template`：PR テンプレートのパス（リポジトリのルートから。`null` なら、プラグインの既定 `${CLAUDE_PLUGIN_ROOT}/templates/pull_request_template.md` の見出しを使う）
 - `guides.pr`：PR の書き方のガイド（あれば読んで従う。複数あれば後ろのものを優先する）
 
@@ -32,7 +32,7 @@ push と PR の作成は GitHub に残るので、必ず手順5でユーザー�
 ### 2. 変更を確かめる
 
 - `git status` で未コミットの変更が無いか見る。あれば commit スキルでコミットしてから進める（PR に入れない変更なら、ユーザーに確かめる）
-- `merge-target.sh` を実行して、PR のマージ先を決めて取得する。出力の `ref`（`origin/<マージ先>`）を、以下の `<ref>` に使う（マージ先を自分で組み立てない。このブランチの PR が既にあれば、そのマージ先で、設定の `base_branch` と違うことがある）
+- `merge-target.sh` を実行して、PR のマージ先を決めて取得する。出力の `ref`（`origin/<マージ先>`）を、以下の `<ref>` に使う（マージ先を自分で組み立てない。このブランチの PR が既にあれば、そのマージ先で、設定の `base_branch` と違うことがある）。出力の `fallback` が null でなければ（PR のマージ先をそのまま使えなかった）、標準エラーの警告をそのまま伝え、どのマージ先との差を読んだか（`ref`）を手順5の確認に書く。`pr-create.sh` は、この場合に push せずに止まる
 - `git log --oneline --no-show-signature <ref>..HEAD` と `git diff <ref>...HEAD` で、PR に入る変更を読む
 
 #### ADR を提案するかを決める

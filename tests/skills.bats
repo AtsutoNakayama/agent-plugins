@@ -327,6 +327,12 @@ has() {
   grep -qF '依頼に書かれたマージ先' "$SKILLS/../review/main-drift.md" || fail "main-drift が、依頼のマージ先を使っていません"
   grep -qF 'マージ先: <context の target>' "$SKILLS/review/SKILL.md" || fail "review が、観点の担当者にマージ先を渡していません"
   grep -qF '基点・マージ先・Issue の番号' "$AGENT" || fail "perspective-reviewer が、依頼のマージ先を受け取っていません"
+  # PR のマージ先をそのまま使えなかった（fallback）ことを伝える
+  for f in pr-create task-auto; do
+    grep -qF '`fallback` が null でなければ' "$SKILLS/$f/SKILL.md" || fail "$f が、merge-target.sh の fallback を伝えていません"
+  done
+  grep -qF '`context` の `fallback` が null でなければ' "$SKILLS/review/SKILL.md" || fail "review が、context.fallback を伝えていません"
+  grep -qF '新しく作る PR のマージ先' "$SKILLS/pr-create/SKILL.md" || fail "pr-create の設定の一覧で、base_branch が PR のマージ先のままです"
 }
 
 # shellcheck disable=SC2016 # バッククォートはスキルの本文の文字で、展開させない

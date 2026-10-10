@@ -146,7 +146,7 @@ Issue #<番号>: <タイトル>（type: <type>）
 報告を受けたら、うのみにせず、次を自分で確かめる。
 
 - `git -C <worktree> status` で、コミットしていない変更が無いこと
-- `<worktree>` の中で `merge-target.sh` を実行し、`git -C <worktree> log --oneline --no-show-signature <ref>..HEAD`（`<ref>` は出力の `ref`。前の作業のブランチを使い回して、その PR が設定の `base_branch` と違うブランチに向いていれば、そのマージ先）で、コミットがあること
+- `<worktree>` の中で `merge-target.sh` を実行し、`git -C <worktree> log --oneline --no-show-signature <ref>..HEAD`（`<ref>` は出力の `ref`。前の作業のブランチを使い回して、その PR が設定の `base_branch` と違うブランチに向いていれば、そのマージ先）で、コミットがあること。出力の `fallback` が null でなければ（PR のマージ先をそのまま使えなかった）、標準エラーの警告と、どのマージ先で確かめたかを「自動で決めたこと」に書く
 - 報告の `checks` のコマンドを、自分でもワークツリーで実行して、通ること
 
 報告ごとに、次のように進める。作業役に頼み直すときは、SendMessage で同じ作業役に送る（文脈を引き継ぐため）。
