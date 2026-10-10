@@ -7,7 +7,7 @@ load test_helper
 # 既定の状態：キューを使うリポジトリで、PR は CLEAN、手元も push 済みのブランチも最新で、キューには入っていない
 BASE='{"behind": 0, "up_to_date": true, "conflicts": false, "pushed_behind": 0, "pushed_conflicts": false,
   "pr": {"number": 5, "url": "u", "merge_state": "CLEAN",
-         "merge_queue": {"enabled": true, "state": null, "position": null, "removed": null}}}'
+         "merge_queue": {"enabled": true, "state": null, "position": null, "queued": false, "removed": null}}}'
 
 # キューを使わないリポジトリにする
 NQ='.pr.merge_queue.enabled = false'
@@ -83,11 +83,16 @@ check_plan() {
 }
 
 @test "キューの案内：キューでの状態に合わせて queue を出す" {
-  check_plan '.pr.merge_queue.state = "UNMERGEABLE" | .pr.merge_queue.position = 2' "none no_conflict conflict -"
+  check_plan '.pr.merge_queue.state = "UNMERGEABLE" | .pr.merge_queue.position = 2 | .pr.merge_queue.queued = true' "none no_conflict conflict -"
   local s
   for s in QUEUED AWAITING_CHECKS MERGEABLE LOCKED; do
-    check_plan ".pr.merge_queue.state = \"$s\" | .pr.merge_queue.position = 1" "none no_conflict queued -"
+    check_plan ".pr.merge_queue.state = \"$s\" | .pr.merge_queue.position = 1 | .pr.merge_queue.queued = true" "none no_conflict queued -"
   done
+  # 入れた直後でまだ state に出ていない・マージの直前（queued が true で state は null）も queued（#323）
+  check_plan '.pr.merge_queue.queued = true' "none no_conflict queued -"
+  # キューの状態を読めず、キューの中か分からない（queued が null）なら unknown（#323）
+  check_plan '.pr.merge_queue.queued = null' "none no_conflict unknown -"
+  check_plan "$BEHIND | .pr.merge_queue.queued = null" "none no_conflict unknown merge"
   check_plan '.pr.merge_queue.removed = {"reason": "merge_conflict", "at": "2026-10-04T16:36:30Z"}' "none no_conflict removed -"
   check_plan "$P | .pr.merge_queue.removed = {\"reason\": \"failed_checks\", \"at\": \"t\"}" "none merged_not_pushed removed push"
 }
