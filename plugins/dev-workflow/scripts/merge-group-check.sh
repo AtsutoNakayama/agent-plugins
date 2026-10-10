@@ -86,8 +86,9 @@ while [ $# -gt 0 ]; do
 done
 [ -n "$branch" ] || dw_die "--branch を指定してください" 64
 
+# shellcheck disable=SC2016 # jq の変数を bash に展開させない
 checks_json="$(printf '%s\n' ${checks[@]+"${checks[@]}"} \
-  | dw_json_str | jq -c --argjson e "$extra" 'split("\n") + $e | map(select(. != "")) | unique')"
+  | dw_json_lines_nonempty '. + $e | map(select(. != "")) | unique' --argjson e "$extra")"
 
 # 結果に、利用者に伝える文（messages）を添えて出力する。使い方: output <ワークフローの JSON> <チェックごとの結果の JSON>
 output() {

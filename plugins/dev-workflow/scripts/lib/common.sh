@@ -19,18 +19,19 @@ dw_warn() {
 
 # 標準入力の全体を、JSON の文字列にして出力する（jq の入力の `.` がその文字列になる）。
 # 長くなりうる文を `jq -R`・`jq -R -s` で読むと、1行が約 4096 バイトを超えるとき、その区切りにかかった BMP の外の文字（絵文字など）が壊れる
-# （jq の既知の不具合）。--rawfile なら壊れないので、文を jq に渡すときは、`jq -R` を使わずに、これを通す。
-# 標準入力は一時ファイルではなくプロセス置換（<(cat)）で渡すので、割り込みで残るファイルが無い
-# 使い方: text="$(printf '%s' "$x" | dw_json_str | jq -r 'ascii_downcase')"
+# （jq の既知の不具合）。--rawfile なら壊れないので、文を jq に渡すときは、`jq -R` を使わずに、dw_jq_text か、これを通す。
+# 標準入力は /dev/stdin を jq に直接読ませる（一時ファイルもプロセス置換も使わないので、読めなかったときは jq が失敗する）。
+# jq のプログラムは引数で渡す（標準入力から読む形ではない）
+# 使い方: text="$(printf '%s' "$x" | dw_json_str)"
 dw_json_str() {
-  jq -n --rawfile s <(cat) '$s'
+  jq -n --rawfile s /dev/stdin '$s'
 }
 
 # 標準入力の全体を、jq の変数 $dw_in（文字列）にして、jq を1回だけ起動する（jq -n --rawfile dw_in に引数を足す）。
-# 入力の文字列を、`.` ではなく `$dw_in` で読む以外は、dw_json_str と同じ（壊れない）。jq の起動の回数を増やしたくないときに使う
+# 入力の文字列を、`.` ではなく `$dw_in` で読む。標準入力の文を jq で処理するときは、これを使う（dw_json_str を通すと jq が2回になる）
 # 使い方: dw_jq_text -r --arg b "$x" '$dw_in | split("\n") | .[0]' <<<"$text"
 dw_jq_text() {
-  jq -n --rawfile dw_in <(cat) "$@"
+  jq -n --rawfile dw_in /dev/stdin "$@"
 }
 
 # 標準入力の各行を、JSON の文字列の配列にして1行で出力する（`jq -R . | jq -sc .` と同じ。空行も1つと数える。
@@ -39,6 +40,17 @@ dw_jq_text() {
 dw_json_lines() {
   # shellcheck disable=SC2016 # jq の変数（$dw_in）を bash に展開させない
   dw_jq_text -c '$dw_in | split("\n") | if .[-1] == "" then .[:-1] else . end'
+}
+
+# 標準入力の各行から、空行を除いた JSON の配列を1行で出力する。第1引数の jq のフィルター（配列を受け取る。既定は .）を通した結果を出す。
+# 第2引数以降は jq の引数（--argjson など）。行を読んで空行を除く処理は、ここにそろえる（各所に split("\n") を書かない）
+# 使い方: arr="$(git ... | dw_json_lines_nonempty)"
+#         arr="$(printf '%s\n' "$a" | dw_json_lines_nonempty '. + $e | unique' --argjson e "$extra")"
+dw_json_lines_nonempty() {
+  local filter="${1:-.}"
+  [ $# -eq 0 ] || shift
+  # shellcheck disable=SC2016 # jq の変数（$dw_in）を bash に展開させない
+  dw_jq_text -c "$@" '$dw_in | split("\n") | map(select(. != "")) | '"$filter"
 }
 
 # 必要なコマンドが無ければ終了する。

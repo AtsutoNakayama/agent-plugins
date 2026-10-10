@@ -308,3 +308,10 @@ branch_off_main() {
   assert_equal "$(jq -r '.commands[0]' <<<"$output")" "$cmd"
   assert_equal "$(jq -r '.checks.commands[0]' "$TEAM")" "$cmd"
 }
+
+# 手がかりの lines()（Makefile のターゲット・CI のワークフロー・言語の設定ファイルの名前）には、4096 バイトを超える1行は届かない。
+# ターゲットは英数字と _.- だけ、ほかはファイル名で、1つの名前は 255 バイトまでなので、壊れる条件（1行が約 4096 バイトを超え、
+# 行の先頭から 4092〜4094 バイト目に絵文字が始まる）に入らない。長い1行が届くのは --command（上の絵文字のテスト）だけ。
+# 直した他の箇所も、呼び出し元を追って確かめた：長い1行が届くものには、それぞれ絵文字のテストがある
+# （pr-create・issue-create の本文、cleanup・branch-status のコミットの件名、setup-repo・merge-group-check のチェック名、
+# setup-models のモデル名、review-perspectives の paths、dw_parse_branch の設定）。config.sh の sources はパス（PATH_MAX 未満）のみで届かない

@@ -194,7 +194,8 @@ if [ "$commands" = null ]; then
       || dw_die "package.json を JSON として読めません" 2
   fi
   # shellcheck disable=SC2016 # jq の変数（$dw_in）を bash に展開させない
-  lines() { printf '%s' "$1" | dw_jq_text -c '$dw_in | split("\n") | map(select(. != ""))'; }
+  # shellcheck disable=SC2119 # 引数（フィルター）は省く
+  lines() { printf '%s' "$1" | dw_json_lines_nonempty; }
   hints="$(jq -nc --arg c "$contributing" --argjson s "$scripts" --argjson t "$(lines "$targets")" \
     --argjson w "$(lines "$ci")" --argjson p "$(lines "$proj")" \
     '{contributing: (if $c == "" then null else $c end), package_scripts: $s, makefile_targets: $t, ci_workflows: $w, project_files: $p}')"

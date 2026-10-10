@@ -100,7 +100,8 @@ for dir in "$user_dir" "$team_dir"; do
 done
 
 # shellcheck disable=SC2016 # jq の変数（$dw_in）を bash に展開させない
-sources_json="$(printf '%s\n' ${sources[@]+"${sources[@]}"} | dw_jq_text -c '$dw_in | split("\n") | map(select(. != ""))')"
+# shellcheck disable=SC2119 # 引数（フィルター）は省く
+sources_json="$(printf '%s\n' ${sources[@]+"${sources[@]}"} | dw_json_lines_nonempty)"
 
 printf '%s\n' "${layers[@]}" \
   | jq -s --argjson guides "$guides" --argjson sources "$sources_json" --argjson set_up "$set_up" \

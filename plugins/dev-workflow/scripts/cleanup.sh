@@ -91,8 +91,8 @@ worktree_of() { dw_worktree_of "$main_root" "$1"; }
 # 一覧は長くなりうる（数千件のコミットなど）ので、jq には引数ではなく標準入力で渡す
 lost='{"commits": [], "uncommitted": [], "ignored": [], "submodules": []}'
 lose() {
-  lost="$({ printf '%s\n' "$lost"; printf '%s' "$2" | dw_json_str; } \
-    | jq -s -c --arg k "$1" '.[1] as $v | .[0] | .[$k] += ($v | split("\n") | map(select(. != "")))')"
+  # shellcheck disable=SC2016 # jq の変数を bash に展開させない
+  lost="$(printf '%s\n%s' "$lost" "$2" | dw_jq_text -c --arg k "$1" '($dw_in | split("\n")) as $a | ($a[0] | fromjson) | .[$k] += ($a[1:] | map(select(. != "")))')"
 }
 
 has_branch=false

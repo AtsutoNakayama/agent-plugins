@@ -658,15 +658,54 @@ SH
   assert_equal "$(jq -c --arg t "$text" '. == [$t, $t]' <<<"$output")" true
 }
 
-# 標準入力のスクリプトから、jq に -R（-Rs・-sR・--raw-input など。ほかの引数を挟んでもよい）を渡している行を出す。
-# 行末の \ で続く行は1行につなぎ、コメントの行（# で始まる行）は除く。パイプ・; ・& ・括弧の手前までを1つのコマンドとみなす
+# 標準入力のスクリプトから、jq に -R（-Rs・-sR・--raw-input など）を渡している行を出す。
+# 行末の \ で続く行は1行につなぎ、コメントの行（# で始まる行）は除く。jq の語ごとに、後ろの引数を1文字ずつ読み、
+# 引用符の中の文字列と $(...) の中は「x」に置き換えて（引数の中身に惑わされない）、引用符の外の | ; & ) < > まで（コマンドの終わり）を、
+# フラグを探す対象にする。引数に $(...) や引用符を挟んでも拾う。$(...) の中の jq は、その中で別に探す
 raw_jq_hits() {
-  awk '{ if (sub(/\\$/, "")) { buf = buf $0; next } print buf $0; buf = "" }' \
-    | grep -vE '^[[:space:]]*#' \
-    | grep -E '(^|[^[:alnum:]_.-])jq( +[^|;&)<>]*)? +(-[A-Za-z]*R[A-Za-z]*|--raw-input)( |$)' || true
+  awk '
+    function flag(rest,   i, c, q, depth, flat, n, d) {
+      flat = ""; q = ""; depth = 0
+      n = length(rest)
+      for (i = 1; i <= n; i++) {
+        c = substr(rest, i, 1)
+        if (depth > 0) {
+          if (c == "(") depth++
+          else if (c == ")") depth--
+          continue
+        }
+        if (q == "\047") { if (c == "\047") q = ""; continue }
+        if (q == "\"") {
+          if (c == "\\") { i++; continue }
+          if (c == "\"") { q = ""; continue }
+          if (c == "$" && substr(rest, i + 1, 1) == "(") { depth = 1; i++; continue }
+          continue
+        }
+        if (c == "\047" || c == "\"") { q = c; flat = flat "x"; continue }
+        if (c == "$" && substr(rest, i + 1, 1) == "(") { depth = 1; i++; flat = flat "x"; continue }
+        if (c ~ /[|;&)<>]/) break
+        flat = flat c
+      }
+      return (flat ~ /(^| )-[A-Za-z]*R[A-Za-z]*( |$)/ || flat ~ /(^| )--raw-input( |$)/)
+    }
+    function scan(line,   pos, rest, prev, found) {
+      found = 0
+      rest = line
+      pos = 0
+      while (match(rest, /jq( |$)/)) {
+        prev = (RSTART + pos > 1) ? substr(line, RSTART + pos - 1, 1) : " "
+        if (prev !~ /[A-Za-z0-9_.\/-]/ && flag(substr(rest, RSTART + 2))) found = 1
+        pos += RSTART + 1
+        rest = substr(rest, RSTART + 2)
+      }
+      return found
+    }
+    { if (sub(/\\$/, "")) { buf = buf $0; next } line = buf $0; buf = "" }
+    line !~ /^[[:space:]]*#/ && scan(line) { print line }
+  '
 }
 
-@test "raw_jq_hits は、jq -R の書き方（ほかの引数を挟む・継続行にある）を拾い、コメントや jq でないコマンドは拾わない" {
+@test "raw_jq_hits は、jq -R の書き方（引数を挟む・\$(...) や引用符を挟む・継続行にある）を拾い、コメントや jq でないコマンドは拾わない" {
   hit() { assert_equal "$(printf '%s\n' "$1" | raw_jq_hits)" "$1"; }
   hit "x=\$(printf a | jq -R -s .)"
   hit "jq -Rs ."
@@ -675,9 +714,15 @@ raw_jq_hits() {
   hit "jq -r --arg x \"\$y\" -R '.'"
   hit "jq --arg a b -Rs '.'"
   hit "jq -c --argjson e \"\$extra\" -R -s 'split(1)'"
+  hit "jq --arg x \"\$(foo)\" -Rs ."
+  hit "jq --argjson c \"\$(jq -c .a <<<\"\$x\")\" -R ."
+  hit "out=\"\$(foo | jq -r --arg b '|;)' -R .)\""
+  hit "jq -r --arg x \$(foo) -Rs . <<<\"\$y\""
+  hit "echo \"\$(jq -Rs . <f)\" && jq . g"
   assert_equal "$(printf '%s\n' $'jq -r \\' $'  -R "$p"' | raw_jq_hits)" $'jq -r   -R "$p"'
   assert_equal "$(printf '%s\n' $'jq -r --arg a b \\' $'  --arg c d \\' $'  -Rs "$p"' | raw_jq_hits | grep -c -- -Rs)" 1
-  assert_equal "$(printf '%s\n' '# jq -R は使わない' '  # jq -Rs' 'jq -r .a' 'sort -R' 'jq .a | sort -R' 'jq --arg r "x" .a' 'ls -R | jq .' | raw_jq_hits)" ""
+  # shellcheck disable=SC2016 # 引数は、検査する行の文字列で、展開しない
+  assert_equal "$(printf '%s\n' '# jq -R は使わない' '  # jq -Rs' 'jq -r .a' 'sort -R' 'jq .a | sort -R' 'jq --arg r "x" .a' 'ls -R | jq .' 'jq -r --arg x "$(foo -R)" .a' "jq -r '-R' .a" 'myjq -R .' 'jq -n --rawfile s /dev/stdin "$s"' | raw_jq_hits)" ""
 }
 
 @test "scripts/ と hooks/ に、標準入力の jq -R・-R -s（--raw-input）が残っていない（絵文字が壊れるため。dw_json_str・dw_jq_text を使う）" {
