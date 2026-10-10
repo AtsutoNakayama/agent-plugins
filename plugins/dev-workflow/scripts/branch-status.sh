@@ -38,15 +38,19 @@
 #                         キューが有効か、state・position は PR がキューに並んでいるときの状態（QUEUED・AWAITING_CHECKS・
 #                         MERGEABLE・UNMERGEABLE・LOCKED）と順番（1 が先頭）で、並んでいなければ null。
 #                         キューに並んだ PR は、merge_state が CLEAN でも、先に並んだ PR と衝突すると state が UNMERGEABLE になり、
-#                         すぐにキューから外れる。queued はキューの中か（並んでいる、入れた直後でまだ state に出ていない、
-#                         または merged の理由で外れた直後（マージの直前）なら true）。removed は、PR がキューから外れたままの
+#                         すぐにキューから外れる。queued はキューの中か（並んでいる、入れた直後（入れたイベントから10分まで。
+#                         common.sh の DW_QUEUE_ADDED_GRACE_MINUTES）でまだ state に出ていない、
+#                         または merged の理由で外れた直後（マージの直前）なら true。入れてから10分を過ぎても state に出て
+#                         いなければ、warn を出して false）。removed は、PR がキューから外れたままの
 #                         ときの、外れた理由と時刻と、push したかを確かめられなかったか（{reason, at, push_unknown}。
 #                         reason は GitHub の値で、衝突なら merge_conflict）。
 #                         外れた後にキューへ入れ直していれば null。キューに入れた後に PR のブランチへ push していれば（直して、
 #                         まだ入れ直していない）、removed は null。push は、リポジトリの activity の push・force_push の時刻で
 #                         見る。push を読めなければ、warn を出して外れたままとみなす（push_unknown が true）。
 #                         enabled が false なら、queued は false・removed は null で、push は読まない。判定は pr-merge-status.sh と共通
-#                         （common.sh の dw_merge_queue_state）。キューの状態を取得できなければ merge_queue は null になる
+#                         （common.sh の dw_merge_queue_state）。キューの状態を取得できなければ、warn で理由を出し、ブランチの
+#                         ルール（REST）でキューを使うかを確かめる。使うなら enabled が true で queued が null（キューの中かは
+#                         分からない）、使わないなら enabled が false。ルールも読めなければ merge_queue は null になる
 #   push_commits          push で origin に入るコミット（どれも {sha, subject} の配列。新しい順）
 #                           to       数える基準。origin にブランチがあれば origin/<ブランチ>、無ければ（初回の push）origin/<base>。
 #                                    どの組も、この基準に無いコミットだけを数える（origin に既にあるコミットは数えない）
@@ -80,6 +84,7 @@ while [ $# -gt 0 ]; do
   esac
 done
 
+dw_check_queue_now
 repo_root="$(dw_repo_root)" || dw_die "リポジトリの中で実行してください" 64
 config="$("$BASH" "$DW_SCRIPTS_DIR/config.sh")"
 base="$(dw_base_branch "$config")"
@@ -194,17 +199,27 @@ if command -v gh >/dev/null 2>&1 \
 fi
 
 # マージキューの状態は gh pr list にも REST にも無いので GraphQL で読む（設計書 §10）。読み方と、並んでいる・外れたままの
-# 判定は pr-merge-status.sh と共通（common.sh の dw_merge_queue_state。ADR 000323）。取得できなければ merge_queue は null にする。
+# 判定は pr-merge-status.sh と共通（common.sh の dw_merge_queue_state。ADR 000323）。取得できないときの扱いは下のとおり。
 # 外れた後（キューに入れた後）に PR のブランチへ push していれば、外れたままとはしない（removed は null）。push を読めなければ、
 # warn を出して外れたままとみなす（キューの状態は捨てない。捨てると branch-plan.sh がキューを使わないリポジトリとして扱い、
 # 遅れていれば取り込んでしまうため）。fork の PR は上で除いているので、push を読むのはこのリポジトリのブランチだけになる
 if [ "$pr" != null ]; then
   queue=null
-  # 標準エラーは分けて受け、成功したときだけ（warn を）出す。失敗したときの理由は出さない（取得できなければ null にする）
+  # 標準エラーは分けて受け、成功したときは（warn を）そのまま出す
   qerr="$(mktemp)"
   if ms="$(dw_merge_queue_state "$(jq -r .url <<<"$pr")" "$branch" false 2>"$qerr")"; then
     queue="$(jq -c 'del(.before_commit)' <<<"$ms")"
     cat "$qerr" >&2
+  else
+    # 読めなければ、理由を warn で出し、ブランチのルール（REST）でキューを使うかを確かめる。使うと分かれば、enabled を
+    # true にして、キューの中かは分からない（queued が null）とする（merge_queue を null にすると、branch-plan.sh が
+    # キューを使わないリポジトリとみなし、遅れていれば main を取り込んでしまう。ADR 000210）。使わないと分かれば enabled を
+    # false にする。ルールも読めなければ、これまでどおり null にする
+    dw_warn "マージキューの状態を読めません: $(tail -n 1 "$qerr")"
+    if rules="$(dw_merge_queue_enabled '{owner}/{repo}' "$base")" && { [ "$rules" = true ] || [ "$rules" = false ]; }; then
+      queue="$(jq -nc --argjson e "$rules" '{enabled: $e, state: null, position: null,
+        queued: (if $e then null else false end), removed: null}')"
+    fi
   fi
   rm -f "$qerr"
   pr="$(jq -c --argjson q "$queue" '. + {merge_queue: $q}' <<<"$pr")"

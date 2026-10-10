@@ -10,6 +10,8 @@ setup_branch() {
   setup_fake_gh
   # キューに入れた直後かの判定に使う今の時刻（2026-10-04T16:05:00Z。ADDED の5分後）
   export DW_QUEUE_NOW=1791129900
+  # キューの状態の既定の答え：キューを使わないリポジトリ（テストごとに上書きする）
+  echo '{"data": {"resource": {"isMergeQueueEnabled": false, "mergeQueueEntry": null}}}' >"$FIX/PrQueue.json"
   git add .claude/dev-workflow/config.json
   git commit -q -m config
   git init -q --bare -b main "$TMP/origin.git"
@@ -211,12 +213,31 @@ run_status() {
   assert_equal "$(jq -c .pr.merge_queue <<<"$output")" '{"enabled":false,"state":null,"position":null,"queued":false,"removed":null}'
 }
 
-@test "マージキューの状態を取得できなくても、PR は出す（merge_queue は null）" {
+@test "マージキューの状態を取得できなくても、PR は出す（ルールでキューを使わないと分かれば enabled は false）" {
   setup_branch
   echo '[{"number": 5, "url": "https://github.com/me/demo/pull/5", "mergeStateStatus": "DIRTY", "isCrossRepository": false}]' >"$FIX/pr-list.json"
-  FAKE_FAIL=PrQueue run_status
-  assert_success
-  assert_equal "$(jq -c '.pr | [.number, .merge_state, .merge_queue]' <<<"$output")" '[5,"DIRTY",null]'
+  out="$(FAKE_FAIL=PrQueue "${TEST_BASH:-bash}" "$SCRIPTS/branch-status.sh" 2>/dev/null)"
+  assert_equal "$(jq -c '.pr | [.number, .merge_state, .merge_queue]' <<<"$out")" \
+    '[5,"DIRTY",{"enabled":false,"state":null,"position":null,"queued":false,"removed":null}]'
+}
+
+@test "マージキューの状態を読めないときは、理由を warn で出し、ルールでキューを使うと分かれば enabled を残して取り込みを勧めない（#323）" {
+  setup_branch
+  echo '[{"number": 5, "url": "https://github.com/me/demo/pull/5", "mergeStateStatus": "CLEAN", "isCrossRepository": false}]' >"$FIX/pr-list.json"
+  echo '[{"type": "merge_queue"}]' >"$FIX/rules.json"
+  advance_main 1
+  out="$(FAKE_FAIL=PrQueue FAKE_FAIL_MSG='gh: HTTP 502' "${TEST_BASH:-bash}" "$SCRIPTS/branch-status.sh" 2>"$TMP/err")"
+  assert_equal "$(jq -c .pr.merge_queue <<<"$out")" '{"enabled":true,"state":null,"position":null,"queued":null,"removed":null}'
+  # キューを使うリポジトリなので、遅れていても衝突しなければ取り込まない（ADR 000210）。キューの中かは分からない
+  assert_equal "$(jq -c '[.plan.action, .plan.queue]' <<<"$out")" '["none","unknown"]'
+  assert_equal "$(cat "$TMP/err")" 'warn: マージキューの状態を読めません: gh: HTTP 502'
+}
+
+@test "DW_QUEUE_NOW が数字でなければ、1行のエラーで止まる（終了コード 64）" {
+  setup_branch
+  DW_QUEUE_NOW=abc run_status
+  assert_failure 64
+  assert_output --partial 'error: DW_QUEUE_NOW は UNIX 秒（0 以上の整数）にしてください: abc'
 }
 
 @test "PR が無ければ、マージキューの状態は問い合わせない" {
@@ -332,9 +353,11 @@ activity_fixture() {
   setup_branch
   queue_removed_fixture "$ADDED"
   # 2026-10-04T16:10:00Z（ADDED のちょうど10分後）
-  DW_QUEUE_NOW=1791130200 run_status
-  assert_equal "$(jq -c '.pr.merge_queue | [.queued, .removed]' <<<"$output")" '[false,null]'
-  assert_equal "$(jq -r .plan.queue <<<"$output")" not_queued
+  out="$(DW_QUEUE_NOW=1791130200 "${TEST_BASH:-bash}" "$SCRIPTS/branch-status.sh" 2>"$TMP/err")"
+  assert_equal "$(jq -c '.pr.merge_queue | [.queued, .removed]' <<<"$out")" '[false,null]'
+  assert_equal "$(jq -r .plan.queue <<<"$out")" not_queued
+  # 並びに出ないまま10分を過ぎたことを warn で伝える（外れた理由は分からない）
+  grep -q '^warn: マージキューに入れたイベントの後、10 分を過ぎても並びに出ていないので' "$TMP/err" || fail "warn がありません: $(cat "$TMP/err")"
 }
 
 @test "キューが無効（enabled が false）なら、外れたイベントが残っていても push は読まず、queued・removed も出さない" {

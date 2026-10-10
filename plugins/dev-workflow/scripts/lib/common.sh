@@ -523,6 +523,38 @@ dw_gql() {
     | gh api graphql --input -
 }
 
+# gh の標準エラーのうち、gh のお知らせ（新しい版がある、など。成功しても失敗しても出ることがある）の行を除き、
+# 空でない最後の行を出力する。gh の失敗の理由を1行にするのに使う（dw_gh_run）。
+# 使い方: dw_gh_error_line <標準エラーを受けたファイル>
+dw_gh_error_line() {
+  grep -v -E '^(A new release of gh is available|To upgrade, run:|https://github\.com/cli/cli/releases)' "$1" 2>/dev/null \
+    | grep -v -E '^[[:space:]]*$' | tail -n 1 || true
+}
+
+# gh を実行し、標準出力と標準エラーを分けて受ける。成功すれば標準出力をそのまま出す（gh が標準エラーに出すお知らせは、
+# JSON と混ぜないよう捨てる）。失敗すれば、理由を1行にして標準エラーに出し、gh の終了コードを返す。理由は、標準出力の
+# GraphQL の errors[].message を優先し（gh api graphql は失敗しても応答の本文を標準出力に出す）、無ければ標準エラーの
+# お知らせ以外の最後の行（dw_gh_error_line）。標準入力は gh にそのまま渡す（gh api graphql --input - など）。
+# マージキューの状態を読む処理（dw_merge_queue_state・dw_pushed_since・pr-merge-status.sh）で使う。
+# 使い方: out="$(dw_gh_run <gh の引数>...)" || ...
+dw_gh_run() {
+  local out err rc=0 reason
+  err="$(mktemp)"
+  out="$(gh "$@" 2>"$err")" || rc=$?
+  if [ "$rc" -eq 0 ]; then
+    rm -f "$err"
+    printf '%s\n' "$out"
+    return 0
+  fi
+  reason="$(jq -r '[.errors[]?.message // empty] | join("; ")' <<<"$out" 2>/dev/null || true)"
+  [ -n "$reason" ] || reason="$(dw_gh_error_line "$err")"
+  rm -f "$err"
+  [ -n "$reason" ] || reason="gh が失敗しました（終了コード ${rc}）"
+  printf '%s\n' "$reason" | tr '\n' ' ' | sed 's/ *$//' >&2
+  printf '\n' >&2
+  return "$rc"
+}
+
 # gh のコマンド（関数でもよい）を実行して出力する。対象が無い（GraphQL の NOT_FOUND、REST の 404・410）ときは
 # 失敗にせず null を出力する。呼ぶ側は「見つからない」を null で判断でき、
 # スコープ不足・認証・通信など他の失敗は理由を伝えて止まる。
@@ -707,21 +739,15 @@ dw_merge_queue_enabled() {
 # 外れたままか（キューに入れた後に push して、まだ入れ直していないか）を見分けるのに使う（dw_merge_queue_state。ADR 000323）。
 # GitHub には PR のコミットを push した時刻が無く（Commit.pushedDate は廃止。コミットの時刻は手元でコミットした時刻）、
 # リポジトリの activity（REST）がブランチへの push の時刻を返すので、それで見る。新しい順に返るので、最初のページだけ見ればよい。
-# gh の標準エラーは、JSON と混ざらないよう分けて受ける（成功しても gh がお知らせを出すことがある）。
-# 読めなければ、理由を標準エラーに出して非0を返す（どう扱うかは呼び出し側で決める）。
+# gh は dw_gh_run で呼ぶ（標準エラーを分けて受け、失敗の理由を1行にする）。
+# 読めなければ、理由を1行で標準エラーに出して非0を返す（どう扱うかは呼び出し側で決める）。
 # 使い方: dw_pushed_since <PR の URL> <PR のブランチ> <時刻（ISO 8601）>
 dw_pushed_since() {
-  local repo out err
+  local repo out
   repo="$(jq -rn --arg u "$1" '$u | capture("^https?://[^/]+/(?<r>[^/]+/[^/]+)/pull/").r // empty' 2>/dev/null || true)"
   [ -n "$repo" ] || { echo "PR の URL からリポジトリが分かりません: $1" >&2; return 1; }
-  err="$(mktemp)"
-  if ! out="$(gh api "repos/$repo/activity?ref=$(jq -rn --arg r "refs/heads/$2" '$r | @uri')&per_page=100" 2>"$err")"; then
-    cat "$err" >&2
-    rm -f "$err"
-    return 1
-  fi
-  rm -f "$err"
-  jq -e 'type == "array"' >/dev/null 2>&1 <<<"$out" || { printf '%s\n' "$out" >&2; return 1; }
+  out="$(dw_gh_run api "repos/$repo/activity?ref=$(jq -rn --arg r "refs/heads/$2" '$r | @uri')&per_page=100")" || return 1
+  jq -e 'type == "array"' >/dev/null 2>&1 <<<"$out" || { echo "activity の応答を読めません: ${out:0:200}" | tr '\n' ' ' >&2; printf '\n' >&2; return 1; }
   jq --arg t "$3" 'any(.[]; (.activity_type == "push" or .activity_type == "force_push") and ((.timestamp // "") > $t))' <<<"$out"
 }
 
@@ -729,6 +755,28 @@ dw_pushed_since() {
 # mergeQueueEntry が出るまでに少し時間がかかるので、その間はキューの中とみなす。この時間を過ぎても出ないのは、
 # 外れたイベントの欠けなど、キューの中ではない状態なので、並んでいないとみなす（いつまでも待ち続けないため）
 DW_QUEUE_ADDED_GRACE_MINUTES=10
+
+# ファイルに受けた warn（「warn: 」で始まる行。dw_warn）のうち、まだ出していない種類のものだけを標準エラーに出す。
+# 種類は「warn: 」の後の、最初の「: 」より前の文で見分ける（後ろの gh のエラーの文などは、呼ぶたびに変わりうるため）。
+# 出した種類は <覚えるファイル> に足す。同じ確かめ方を繰り返す処理（pr-merge-status.sh の --wait）で、同じ warn を1回だけにする
+# 使い方: dw_warn_once <warn を受けたファイル> <出した種類を覚えるファイル>
+dw_warn_once() {
+  local line body key
+  while IFS= read -r line; do
+    case "$line" in warn:\ *) ;; *) continue ;; esac
+    body="${line#warn: }"
+    key="${body%%: *}"
+    grep -qxF -- "$key" "$2" 2>/dev/null && continue
+    printf '%s\n' "$line" >&2
+    printf '%s\n' "$key" >>"$2"
+  done <"$1"
+}
+
+# 環境変数 DW_QUEUE_NOW（テスト用の今の時刻。UNIX 秒）が数字かを確かめる。数字でなければ、1行のエラーで止まる（終了コード 64）。
+# dw_merge_queue_state を使うスクリプトが、始めに呼ぶ
+dw_check_queue_now() {
+  [ -z "${DW_QUEUE_NOW:-}" ] || [[ "$DW_QUEUE_NOW" =~ ^[0-9]+$ ]] || dw_die "DW_QUEUE_NOW は UNIX 秒（0 以上の整数）にしてください: $DW_QUEUE_NOW" 64
+}
 
 # PR のマージキューの状態を読んで、判定した結果を JSON で出力する（pr-merge-status.sh・branch-status.sh が共通に使う。ADR 000323）。
 # キューが有効か（isMergeQueueEnabled）、キューに並んでいるか（mergeQueueEntry）とキューの出入りのイベント（タイムラインの
@@ -752,16 +800,21 @@ DW_QUEUE_ADDED_GRACE_MINUTES=10
 #                  確かめられなければ、外れたままとみなす（キューの状態は捨てない）
 #   before_commit  removed のときの、外れたイベントのコミット（キューの一時的なブランチのコミット。そのキューの CI の実行の
 #                  headSha）。CI を動かす前に外れた（衝突など）ときや、removed でなければ null
-# gh の標準エラーは、JSON と混ざらないよう分けて受ける（成功しても gh がお知らせを出すことがある）。
-# 読めなければ、理由を標準エラーに出して非0を返す（どう扱うかは呼び出し側で決める）。warn も標準エラーに出るので、
-# 呼び出し側は、成功したときの標準エラーをそのまま出し、失敗したときの標準エラーを理由として使う。
-# テストのため、環境変数 DW_QUEUE_NOW（UNIX 秒）で今の時刻を差し替えられる（pr-watch.sh の PR_WATCH_NOW と同じ形）
+# gh は dw_gh_run で呼ぶ（標準エラーを分けて受け、失敗の理由を1行にする）。読めなければ、理由を1行で標準エラーに出して
+# 非0を返す（どう扱うかは呼び出し側で決める）。warn（dw_warn。「warn: <種類の文>: <変わる値>」の形）も標準エラーに出るので、
+# 呼び出し側は、成功したときの標準エラーを warn として出し、失敗したときの標準エラーの最後の行を理由として使う。
+# 入れたイベントの後、DW_QUEUE_ADDED_GRACE_MINUTES 分を過ぎても並びに出ていなければ、キューに入っていないとみなし、warn を出す。
+# テストのため、環境変数 DW_QUEUE_NOW（UNIX 秒）で今の時刻を差し替えられる（pr-watch.sh の PR_WATCH_NOW と同じ形。
+# 数字でなければ、理由を出して終了コード 64 を返す。スクリプトは始めに dw_check_queue_now で確かめる）
 # 使い方: dw_merge_queue_state <PR の URL> <PR のブランチ> <フォークか（true・false）>
 dw_merge_queue_state() {
   local res q pushed err
-  err="$(mktemp)"
+  if [ -n "${DW_QUEUE_NOW:-}" ] && ! [[ "$DW_QUEUE_NOW" =~ ^[0-9]+$ ]]; then
+    echo "DW_QUEUE_NOW は UNIX 秒（0 以上の整数）にしてください: $DW_QUEUE_NOW" >&2
+    return 64
+  fi
   # shellcheck disable=SC2016 # GraphQL の変数（$url）を bash に展開させないため、シングルクォートで書く
-  if ! res="$(dw_gql 'query PrQueue($url: URI!) {
+  res="$(jq -n --arg u "$1" '{query: "query PrQueue($url: URI!) {
       resource(url: $url) {
         ... on PullRequest {
           isMergeQueueEnabled
@@ -775,19 +828,15 @@ dw_merge_queue_state() {
           }
         }
       }
-    }' "$(jq -nc --arg u "$1" '{url: $u}')" 2>"$err")"; then
-    cat "$err" >&2
-    rm -f "$err"
-    return 1
-  fi
-  rm -f "$err"
+    }", variables: {url: $u}}' | dw_gh_run api graphql --input -)" || return 1
   q="$(jq -c --argjson now "${DW_QUEUE_NOW:-$(date -u +%s)}" --argjson grace "$DW_QUEUE_ADDED_GRACE_MINUTES" '
     .data.resource | select(type == "object" and has("mergeQueueEntry"))
     | (.isMergeQueueEnabled == true) as $enabled
     | (.timelineItems.nodes // []) as $n | ($n | last) as $ev
     | ([$n[] | select(.__typename == "AddedToMergeQueueEvent")] | last) as $added
     | ($ev.__typename == "RemovedFromMergeQueueEvent") as $was_removed
-    | ($ev.__typename == "AddedToMergeQueueEvent"
+    | ($ev.__typename == "AddedToMergeQueueEvent" and .mergeQueueEntry == null) as $added_no_entry
+    | ($added_no_entry
        and (($now - (($ev.createdAt // "1970-01-01T00:00:00Z") | fromdateiso8601)) < ($grace * 60))) as $just_added
     | ($enabled and (.mergeQueueEntry != null or $just_added or ($was_removed and $ev.reason == "merged"))) as $queued
     | ($enabled and ($queued | not) and $was_removed) as $removed
@@ -795,8 +844,20 @@ dw_merge_queue_state() {
        queued: $queued,
        removed: (if $removed then {reason: $ev.reason, at: $ev.createdAt, push_unknown: false} else null end),
        before_commit: (if $removed then $ev.beforeCommit.oid else null end),
-       since: (if $added != null then $added.createdAt else $ev.createdAt end)}' <<<"$res" 2>/dev/null)" || q=""
-  [ -n "$q" ] || { printf '%s\n' "$res" >&2; return 1; }
+       since: (if $added != null then $added.createdAt else $ev.createdAt end),
+       stale_added: ($enabled and $added_no_entry and ($just_added | not))}' <<<"$res" 2>/dev/null)" || q=""
+  if [ -z "$q" ]; then
+    # 成功しても errors を返すことがあるので、あればその本文を、無ければ応答の先頭を、1行で理由にする
+    err="$(jq -r '[.errors[]?.message // empty] | join("; ")' <<<"$res" 2>/dev/null || true)"
+    [ -n "$err" ] || err="マージキューの状態の応答を読めません: ${res:0:200}"
+    printf '%s' "$err" | tr '\n' ' ' >&2
+    printf '\n' >&2
+    return 1
+  fi
+  if [ "$(jq -r .stale_added <<<"$q")" = true ]; then
+    # 入れたイベントの後、待つ時間を過ぎても並びに出ていない。外れたイベントの欠けなどで、外れた理由は分からない
+    dw_warn "マージキューに入れたイベントの後、${DW_QUEUE_ADDED_GRACE_MINUTES} 分を過ぎても並びに出ていないので、キューに入っていないとみなします（外れた理由は分かりません）: $(jq -r .since <<<"$q")"
+  fi
   if [ "$(jq -r '.removed != null' <<<"$q")" = true ]; then
     if [ "$3" = true ]; then
       # フォークのブランチへの push は、このリポジトリの activity に無いので読まない
@@ -812,7 +873,7 @@ dw_merge_queue_state() {
       rm -f "$err"
     fi
   fi
-  jq -c 'del(.since)' <<<"$q"
+  jq -c 'del(.since, .stale_added)' <<<"$q"
 }
 
 # 古いブランチ保護（ルールセットでない）が求める必須のチェックの名前の一覧（JSON の配列）を出力する。

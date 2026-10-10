@@ -29,8 +29,12 @@ load fake_gh
 # FAKE_GH_STDERR があれば、どの呼び出しも成功したうえで標準エラーにそれを出す（gh のお知らせの代わり）。
 # - gh pr view ... --json ...   $FIX/pr-<n>.json（n は pr view の呼び出し回数。無ければ $FIX/pr.json）を返す
 # - gh api graphql --input -    $FIX/gql-<n>.json（無ければ $FIX/gql.json）を返す。$FIX/gql-fail があれば失敗する
+#                               （$FIX/gql-errors があれば、その本文を標準出力に出す。FAKE_GH_NOTICE があれば、失敗の後に
+#                               gh のお知らせを標準エラーに出す）
 # - gh run list ...             $FIX/runs.json を返す。引数に --event merge_group が無ければ失敗する
 # - gh api repos/<owner>/<repo>/activity?...  fake_gh.bash の api-activity（$FIX/activity.json。$CALLS に「api-activity <パス>」）
+# - gh api --paginate repos/.../rules/branches/...  fake_gh.bash の api-rules（$FIX/rules.json。無ければ []。キューの状態を
+#                               読めないときに、キューを使うかを確かめるのに読む）
 # - それ以外（書き込みを含む）は、$CALLS に「WRITE <引数>」を記録して失敗する
 setup_merge_status_gh() {
   setup_fake_gh
@@ -47,7 +51,15 @@ pick() { # pick <名前>: 呼び出し回数に合うファイルを選ぶ
 case "$1 $2" in
   "pr view") pick pr; echo "READ pr $*" >>"$CALLS" ;;
   "api graphql")
-    [ ! -f "$FIX/gql-fail" ] || { echo "READ gql-failed" >>"$CALLS"; echo "gh: GraphQL が失敗しました" >&2; exit 1; }
+    if [ -f "$FIX/gql-fail" ]; then
+      echo "READ gql-failed" >>"$CALLS"
+      # gql-errors があれば、GraphQL の errors の本文を標準出力に出す（gh api graphql は失敗しても本文を出す）
+      [ ! -f "$FIX/gql-errors" ] || cat "$FIX/gql-errors"
+      echo "gh: GraphQL が失敗しました" >&2
+      # FAKE_GH_NOTICE があれば、失敗の後に gh のお知らせを出す
+      [ -z "${FAKE_GH_NOTICE:-}" ] || printf '\nA new release of gh is available: 2.0.0 → 2.1.0\nTo upgrade, run: gh upgrade\nhttps://github.com/cli/cli/releases/tag/v2.1.0\n' >&2
+      exit 1
+    fi
     pick gql; echo "READ gql $(tr '\n' ' ')" >>"$CALLS"
     ;;
   "run list")
@@ -55,6 +67,12 @@ case "$1 $2" in
     cat "$FIX/runs.json"; echo "READ runs $*" >>"$CALLS"
     ;;
   "api repos/"*/activity\?*) exec "$(dirname "$0")/gh-common" "$@" ;;
+  "api --paginate")
+    case "$3" in
+      repos/*/rules/branches/*) exec "$(dirname "$0")/gh-common" "$@" ;;
+    esac
+    echo "WRITE $*" >>"$CALLS"; echo "gh: 想定外の呼び出し: $*" >&2; exit 1
+    ;;
   *) echo "WRITE $*" >>"$CALLS"; echo "gh: 想定外の呼び出し: $*" >&2; exit 1 ;;
 esac
 SH
@@ -157,7 +175,7 @@ teardown() { rm -rf "$TMP"; }
   assert_equal "$(jq -r .merge_queue <<<"$output")" false
 }
 
-@test "キューの状態は、OPEN の PR だけ読む（MERGED・CLOSED では GraphQL が失敗しても動きを変えない。OPEN で読めなければ失敗する）" {
+@test "キューの状態は、OPEN の PR だけ読む（MERGED・CLOSED では GraphQL が失敗しても動きを変えない）" {
   echo 'GraphQL を呼んだ' >"$FIX/gql-fail"
   pr_json '{state: "MERGED"}'
   run_script pr-merge-status.sh --pr 5
@@ -167,10 +185,47 @@ teardown() { rm -rf "$TMP"; }
   run_script pr-merge-status.sh --pr 5
   assert_equal "$(st)" not_queued
   if grep -q '^READ gql' "$CALLS"; then fail "GraphQL を呼んでいます"; fi
-  pr_json '{}'
+}
+
+@test "キューの状態を読めなくても、ブランチのルールでキューを使わないと分かれば、warn を出して not_queued（#323）" {
+  echo 'GraphQL を読めない' >"$FIX/gql-fail"
+  echo '[{"type": "pull_request"}]' >"$FIX/rules.json"
+  out="$("${TEST_BASH:-bash}" "$SCRIPTS/pr-merge-status.sh" --pr 5 2>"$TMP/err")"
+  assert_equal "$(jq -c '[.status, .merge_queue]' <<<"$out")" '["not_queued",false]'
+  assert_equal "$(cat "$TMP/err")" 'warn: マージキューの状態を読めないので、ブランチのルールでキューを使わないと確かめて続けます: gh: GraphQL が失敗しました'
+  # --wait でも、最初の失敗で止まらない
+  out="$(DW_WAIT_SLEEP=0 "${TEST_BASH:-bash}" "$SCRIPTS/pr-merge-status.sh" --pr 5 --wait 2>/dev/null)"
+  assert_equal "$(jq -r .status <<<"$out")" not_queued
+}
+
+@test "キューの状態を読めず、ルールでキューを使う、またはルールも読めなければ、理由を1行で伝えて止まる" {
+  echo 'GraphQL を読めない' >"$FIX/gql-fail"
+  echo '[{"type": "merge_queue"}]' >"$FIX/rules.json"
   run_script pr-merge-status.sh --pr 5
   assert_failure
-  assert_output --partial "マージキューの状態を読めません: gh: GraphQL が失敗しました"
+  assert_output 'error: マージキューの状態を読めません: gh: GraphQL が失敗しました'
+  FAKE_FAIL=api-rules run_script pr-merge-status.sh --pr 5
+  assert_failure
+  assert_output 'error: マージキューの状態を読めません: gh: GraphQL が失敗しました'
+}
+
+@test "GraphQL が errors を返して失敗したら、errors の本文を理由にする。gh のお知らせが後に出ても、理由は1行でお知らせでない（#323）" {
+  echo 'GraphQL を読めない' >"$FIX/gql-fail"
+  echo '{"data": null, "errors": [{"message": "Resource not accessible by integration"}]}' >"$FIX/gql-errors"
+  echo '[{"type": "merge_queue"}]' >"$FIX/rules.json"
+  FAKE_GH_NOTICE=1 run_script pr-merge-status.sh --pr 5
+  assert_failure
+  assert_output 'error: マージキューの状態を読めません: Resource not accessible by integration'
+  rm "$FIX/gql-errors"
+  FAKE_GH_NOTICE=1 run_script pr-merge-status.sh --pr 5
+  assert_failure
+  assert_output 'error: マージキューの状態を読めません: gh: GraphQL が失敗しました'
+}
+
+@test "DW_QUEUE_NOW が数字でなければ、1行のエラーで止まる（終了コード 64）" {
+  DW_QUEUE_NOW=abc run_script pr-merge-status.sh --pr 5
+  assert_failure 64
+  assert_output 'error: DW_QUEUE_NOW は UNIX 秒（0 以上の整数）にしてください: abc'
 }
 
 @test "キューを使うかは GraphQL の isMergeQueueEnabled で決め、ブランチのルール（REST）は読まない（古いブランチ保護のキューも含むため）" {
@@ -228,8 +283,10 @@ teardown() { rm -rf "$TMP"; }
 @test "表: 入れたイベントから10分を過ぎても mergeQueueEntry が無ければ、並んでいないとみなして not_queued（#323）" {
   gql_json '{timelineItems: {nodes: [{__typename: "AddedToMergeQueueEvent", createdAt: "2026-10-01T00:00:00Z"}]}}'
   # 10分ちょうどは過ぎている（00:10:00）。9分59秒（00:09:59）はまだ入れた直後
-  DW_QUEUE_NOW=1790813400 run_script pr-merge-status.sh --pr 5
-  assert_equal "$(st)" not_queued
+  out="$(DW_QUEUE_NOW=1790813400 "${TEST_BASH:-bash}" "$SCRIPTS/pr-merge-status.sh" --pr 5 2>"$TMP/err")"
+  assert_equal "$(jq -r .status <<<"$out")" not_queued
+  # 並びに出ないまま10分を過ぎたことを warn で伝える（外れた理由は分からない）
+  grep -q '^warn: マージキューに入れたイベントの後、10 分を過ぎても並びに出ていないので' "$TMP/err" || fail "warn がありません: $(cat "$TMP/err")"
   DW_QUEUE_NOW=1790813399 run_script pr-merge-status.sh --pr 5
   assert_equal "$(st)" waiting
 }
@@ -438,9 +495,10 @@ teardown() { rm -rf "$TMP"; }
   assert_failure
   pr_json '{}'
   echo '{"errors": [{"message": "x"}]}' >"$FIX/gql.json"
+  echo '[{"type": "merge_queue"}]' >"$FIX/rules.json"
   run_script pr-merge-status.sh --pr 5
   assert_failure
-  assert_output --partial "マージキューの状態を読めません"
+  assert_output "error: マージキューの状態を読めません: x"
   removed_ev failed_checks 2026-10-01T00:10:00Z sha1
   echo '{"message": "x"}' >"$FIX/runs.json"
   run_script pr-merge-status.sh --pr 5

@@ -14,7 +14,8 @@
 #             merge_state_unknown（衝突するか分からない）・base_mismatch（GitHub と手元で判断が食い違う）
 #   queue     キューの案内。キューを使い、action が none のときだけ。conflict（キューの中で先に並んだ PR と衝突した）・
 #             queued（並んでいる。入れた直後・マージの直前も）・removed（外れたまま。キューに入れた後に push していない）・
-#             not_queued（入っていない。入れた後に push して、まだ入れ直していないときも）。ほかは null
+#             not_queued（入っていない。入れた後に push して、まだ入れ直していないときも）・unknown（キューの状態を
+#             読めず、キューの中か分からない。queued が null）。ほかは null
 #   fallback  ユーザーに確かめてからすること（merge・push）。action が recheck なら、調べ直しても分からないとき。
 #             none なら、ユーザーが最新の main を求めたとき（取り込むものが無ければ null）。ほかは null
 #
@@ -34,7 +35,8 @@
 #    10. merge_state が BEHIND か DIRTY（behind は 0）           → ask_base
 #    11. それ以外                                                → none（up_to_date）
 #   queue（3・7 のとき）: キューでの状態が UNMERGEABLE なら conflict、キューの中（queued。並んでいる・入れた直後で
-#   まだ状態に出ていない・マージの直前）なら queued、外れたまま（removed）なら removed、どれでもなければ not_queued
+#   まだ状態に出ていない・マージの直前）なら queued、キューの中か分からない（queued が null。キューの状態を読めなかった）
+#   なら unknown、外れたまま（removed）なら removed、どれでもなければ not_queued
 set -euo pipefail
 
 # shellcheck source=lib/common.sh
@@ -62,6 +64,7 @@ jq -c '
   | (.behind == 0 and (.pushed_behind // 0) >= 1) as $merged_not_pushed
   | (if .pr.merge_queue.state == "UNMERGEABLE" then "conflict"
      elif .pr.merge_queue.queued == true then "queued"
+     elif .pr.merge_queue.queued == null then "unknown"
      elif .pr.merge_queue.removed != null then "removed"
      else "not_queued" end) as $guide
   | if $queue then

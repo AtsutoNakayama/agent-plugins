@@ -90,6 +90,9 @@ check_plan() {
   done
   # 入れた直後でまだ state に出ていない・マージの直前（queued が true で state は null）も queued（#323）
   check_plan '.pr.merge_queue.queued = true' "none no_conflict queued -"
+  # キューの状態を読めず、キューの中か分からない（queued が null）なら unknown（#323）
+  check_plan '.pr.merge_queue.queued = null' "none no_conflict unknown -"
+  check_plan "$BEHIND | .pr.merge_queue.queued = null" "none no_conflict unknown merge"
   check_plan '.pr.merge_queue.removed = {"reason": "merge_conflict", "at": "2026-10-04T16:36:30Z"}' "none no_conflict removed -"
   check_plan "$P | .pr.merge_queue.removed = {\"reason\": \"failed_checks\", \"at\": \"t\"}" "none merged_not_pushed removed push"
 }

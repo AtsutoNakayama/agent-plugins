@@ -40,11 +40,13 @@ issue: 323
 
 * キューの状態の問い合わせと判定（キューの中か・外れたままか）は、`common.sh` の `dw_merge_queue_state` 1つにまとめ、`pr-merge-status.sh` と `branch-status.sh` の両方が使う。2つのスクリプトで別々に読むと、同じ PR の判定が食い違うため
 * キューを使うか（`enabled`）は、2つのスクリプトとも GraphQL の `isMergeQueueEnabled` で決める。それまでは、`pr-merge-status.sh` が REST のブランチのルール（`dw_merge_queue_enabled`。#199 で `pr-create.sh`・`doctor.sh` の読み方に合わせた）、`branch-status.sh` が GraphQL の `isMergeQueueEnabled`（ADR 000210）と、別々に決めていた。REST の `rules/branches` はルールセットのルールだけを返し、古いブランチ保護の「Require merge queue」でキューを有効にしたリポジトリでは、キューを使っていても false になる。`isMergeQueueEnabled` は PR のマージ先でキューが有効かを GitHub が返すので、どちらの設定でも正しく、キューの状態と同じ1回の問い合わせで読める。キューが無効なら、キューの中・外れたままとはせず、push も読まない。`pr-create.sh`・`doctor.sh` の読み方（ルール）は、この ADR では変えない
-* キューの中か（`queued`）は、`mergeQueueEntry` があるか、タイムラインの最後のキューの出入りのイベント（`ADDED_TO_MERGE_QUEUE_EVENT`・`REMOVED_FROM_MERGE_QUEUE_EVENT`）が入れたもの（入れた直後で、まだ `mergeQueueEntry` に出ていない。入れたイベントから10分まで。それを過ぎても出ないのはイベントの欠けなどとして、並んでいないとみなす。`common.sh` の `DW_QUEUE_ADDED_GRACE_MINUTES`）か、merged の理由で外れたもの（マージの直前で、PR の state がまだ MERGED でない）かで見る。入れた直後で CI の実行が無くても、`pr-merge-status.sh` は `waiting`、`branch-status.sh` は `queued` になる
+* キューの状態（GraphQL）を読めなければ、ブランチのルール（REST の `dw_merge_queue_enabled`）でキューを使うかを確かめる。`isMergeQueueEnabled` に寄せただけでは、キューを使わないリポジトリでも、GraphQL を読めないと止まってしまう（`--wait` も最初の一時的な失敗で止まる）ため。`pr-merge-status.sh` は、ルールでキューを使わないと分かれば warn を出して `not_queued` を返し、使う、またはルールも読めなければ、理由を1行で伝えて止まる。`branch-status.sh` は、理由を warn で出し、ルールでキューを使うと分かれば `enabled` を true・`queued` を null（キューの中か分からない。`branch-plan.sh` の `plan.queue` は `unknown`）にする。`merge_queue` を null にすると、`branch-plan.sh` がキューを使わないリポジトリとみなし、遅れていれば main を取り込んでしまう（ADR 000210 に反する）ため。使わないと分かれば `enabled` を false にし、ルールも読めなければ、これまでどおり `merge_queue` を null にする。ルールは古いブランチ保護のキューを含まないので、この確かめ方は読めないときの代わりにだけ使う
+* キューの中か（`queued`）は、`mergeQueueEntry` があるか、タイムラインの最後のキューの出入りのイベント（`ADDED_TO_MERGE_QUEUE_EVENT`・`REMOVED_FROM_MERGE_QUEUE_EVENT`）が入れたもの（入れた直後で、まだ `mergeQueueEntry` に出ていない。入れたイベントから10分まで。それを過ぎても出ないのはイベントの欠けなどとして、並んでいないとみなし、外れた理由は分からないことを warn で伝える。`common.sh` の `DW_QUEUE_ADDED_GRACE_MINUTES`。手元の時計とのずれは扱わない）か、merged の理由で外れたもの（マージの直前で、PR の state がまだ MERGED でない）かで見る。入れた直後で CI の実行が無くても、`pr-merge-status.sh` は `waiting`、`branch-status.sh` は `queued` になる
 * 外れたままか（`removed`）は、最後のイベントが merged 以外の理由で外れたもので、その後に push していないかで見る。衝突で外れて CI の実行が無くても外れたままになり、理由（`reason`）も返す
 * push したかは、リポジトリの activity（`GET /repos/{owner}/{repo}/activity?ref=refs/heads/<ブランチ>`）の `push`・`force_push` の時刻で見る。GitHub の GraphQL には、PR のコミットを push した時刻が無い（`Commit.pushedDate` は廃止。コミットの時刻は手元でコミットした時刻）が、activity は REST で push の時刻を返す。比べるのは、外れた時刻ではなく、最後にキューに入れた時刻（`AddedToMergeQueueEvent` の時刻。タイムラインの最後の2つのイベントから読む）。キューに並んでいる間の push は、それ自体で PR をキューから外すので、push の時刻が外れた時刻より前になるため。push があれば、直して入れ直す前なので、外れたままとはしない（`pr-merge-status.sh` は `not_queued`、`branch-status.sh` は `merge_queue.removed` が null）。フォークからの PR は、push がこのリポジトリの activity に無いので読まず、外れたままとする（`branch-status.sh` はフォークからの PR をもともと対象にしない）
-* push を読めなければ、push は分からないものとして、warn を出して外れたままとみなし、`removed.push_unknown` を true にする（フォークからの PR も true）。task-finish と branch-update は、そのとき、push したかは確かめられなかったこと、もう直して push してあるなら入れ直すだけでよいことを伝える。`pr-merge-status.sh` の `--wait` の間、同じ warn は1回だけ出す。キューの状態は捨てない（`branch-status.sh` が `merge_queue` を null にすると、`branch-plan.sh` がキューを使わないリポジトリとみなし、遅れていれば main を取り込んでしまう。ADR 000210 に反する）。`pr-merge-status.sh` も止まらない（`--wait` の途中でも待ちを続けられる）
-* gh の標準エラーは、JSON と分けて受ける。成功しても gh がお知らせや警告を標準エラーに出すことがあり、混ぜて受けると JSON として読めず、`branch-status.sh` がキューの状態を捨ててしまう。読めない理由は、`dw_merge_queue_state`・`dw_pushed_since` とも標準エラーに出して非0を返す
+* push を読めなければ、push は分からないものとして、warn を出して外れたままとみなし、`removed.push_unknown` を true にする（フォークからの PR も true）。task-finish と branch-update は、そのとき、push したかは確かめられなかったこと、もう直して push してあるなら入れ直すだけでよいことを伝える。キューの状態は捨てない（`branch-status.sh` が `merge_queue` を null にすると、`branch-plan.sh` がキューを使わないリポジトリとみなし、遅れていれば main を取り込んでしまう。ADR 000210 に反する）。`pr-merge-status.sh` も止まらない（`--wait` の途中でも待ちを続けられる）
+* gh は `common.sh` の `dw_gh_run` 1つで呼ぶ（`dw_merge_queue_state`・`dw_pushed_since`・`pr-merge-status.sh` の `gh pr view`・`gh run list`）。標準出力と標準エラーを分けて受け、成功しても gh がお知らせや警告を標準エラーに出すことがあるので、JSON と混ぜない（混ぜると JSON として読めず、`branch-status.sh` がキューの状態を捨てていた）。失敗の理由は、標準出力の GraphQL の errors[].message を優先し、無ければ標準エラーから gh のお知らせの行を除いた最後の行にして、必ず1行で標準エラーに出す（エラーは1行のメッセージという決まり。呼ぶ場所ごとに受け方がばらばらで、理由が複数行になったり、お知らせが理由になったりしていた）
+* warn は「warn: <種類の文>: <変わる値>」の形で出し、`pr-merge-status.sh` の `--wait` の間は、種類ごとに1回だけ出す（`dw_warn_once`。gh のエラーの文は呼ぶたびに変わりうるので、文全体では見分けない）
 * 外れる原因になった CI の実行は、`RemovedFromMergeQueueEvent` の `beforeCommit`（キューの一時的なブランチのコミット）で `gh run list --commit` を絞って読む。リポジトリ全体の実行を新しい方から数えないので、窓から外れない
 
 ### 結果として起きること
@@ -54,12 +56,12 @@ issue: 323
 * 良い点：task-finish が、キューに入れた直後でも待つかを聞けるようになり、修正を push した後に古い失敗を伝えなくなる
 * 悪い点：GraphQL を使う箇所が1つ増える（設計書 §10 の、GraphQL を残している箇所の一覧に足す）。偽の gh のテストでは、`gh api graphql` の答えを用意する
 * 悪い点：外れた後の push を見るために、REST の呼び出しが1回増える（外れたままのときだけ）。activity を読めない権限では、push したかが分からず、warn を出して外れたままとみなす（push していても「外れたまま」と案内することがある）
-* 悪い点：`pr-merge-status.sh` は、キューを使わないリポジトリでも、開いている PR ならキューの状態を GraphQL で読むので、読めなければ止まる（それまでは、ルールを読めなければキューを使わないものとして `not_queued` を返した）。task-finish は、スクリプトが止まったときも後片付けの手順に進むので、動きは変わらない
+* 悪い点：キューの状態を読めず、ルールでキューを使うと分かったときは、`pr-merge-status.sh` は止まり、`branch-status.sh` はキューの中かを「分からない」と案内する（ルールでは、並んでいるかも外れたかも分からないため）
 * 悪い点：`autoMergeRequest` は使わなくなる（キューを使うリポジトリでは、キューに並んでいるかは `mergeQueueEntry` で分かるため）
 
 ### 確認
 
-`tests/pr-merge-status.bats` の判定の表で、キューに入れた直後（実行も予約も無い）・コンフリクトで外れた・外れた後に push した・入れ直した後に古い失敗の実行が残っている・実行をコミットで絞って読む、のそれぞれを確かめる。`tests/branch-status.bats` で、外れた後に push した・並んでいる間に push して外れた・入れる前の push・push を読めない・入れた直後・入れてから10分を過ぎた・merged の理由で外れた直後・キューが無効・gh が標準エラーに何か出す・フォークの PR のそれぞれを確かめる。両方のテストで、並んでいる間の push と、push を読めないときの扱いが同じになることを確かめる。
+`tests/pr-merge-status.bats` の判定の表で、キューに入れた直後（実行も予約も無い）・コンフリクトで外れた・外れた後に push した・入れ直した後に古い失敗の実行が残っている・実行をコミットで絞って読む、のそれぞれを確かめる。`tests/branch-status.bats` で、外れた後に push した・並んでいる間に push して外れた・入れる前の push・push を読めない・入れた直後・入れてから10分を過ぎた・merged の理由で外れた直後・キューが無効・gh が標準エラーに何か出す・フォークの PR のそれぞれを確かめる。両方のテストで、並んでいる間の push と、push を読めないときの扱いが同じになることを確かめる。キューの状態を読めないとき（ルールでキューを使う・使わない）、GraphQL の errors や gh のお知らせがあるときの理由の1行、warn の種類ごとの1回（`tests/common.bats` の `dw_warn_once`）、`DW_QUEUE_NOW` の誤りも確かめる。
 
 ## 各案の長所と短所
 

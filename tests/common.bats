@@ -388,3 +388,45 @@ run_common() {
   assert_success
   assert_output ok
 }
+
+# dw_gh_run のための偽の gh。標準出力に $FAKE_OUT、標準エラーに $FAKE_ERR を出し、終了コード $FAKE_RC で終わる
+fake_gh_run() {
+  mkdir -p "$TMP/bin"
+  cat >"$TMP/bin/gh" <<'SH'
+#!/usr/bin/env bash
+[ -z "${FAKE_OUT:-}" ] || printf '%s\n' "$FAKE_OUT"
+[ -z "${FAKE_ERR:-}" ] || printf '%s\n' "$FAKE_ERR" >&2
+exit "${FAKE_RC:-0}"
+SH
+  chmod +x "$TMP/bin/gh"
+  export PATH="$TMP/bin:$PATH"
+}
+
+@test "dw_gh_run は、成功すれば標準出力だけを出し（gh のお知らせを混ぜない）、失敗すれば理由を1行で標準エラーに出す（#323）" {
+  fake_gh_run
+  notice=$'A new release of gh is available: 2.0.0 → 2.1.0\nTo upgrade, run: gh upgrade\nhttps://github.com/cli/cli/releases/tag/v2.1.0'
+  # shellcheck disable=SC2016 # 引数は、起動した bash の中で展開させる
+  out="$(FAKE_OUT='{"a": 1}' FAKE_ERR="$notice" "${TEST_BASH:-bash}" -c '. "$1"; dw_gh_run api x' _ "$SCRIPTS/lib/common.sh" 2>"$TMP/err")"
+  assert_equal "$out" '{"a": 1}'
+  # GraphQL の errors があれば、その本文を理由にする（複数なら「; 」でつなぐ）
+  FAKE_OUT='{"errors": [{"message": "a"}, {"message": "b\nc"}]}' FAKE_ERR='gh: failed' FAKE_RC=1 run_common dw_gh_run api graphql
+  assert_failure 1
+  assert_output 'a; b c'
+  # 無ければ、お知らせを除いた標準エラーの最後の行
+  FAKE_ERR=$'gh: HTTP 502\n\n'"$notice" FAKE_RC=1 run_common dw_gh_run api x
+  assert_failure 1
+  assert_output 'gh: HTTP 502'
+  # 何も無ければ、終了コードを添えた1行
+  FAKE_RC=4 run_common dw_gh_run api x
+  assert_failure 4
+  assert_output 'gh が失敗しました（終了コード 4）'
+}
+
+@test "dw_warn_once は、warn の種類（最初の「: 」より前の文）ごとに1回だけ出す（後ろの文が変わっても。#323）" {
+  printf '%s\n' 'warn: 読めません: gh: HTTP 502' 'warn: 別の種類' 'ほかの行' >"$TMP/w1"
+  printf '%s\n' 'warn: 読めません: gh: HTTP 503' 'warn: 別の種類' 'warn: 新しい種類: x' >"$TMP/w2"
+  # shellcheck disable=SC2016 # 引数は、起動した bash の中で展開させる
+  run "${TEST_BASH:-bash}" -c '. "$1"; dw_warn_once "$2" "$4"; dw_warn_once "$3" "$4"' _ "$SCRIPTS/lib/common.sh" "$TMP/w1" "$TMP/w2" "$TMP/seen"
+  assert_success
+  assert_output $'warn: 読めません: gh: HTTP 502\nwarn: 別の種類\nwarn: 新しい種類: x'
+}
