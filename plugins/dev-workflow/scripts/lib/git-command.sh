@@ -948,11 +948,14 @@ gc_command() {
         # -e（sudoedit）・-l・-v・-K・-V は、コマンドを実行しない（-e の後ろはファイル）。
         # -i（--login）は対象のユーザーのホームで、-R（--chroot）は別のルートの下で動くので、場所を分からないものとする（-D より優先する）。
         # sudo は既定で環境変数を消す（env_reset）が、sudoers の env_keep や -E で残ることもあるので、sudo の前の GIT_DIR などが
-        # 効くかは決められない。そのときは、git を実行する場所を分からないものとする（lost。止める側に倒す）。
+        # 効くかは決められない。そのときは、git を実行する場所を分からないものとし（lost。止める側に倒す）、その値も使わない。
         # sudo の後ろに書いた代入（sudo GIT_DIR=x git）は、そのコマンドに渡るので、今までどおり使う
         ext=true
         shift
-        [ "${#gc_genv[@]}" -eq 0 ] || lost=true
+        if [ "${#gc_genv[@]}" -gt 0 ]; then
+          lost=true
+          gc_genv=()
+        fi
         gc_skip_opts aCcDgpRrTtUu "--close-from= --login-class= --chdir= --group= --host= --prompt= --chroot= --role= --type= --command-timeout= --other-user= --user= --edit --list --validate --remove-timestamp --version --login" "$@"
         shift "$gc_nopt"
         if $has_cdir; then envbase="$cdir"; else envbase="$gc_dir"; fi
