@@ -508,30 +508,29 @@ dw_config_regex_test() {
 
 # 設定（入力）の branch.pattern を、type と Issue の番号を取り出す正規表現にする jq の定義（dw_parse_branch・dw_issue_branches・
 # branch-name.sh --check）。branch.pattern が文字列でない（設定が空・部分的）ときは null（どの名前にも合わない）、
-# labels.types が無いときは空の配列とみなす。
+# labels.types が無いときは空の配列とみなす。type は正規表現の記号を含んでいても、文字どおりに照合する（branch_literal）。
 #   branch_error   設定（入力）を検査し、誤りがあれば設定の誤りと分かる1行のメッセージを、無ければ null を返す。
 #                  branch.pattern が無い・null なら、組み立てられないだけで誤りではないので null。文字列でない型、
-#                  文字列の配列でない labels.types、正規表現の記号を含む type（type は文字どおりに照合する名前なので）、
-#                  正規表現としての誤りを、それぞれの原因で報告する。ほかの jq の失敗は「検査できません」と理由を添える
+#                  文字列の配列でない labels.types、正規表現としての誤りを、それぞれの原因で報告する。ほかの jq の失敗は「検査できません」と理由を添える
 #   branch_config  入力（設定の JSON の文字列。jq -R -s で読む）を {c: 設定} にする。JSON として読めなければ、
 #                  {e: メッセージ}。読めても branch_error が誤りを返せば {e: メッセージ}。jq の起動 1 回で、
 #                  JSON の読み取り・検査・解析までできるようにする
 # jq の変数（$t など）を bash に展開させないため、シングルクォートで書く
 # shellcheck disable=SC2016
-DW_JQ_BRANCH_RE="$DW_JQ_REGEX_FAILURE"'def branch_re: if (.branch.pattern | type) != "string" then null
+DW_JQ_BRANCH_RE="$DW_JQ_REGEX_FAILURE"'def branch_literal: gsub("(?<c>[][\\\\^$.|?*+(){}])"; "\\\(.c)");
+def branch_pattern_not_string: "branch.pattern（\(tojson)）が文字列ではありません。設定を直してください";
+def branch_types_not_strings: "labels.types（\(tojson)）が文字列の配列ではありません。設定を直してください";
+def branch_re: if (.branch.pattern | type) != "string" then null
   else (.labels.types // []) as $t | .branch.pattern
-    | gsub("\\{type\\}"; "(?<type>" + ($t | join("|")) + ")")
+    | gsub("\\{type\\}"; "(?<type>" + ($t | map(branch_literal) | join("|")) + ")")
     | gsub("\\{issue_number\\}"; "(?<issue>[0-9]+)")
     | gsub("\\{slug\\}"; "[a-z0-9]+(?:-[a-z0-9]+)*")
     | "^" + . + "$" end;
 def branch_error: try (
     .branch.pattern as $p | (.labels.types // []) as $t
     | if $p == null then null
-      elif ($p | type) != "string" then "branch.pattern（\($p | tojson)）が文字列ではありません。設定を直してください"
-      elif ($t | type) != "array" or any($t[]; type != "string") then
-        "labels.types（\($t | tojson)）が文字列の配列ではありません。設定を直してください"
-      elif any($t[]; test("[][\\\\^$.|?*+(){}]")) then
-        "labels.types の「\(first($t[] | select(test("[][\\\\^$.|?*+(){}]"))) | tojson | .[1:-1])」に正規表現の記号があります。設定を直してください"
+      elif ($p | type) != "string" then $p | branch_pattern_not_string
+      elif ($t | type) != "array" or any($t[]; type != "string") then $t | branch_types_not_strings
       else branch_re as $re
         | try ("" | test($re) | null)
           catch (if regex_failure then

@@ -300,9 +300,30 @@ assert_config_error() {
   assert_config_error '{"branch":{"pattern":"{type}/{issue_number}-{slug}"},"labels":{"types":["feat",1]}}' 'labels.types（["feat",1]）が文字列の配列ではありません'
 }
 
-@test "labels.types に正規表現の記号を含む type があれば、検査の段階で設定の誤りとして報告する（実際の labels.types で検査する）" {
-  assert_config_error '{"branch":{"pattern":"{type}/{issue_number}-{slug}"},"labels":{"types":["feat","c++"]}}' 'labels.types の「c++」に正規表現の記号があります'
-  assert_config_error '{"branch":{"pattern":"{type}/{issue_number}-{slug}"},"labels":{"types":["feat","fix("]}}' 'labels.types の「fix(」に正規表現の記号があります'
+@test "labels.types に正規表現の記号を含む type があっても、設定の誤りにせず、文字どおりに照合する" {
+  local c='{"branch":{"pattern":"{type}/{issue_number}-{slug}"},"labels":{"types":["c++","docs.v2"]}}'
+  run_common dw_check_branch_pattern "$c"
+  assert_success
+  # 記号は文字どおりに照合する（. は . にだけ合い、+ は繰り返しにならない）
+  run_common dw_parse_branch "$c" docs.v2/17-add-login
+  assert_success
+  assert_output "docs.v2|17"
+  run_common dw_parse_branch "$c" c++/17-add-login
+  assert_success
+  assert_output "c++|17"
+  for name in docsxv2/17-add-login c/17-add-login ccc/17-add-login; do
+    run_common dw_parse_branch "$c" "$name"
+    assert_success
+    assert_output "|"
+  done
+  # --check も設定の誤りにしない。problem() に合う名前では、dw_parse_branch と判定が一致する
+  echo '{"labels": {"types": ["c++", "docs.v2", "feat"]}}' >.claude/dev-workflow/config.json
+  assert_check_matches_parse feat/17-add-login "feat|17"
+  assert_check_matches_parse docsxv2/17-add-login "|"
+  # problem() が拒否する文字（.）を含む type では、ブランチ名を作らずに止まる（設定の誤りではない）
+  run_script branch-name.sh --issue 17 --type docs.v2 --slug x
+  assert_failure 2
+  assert_output --partial "規約に合いません"
 }
 
 @test "設定が JSON として壊れているときは、正規表現の誤りではなく、JSON を読めないと報告する" {
