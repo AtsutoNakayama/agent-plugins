@@ -205,14 +205,14 @@ grader_matches() {
   # shellcheck disable=SC2016 # バッククォートは観点の本文の文字で、展開させない
   grep -qF '`bin/greet.sh`' .claude/dev-workflow/review/typo.md || fail "誤字の観点に bin/greet.sh がありません"
   grep -qF '差分に無くても必ず Read で読む' .claude/dev-workflow/review/typo.md || fail "誤字の観点に、Read で読むことがありません"
-  run "${TEST_BASH:-bash}" "$SCRIPTS/auto-check.sh" --issue 2
+  run_script auto-check.sh --issue 2
   assert_success
   assert_equal "$(jq -c '[.action, .resume]' <<<"$output")" '["proceed",null]'
-  run "${TEST_BASH:-bash}" "$SCRIPTS/next-tasks.sh" --issue 2
+  run_script next-tasks.sh --issue 2
   assert_success
   assert_equal "$(jq -r .issue.overlap <<<"$output")" none
   [ ! -s .fake-gh/writes ] || fail "着手の前に書き込みました: $(cat .fake-gh/writes)"
-  run "${TEST_BASH:-bash}" "$SCRIPTS/task-start.sh" --issue 2 --slug add-farewell
+  run_script task-start.sh --issue 2 --slug add-farewell
   assert_success
   assert_equal "$(jq -c '[.status.to, .status.warnings]' <<<"$output")" '["In Progress",[]]'
   local wt
@@ -224,15 +224,15 @@ grader_matches() {
   git -C "$wt" commit -q -m "feat: 別れの挨拶のスクリプトを足す"
   cd "$wt"
   # レビューは、リポジトリの誤字の観点だけを使い、1周で終える
-  run "${TEST_BASH:-bash}" "$SCRIPTS/review-perspectives.sh" --auto
+  run_script review-perspectives.sh --auto
   assert_success
   assert_equal "$(jq -c '[[.perspectives[].name], .context.max_rounds, .context.issue]' <<<"$output")" '[["typo"],1,2]'
   printf '## 背景\n#2 の自動のレビューで見つかった指摘\n' >"$TMP/issue.md"
-  run "${TEST_BASH:-bash}" "$SCRIPTS/issue-create.sh" --title "greet.sh の挨拶の誤字を直す" --type fix --body-file "$TMP/issue.md"
+  run_script issue-create.sh --title "greet.sh の挨拶の誤字を直す" --type fix --body-file "$TMP/issue.md"
   assert_success
   assert_equal "$(jq -r .number <<<"$output")" 99
   printf '## 概要\n別れの挨拶\n\nCloses #2\n' >"$TMP/pr.md"
-  run "${TEST_BASH:-bash}" "$SCRIPTS/pr-create.sh" --issue 2 --body-file "$TMP/pr.md" --no-draft
+  run_script pr-create.sh --issue 2 --body-file "$TMP/pr.md" --no-draft
   assert_success
   assert_equal "$(jq -c '[.created, .draft, .pr.number]' <<<"$output")" '[true,false,98]'
   cd "$WS"
