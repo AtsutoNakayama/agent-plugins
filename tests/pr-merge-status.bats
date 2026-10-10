@@ -11,7 +11,8 @@ load fake_gh
 #   PR の state / 入力                                             status      その他
 #   MERGED                                                          merged
 #   CLOSED                                                          not_queued
-#   OPEN でも、マージキューを使わない（ルールに merge_queue が無い）      not_queued  キューの状態を読まない
+#   OPEN でも、マージキューを使わない（isMergeQueueEnabled が false。   not_queued  push を読まない
+#   読めなければ、ブランチのルールに merge_queue が無い）
 #   キューに並んでいる（mergeQueueEntry がある）                    waiting     queue に state・position。入れた直後で実行が無くても
 #   並んでおらず、最後が外れたイベントで理由が merged               waiting     （PR が MERGED に変わる直前）
 #   並んでおらず、最後が外れたイベントで、入れた後に push が無い    removed     removed に reason・at。CI の失敗なら failed に
