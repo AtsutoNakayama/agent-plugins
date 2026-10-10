@@ -3,6 +3,7 @@
 # shellcheck disable=SC2030,SC2031
 
 load test_helper
+load fake_gh
 
 # 判定の表（PR の state・キューの状態（mergeQueueEntry とタイムラインの最後のキューの出入りのイベント）・外れた後の push → status）。
 # 上から順に最初に当てはまったもの。
@@ -23,19 +24,17 @@ load test_helper
 #   フォークからの PR は push を読まない（外れたままなら removed）
 #   push を読めなければ、warn を出して removed（止まらない）
 #
-# 偽の gh。
+# 偽の gh。PR・キューの状態・キューの実行は、呼び出し回数ごとに答えを変える（--wait を試す）ので、ここで答える。
+# ルールと activity は、共通の偽の gh（tests/fake_gh.bash）に任せる（失敗させるのは FAKE_FAIL=api-rules・api-activity）。
 # - gh pr view ... --json ...   $FIX/pr-<n>.json（n は pr view の呼び出し回数。無ければ $FIX/pr.json）を返す
 # - gh api graphql --input -    $FIX/gql-<n>.json（無ければ $FIX/gql.json）を返す。$FIX/gql-fail があれば失敗する
-# - gh api repos/<owner>/<repo>/activity?...  $FIX/activity.json を返す。$FIX/activity-fail があれば失敗する
 # - gh run list ...             $FIX/runs.json を返す。引数に --event merge_group が無ければ失敗する
-# - gh api --paginate repos/.../rules/branches/...  $FIX/rules.json（既定は merge_queue のルールあり）を返す
+# - gh api repos/<owner>/<repo>/activity?...  fake_gh.bash の api-activity（$FIX/activity.json。$CALLS に「api-activity <パス>」）
+# - gh api --paginate repos/.../rules/branches/...  fake_gh.bash の api-rules（$FIX/rules.json。既定は merge_queue のルールあり）
 # - それ以外（書き込みを含む）は、$CALLS に「WRITE <引数>」を記録して失敗する
-setup_fake_gh() {
-  FIX="$TMP/fix"
-  CALLS="$TMP/calls"
-  export FIX CALLS
-  mkdir -p "$TMP/bin" "$FIX"
-  : >"$CALLS"
+setup_merge_status_gh() {
+  setup_fake_gh
+  mv "$TMP/bin/gh" "$TMP/bin/gh-common"
   cat >"$TMP/bin/gh" <<'SH'
 #!/usr/bin/env bash
 pick() { # pick <名前>: 呼び出し回数に合うファイルを選ぶ
@@ -53,11 +52,13 @@ case "$1 $2" in
     case " $* " in *" --event merge_group "*) ;; *) echo "gh: --event merge_group が無い" >&2; exit 1 ;; esac
     cat "$FIX/runs.json"; echo "READ runs $*" >>"$CALLS"
     ;;
-  "api --paginate") cat "$FIX/rules.json" ;;
-  "api repos/"*/activity\?*)
-    [ ! -f "$FIX/activity-fail" ] || { echo "READ activity-failed" >>"$CALLS"; echo "gh: 権限がありません" >&2; exit 1; }
-    cat "$FIX/activity.json"; echo "READ activity $*" >>"$CALLS"
+  "api --paginate")
+    case "$3" in
+      repos/*/rules/branches/*) exec "$(dirname "$0")/gh-common" "$@" ;;
+    esac
+    echo "WRITE $*" >>"$CALLS"; echo "gh: 想定外の呼び出し: $*" >&2; exit 1
     ;;
+  "api repos/"*/activity\?*) exec "$(dirname "$0")/gh-common" "$@" ;;
   *) echo "WRITE $*" >>"$CALLS"; echo "gh: 想定外の呼び出し: $*" >&2; exit 1 ;;
 esac
 SH
@@ -66,7 +67,6 @@ SH
   pr_json '{}'
   gql_json '{}'
   echo '[]' >"$FIX/runs.json"
-  echo '[]' >"$FIX/activity.json"
   echo '[{"type": "merge_queue"}, {"type": "pull_request"}]' >"$FIX/rules.json"
 }
 
@@ -125,7 +125,7 @@ st() { jq -r .status <<<"$output"; }
 
 setup() {
   test_helper_setup
-  setup_fake_gh
+  setup_merge_status_gh
 }
 
 teardown() { rm -rf "$TMP"; }
@@ -176,7 +176,7 @@ teardown() { rm -rf "$TMP"; }
 }
 
 @test "表: ルールを読めないときは、キューを使わないものとして not_queued" {
-  rm "$FIX/rules.json"
+  export FAKE_FAIL=api-rules
   queued AWAITING_CHECKS
   run_script pr-merge-status.sh --pr 5
   assert_success
@@ -226,7 +226,7 @@ teardown() { rm -rf "$TMP"; }
   removed_ev merged 2026-10-01T00:00:00Z sha1
   run_script pr-merge-status.sh --pr 5
   assert_equal "$(st)" waiting
-  if grep -q '^READ \(runs\|activity\)' "$CALLS"; then fail "外れたときだけ読むものを読んでいます"; fi
+  if grep -q '^\(READ runs\|api-activity\)' "$CALLS"; then fail "外れたときだけ読むものを読んでいます"; fi
 }
 
 @test "表: OPEN で、並んでおらずイベントも無ければ not_queued" {
@@ -282,7 +282,7 @@ teardown() { rm -rf "$TMP"; }
   assert_equal "$(st)" not_queued
   assert_equal "$(jq -c '[.removed, .failed]' <<<"$output")" '[null,[]]'
   # PR の URL のリポジトリの、PR のブランチの activity を読む
-  grep -q '^READ activity api repos/me/demo/activity?ref=refs%2Fheads%2Ffeat%2F5-x&' "$CALLS" || fail "$(cat "$CALLS")"
+  grep -q '^api-activity repos/me/demo/activity?ref=refs%2Fheads%2Ffeat%2F5-x&' "$CALLS" || fail "$(cat "$CALLS")"
   # force push も push として数える
   activity force_push 2026-10-01T00:20:00Z
   run_script pr-merge-status.sh --pr 5
@@ -306,8 +306,7 @@ teardown() { rm -rf "$TMP"; }
 
 @test "外れた後の push を読めなければ、warn を出して removed を返す（--wait でも止まらない。#323）" {
   added_removed_ev merge_conflict 2026-10-01T00:10:00Z
-  echo 'activity を読めない' >"$FIX/activity-fail"
-  out="$(DW_WAIT_SLEEP=0 "${TEST_BASH:-bash}" "$SCRIPTS/pr-merge-status.sh" --pr 5 --wait 2>"$TMP/err")"
+  out="$(FAKE_FAIL=api-activity DW_WAIT_SLEEP=0 "${TEST_BASH:-bash}" "$SCRIPTS/pr-merge-status.sh" --pr 5 --wait 2>"$TMP/err")"
   assert_equal "$(jq -c '[.status, .removed.reason]' <<<"$out")" '["removed","merge_conflict"]'
   grep -q '^warn: PR のブランチへの push を読めないので' "$TMP/err" || fail "warn がありません: $(cat "$TMP/err")"
 }
@@ -324,11 +323,11 @@ teardown() { rm -rf "$TMP"; }
 @test "フォークからの PR は、外れた後の push を読まずに removed" {
   pr_json '{isCrossRepository: true}'
   removed_ev merge_conflict 2026-10-01T00:10:00Z
-  echo 'activity を呼んだ' >"$FIX/activity-fail"
+  export FAKE_FAIL=api-activity
   run_script pr-merge-status.sh --pr 5
   assert_success
   assert_equal "$(st)" removed
-  if grep -q '^READ activity' "$CALLS"; then fail "フォークの PR で activity を読んでいます"; fi
+  if grep -q '^api-activity' "$CALLS"; then fail "フォークの PR で activity を読んでいます"; fi
 }
 
 @test "PR の base がマージ先になる（develop へのキュー）" {
