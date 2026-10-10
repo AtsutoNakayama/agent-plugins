@@ -2,8 +2,9 @@
 # 今のブランチ（作業用のブランチ）が、マージ先のブランチより遅れているかを調べる。マージ先は、開いた PR があれば
 # その PR のマージ先、無ければ設定の base_branch にする。
 # 何も変更しない（fetch だけ行う）。取り込む作業は今のブランチに対して行うので、調べるのも今のブランチだけにする。
-# PR のマージ先を使えない（ブランチ名として使えない・マージ先の違う開いた PR が複数ある）か、取り込み先を取得できなければ、
-# 取り違えたマージ先を取り込まないよう、終了コード 2 で止まる（規則は lib/common.sh の「PR のマージ先」）。
+# PR のマージ先を使えない（ブランチ名として使えない・マージ先の違う開いた PR が複数ある）か、取り込み先を取得できないか、
+# gh で PR を読めない（gh が失敗した・JSON でない応答）なら、取り違えたマージ先を取り込まないよう、終了コード 2 で止まる
+# （規則は lib/common.sh の「PR のマージ先」。gh が無いときだけは、PR が無いものとして設定の base_branch を使う）。
 #
 # 使い方: branch-status.sh [--merged-from <sha>] [--pulled-from <sha>]
 #   --merged-from <sha>   origin/<base> を取り込む前（branch-update の手順2の merge の前）の HEAD。今のブランチの祖先
@@ -35,8 +36,8 @@
 #                         確かめられないときは null
 #   pr                    そのブランチの開いている PR（number・url・merge_state・merge_queue）。無ければ null
 #                         merge_state は GitHub の mergeStateStatus（BEHIND・DIRTY・BLOCKED・CLEAN など）。
-#                         fork の同じ名前のブランチからの PR は除く。PR が無い、gh が無い、
-#                         または gh で取得できないときは、pr は null になる（behind と ahead は gh が無くても出る）
+#                         fork の同じ名前のブランチからの PR は除く。PR が無いか gh が無いときは、pr は null になる
+#                         （behind と ahead は gh が無くても出る。gh で PR を読めないときは、上のとおり止まる）
 #                         pr.merge_queue はマージキューの状態（enabled・state・position・removed）。enabled は PR のマージ先で
 #                         キューが有効か、state・position は PR がキューに並んでいるときの状態（QUEUED・AWAITING_CHECKS・
 #                         MERGEABLE・UNMERGEABLE・LOCKED）と順番（1 が先頭）で、並んでいなければ null。
@@ -90,11 +91,14 @@ branch="$(git -C "$repo_root" symbolic-ref --short -q HEAD || true)"
 # 取り込み先を取り込む（変更を加える）ので、ここは止める側：PR のマージ先を使えない（ブランチ名として使えない、マージ先の違う
 # PR が複数ある）なら、取り違えたマージ先を取り込まないよう終了コード 2 で止まり、マージ先を取得できなくても止まる
 # （読むだけの merge-target.sh は、同じ状況で警告して base_branch で続ける）。
-# gh が無いか、失敗したか、JSON でない応答を返したときは、PR は無いものとし（pr は null）、設定の base_branch を使う
+# gh が無いときだけ、PR は無いものとし（pr は null）、設定の base_branch を使う。gh が失敗したか、JSON でない応答を返したときは、
+# PR が別のマージ先に向いているかが分からないので、取り違えたマージ先を取り込まないよう終了コード 2 で止まる
 pr=null
-if command -v gh >/dev/null 2>&1 \
-  && prs="$(gh pr list --head "$branch" --state open --json number,url,mergeStateStatus,isCrossRepository,baseRefName 2>/dev/null)" \
-  && dw_pr_pick_strict "$prs" "$base" "取り込み先を決められないので止めます（PR のマージ先を確かめてください）"; then
+if command -v gh >/dev/null 2>&1; then
+  prs="$(gh pr list --head "$branch" --state open --json number,url,mergeStateStatus,isCrossRepository,baseRefName 2>/dev/null)" \
+    || dw_die "${branch} の PR を取得できませんでした。PR のマージ先が分からないので、取り込み先を決めずに止めます（gh auth status などで確かめてください）" 2
+  dw_pr_pick_strict "$prs" "$base" "取り込み先を決められないので止めます（PR のマージ先を確かめてください）" \
+    || dw_die "${branch} の PR を読めませんでした（gh の応答が JSON ではありません）。PR のマージ先が分からないので、取り込み先を決めずに止めます" 2
   base="$DW_PICK_BASE" pr="$DW_PICK_PR"
   [ "$pr" = null ] || pr="$(jq -c '{number, url, merge_state: .mergeStateStatus}' <<<"$pr")"
 fi

@@ -35,7 +35,7 @@ issue: 284
 選んだ案：「変更を加える処理は止め、読むだけの処理は警告して base_branch で続ける」。理由は、取り違えると困る取り込みと push だけを止め、差分を読むだけのレビューや確認は、警告付きで進められるから。
 
 * PR のマージ先をそのまま使えないときは、理由を `fallback` に出す。理由は `invalid_name`（ブランチ名として使えない。マージ先は base_branch）、`multiple_prs`（マージ先の違う開いた PR が複数ある。マージ先は最初の PR のもの）、`fetch_failed`（取得できず手元にも無い。マージ先は base_branch）の3つ。
-* 変更を加える処理は、`fallback` があれば終了コード 2 で止まる。対象は、branch-update の取り込みに使う `branch-status.sh` と、`pr-create.sh` の push である。マージ先を取得できないときも、同じく終了コード 2 で止まる。
+* 変更を加える処理は、`fallback` があれば終了コード 2 で止まる。対象は、branch-update の取り込みに使う `branch-status.sh` と、`pr-create.sh` の push である。マージ先を取得できないときも、同じく終了コード 2 で止まる。gh で PR を読めない（gh が失敗した・JSON でない応答）ときも、PR が別のマージ先に向いているかが分からないので止まる（gh が入っていないときだけは、PR が無いものとして base_branch を使う）。
 * `pr-create.sh --dry-run` も、本番と同じく止まる。dry-run は、本番で何が起きるかを先に見せるためのものだからである。dry-run ではマージ先を取得（fetch）しないので、手元の origin/<マージ先> で先行を数える。手元に無ければ、確認を飛ばして `ahead` を null にする。本番は取得し直して、push の前に確かめる。
 * 読むだけの処理は、警告して続け、`fallback` を出力に出す。対象は、`merge-target.sh`・`review-perspectives.sh --auto`（`context.fallback`）・pr-create の手順2・task-auto の確認である。スキルは、`fallback` が null でなければ、その旨をユーザーに伝える。
 * 次は `fallback` にしない。開いた PR が無いときは、base_branch を使う。PR の `baseRefName` が無いか空のときは、#178 のとおり base_branch を使う。マージ先が同じ PR が複数あるときは、そのマージ先を使う。

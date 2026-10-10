@@ -652,6 +652,8 @@ dw_base_branch() {
 #   - fallback があるとき、変更を加える処理（branch-status.sh → branch-update の取り込み、pr-create.sh の push）は、
 #     dw_pr_pick_strict で終了コード 2 で止まる（取り違えたマージ先を取り込んだり、それで先行を確かめたりしない）。
 #     マージ先を取得できないときも、dw_fetch_target_strict で同じく終了コード 2 で止まる（fetch_failed に当たる）。
+#     gh で PR を読めない（gh が失敗した・JSON でない応答）ときも、PR が別のマージ先に向いているかが分からないので止まる
+#     （gh が無いときだけは、PR が無いものとして base_branch を使う）。
 #     pr-create.sh の --dry-run も、本番と同じく止まる（dry-run は本番で何が起きるかを先に見せるためのものなので）。読むだけの処理
 #     （review-perspectives.sh、merge-target.sh を使う pr-create の手順2・task-auto の確認）は、警告して出したマージ先で続け、
 #     スキルは fallback が null でなければその旨を伝える

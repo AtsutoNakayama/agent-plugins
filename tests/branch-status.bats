@@ -113,13 +113,13 @@ run_status() {
   assert_equal "$(jq -r '[.base, .behind] | map(tostring) | join(" ")' <<<"$output")" "main 2"
 }
 
-@test "gh が JSON でない応答を返しても止まらず、pr は null で、設定の base_branch を取り込み先にする（#284）" {
+@test "gh が JSON でない応答を返したら、PR のマージ先が分からないので、設定の base_branch を取り込まずに終了コード 2 で止まる（#284）" {
   setup_branch
   advance_main 1
   echo 'not json' >"$FIX/pr-list.raw"
   run_status
-  assert_success
-  assert_equal "$(jq -r '[.base, .behind, .pr] | map(tostring) | join(" ")' <<<"$output")" "main 1 null"
+  assert_failure 2
+  assert_output --partial "PR を読めませんでした（gh の応答が JSON ではありません）"
 }
 
 @test "PR のマージ先を使えない（ブランチ名として使えない・マージ先の違う PR が複数ある）なら、取り込み先を決めずに終了コード 2 で止まる（#284）" {
@@ -215,11 +215,12 @@ run_status() {
   assert_equal "$(jq -c '[.unpushed, .unpulled]' <<<"$output")" "[1,1]"
 }
 
-@test "PR を取得できなくても、遅れの数は出す（pr は null）" {
+@test "gh で PR を取得できなければ、PR のマージ先が分からないので、設定の base_branch を取り込まずに終了コード 2 で止まる（#284）" {
   setup_branch
+  advance_main 1
   FAKE_FAIL=pr-list run_status
-  assert_success
-  assert_equal "$(jq -c .pr <<<"$output")" "null"
+  assert_failure 2
+  assert_output --partial "の PR を取得できませんでした。PR のマージ先が分からないので、取り込み先を決めずに止めます"
 }
 
 @test "base_branch の上では止まる" {
