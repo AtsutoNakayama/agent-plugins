@@ -142,8 +142,9 @@ printf '%s\n' "$view" "$threads" | jq -s --argjson handlers "$handlers" '
       # 持ち主と PR の作者が、それぞれ最後に書いたコメントの位置（書いていなければ -1）
       | ([.comments | to_entries[] | select(.value.author | norm == ($by.author | norm)) | .key] | last) as $by_at
       | ([.comments | to_entries[] | select(.value.author | norm == $me) | .key] | last // -1) as $me_at
+      | ($me_at > $by_at) as $replied
       | {author: $by.author, item: {id: .comments[0].id, path, line, outdated, url: .comments[0].url,
-          comments: [.comments[] | del(.id)], replied: ($me_at > $by_at), needs_attention: ($me_at < $by_at)}}] as $t
+          comments: [.comments[] | del(.id)], replied: $replied, needs_attention: ($replied | not)}}] as $t
   # PR の作者の PR のコメントの、最後の時刻（無ければ ""）。レビュー本文・PR のコメントは、これより前なら返事済みとする
   | ([($v.comments // [])[] | select((login | norm) == $me) | .createdAt] | max // "") as $last_own
   | [($v.reviews // [])[]
