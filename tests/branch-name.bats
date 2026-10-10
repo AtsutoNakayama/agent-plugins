@@ -324,6 +324,24 @@ assert_config_error() {
   run_common dw_parse_branch "$c" c++/17-add-login
   assert_success
   assert_output "c++|17"
+  # ( [ \ も文字どおりに照合し、設定の誤りにしない
+  local c2='{"branch":{"pattern":"{type}/{issue_number}-{slug}"},"labels":{"types":["fix(","a[b","a\\b"]}}'
+  run_common dw_check_branch_pattern "$c2"
+  assert_success
+  run_common dw_parse_branch "$c2" "fix(/17-add-login"
+  assert_success
+  assert_output "fix(|17"
+  run_common dw_parse_branch "$c2" "a[b/17-add-login"
+  assert_success
+  assert_output "a[b|17"
+  run_common dw_parse_branch "$c2" 'a\b/17-add-login'
+  assert_success
+  assert_output 'a\b|17'
+  for name in fix/17-add-login ab/17-add-login 'a[/17-add-login' 'a\\b/17-add-login'; do
+    run_common dw_parse_branch "$c2" "$name"
+    assert_success
+    assert_output "|"
+  done
   for name in docsxv2/17-add-login c/17-add-login ccc/17-add-login; do
     run_common dw_parse_branch "$c" "$name"
     assert_success
@@ -361,14 +379,6 @@ assert_config_error() {
     refute_output --partial "正規表現として正しくありません"
     assert_equal "${#lines[@]}" 1
   done
-}
-
-@test "branch.pattern が無い・null の設定では、dw_parse_branch は取り出せない（|）を出力し、エラーにしない" {
-  for c in '{}' '{"labels":{"types":["feat"]}}' '{"branch":{"pattern":null},"labels":{"types":["feat"]}}'; do
-    run_common dw_parse_branch "$c" feat/17-x
-    assert_success
-    assert_output "|"
-  done
   # labels がオブジェクトでなければ、branch.pattern ではなく labels.types を名指しする
   run_common dw_check_branch_pattern '{"branch":{"pattern":"{type}"},"labels":"x"}'
   assert_failure 1
@@ -385,6 +395,14 @@ assert_config_error() {
   run_script branch-name.sh --issue 17 --type feat --slug x
   assert_failure 2
   assert_output --partial "labels.types を読めません"
+}
+
+@test "branch.pattern が無い・null の設定では、dw_parse_branch は取り出せない（|）を出力し、エラーにしない" {
+  for c in '{}' '{"labels":{"types":["feat"]}}' '{"branch":{"pattern":null},"labels":{"types":["feat"]}}'; do
+    run_common dw_parse_branch "$c" feat/17-x
+    assert_success
+    assert_output "|"
+  done
 }
 
 # jq を、呼ばれるたびに $TMP/jq.log に1行を足してから本物の jq を実行するものに置き換える。

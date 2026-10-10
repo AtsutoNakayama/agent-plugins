@@ -114,6 +114,17 @@ run_pr() {
   done
 }
 
+@test "pr.title_pattern の上のキー（pr）がオブジェクトでなければ、null ではなく、読めない理由を報告し、push しない" {
+  setup_branch
+  echo '{"pr": "x"}' >.claude/dev-workflow/config.local.json
+  run_pr --issue 17 --body-file "$TMP/body.md"
+  assert_failure 2
+  assert_output --partial "pr.title_pattern を読めません"
+  refute_output --partial "pr.title_pattern（null）"
+  run git rev-parse -q --verify origin/feat/17-x
+  assert_failure
+}
+
 @test "タイトルの type が Issue の type ラベルと違えば止まる" {
   setup_branch
   run_pr --issue 17 --body-file "$TMP/body.md" --title "fix: 作業 17"
