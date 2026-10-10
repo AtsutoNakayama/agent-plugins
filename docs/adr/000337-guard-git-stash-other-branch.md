@@ -27,7 +27,7 @@ stash（`refs/stash`）は、リポジトリの全ワークツリーで共有さ
 
 選んだ案：「guard-git で、取り出す・消す stash を作ったブランチが今のブランチと違えば止める」。理由は、文言で縛る案は読み落とすと防げず、stash をすべて止める案は自分の作業の stash まで使えなくなるため。
 
-* `git stash pop`・`apply`・`drop`・`branch` は、対象の stash（書かなければ `stash@{0}`、数だけなら `stash@{<数>}`）の件名（`WIP on <ブランチ>: …`・`On <ブランチ>: …`）のブランチが、操作の対象のリポジトリの今のブランチと違えば止める。detached HEAD は `(no branch)` として比べる。件名からブランチが読めないときも、違うものとして止める。
+* `git stash pop`・`apply`・`drop`・`branch` は、対象の stash（書かなければ `stash@{0}`、数だけなら `stash@{<数>}`）の件名（`WIP on <ブランチ>: …`・`On <ブランチ>: …`）のブランチが、操作の対象のリポジトリの今のブランチと違えば止める。detached HEAD で作った stash の件名は `(no branch)` になり、別のワークツリーの detached HEAD と見分けられないので、今も detached HEAD のときは、stash を作ったときの HEAD（stash のコミットの1つ目の親）が今の HEAD と同じときだけ通す。件名からブランチが読めないときも、違うものとして止める。
 * `git stash clear` は、全ワークツリーの stash をすべて消すので、いつも止める（今のブランチの stash を `git stash drop` で1つずつ消すよう案内する）。
 * 対象の stash を読めない（無い）ときは、git 自身が失敗するので通す。今のブランチを読めない（対象のリポジトリが分からない）ときは、比べられないので止める（コミットと同じ。[ADR 000219](000219-resolve-guard-git-target-repo.md) の追補）。
 * `git stash`（push）・`list`・`show` など、作る・見るだけの操作は止めない。

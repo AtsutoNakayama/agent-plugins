@@ -232,7 +232,7 @@ base_ahead: required
 - base_branch の上での `git commit`
 - base_branch への `git push`（base_branch の上で push 先を書かずに push するときを含む）
 - 強制 push（`--force` / `-f` / `+<refspec>` / `--mirror`）。`--force-with-lease` は許可する
-- 別のブランチで作った stash の取り出し・破棄（`git stash pop` / `apply` / `drop` / `branch`。stash を書かなければ `stash@{0}`）と、`git stash clear`。stash は全ワークツリーで共有されるので、別の作業の変更が混ざらないようにします。今のブランチで作った stash は取り出せます
+- 別のブランチで作った stash の取り出し・破棄（`git stash pop` / `apply` / `drop` / `branch`。stash を書かなければ `stash@{0}`）と、`git stash clear`。stash は全ワークツリーで共有されるので、別の作業の変更が混ざらないようにします。detached HEAD どうしでは、stash を作ったときの HEAD が今の HEAD と同じときだけ取り出せます。今のブランチで作った stash は取り出せます
 
 また、規約（`branch.pattern`）に合わない名前でブランチを作ろうとしたとき（`git switch -c` / `git checkout -b` / `git branch <名前>` / `git worktree add -b` / commit-ish を書かない `git worktree add <パス>`（パスの最後の名前でブランチを作ります））は、コマンドは止めずに、使用者と Claude に警告します。
 
@@ -250,7 +250,7 @@ base_ahead: required
 
 - 紐付く Issue は、ブランチ名（`branch.pattern` の `{issue_number}`）から分かります。ブランチを作るコマンドでは、作るブランチの Issue です。リモートにだけあるブランチを追跡ブランチとして作る `git switch <名前>` / `git checkout <名前>` / `git switch -t <リモート>/<名前>` / `git checkout -t <リモート>/<名前>` も含みます（コマンドの後に動くので、今作られたブランチ（ブランチの reflog が「Created from」の 1 行だけ）が対象で、前から手元にあるブランチへの切り替えと、手元にできなかったときは出しません。commit-ish を書かない `git worktree add <パス>` は、パスの最後の名前をブランチの名前にします。名前を拾えないときも出しません）。main など、Issue の番号が分からないブランチでは、ブランチから導くリンクは出しません。
 - `cd`・`pushd`・`popd`・`git -C`・`env -C`・`sudo -D`・`--git-dir`・`GIT_DIR` などで別のリポジトリ・ブランチへ移った git のコマンドでは、移った先のリポジトリ・ブランチのリンクを出します。ただし、次のときは移った先を正しく追えません。
-  - `cd sub && git push && cd ..`・`pushd sub && git push && popd` のように、後ろでまた移るコマンドでは、移る前のブランチで判断します。`cd -` の後の git のコマンドには、リンクを出しません。
+  - `cd sub && git push && cd ..`・`pushd sub && git push && popd` のように、後ろでまた移るコマンドでは、移る前のブランチで判断します。`cd -` の後の git のコマンドと、まだ無いディレクトリへの `cd`（失敗しています）の後ろの `&&` でつないだコマンドには、リンクを出しません。
   - プロジェクトのルートにいるときに、相対パスへ `cd` したコマンド（`cd ../other && git push`）には、リンクを出しません。プロジェクトの外へ移ると、Claude Code が今のディレクトリをプロジェクトのルートに戻すので、どこへ移ったのか分からないためです。絶対パスへの `cd` なら追えます。
   - `sh -c`・`xargs` などを通したコマンドや、git の別名を通したコマンドは見逃します（`timeout`・`env`・`sudo` などの前に付くコマンドは、guard-git と同じく飛ばして拾います）。
   - コマンドの読み方は、guard-git と同じく bash の振る舞いに合わせているので、zsh などでは移った先を誤ることがあります。`case` の枝や、関数の定義の本体の扱いも、guard-git と同じです。
