@@ -83,7 +83,7 @@ target_set_up() {
 
 # 対象のリポジトリを git が見つけられないとき（ディレクトリが分からない cd - の後など）に成功する。gc_target の後に呼ぶ。
 # このときは HEAD を読めず、今のブランチが分からない。空のブランチを base_branch ではないとみなして通すと守りが外れるので、
-# 今のブランチに頼る操作（コミットと、push 先を書かない push・HEAD や @ への push）は止める。それ以外の、先の名前を書いた push は、書かれた先で判断できるので通す
+# 今のブランチに頼る操作（コミットと、push 先を書かない push・HEAD や @ への push と、stash の取り出し・破棄（pop・apply・drop・branch））は止める。それ以外の、先の名前を書いた push は、書かれた先で判断できるので通す
 target_unknown() { [ -z "$gc_repo" ]; }
 
 # 対象が分からないときに止める理由。使い方: unknown_target_message <止める操作>
