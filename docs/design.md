@@ -287,7 +287,7 @@ Issue を指定したら、ユーザーの承認や入力なしで、着手・�
 PR の見回りで `pr-watch.sh` が `conflict` を返した PR を、承認なしで直す（#287、[ADR 000285](adr/000285-unattended-pr-repair-scope.md)）。別のスキルにはせず、`branch-update` の SKILL.md に「無人で直すとき」の節を足した。指示役が「無人で直す」と指定したときだけ使い、指定が無ければ、今までどおりユーザーの確認を取る。
 
 - **確認の置き換え**：`branch-update` の確認（取り込む前・衝突の直し方の方針・push・テストとチェックのコマンド）を、指示役の判断に置き換える。次にすること（取り込む・pull する・テストとチェックを実行する・直す・push する・取り込まずに終える・再確認・止まる）は、`repair-next.sh` が `branch-status.sh` の出力などの値から判断の表で決め、組み合わせを bats で確かめる（SKILL.md の文章に書くと、組み合わせの抜けが残るため。`branch-plan.sh` と同じ流儀）。決まらない場面に当たったら止まる。`branch-status.sh` の `plan` に従うことは変えない。
-- **直す対象**：main（`base_branch`）とのコンフリクトだけ。マージキューを使うリポジトリでは、`plan.action` が `none`（マージ先と衝突していない・キューの中で衝突した・キューから外れた）なら、取り込まず、何も書き込まずに終える。`plan.fallback` は使わない（最新の main を求めたユーザーがいないため）。
+- **直す対象**：`branch-status.sh` が示す `base` とのコンフリクトだけ。マージキューを使うリポジトリでは、`plan.action` が `none`（マージ先と衝突していない・キューの中で衝突した・キューから外れた）なら、取り込まず、何も書き込まずに終える。`plan.fallback` は使わない（最新の main を求めたユーザーがいないため）。
 - **衝突の直し方**：両側の意図を Issue（PR が閉じる Issue）と周りのコード・`git log` から読み、両立できるなら両立させ、どちらかを採るなら Issue の目的と周りの書き方に合う方を採る。どちらの意図を残すか判断できない・直すのに `repair-push-check.sh` が止めるパス（`.github`・`.claude` の名前そのもの・`.github/` 以下・どの階層の `.claude/` 以下。大文字と小文字は区別しない。正本は `repair-push-check.sh --help`）の変更が要るときは止まる（push の前の検査と同じ範囲）。
 - **テストとチェック**：`checks-commands.sh` の `action` が `run`・`none` のときだけ進める。`confirm`（PR の作者が書き換えた任意のコマンド）と `infer` は、無人では実行せず止まる。
 - **push する条件**：`unpulled` が 0、テストとチェックが通っている、`repair-push-check.sh` の `ok` が true、強制のオプションの無い通常の `git push`。`repair-push-check.sh` は、push で origin に入る変更に、止めるパス（正本は `repair-push-check.sh --help`）が含まれていないかを機械的に確かめる（取り込んだ `base_branch` と同じ内容のパスは数えない）。CI は待たず、次の見回りが見る。キューを使うリポジトリでは、push で PR がキューから外れるので、入れ直すのは人が行う。
