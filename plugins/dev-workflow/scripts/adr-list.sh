@@ -8,12 +8,14 @@
 #              （#N でもよい。先頭の 0 はそろえる）
 #
 # 置き場所の直下の *.md を読み、ファイル名の順（ロケールに左右されない文字の順）に出す（下のディレクトリは読まない）。置き場所が無ければ、ADR は無いものとする。
-# front matter（先頭の --- から次の --- まで）の issue・status と、最初の「# 」の見出しを読む。行末の CR と先頭の BOM は外して読む。
+# front matter（先頭の --- から次の --- まで）の issue・status と、最初のレベル1の見出しを読む。行末の CR と先頭の BOM は外して読む。
 # 見出しと補足は、front matter の後の本文を、Issue の本文と同じ md_scan（lib/common.sh）で読み、コードブロックの中と
-# 複数行の HTML のコメントの中の行は除く（コードブロックの中の「# 」の行は見出しにしない）。
-# 「補足」の節（見出しが「## 補足」か、MADR の元の「## More Information」の節。閉じの # と大文字・小文字の違いは問わない。
-# 次の「# 」か「## 」の見出しまで）からは、インラインのリンク [文](先) の先と、参照形式のリンクの定義 [ref]: 先 の先を読み、
-# リンクしている ADR を求める。画像のリンク ![文](先)、行の中の HTML のコメントとインラインのコードの中のリンクは数えない。
+# 複数行の HTML のコメントの中の行は除く（コードブロックの中の「# 」の行は見出しにしない）。見出しは md_scan の headings で、
+# 見出しの文字は auto-check.sh と同じく、行の中の HTML のコメントと閉じの # と後ろの空白を外して読む。
+# 「補足」の節（見出しが「補足」か、MADR の元の「More Information」（大文字・小文字は問わない）の節。次の同じか上のレベルの
+# 見出しまで）からは、インラインのリンク [文](先) の先と、参照形式のリンク [文][ref]・[ref][]・[ref] をファイル全体の定義
+# [ref]: 先 で引いた先を読み、リンクしている ADR を求める。リンクの文には、入れ子の角括弧（1段）と \ のエスケープを許す。
+# 画像のリンク ![文](先)、行の中の HTML のコメントとインラインのコードの中のリンク、定義の行そのもの、脚注 [^1] は数えない。
 # リンクの先は、その ADR のファイルからの相対パス（/ で始まればリポジトリのルートからのパス）として解き、#・? からの後ろは
 # 外す。URL（https: など）と、置き場所の直下の ADR でない先と、自分へのリンクは数えない。パスは . と .. と重なった / を
 # 解いて比べる（adr.dir が ./docs/adr のようでも当たる）。
@@ -84,7 +86,7 @@ case "$suggest" in
 esac
 
 # ADR ごとに「A<TAB>パス<TAB>issue<TAB>status」の1行と、front matter の後の本文の行ごとに「B<TAB>パス<TAB>行」の1行にし、
-# 最後に1回の jq でまとめる（見出しと補足は、jq で本文を md_scan に通して読む）。ADR が多くても遅くならないよう、awk は全部の
+# 最後に1回の jq でまとめる（見出しと補足は、jq で本文を ADR ごとに1つにまとめてから md_scan に通して読む）。ADR が多くても遅くならないよう、awk は全部の
 # ファイルに1回だけ起動する。awk は中身の無いファイルを1行も読まないので、そのファイルは、ファイルの一覧（files）から、値の無い
 # ADR として補う
 files="" rows=""
@@ -133,38 +135,52 @@ res="$(jq -n -r --rawfile files "$tmp_dir/files" --rawfile row_lines "$tmp_dir/r
   def normpath: reduce (split("/")[] | select(. != "" and . != ".")) as $x ([];
       if . == null then null elif $x == ".." then (if length > 0 then .[:-1] else null end) else . + [$x] end)
     | if . == null then null else join("/") end;
-  # 補足の節の見出し（「## 補足」か、MADR の元の「## More Information」。閉じの # と、大文字・小文字の違いも許す）と、節の終わり
-  # （次の「# 」か「## 」の見出し）
-  def sup_head: test("^ {0,3}##[ \t]+(補足|more information)([ \t]+#+)?[ \t]*$"; "i");
-  def sup_end: test("^ {0,3}#{1,2}(\\s|$)");
-  # 行から、インラインのリンク [文](先)（画像 ![文](先) は除く）の先と、参照形式のリンクの定義 [ref]: 先 の先を出す。
-  # 行の中の HTML のコメントとインラインのコードの中は読まない
-  def link_targets:
-    gsub("<!--.*?-->"; "") | gsub("(?<b>`+).*?\\k<b>"; "")
-    | ((capture("^ {0,3}\\[[^\\]]+\\]:[ \t]*(?:<(?<a>[^>]*)>|(?<b>[^ \t]+))") | .a // .b // ""),
-       (capture("(?<!!)\\[[^\\]]*\\]\\([ \t]*(?:<(?<a>[^>]*)>|(?<b>[^)\\s]*))[^)]*\\)"; "g") | .a // .b // ""))
+  # 見出しは md_scan の headings から読み、文字は auto-check.sh と同じく、行の中の HTML のコメント・閉じの #・後ろの空白を外す
+  def heading($l): $l | capture("^ {0,3}(?<h>#{1,6})\\s*(?<t>.*)$")
+    | {level: (.h | length), text: (.t | gsub("<!--.*?-->"; "") | sub("\\s+#+\\s*$"; "") | sub("^#+\\s*$"; "") | sub("\\s+$"; ""))};
+  # リンクの文（入れ子の角括弧を1段と、\ のエスケープを許す）と、インラインのリンクの先
+  def link_text: "(?:[^\\[\\]\\\\]|\\\\.|\\[(?:[^\\[\\]\\\\]|\\\\.)*\\])*";
+  def dest: "[ \t]*(?:<(?<a>[^>]*)>|(?<b>[^)\\s]*))";
+  # 参照の名前は、大文字・小文字と空白の違いを区別しない
+  def ref_key: ascii_downcase | gsub("\\s+"; " ") | sub("^ "; "") | sub(" $"; "");
+  # 参照形式のリンクの定義の行（[ref]: 先。脚注の定義 [^1]: は除く）
+  def ref_def: "^ {0,3}\\[(?<k>(?!\\^)" + link_text + ")\\]:" + dest;
+  # 補足の行から、リンクの先を出す。インラインのリンク [文](先) はその先、参照形式のリンク（[文][ref]・[ref][]・[ref]）は
+  # ファイル全体の定義 $defs で引いた先。画像 ![文](先)、行の中の HTML のコメントとインラインのコードの中、定義の行そのものは読まない
+  def link_targets($defs):
+    select(test(ref_def) | not)
+    | gsub("<!--.*?-->"; "") | gsub("(?<c>`+).*?\\k<c>"; "")
+    | capture("(?<![!\\\\])\\[(?<t>" + link_text + ")\\](?:\\(" + dest + "[^)]*\\)|\\[(?<r>[^\\[\\]]*)\\])?"; "g")
+    | if .a != null or .b != null then (.a // .b) else $defs[(if (.r // "") != "" then .r else .t end) | ref_key] // empty end
     | sub("[#?].*$"; "") | select(. != "");
   [$row_lines | split("\n")[] | select(. != "") | split("\t")] as $lines
   | (reduce ($lines[] | select(.[0] == "A")) as $r ({}; .[$r[1]] = $r[1:])) as $rows
-  # 本文の行を ADR ごとにまとめ、md_scan で GitHub に表示される行（コードブロックと複数行の HTML のコメントを除く）にする
-  | (reduce ($lines[] | select(.[0] == "B")) as $r ({}; .[$r[1]] += [$r[2:] | join("\t")])
-     | map_values(join("\n") | md_scan | .lines | map(.text))) as $bodies
+  # 本文の行を ADR ごとに1つにまとめ（group_by は並びを保つ）、md_scan で、GitHub に表示される行（コードブロックと複数行の
+  # HTML のコメントを除く）と見出しを読む
+  | ([$lines[] | select(.[0] == "B")] | group_by(.[1])
+     | map({key: .[0][1], value: (map(.[2:] | join("\t")) as $l | ($l | join("\n") | md_scan) as $m
+         | [$m.headings[] as $i | heading($l[$i]) + {line: $i}] as $hs
+         # 補足の節は、見出しが「補足」か MADR の元の「More Information」（大文字・小文字は問わない）の節。次の同じか上のレベルの
+         # 見出しまで（下のレベルの見出しの節も含む）
+         | [range(0; $hs | length) as $k | $hs[$k] | select(.text | ascii_downcase | IN("補足", "more information")) | . as $h
+             | {from: $h.line, to: ([$hs[$k + 1:][] | select(.level <= $h.level) | .line] | first // ($l | length))}] as $sups
+         | {title: (first($hs[] | select(.level == 1) | .text | gsub("\t"; " ")) // null),
+            defs: (reduce ($m.lines[].text | select(test(ref_def)) | capture(ref_def)) as $d ({};
+              ($d.k | ref_key) as $k | if has($k) then . else .[$k] = ($d.a // $d.b // "") end)),
+            sup: [$m.lines[] | . as $x | select(any($sups[]; $x.line > .from and $x.line < .to)) | .text]})})
+     | from_entries) as $bodies
   # 補足のリンクの先を、リンクしている ADR のファイルからの相対パスとして、リポジトリのルートからのパスに解き、
   # 先（正規化したパス）ごとに、リンクしている ADR をまとめる
-  | (reduce ($bodies | to_entries[] | .key as $from
-        | foreach .value[] as $l ({sup: false};
-            if $l | sup_head then {sup: true, l: null} elif $l | sup_end then {sup: false, l: null}
-            else .l = (if .sup then $l else null end) end;
-            .l // empty)
-        | link_targets
+  | (reduce ($bodies | to_entries[] | .key as $from | .value.defs as $defs
+        | .value.sup[] | link_targets($defs)
         | select(test("^[A-Za-z][A-Za-z0-9+.-]*:") | not)
         | (if startswith("/") then . else ($from | sub("[^/]*$"; "")) + . end | normpath) as $to
         | select($to != null and $to != ($from | normpath))
         | {from: $from, to: $to}) as $k ({}; .[$k.to] += [$k.from])) as $cited
   | [$files | split("\n")[] | select(. != "") | . as $p | ($rows[$p] // [$p])
     | {path: $p, issue: (.[1] // "" | num), status: (.[2] // "" | nz),
-       # 最初の「# 」の行を見出しにする（コードブロックの中の「# 」の行は見出しにしない）
-       title: (first($bodies[$p][]? | select(startswith("# ")) | .[2:] | sub("[ \t]+$"; "") | gsub("\t"; " ")) // null),
+       # 最初のレベル1の見出し（md_scan の見出し。コードブロックの中の「# 」の行は見出しにしない）
+       title: ($bodies[$p].title // "" | nz),
        cited_in_supplements: ($cited[$p | normpath] // [] | unique)}]
   # glob の並びはロケールで変わるので、文字の順に並べ直す
   | sort_by(.path)
