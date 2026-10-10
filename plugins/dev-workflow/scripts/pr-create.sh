@@ -188,8 +188,8 @@ fi
 case "$title" in
   *$'\n'*) dw_die "タイトルは1行にしてください" 64 ;;
 esac
-pattern="$(jq -r '.pr.title_pattern' <<<"$config")"
-jq -e --arg s "$title" --arg p "$pattern" '$s | test($p)' <<<null >/dev/null \
+# pr.title_pattern が読めない・文字列でない・正規表現として正しくないときは、設定の誤りとして止まる（dw_config_regex_test）
+dw_config_regex_test "$config" pr.title_pattern "$title" \
   || dw_die "タイトルが規約に合いません（<type>: <Issue のタイトル>）: $title" 2
 # type ラベル・ブランチ名・PR のタイトルは同じ type で1対1に対応させる（設計書 §5）
 title_type="$(jq -rn --arg s "$title" '$s | capture("^(?<t>[a-z]+)").t // ""')"

@@ -12,6 +12,8 @@
 #                    - gh issue view・gh pr view：「<issue か pr> view <番号> <残りの引数>」（#番号・URL の指定は番号にし、先頭に並べ直す）
 #   .fake-gh/calls   呼ばれるたびに、引数を空白でつないだ1行を足す（graphql は「api graphql <操作名> <変数の JSON> <-f・-F の値>」）
 #   .fake-gh/writes  書き込みなら、calls と同じ1行をここにも足す（grader は、これが空かで「書き込まなかった」を確かめる）
+#   .fake-gh/pr-body gh pr create で送られた PR の本文（--body-file・-F・--body・-b。最後の呼び出しのもので上書きする）。
+#                    引数の記録には本文のファイルのパスしか残らないので、grader が PR の本文を採点できるように残す
 # 応答のファイルは .fake-gh/ からの相対パス。終了コードが 0 でなければ、応答を標準エラーに出して、その終了コードで終わる。
 # -q / --jq があれば、応答に jq -r で当てる。合うパターンが無ければ、記録してから失敗する（足りない応答に気付けるように）。
 #
@@ -48,10 +50,16 @@ takes_value() {
 # --- 1. 引数を読む ---------------------------------------------------------------
 # -q / --jq の式、--input のファイル、-f・-F の値（GraphQL のクエリと変数）、位置の引数、標準入力を読むか
 q="" stdin_input=false input_file="" stdin_used=false stdin_read=false fields=() pos=() prev=""
+body_file="" body_text="" body_set=false
 for a in "$@"; do
   # gh は、値の - と @-（-F body=@- など）で標準入力を読む
   case "$a" in - | *=- | *=@-) stdin_used=true ;; esac
   if [ -n "$prev" ]; then
+    # PR の本文（gh pr create の -F は --body-file。gh api の -F は本文の値なので、下の fields にも入れ、使うかは後で決める）
+    case "$prev" in
+      -F | --body-file) body_file="$a" ;;
+      -b | --body) body_text="$a" body_set=true ;;
+    esac
     case "$prev" in
       -q | --jq) q="$a" ;;
       -f | --raw-field) fields+=("f:$a") ;;
@@ -69,6 +77,8 @@ for a in "$@"; do
     --field=*) fields+=("F:${a#--field=}") ;;
     --input=-) stdin_input=true ;;
     --input=*) input_file="${a#--input=}" ;;
+    --body-file=*) body_file="${a#--body-file=}" ;;
+    --body=*) body_text="${a#--body=}" body_set=true ;;
     -) ;;
     -*) takes_value "$a" && prev="$a" ;;
     *) pos+=("$a") ;;
@@ -116,7 +126,19 @@ elif [ "$p1" = view ] && { [ "$p0" = issue ] || [ "$p0" = pr ]; }; then
   done
   key="${p0} view${num:+ ${num}}${rest[0]+ ${rest[*]}}"
 fi
-# 送られた本文は使わないが、書き手が詰まらないよう、標準入力を読み捨てる（--input - や --body-file - など）
+# gh pr create の本文を残す（--body-file - なら標準入力から読む）。本文の無い呼び出しで前の本文が残らないよう、先に消す
+if [ "$p0" = pr ] && [ "$p1" = create ]; then
+  rm -f "$base/pr-body"
+  if [ "$body_file" = - ]; then
+    cat >"$base/pr-body"
+    stdin_read=true
+  elif [ -n "$body_file" ]; then
+    cat "$body_file" >"$base/pr-body" 2>/dev/null || : >"$base/pr-body"
+  elif $body_set; then
+    printf '%s\n' "$body_text" >"$base/pr-body"
+  fi
+fi
+# ほかの送られた本文は使わないが、書き手が詰まらないよう、標準入力を読み捨てる（--input - や --body-file - など）
 if { $stdin_input || $stdin_used; } && ! $stdin_read; then cat >/dev/null; fi
 
 # 書き込みのしるし（上の説明）
