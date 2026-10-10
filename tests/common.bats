@@ -389,6 +389,44 @@ run_common() {
   assert_output ok
 }
 
+@test "dw_json_enum_ok は、null か一覧のどれかの文字列なら 0、それ以外（読めない JSON を含む）は 1 を返す" {
+  list='["low", "high"]'
+  for v in null '"low"' '"high"'; do
+    run_common dw_json_enum_ok "$list" "$v"
+    assert_success
+  done
+  for v in '"Low"' '"medium"' '""' 1 true '["low"]' '{"v": "low"}' 'low' ''; do
+    run_common dw_json_enum_ok "$list" "$v"
+    assert_failure 1
+    assert_output ""
+  done
+}
+
+@test "dw_json_enum_names は、一覧を「・」でつないで出す" {
+  run_common dw_json_enum_names '["low", "medium", "high"]'
+  assert_success
+  assert_output "low・medium・high"
+}
+
+@test "dw_json_enum_ok は、一覧が1つの配列でなければ（文字列・複数の値・オブジェクト・読めない JSON）当てない" {
+  # 一覧が文字列だと、jq の index が部分文字列で当たってしまう（"slow" の中の "low"）
+  for list in '"slow"' '1 ["low"]' '["low"] ["high"]' '{"low": 1}' '[low' ''; do
+    run_common dw_json_enum_ok "$list" '"low"'
+    assert_failure 1
+    assert_output ""
+  done
+}
+
+@test "設定の値の一覧の定数（DW_REVIEW_MODELS・DW_CODE_REVIEW_EFFORTS）は、空でない文字列の配列" {
+  for name in DW_REVIEW_MODELS DW_CODE_REVIEW_EFFORTS; do
+    # shellcheck disable=SC2016 # 引数は、起動した bash の中で展開させる
+    run "${TEST_BASH:-bash}" -c '. "$1"; printf "%s" "${!2}"' _ "$SCRIPTS/lib/common.sh" "$name"
+    assert_success
+    jq -s -e 'length == 1 and (.[0] | type == "array" and length > 0 and all(.[]; type == "string" and . != ""))' <<<"$output" >/dev/null \
+      || fail "${name} が空でない文字列の配列ではありません: ${output}"
+  done
+}
+
 # 所有者が repos のリポジトリ（API の URL が .../repos/repos/<名前>）を読む偽の gh を置く。
 # gh api repos/<所有者>/<名前>/issues/<番号>/parent は $TMP/fix/parent-<番号>.json を返し（無ければ 404。FAKE_FAIL_PARENT があれば 500）、
 # 「GetParent <番号>」を $TMP/fix/calls に記録する。

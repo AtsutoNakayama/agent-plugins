@@ -524,6 +524,36 @@ has() {
     || fail "再レビュー（手順8）でも /code-review をサブエージェントに任せることが書かれていません"
 }
 
+# shellcheck disable=SC2016 # バッククォートはスキルの本文の文字で、展開させない
+@test "review は、設定 review.code_review_effort があるときだけ、1周目と再レビューの /code-review にその段階を渡す（設計書 §7）" {
+  f="$SKILLS/review/SKILL.md"
+  step3="$(step "$f" 3)"
+  [ -n "$step3" ] || fail "手順3が見つかりません"
+  # 段階の付け方の決まりは、手順3の1か所（「`/code-review` に渡す引数」）だけに書く
+  rule="$(grep -F '`<段階> <対象>`' "$f" || true)"
+  [ "$(grep -c . <<<"$rule")" -eq 1 ] || fail "段階の付け方（<段階> <対象>）を書いた行が1つではありません: ${rule}"
+  grep -qF -e "$rule" <<<"$step3" || fail "段階の付け方の決まりが、手順3にありません: ${rule}"
+  has "段階の付け方の決まり" "$rule" '`context` の `code_review_effort` が null でなければ' 'null なら `<対象>` だけ'
+  target="$(grep -F '`<対象>` は' <<<"$step3" || true)"
+  has "<対象> の決まり" "$target" '1周目は今のブランチ名' '再レビューは反映したコミットの sha' '何も反映していない'
+  grep -qE '何も反映していない.*今のブランチ名' <<<"$target" || fail "再レビューで反映が無いときの <対象> がブランチ名だと書かれていません: ${target}"
+  # 指示のブロックは、<引数> を決まりで決めた値に置き換えて含める（文字どおり渡さない）
+  use="$(grep -F '「`/code-review` を任せるサブエージェントへの指示」を' <<<"$step3" || true)"
+  has "指示のブロックを含める文" "$use" '`<引数>`' '置き換え'
+  ! grep -nF '指示」をそのまま含める' <<<"$step3" || fail "指示のブロックを、<引数> を置き換えずにそのまま含めるとしています"
+  # 指示のブロックのプレースホルダは、決まりで決めた <引数> の1つだけにし、角括弧の書き方を使わない
+  grep -qF 'Skill ツールの code-review を、引数 <引数> で実行する。' <<<"$step3" \
+    || fail "/code-review を任せるサブエージェントへの指示が、引数 <引数> で実行する形になっていません"
+  ! grep -nF '[<段階>' "$f" || fail "段階を角括弧の書き方で書いています"
+  # 手順1・手順8は決まりを参照するだけにし、書き写さない
+  for n in 1 8; do
+    body="$(step "$f" "$n")"
+    grep -qF '「`/code-review` に渡す引数」' <<<"$body" || fail "手順${n}が、手順3の「/code-review に渡す引数」を参照していません"
+    ! grep -nF '<段階>' <<<"$body" || fail "手順${n}に、段階の付け方を書き写しています"
+  done
+  ! grep -nF '引数の先頭にその段階を付ける' "$f" || fail "段階の付け方を書き写した文が残っています"
+}
+
 @test "repo-setup は、レビューに使うモデルを決めていなければ、使うかと保存する層を聞き、使わないことも保存する" {
   f="$SKILLS/repo-setup/SKILL.md"
   step2="$(step "$f" 2)"

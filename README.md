@@ -171,7 +171,7 @@ base_ahead: required
 - レビューを終えるときに、レビューが見落としてユーザーが出した指摘があれば、それを観点に残すか（既にある観点を直すか、新しい観点を作るか）を尋ねます。反映しなかった指摘に、今後も要らないという理由（例：「この書き方はこのリポジトリでは許容」）を述べたときは、今後指摘しないようにするかを尋ねます。どちらも、選んだときだけ観点ファイルを作ったり直したりします。一般的なバグや、その場限りの好みは観点にしません。
 - 今後指摘しないものは、その観点ファイルの「指摘しないこと」に書きます。`/code-review` の指摘は、上の層に `code-review.md`（`builtin: code-review`）を置き、本文の「## 指摘しないこと」の節に書きます。`/code-review` そのものは変わらず、`/dev-workflow:review` が一覧にまとめるときにこの節と照らして外し、外した件数を伝えます。
 - 同梱の観点を使わないときは、上の層に同じ名前のファイルを置き、frontmatter に `enabled: false` と書きます（本文と `title` は省けます）。
-- 使われる観点は `plugins/dev-workflow/scripts/review-perspectives.sh` で確かめられます。引数なしでは、層を合わせた観点の一覧（条件で外す前）が出ます。今の変更で使われる観点を見るには、`--auto` を付けます（review スキルと同じく、基点・マージ先・Issue・type をブランチから決め、`context` に出します。設定の `review.max_rounds` が1以上の整数でないときと、`review.model` が null か使えるモデルでないときは止まります）。形式の誤ったファイルは警告を出して使いません。そのファイルと同じ名前の観点は、下の層にあっても使いません（`enabled: false` の書き間違いで、止めたつもりの観点が動かないようにするため）。
+- 使われる観点は `plugins/dev-workflow/scripts/review-perspectives.sh` で確かめられます。引数なしでは、層を合わせた観点の一覧（条件で外す前）が出ます。今の変更で使われる観点を見るには、`--auto` を付けます（review スキルと同じく、基点・マージ先・Issue・type をブランチから決め、`context` に出します。設定の `review.max_rounds` が1以上の整数でないときと、`review.model` が null か使えるモデルでないとき、`review.code_review_effort` が null か low・medium・high・xhigh・max でないときは止まります）。形式の誤ったファイルは警告を出して使いません。そのファイルと同じ名前の観点は、下の層にあっても使いません（`enabled: false` の書き間違いで、止めたつもりの観点が動かないようにするため）。
 
 同梱の観点：
 
@@ -381,6 +381,23 @@ plugins/dev-workflow/scripts/setup/setup-models.sh
 - 計った結果（[設計書 §7](docs/design.md#7-レビュー)）：費用の半分ほどはセッションのモデルで動く進行役の分なので、`sonnet` に下げても、レビュー1回の費用は17%ほどしか減りません。`haiku` はトークンを多く使うので `sonnet` より得にならず、時間は倍以上かかります。セッションを Sonnet にしたままレビューだけを `opus` にすると、セッションを Opus にしたときと同じくらいの費用で、レビューを Opus で行えます。
 - `local` に書いたとき、`config.local.json` が git に無視されていなければ警告します。`.gitignore` に `.claude/dev-workflow/config.local.json` を足してください。既にコミットしてあるときは、`.gitignore` に書くだけでは追跡が外れないので、`git rm --cached .claude/dev-workflow/config.local.json` で外すよう警告します。
 - `--review-model`・`--models-scope` は、`setup-all.sh` にも渡せます。
+
+### レビューの /code-review の段階
+
+`/dev-workflow:review` が呼ぶ組み込みの `/code-review` に渡す effort の段階（low・medium・high・xhigh・max）を、設定の `review.code_review_effort` で固定できます。既定（null）では段階を渡さないので、`/code-review` は、最後に手で打った段階を使い、一度も打っていなければセッションの今の effort を使います。そのため、セッションの effort を上げると、レビューの待ち時間が大きく変わります（過去の記録では、low で1回1分足らず、high で約2分、max で約33分でした。再レビューの周ごとに繰り返します）。
+
+```json
+{
+  "review": {
+    "code_review_effort": "low"
+  }
+}
+```
+
+- 設定すると、セッションの effort や前に打った段階に関係なく、1周目と再レビューの `/code-review` がその段階で動きます（`review.model` でサブエージェントに任せるときも同じです）。
+- 自分だけ固定するなら、`.claude/dev-workflow/config.local.json`（このリポジトリだけ）か `~/.claude/dev-workflow/config.json`（導入したすべてのリポジトリ）に書きます。チームでそろえるなら `.claude/dev-workflow/config.json` に書きます。リポジトリの層で決めた値が優先されます。
+- 誤った値（`ultra` を含みます）を書くと、レビューの前に1行のメッセージで止まります。
+- review スキルが渡した段階は、手で打つ `/code-review` が後で使う「最後に打った段階」を変えないと見込んでいますが、実際に実行しては確かめていません（[設計書 §7](docs/design.md#7-レビュー)）。
 
 ## 開発
 

@@ -19,7 +19,8 @@
   },
   "review": {
     "max_rounds": 3,
-    "model": null
+    "model": null,
+    "code_review_effort": null
   },
   "checks": {
     "commands": null
