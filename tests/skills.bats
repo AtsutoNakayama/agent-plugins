@@ -301,9 +301,13 @@ has() {
 }
 
 # shellcheck disable=SC2016 # バッククォートはスキルの本文の文字で、展開させない
-@test "gh-pr-check は、対応が要るかを needs_attention で決め、スレッドの件数だけで未解決なしと言わない（#279）" {
+@test "gh-pr-check は、needs_attention が true なら対応なしで終えず、スレッドの件数だけで未解決なしと言わない（#279）" {
   f="$SKILLS/gh-pr-check/SKILL.md"
-  grep -q '`needs_attention` が false で' "$f" || fail "gh-pr-check に、needs_attention で終えるかを決めることが書かれていません"
+  grep -q '`needs_attention` が true なら.*「対応はありません」で終えない' "$f" \
+    || fail "gh-pr-check に、needs_attention が true なら対応なしで終えないことが書かれていません"
+  grep -q '`feedback` が空で、`checks.state` が `failure` でもなければ、何も変えずに終える' "$f" \
+    || fail "gh-pr-check の終える条件が、feedback が空で CI も失敗していないこと、になっていません"
+  grep -q '`replied` は.*時刻だけで決めた目安' "$f" || fail "gh-pr-check に、replied が時刻だけの目安であることが書かれていません"
   grep -q 'counts.threads.*だけを見て' "$f" || fail "gh-pr-check に、スレッドの件数だけで未解決なしと言わないことが書かれていません"
   grep -q '`reviews`・`comments`・`needs_attention`・`counts.unanswered` を落とさない' "$f" \
     || fail "gh-pr-check に、出力を絞って読むときも reviews・comments を落とさないことが書かれていません"
