@@ -61,6 +61,19 @@ load fake_gh
   assert_output --partial "正規表現として正しくありません"
 }
 
+@test "ブランチ名を作るときも、labels.types が正しくなければ、type の誤り（64）ではなく設定の誤りとして終了コード 2" {
+  echo '{"labels": {"types": null}}' >.claude/dev-workflow/config.json
+  run_script branch-name.sh --issue 17 --type feat --slug x
+  assert_failure 2
+  assert_output --partial "labels.types（null）が文字列の配列ではありません"
+  setup_fake_gh
+  echo '{"labels": {"types": "feat"}}' >.claude/dev-workflow/config.json
+  fake_issue 17 '["feat"]'
+  run_script branch-name.sh --issue 17 --slug x
+  assert_failure 2
+  assert_output --partial 'labels.types（"feat"）が文字列の配列ではありません'
+}
+
 @test "type ラベルが無い、または複数あればエラーになる" {
   setup_fake_gh
   fake_issue 17 '["priority: high"]'
