@@ -147,6 +147,20 @@ has() {
   grep -q '「このまま設定する」と合わせて4つにする' <<<"$step3" || fail "21/34 の分割の段落に、選択肢を4つに収めることが書かれていません"
   grep -q '外した親の代わりとして使う例外' <<<"$step2" || fail "親を外すときの扱いが書かれていません"
   grep -q '子を親なしで起票し' <<<"$step2" || fail "外した親の代わりの Issue を親にできないときの扱いが書かれていません"
+  # 親にできるかは、スクリプトの出力の action で決める（SKILL.md に条件の組み合わせを書いて判断させない）
+  grep -qF 'parent-candidate.sh --issue <重なる既にある Issue の番号> --levels' <<<"$step2" || fail "外した親の代わりを parent-candidate.sh で判定することが書かれていません"
+  grep -qF "\`use_as_parent\` なら" <<<"$step2" || fail "action が use_as_parent のときにすることが書かれていません"
+  grep -qF "\`no_parent\` なら" <<<"$step2" || fail "action が no_parent のときにすることが書かれていません"
+  # 止まったときにユーザーに親にするかを聞くと、issue-create.sh は確かめ直さないので、防ぐはずの紐付けが起きる
+  # 一時的な失敗で親の紐付けを失わないよう、1回だけ実行し直してから、親なしにする
+  grep -qF '通信などの一時的な失敗のこともあるので、1回だけ実行し直し' <<<"$step2" || fail "parent-candidate.sh が止まったときに実行し直すことが書かれていません"
+  grep -qF "それでも止まったら \`no_parent\` と同じに扱う" <<<"$step2" || fail "parent-candidate.sh が止まり続けたときに親なしで起票することが書かれていません"
+  # 直らない失敗（設定の誤り・引数の誤り）は実行し直さない
+  grep -qF "2（設定の誤り）か 64（引数の誤り）なら、実行し直しても直らないので、実行し直さずに \`no_parent\` と同じに扱う" <<<"$step2" \
+    || fail "parent-candidate.sh が終了コード 2・64 で止まったときに、実行し直さないことが書かれていません"
+  grep -qF '後で GitHub の画面などから子を重なる既にある Issue に紐付けられる' <<<"$step2" || fail "親なしで起票したときに、後で紐付けられることを伝えると書かれていません"
+  ! grep -qF '親にするかをユーザーに聞く' <<<"$step2" || fail "parent-candidate.sh が止まったときに、親にするかをユーザーに聞くと書かれています"
+  [ -x "$BATS_TEST_DIRNAME/../plugins/dev-workflow/scripts/parent-candidate.sh" ] || fail "parent-candidate.sh が実行できません"
   grep -q '外した親のさらに上の親にする' <<<"$step2" || fail "木の途中の親を外すときの扱いが書かれていません"
   grep -qF "依存先を既にある Issue の \`#N\` に付け替え" <<<"$step2" || fail "依存先の付け替えが書かれていません"
 }

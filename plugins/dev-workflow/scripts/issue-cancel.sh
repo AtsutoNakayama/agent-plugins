@@ -119,7 +119,7 @@ while [ "$(jq length <<<"$level")" -gt 0 ] && [ "$depth" -lt 8 ]; do
   depth=$((depth + 1))
   # 子の一覧は本文を含んで長くなりうるので、引数ではなく標準入力で jq に渡す（引数1つの長さには上限がある。下も同じ）
   open_subs="$(printf '%s\n' "$open_subs" "$level" | jq -sc '.[0] + (.[1] | map(select(.state == "open")
-    | {number, title, repo: (.repository_url | sub("^.*/repos/"; ""))}))')"
+    | {number, title, repo: (.repository_url | sub("^.*?/repos/"; ""))}))')"
   next='[]'
   # 孫の数（sub_issues_summary）が応答に無ければ、孫を見落とさないよう読みにいく
   for path in $(jq -r '.[] | select((.sub_issues_summary.total // 1) > 0) | .url | sub("^.*?/repos/"; "repos/")' <<<"$level"); do

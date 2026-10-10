@@ -26,6 +26,7 @@ issue-depend.bats	7
 issue-number-arg.bats	7
 merge-group-check.bats	7
 next-tasks.bats	23
+parent-candidate.bats	6
 pr-create.bats	31
 pr-feedback.bats	7
 pr-link.bats	24
