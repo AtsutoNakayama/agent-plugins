@@ -19,7 +19,7 @@
 #            fork          フォークからの PR（対象外。push できない）
 #   2. wait  in_merge_queue  マージキューに入っている（キューの結果を待つ）
 #   3. conflict  conflicting  main などとコンフリクトしている（mergeable が CONFLICTING、または merge_state が DIRTY）
-#                behind       base_branch に遅れている（merge_state が BEHIND）
+#                behind       PR のマージ先に遅れている（merge_state が BEHIND）
 #   4. act   ci_failed             CI のチェックが失敗している
 #            unresolved_threads    resolved でないスレッドで、PR の作者がまだ返事をしていないものがある
 #            unanswered_reviews    変更の要求か本文のあるレビューで、その後に PR の作者のコメントが無いものがある
