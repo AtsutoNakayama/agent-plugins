@@ -58,7 +58,7 @@ subject="$(printf '%s\n' "$message" | sed -n 1p)"
 second="$(printf '%s\n' "$message" | sed -n 2p)"
 [ -z "$second" ] || dw_die "1行目（要約）の次は空行にしてください" 2
 
-# commit.pattern が文字列でない・正規表現として正しくないときは、設定の誤りとして止まる（dw_config_regex_test）
+# commit.pattern が読めない・文字列でない・正規表現として正しくないときは、設定の誤りとして止まる（dw_config_regex_test）
 dw_config_regex_test "$config" commit.pattern "$subject" \
   || dw_die "1行目が規約に合いません（<type>(<scope>): <要約>。type は $(jq -r '.commit.types | join(" / ")' <<<"$config")）: $subject" 2
 

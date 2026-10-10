@@ -486,18 +486,19 @@ dw_is_json_object() {
 DW_JQ_REGEX_FAILURE='def regex_failure: tostring | test("Regex failure|is not a valid regex");'
 
 # 文字列を、設定の正規表現（<キー>。例：commit.pattern）に当てる。合えば 0、合わなければ 1 を返す。
-# 設定の値が文字列でない・正規表現として正しくないときは、合わないのと区別できるよう、設定の誤りと分かる1行を出して
+# 設定の値が読めない（上のキーがオブジェクトでない）・文字列でない・正規表現として正しくないときは、合わないのと区別できるよう、設定の誤りと分かる1行を出して
 # 終了コード 2 で止まる（jq の test は正しくない正規表現で失敗し、合わないのと区別できないため）
 # 使い方: dw_config_regex_test <設定の JSON> <キー（. で区切る）> <文字列>
 dw_config_regex_test() {
   local out
   # shellcheck disable=SC2016 # jq の変数を bash に展開させない
   out="$(jq -r --arg k "$2" --arg s "$3" "$DW_JQ_REGEX_FAILURE"'
-    (try getpath($k | split(".")) catch null) as $p
-    | if ($p | type) != "string" then "!\($k)（\($p | tojson)）が文字列ではありません。設定を直してください"
+    (try {p: getpath($k | split("."))} catch {e: "!\($k) を読めません（\(tostring | gsub("\n"; " "))）。設定を直してください"})
+    | if has("e") then .e
+      else .p as $p | if ($p | type) != "string" then "!\($k)（\($p | tojson)）が文字列ではありません。設定を直してください"
       else try (if ($s | test($p)) then "+" else "-" end)
         catch (if regex_failure then "!\($k)（\($p | tojson)）が正規表現として正しくありません。設定を直してください"
-          else "!\($k) を検査できません（\(tostring | gsub("\n"; " "))）。設定を直してください" end) end' <<<"$1")" \
+          else "!\($k) を検査できません（\(tostring | gsub("\n"; " "))）。設定を直してください" end) end end' <<<"$1")" \
     || dw_die "${2} を検査できませんでした（jq が失敗しました）" 2
   case "$out" in
     '!'*) dw_die "${out#!}" 2 ;;

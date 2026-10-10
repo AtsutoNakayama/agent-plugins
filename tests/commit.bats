@@ -129,3 +129,13 @@ commit_with() {
   done
   assert_equal "$(git rev-list --count HEAD)" 1
 }
+
+@test "commit.pattern の上のキー（commit）がオブジェクトでなければ、null ではなく、読めない理由を報告する" {
+  setup_branch
+  echo '{"commit": "x"}' >.claude/dev-workflow/config.json
+  commit_with "feat: ログインを追加する"
+  assert_failure 2
+  assert_output --partial "commit.pattern を読めません"
+  refute_output --partial "commit.pattern（null）"
+  assert_equal "${#lines[@]}" 1
+}
