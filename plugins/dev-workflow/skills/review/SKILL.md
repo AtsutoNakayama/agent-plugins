@@ -33,7 +33,7 @@ description: 作業中のブランチの変更を、組み込みの /code-review
 - 基点からの差分（`git diff <基点>`）が無ければ、レビューするものが無いと伝えて止める
 - 出力の `context` の `max_rounds` が、周回の上限（設定の `review.max_rounds`。スクリプトが、1以上の整数かを検査する）
 - 出力の `context` の `model` が、レビューに使うモデル（設定の `review.model`。スクリプトが、null か使える別名かを検査する）。null なら、手順3はセッションと同じモデルで動かす（Agent ツールに `model` を渡さない）
-- 出力の `context` の `code_review_effort` が、`/code-review` に渡す effort の段階（設定の `review.code_review_effort`。スクリプトが、null か low・medium・high・xhigh・max のどれかを検査する）。使い方は、手順3の「`/code-review` に渡す引数」に従う
+- 出力の `context` の `code_review_effort` が、`/code-review` に渡す effort の段階（設定の `review.code_review_effort`。スクリプトが、null か low・medium・high・xhigh・max のどれかを検査する）。null なら段階を付けない。付け方は、手順3の「`/code-review` に渡す引数」に従う
 
 ### 2. 観点を伝える
 
@@ -48,16 +48,16 @@ description: 作業中のブランチの変更を、組み込みの /code-review
 `perspectives` の観点ごとに、次のどちらかを、まとめて並行して実行する。
 
 - **`builtin` が null の観点**：Agent ツールで、`subagent_type` を `dev-workflow:perspective-reviewer`（プラグインの agent。ファイルを編集するツールを持たない）にしたサブエージェントを1つずつ、同じメッセージの中で起動する。プロンプトには、観点ファイルのパス（`path`）・基点・Issue の番号（null なら「なし」）だけを書く（担当者への指示と返す JSON の形式は agent の定義にあるので、書き足さない）。手順1の `context` の `model` が null でなければ、Agent ツールの `model` にその値を渡す
-- **`builtin` が `code-review` の観点**：組み込みの `/code-review`（Skill ツールの `code-review`）を、下の「`/code-review` に渡す引数」で決めた引数で実行する。使えない環境では、その旨を最後に伝えて、ほかの観点だけで進める。手順1の `context` の `model` が null でなければ、自分では実行せず、Agent ツールでサブエージェントを1つ（`model` にその値を渡して）、ほかの観点と同じメッセージの中で起動し、下の「`/code-review` を任せるサブエージェントへの指示」をそのまま含める（Skill ツールで直接実行すると、セッションのモデルで動くため）
+- **`builtin` が `code-review` の観点**：組み込みの `/code-review`（Skill ツールの `code-review`）を、下の「`/code-review` に渡す引数」で決めた引数で実行する。使えない環境では、その旨を最後に伝えて、ほかの観点だけで進める。手順1の `context` の `model` が null でなければ、自分では実行せず、Agent ツールでサブエージェントを1つ（`model` にその値を渡して）、ほかの観点と同じメッセージの中で起動し、下の「`/code-review` を任せるサブエージェントへの指示」を、`<引数>` を下の「`/code-review` に渡す引数」で決めた値に置き換えて含める（Skill ツールで直接実行すると、セッションのモデルで動くため）
 
 `context` の `model` を Agent ツールに渡しても、組織の制限や契約で使えないモデルなら、Claude Code が別のモデルに置き換えて動かす。置き換えを知らせる警告が出たら、そのままユーザーに伝える。
 
 `/code-review` に渡す引数（1周目も再レビューも、自分で実行するときもサブエージェントに任せるときも、この決まりだけで決める）:
 
-- `<対象>` は、1周目は今のブランチ名、再レビューは反映したコミットの sha（1周目に基点の sha を渡すと、そのコミット1つだけをレビューしてしまう。再レビューにブランチ名を渡すと、前の周の指摘まで見てしまう）
+- `<対象>` は、1周目は今のブランチ名、再レビューは反映したコミットの sha。ただし、再レビューで何も反映していないとき（手順8の「もう1周」で何も選ばれなかったとき）は、基点からの差分全体を見るので、今のブランチ名（1周目に基点の sha を渡すと、そのコミット1つだけをレビューしてしまう。反映したコミットがある再レビューにブランチ名を渡すと、前の周の指摘まで見てしまう）
 - 手順1の `context` の `code_review_effort` が null でなければ、引数は `<段階> <対象>`（`<段階>` はその値。例：`high feat/12-add-thing`）。null なら `<対象>` だけ（段階を付けないので、`/code-review` が前に打った段階かセッションの effort を使う）
 
-`/code-review` を任せるサブエージェントへの指示（`<引数>` には、上の「`/code-review` に渡す引数」で決めた引数を入れる）:
+`/code-review` を任せるサブエージェントへの指示（`<引数>` は、上の「`/code-review` に渡す引数」で決めた値に置き換える。`<引数>` の文字のまま渡さない）:
 
 ```
 Skill ツールの code-review を、引数 <引数> で実行する。ファイルは編集しない。
@@ -65,7 +65,7 @@ code-review が報告した指摘を、省かずにそのまま返す（場所�
 Skill ツールを使えなければ、そのことだけを返す。
 ```
 
-`dev-workflow:perspective-reviewer` へのプロンプト（`<基点>` には、上のとおり基点か、再レビューでは反映の前のコミットの sha を入れる）:
+`dev-workflow:perspective-reviewer` へのプロンプト（`<基点>` には、手順1の `context` の `base`（基点）か、再レビューでは反映の前のコミットの sha を入れる）:
 
 ```
 観点ファイル: <path>
@@ -132,7 +132,7 @@ AskUserQuestion の複数選択（`multiSelect: true`）で、反映する指摘
 再レビューは、今の周で反映したコミットの差分だけを見る（1の「もう1周」で何も反映していなければ、基点からの差分全体）。
 
 - 手順1の `review-perspectives.sh --auto` をもう一度実行し、当てはまる観点を決め直す（失敗したときの扱いも手順1と同じ）
-- `/code-review`（Skill ツールの `code-review`）には、手順3の「`/code-review` に渡す引数」で決めた引数（対象は反映したコミットの sha）を渡す。`context` の `model` が null でなければ、手順3のとおりサブエージェントに任せる。当てはまる独自の観点は、手順3のとおり `dev-workflow:perspective-reviewer` で起動し、基点には反映の前のコミットの sha を渡す（そのコミットの差分だけを見るため）
+- `/code-review`（Skill ツールの `code-review`）には、手順3の「`/code-review` に渡す引数」で決めた引数（再レビューの `<対象>`）を渡す。`context` の `model` が null でなければ、手順3のとおりサブエージェントに任せる。当てはまる独自の観点は、手順3のとおり `dev-workflow:perspective-reviewer` で起動し、基点には反映の前のコミットの sha を渡す（そのコミットの差分だけを見るため）
 - 手順4からの流れで、新しい指摘を一覧にする。前の周の指摘と同じ場所や同じ種類のものには、手順4のとおり「繰り返し」の印を付ける
 - 新しい指摘が無ければ、再レビューでも指摘が無かったことを、手順4の「指摘が1つも無ければ」のとおり伝えて終える
 
