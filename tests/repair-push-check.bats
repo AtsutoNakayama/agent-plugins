@@ -17,6 +17,12 @@ setup() {
 }
 
 commit_file() { mkdir -p "$(dirname "$1")" && echo "$2" >"$1" && git add "$1" && git commit -q -m "change $1"; }
+# ファイルを書かずに、index に直接パスを入れてコミットする。大文字と小文字を区別しないファイルシステム（macOS）では、
+# .GitHub/x を書くと既にある .github/ に入り、git が .github/x と記録するので、綴りどおりのパスを作るのに使う
+commit_index_only() {
+  local blob
+  blob=$(echo "$2" | git hash-object -w --stdin) && git update-index --add --cacheinfo "100644,$blob,$1" && git commit -q -m "change $1"
+}
 
 @test "通常のファイルだけなら ok" {
   commit_file src/b.txt b
@@ -217,9 +223,9 @@ SHIM
 }
 
 @test "大文字と小文字を区別せずに止める（.Claude/・sub/.CLAUDE/・.GitHub/）" {
-  commit_file .Claude/settings.json '{}'
-  commit_file sub/.CLAUDE/x x
-  commit_file .GitHub/x x
+  commit_index_only .Claude/settings.json '{}'
+  commit_index_only sub/.CLAUDE/x x
+  commit_index_only .GitHub/x x
   run_script repair-push-check.sh --base-branch main
   assert_success
   assert_equal "$(jq -c '[.ok, (.forbidden | sort)]' <<<"$output")" '[false,[".Claude/settings.json",".GitHub/x","sub/.CLAUDE/x"]]'
