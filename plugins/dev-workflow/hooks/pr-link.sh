@@ -214,7 +214,7 @@ issue_of() {
   [ -n "$2" ] || return 0
   load_config "$1"
   [ -n "$config" ] || return 0
-  # branch.pattern が正規表現として正しくなくても、フックは止めず Issue なしとして扱う（ツールの実行を妨げないため。
+  # branch.pattern などの設定に誤り（正規表現として正しくない・文字列でない・labels.types が正しくないなど）があっても、フックは止めず Issue なしとして扱う（ツールの実行を妨げないため。
   # 他のスクリプトのように設定の誤りとして終了コード 2 で止めることはしない）
   parsed="$(dw_parse_branch "$config" "$2" 2>/dev/null || true)"
   issue="${parsed#*|}"

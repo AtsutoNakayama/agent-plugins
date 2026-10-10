@@ -102,7 +102,7 @@ dw_read_issue() {
 #     Issue の作業と決めつけたりしない
 # PR からは探さない（Closes #17, #18 の PR やリリース用の PR のように、別の Issue のブランチまで拾うため）。
 # origin を読めなければ止まる（「origin に無い」と区別できないまま出すと、使う側が片付けを誤るため）。
-# branch.pattern が正規表現として正しくなければ、メッセージを出して終了コード 2 で止まる（dw_check_branch_pattern）。
+# branch.pattern などの設定に誤り（正規表現として正しくない・文字列でない・labels.types が正しくないなど）があれば、メッセージを出して終了コード 2 で止まる（dw_check_branch_pattern）。
 # 使い方: dw_issue_branches <メインのワークツリー> <Issue の番号（dw_issue_number でそろえたもの）> <設定の JSON>
 dw_issue_branches() {
   local names refs msg
@@ -133,7 +133,7 @@ dw_issue_branches() {
 #   open_prs    Issue を閉じる PR のうち開いているもの（フォークや別のリポジトリの PR も含む）。[{number, url, branch,
 #               cross（フォークか別のリポジトリの PR なら true。branch は、今のリポジトリのブランチとは限らない）}]
 #   merged_prs  Issue を閉じる PR のうちマージ済みの、今のリポジトリのもの。[{number, url, branch}]
-# origin・PR を読めなければ止まる。branch.pattern が正規表現として正しくなければ、設定の誤りとして終了コード 2 で止まる（dw_issue_branches）。
+# origin・PR を読めなければ止まる。branch.pattern などの設定に誤り（正規表現として正しくない・文字列でない・labels.types が正しくないなど）があれば、終了コード 2 で止まる（dw_issue_branches）。
 # 使い方: dw_issue_work <メインのワークツリー> <Issue の番号> <設定の JSON> <Issue の JSON（closedByPullRequestsReferences を含む）>
 dw_issue_work() {
   local found branches='[]' candidates='[]' open_prs='[]' merged_prs='[]' cross b is_local is_remote confirmed wt nwo="" url pr_repo pr head
@@ -480,38 +480,116 @@ dw_is_json_object() {
   jq -se "$DW_JQ_ONE_OBJECT" "$1" >/dev/null 2>&1
 }
 
-# 設定（入力）の branch.pattern を、type と Issue の番号を取り出す正規表現にする jq の定義（dw_parse_branch・dw_issue_branches）
-# jq の変数（$t）を bash に展開させないため、シングルクォートで書く
+# jq の失敗の理由（catch で受け取ったもの）が、正規表現として正しくないことによるものなら true にする jq の定義。
+# jq 1.6 は「… is not a valid regex: …」、1.7 以降は「Regex failure: …」と出す
 # shellcheck disable=SC2016
-DW_JQ_BRANCH_RE='def branch_re: .labels.types as $t | .branch.pattern
-  | gsub("\\{type\\}"; "(?<type>" + ($t | join("|")) + ")")
-  | gsub("\\{issue_number\\}"; "(?<issue>[0-9]+)")
-  | gsub("\\{slug\\}"; "[a-z0-9]+(?:-[a-z0-9]+)*")
-  | "^" + . + "$";'
+DW_JQ_REGEX_FAILURE='def regex_failure: tostring | test("Regex failure|is not a valid regex");'
 
-# 設定の branch.pattern が、正規表現として正しいかを確かめる。正しくなければ、設定の誤りと分かる1行を出力して 1 を返す
-# （jq の test は正しくない正規表現で失敗し、ブランチ名が合わないのと区別できないため、先に確かめる）
-# branch.pattern が文字列でない（設定が空・部分的）ときは、組み立てられないだけで正規表現の誤りではないので、確かめずに通す
+# 設定（入力）の <キー>（. で区切る）を読み、{v: 値} にする jq の定義。上のキーがオブジェクトでないなどで読めなければ、
+# 読めないキーを名指しする {e: メッセージ} にする（dw_config_regex_test・DW_JQ_BRANCH_RE）。無いキーは {v: null}
+# shellcheck disable=SC2016
+DW_JQ_CONFIG_READ='def config_read($k): try {v: getpath($k | split("."))}
+  catch {e: "\($k) を読めません（\(tostring | gsub("\n"; " "))）。設定を直してください"};'
+
+# 文字列を、設定の正規表現（<キー>。例：commit.pattern）に当てる。合えば 0、合わなければ 1 を返す。
+# 設定の値が読めない（上のキーがオブジェクトでない）・文字列でない・正規表現として正しくないときは、合わないのと区別できるよう、設定の誤りと分かる1行を出して
+# 終了コード 2 で止まる（jq の test は正しくない正規表現で失敗し、合わないのと区別できないため）
+# 使い方: dw_config_regex_test <設定の JSON> <キー（. で区切る）> <文字列>
+dw_config_regex_test() {
+  local out
+  # shellcheck disable=SC2016 # jq の変数を bash に展開させない
+  out="$(jq -r --arg k "$2" --arg s "$3" "$DW_JQ_REGEX_FAILURE$DW_JQ_CONFIG_READ"'
+    config_read($k)
+    | if has("e") then "!" + .e
+      else .v as $p | if ($p | type) != "string" then "!\($k)（\($p | tojson)）が文字列ではありません。設定を直してください"
+      else try (if ($s | test($p)) then "+" else "-" end)
+        catch (if regex_failure then "!\($k)（\($p | tojson)）が正規表現として正しくありません。設定を直してください"
+          else "!\($k) を検査できません（\(tostring | gsub("\n"; " "))）。設定を直してください" end) end end' <<<"$1")" \
+    || dw_die "${2} を検査できませんでした（jq が失敗しました）" 2
+  case "$out" in
+    '!'*) dw_die "${out#!}" 2 ;;
+    +) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+# 設定（入力）の branch.pattern を、type と Issue の番号を取り出す正規表現にする jq の定義（dw_parse_branch・dw_issue_branches・
+# branch-name.sh）。設定されていない（無い・null）の branch.pattern は null（どの名前にも合わない）、labels.types は
+# 空の配列とみなす（false などほかの値は、設定されていないとはみなさない）。type は正規表現の記号を含んでいても、
+# 文字どおりに照合する（branch_literal）。
+#   branch_error_by($strict)  設定（入力）を検査し、誤りがあれば設定の誤りと分かる1行のメッセージを、無ければ null を返す。
+#                  キーを読めない（上のキーがオブジェクトでない）ときは、読めないキーを名指しする（config_read）。
+#                  文字列でない branch.pattern、文字列の配列でない labels.types、正規表現としての誤りを、それぞれの原因で
+#                  報告する。$strict が false（--check・dw_parse_branch・dw_issue_branches）なら、設定されていない
+#                  branch.pattern・labels.types は、組み立てられないだけで誤りではないので通す。true（ブランチ名を作る
+#                  branch-name.sh）なら、ブランチ名を作れないので「設定されていません」と報告する。
+#                  正規表現の誤りでない jq の失敗（test の catch から投げ直したものなど）は、受け皿の
+#                  「branch.pattern・labels.types の設定を検査できません（理由）」で報告する
+#   branch_config($strict)  入力（設定の JSON の文字列。jq -R -s で読む）を {c: 設定} にする。JSON として読めなければ、
+#                  {e: メッセージ}。読めても branch_error_by($strict) が誤りを返せば {e: メッセージ}。jq の起動 1 回で、
+#                  JSON の読み取り・検査・解析までできるようにする
+# jq の変数（$t など）を bash に展開させないため、シングルクォートで書く
+# shellcheck disable=SC2016
+DW_JQ_BRANCH_RE="$DW_JQ_REGEX_FAILURE$DW_JQ_CONFIG_READ"'def branch_literal: gsub("(?<c>[][\\\\^$.|?*+(){}])"; "\\\(.c)");
+def branch_pattern_not_string: "branch.pattern（\(tojson)）が文字列ではありません。設定を直してください";
+def branch_types_not_strings: "labels.types（\(tojson)）が文字列の配列ではありません。設定を直してください";
+def branch_re: if (.branch.pattern | type) != "string" then null
+  else (.labels.types | if . == null then [] else . end) as $t | .branch.pattern
+    | gsub("\\{type\\}"; "(?<type>" + ($t | map(branch_literal) | join("|")) + ")")
+    | gsub("\\{issue_number\\}"; "(?<issue>[0-9]+)")
+    | gsub("\\{slug\\}"; "[a-z0-9]+(?:-[a-z0-9]+)*")
+    | "^" + . + "$" end;
+def branch_error_by($strict): try (
+    config_read("branch.pattern") as $pr | config_read("labels.types") as $tr
+    | if $pr.e then $pr.e elif $tr.e then $tr.e
+      else $pr.v as $p | $tr.v as $t
+      | if $p == null and $strict then "branch.pattern が設定されていません。設定を直してください"
+        elif $p != null and ($p | type) != "string" then $p | branch_pattern_not_string
+        elif $t == null and $strict then "labels.types が設定されていません。設定を直してください"
+        elif $t != null and (($t | type) != "array" or any($t[]; type != "string")) then $t | branch_types_not_strings
+        elif $p == null then null
+        else branch_re as $re
+          | try ("" | test($re) | null)
+            catch (if regex_failure then
+                "branch.pattern（\($p | tojson)）が正規表現として正しくありません。設定を直してください"
+              else error end)
+        end end)
+  catch "branch.pattern・labels.types の設定を検査できません（\(tostring | gsub("\n"; " "))）。設定を直してください";
+def branch_config($strict): (try {c: fromjson}
+    catch {e: "設定を JSON として読めません（\(tostring | gsub("\n"; " "))）。設定を直してください"})
+  | if has("e") then . else (.c | branch_error_by($strict)) as $e | if $e then {e: $e} else . end end;'
+
+# 設定の branch.pattern と labels.types を検査する（DW_JQ_BRANCH_RE の branch_error_by(false)）。誤りがあれば、設定の誤りと
+# 分かる1行を出力して 1 を返す（jq の test は正しくない正規表現で失敗し、ブランチ名が合わないのと区別できないため、先に確かめる）
+# 設定されていない（無い・null）branch.pattern・labels.types は、組み立てられないだけで誤りではないので通す
 # 使い方: dw_check_branch_pattern <設定の JSON>
 dw_check_branch_pattern() {
-  # shellcheck disable=SC2016 # jq の変数（$re）を bash に展開させない
-  jq -e "$DW_JQ_BRANCH_RE"'if (.branch.pattern | type) != "string" then true
-    else (.labels.types //= []) | branch_re as $re | "" | test($re) | true end' <<<"$1" >/dev/null 2>&1 \
-    || { printf 'branch.pattern（%s）が正規表現として正しくありません。設定を直してください\n' "$(jq -c '.branch.pattern' <<<"$1")"; return 1; }
+  local msg
+  msg="$(jq -R -s -r "$DW_JQ_BRANCH_RE"'branch_config(false) | .e // empty' <<<"$1")" \
+    || msg="branch.pattern・labels.types の設定を検査できませんでした（jq が失敗しました）"
+  [ -z "$msg" ] || { printf '%s\n' "$msg"; return 1; }
 }
 
 # ブランチ名を branch.pattern に当て、type と Issue の番号を「<type>|<番号>」で出力する（無いものは空）
 # 区切りを空白にすると、read が先頭の空白を外して、type が空のときに番号を type と取り違える
-# branch.pattern が正規表現として正しくなければ、メッセージを出して終了コード 2 で止まる（dw_check_branch_pattern）。
+# 設定の検査（dw_check_branch_pattern と同じ）と解析は、1回の jq で行う。設定に誤りがあれば、
+# メッセージを出して終了コード 2 で止まる。
 # 使い方: dw_parse_branch <設定の JSON> <ブランチ名>
 dw_parse_branch() {
-  local msg
-  msg="$(dw_check_branch_pattern "$1")" || dw_die "$msg" 2
+  local out
+  # 誤りは「!」を、解析の結果は「=」を先頭に付けて出し、取り違えないようにする
   # shellcheck disable=SC2016 # jq の変数（$b・$re）を bash に展開させない
-  jq -r --arg b "$2" "$DW_JQ_BRANCH_RE"'
-    branch_re as $re
-    | (try ($b | capture($re)) catch null) // {}
-    | "\(.type // "")|\(.issue // "")"' <<<"$1"
+  out="$(jq -R -s -r --arg b "$2" "$DW_JQ_BRANCH_RE"'
+    branch_config(false)
+    | if has("e") then "!" + .e
+      else .c | branch_re as $re
+        | (try ($b | capture($re)) catch null) // {}
+        | "=\(.type // "")|\(.issue // "")" end' <<<"$1")" \
+    || dw_die "branch.pattern・labels.types の設定を検査できませんでした（jq が失敗しました）" 2
+  case "$out" in
+    '!'*) dw_die "${out#!}" 2 ;;
+  esac
+  printf '%s\n' "${out#=}"
 }
 
 # GitHub の GraphQL API を呼び、応答の JSON を出力する。GraphQL は、gh のサブコマンドにも REST にも手段が無いときだけ使う。
@@ -676,6 +754,139 @@ dw_base_branch() {
   b="${b%.}"
   dw_valid_base_branch "$b" || dw_die "設定の base_branch が git のブランチ名として使えません: ${b}" 2
   printf '%s\n' "$b"
+}
+
+# --- PR のマージ先（#284） -------------------------------------------------------
+# PR のマージ先は、設定の base_branch と違うことがある（例：release/v1 に向いた PR）。ブランチの開いた PR のマージ先を
+# 決める処理は、どれも dw_pr_pick と dw_merge_target を使い、次の1つの規則に従う（正本はここ。設計書 §10 にも書く）。
+#   - 開いた PR が無い：設定の base_branch をマージ先にする（fallback ではない）
+#   - PR の baseRefName が無いか空（gh が返さない）：マージ先は分からないので、設定の base_branch にする（fallback ではない。#178）
+#   - PR のマージ先をそのまま使えない：fallback に理由を出す
+#       invalid_name  git のブランチ名として使えない（dw_valid_branch_name。-x・+x・HEAD・制御文字など）。マージ先は base_branch
+#       multiple_prs  fork でない開いた PR が複数あり、マージ先が違う。マージ先は最初の PR のもの（gh の並び順なので確かでない）
+#       fetch_failed  origin/<PR のマージ先> を取得できず、手元にも無い（dw_merge_target だけ）。マージ先は base_branch
+#   - fallback があるとき、変更を加える処理（branch-status.sh → branch-update の取り込み、pr-create.sh の push）は、
+#     dw_pr_pick_strict で終了コード 2 で止まる（取り違えたマージ先を取り込んだり、それで先行を確かめたりしない）。
+#     マージ先を取得できないときも、dw_fetch_target_strict で同じく終了コード 2 で止まる（fetch_failed に当たる）。
+#     gh で PR を読めない（gh が失敗した・JSON でない応答）ときも、PR が別のマージ先に向いているかが分からないので止まる
+#     （gh が無いときだけは、PR が無いものとして base_branch を使う）。
+#     pr-create.sh の --dry-run も、本番と同じく止まる（dry-run は本番で何が起きるかを先に見せるためのものなので）。読むだけの処理
+#     （review-perspectives.sh、merge-target.sh を使う pr-create の手順2・task-auto の確認）は、警告して出したマージ先で続け、
+#     スキルは fallback が null でなければその旨を伝える
+# fork でない開いた PR が複数あってもマージ先が同じなら、そのマージ先を使う（どれを選んでも同じなので fallback ではない。
+# マージ先が無いか空の PR は、base_branch に向いているとみなして比べる）。
+
+# gh pr list --head <ブランチ> の応答（JSON の配列）から、このブランチの開いた PR とマージ先を選ぶ。--head はブランチ名だけで
+# 探すので、fork の同じ名前のブランチからの PR（isCrossRepository が true）は除き、残りの最初の PR を選ぶ。
+# 4行を出力する：1行目 マージ先、2行目 fallback の理由（上の規則。無ければ空）、3行目 PR が示したマージ先を JSON の文字列に
+# したもの（メッセージ用。制御文字も印字できる形になる。PR が無ければ null）、4行目 選んだ PR（応答のオブジェクトのまま
+# 1行の JSON。無ければ null）。応答は1回だけ jq で読み、行には制御文字を出さない。
+# 応答を JSON の配列として読めなければ（gh が JSON でない出力を返したなど）1 を返す。呼ぶ側は gh が失敗したときと同じに扱う。
+# 使い方: dw_pr_pick <gh pr list の応答（--json に baseRefName・isCrossRepository を含める）> <既定の base_branch>
+dw_pr_pick() {
+  local out base="" reason="" shown="" pr=""
+  # 1行目は、制御文字を含む値なら空にして2行目に invalid_name の印を出す（行や here-string の中で制御文字を扱わないため）
+  out="$(jq -r --arg d "$2" 'if type == "array" then . else error end
+    | map(select(type == "object" and (.isCrossRepository | not))) as $prs
+    | ($prs | first // null) as $p
+    | ($p.baseRefName // "" | if type == "string" then . else "" end) as $b
+    | ($b | explode | any(. < 32 or . == 127)) as $ctrl
+    | (if $ctrl then "" else $b end),
+      (if $ctrl then "invalid_name"
+       elif ([$prs[] | .baseRefName // "" | if type == "string" and . != "" then . else $d end] | unique | length) > 1
+       then "multiple_prs" else "" end),
+      (if $p == null then "null" else ($b | tojson) end),
+      ($p | tojson)' <<<"$1" 2>/dev/null)" || return 1
+  { IFS= read -r base; IFS= read -r reason; IFS= read -r shown; IFS= read -r pr; } <<<"$out" || true
+  [ -n "$pr" ] || return 1
+  if [ "$reason" = invalid_name ] || { [ -n "$base" ] && ! dw_valid_branch_name "$base"; }; then
+    reason=invalid_name base="$2"
+  elif [ -z "$base" ]; then
+    base="$2"
+  fi
+  printf '%s\n%s\n%s\n%s\n' "$base" "$reason" "$shown" "$pr"
+}
+
+# fallback の理由を、1文（句点なし）にする。使い方: dw_pr_fallback_msg <理由> <PR が示したマージ先（JSON の文字列）>
+dw_pr_fallback_msg() {
+  case "$1" in
+    invalid_name) printf '%s\n' "PR のマージ先（${2}）は git のブランチ名として使えません" ;;
+    multiple_prs) printf '%s\n' "このブランチに、マージ先の違う開いた PR が複数あります（最初の PR のマージ先は ${2}）" ;;
+    fetch_failed) printf '%s\n' "PR のマージ先（${2}）を origin から取得できず、手元にもありません" ;;
+    *) printf '%s\n' "PR のマージ先を使えません（${1}）" ;;
+  esac
+}
+
+# 変更を加える処理（branch-status.sh・pr-create.sh）の、PR とマージ先の選び方。dw_pr_pick で選び、fallback があれば
+# 「<理由>。<止めるときの文>」で終了コード 2 で止まる。選べたら、マージ先を DW_PICK_BASE に、PR（無ければ null）を DW_PICK_PR に
+# 入れる（止まれるよう、コマンド置換の中では呼ばない）。応答を JSON として読めなければ 1 を返す（呼ぶ側が扱う）
+# 使い方: dw_pr_pick_strict <gh pr list の応答> <既定の base_branch> <止めるときの文>
+dw_pr_pick_strict() {
+  local picked reason shown
+  picked="$(dw_pr_pick "$1" "$2")" || return 1
+  # shellcheck disable=SC2034 # DW_PICK_BASE・DW_PICK_PR は、呼んだスクリプトが読む
+  { IFS= read -r DW_PICK_BASE; IFS= read -r reason; IFS= read -r shown; IFS= read -r DW_PICK_PR; } <<<"$picked"
+  [ -z "$reason" ] || dw_die "$(dw_pr_fallback_msg "$reason" "$shown")。${3}" 2
+}
+
+# origin/<ブランチ> が手元にあれば 0 を返す（取得はしない）。使い方: dw_remote_ref_exists <リポジトリのルート> <ブランチ>
+dw_remote_ref_exists() { git -C "$1" rev-parse -q --verify "refs/remotes/origin/$2^{commit}" >/dev/null; }
+
+# origin/<ブランチ> を取得する。取得できて手元にあれば 0、取得できなくても手元にあれば 1、手元に無ければ 2 を返す
+# 使い方: dw_fetch_target <リポジトリのルート> <ブランチ>
+dw_fetch_target() {
+  local fetched=false
+  git -C "$1" fetch -q origin -- "$2" 2>/dev/null && fetched=true
+  dw_remote_ref_exists "$1" "$2" || return 2
+  $fetched || return 1
+}
+
+# 変更を加える処理の、マージ先の取得。取得できない（手元の古い ref で確かめない）か手元に無ければ、終了コード 2 で止まる
+# 使い方: dw_fetch_target_strict <リポジトリのルート> <ブランチ>
+dw_fetch_target_strict() {
+  dw_fetch_target "$1" "$2" || dw_die "origin/${2} を取得できませんでした（マージ先を確かめられないので止めます）" 2
+}
+
+# 今のブランチのマージ先を決め、origin から取得して、JSON を出力する（merge-target.sh の本体。読むだけの処理が使う）。
+# 規則は上の「PR のマージ先」のとおり。fallback があれば警告して続ける。origin/<マージ先> を取得できなければ、手元にあれば
+# 警告してそれを使い（fetched が false）、PR のマージ先が手元にも無ければ fetch_failed として base_branch に戻す。
+# base_branch も取得できず手元にも無ければ、終了コード 2 で止まる。gh が失敗するか応答を読めなければ pr_unreadable として
+# base_branch を使う。gh が無ければ PR は無いものとする。
+# 出力: {branch, base_branch, target, ref, from, pr, fallback, fetched}（merge-target.sh --help）
+# 使い方: dw_merge_target <リポジトリのルート> <設定の base_branch> <今のブランチ（detached HEAD なら空）>
+dw_merge_target() {
+  local root="$1" base_branch="$2" branch="$3" target="$2" from="base_branch" pr=null reason="" shown=null prs picked rc fetched=true
+  if [ -n "$branch" ] && command -v gh >/dev/null 2>&1; then
+    if prs="$(gh pr list --head "$branch" --state open --json number,url,baseRefName,isCrossRepository 2>/dev/null)" \
+      && picked="$(dw_pr_pick "$prs" "$base_branch")"; then
+      { IFS= read -r target; IFS= read -r reason; IFS= read -r shown; IFS= read -r pr; } <<<"$picked"
+      if [ "$pr" != null ]; then
+        pr="$(jq -c '{number, url}' <<<"$pr")"
+        # from は、PR の baseRefName をそのまま使ったときだけ pr（base_branch と同じ値でも）。使えない値・無いか空なら base_branch
+        [ "$reason" = invalid_name ] || [ "$shown" = '""' ] || from="pr"
+      fi
+    else
+      reason=pr_unreadable
+    fi
+  fi
+  rc=0
+  dw_fetch_target "$root" "$target" || rc=$?
+  if [ "$rc" = 2 ] && [ "$from" = pr ] && [ "$target" != "$base_branch" ]; then
+    # 前の理由（multiple_prs）の警告は、fetch_failed で上書きする前に出しておく（fallback の値は fetch_failed にする）
+    [ -z "$reason" ] || dw_warn "$(dw_pr_fallback_msg "$reason" "$shown")"
+    reason=fetch_failed shown="$(jq -n --arg t "$target" '$t')" target="$base_branch" from="base_branch" rc=0
+    dw_fetch_target "$root" "$target" || rc=$?
+  fi
+  [ "$rc" != 2 ] || dw_die "マージ先が見つかりません: origin/${target}（git fetch origin ${target} で取得してください）" 2
+  if [ "$rc" = 1 ]; then
+    fetched=false
+    dw_warn "origin/${target} を最新にできませんでした。手元の origin/${target} で判断します"
+  fi
+  [ -z "$reason" ] || dw_warn "$(dw_pr_fallback_msg "$reason" "$shown")。マージ先を origin/${target} として判断します"
+  jq -n --arg branch "$branch" --arg base_branch "$base_branch" --arg target "$target" --arg from "$from" \
+    --argjson pr "$pr" --arg fallback "$reason" --argjson fetched "$fetched" \
+    '{branch: (if $branch == "" then null else $branch end), base_branch: $base_branch, target: $target,
+      ref: "origin/\($target)", from: $from, pr: $pr, fallback: (if $fallback == "" then null else $fallback end), fetched: $fetched}'
 }
 
 # チームの設定から項目を1つ選び、{"<キー>": <値>} の形（1行）で出力する。設定のファイルが無いか、項目が無い（null）なら

@@ -315,6 +315,41 @@ has() {
 }
 
 # shellcheck disable=SC2016 # バッククォートはスキルの本文の文字で、展開させない
+@test "branch-update は、設定の base_branch ではなく、branch-status.sh の取り込み先（開いた PR があればそのマージ先）を取り込む（#284）" {
+  f="$SKILLS/branch-update/SKILL.md"
+  has "branch-update の冒頭" "$(sed -n '/^# /,/^## /p' "$f")" '開いた PR があればその PR のマージ先'
+  ! grep -qF 'origin/<base_branch>' "$f" || fail "branch-update に、設定の base_branch を取り込む手順（origin/<base_branch>）が残っています"
+  has "手順2" "$(step "$f" 2)" '`git merge --no-edit origin/<base>`'
+}
+
+# shellcheck disable=SC2016 # バッククォートはスキルの本文の文字で、展開させない
+@test "pr-create は、既にある PR のマージ先が設定の base_branch と違えば、そのマージ先との差で PR に入る変更を読む（#284）" {
+  f="$SKILLS/pr-create/SKILL.md"
+  has "pr-create の手順2" "$(step "$f" 2)" 'merge-target.sh' '`git diff <ref>...HEAD`'
+}
+
+# shellcheck disable=SC2016 # バッククォートはスキルの本文の文字で、展開させない
+@test "マージ先との差を読むスキルと観点は、設定の base_branch を組み立てず、merge-target.sh か依頼のマージ先を使う（#284）" {
+  # マージ先をモデルに組み立てさせると、PR のマージ先が設定の base_branch と違うとき（release/v1 に向いた PR）に誤る
+  for f in "$SKILLS"/*/SKILL.md "$SKILLS/../review/"*.md "$AGENT"; do
+    ! grep -qF 'origin/<base_branch>' "$f" || fail "${f} に、設定の base_branch との差を読む手順（origin/<base_branch>）が残っています"
+  done
+  grep -qF '`merge-target.sh` を実行し' "$SKILLS/task-auto/SKILL.md" || fail "task-auto が、コミットがあるかを merge-target.sh のマージ先で確かめていません"
+  grep -qF '<ref>..HEAD' "$SKILLS/task-auto/SKILL.md" || fail "task-auto が、merge-target.sh の ref との差でコミットを確かめていません"
+  grep -qF '`BEHIND` は PR のマージ先' "$SKILLS/gh-pr-check/SKILL.md" || fail "gh-pr-check の BEHIND の説明が、PR のマージ先になっていません"
+  # main-drift は、review が渡すマージ先を使う（観点の担当者に渡るのは、パス・基点・マージ先・Issue だけ）
+  grep -qF '依頼に書かれたマージ先' "$SKILLS/../review/main-drift.md" || fail "main-drift が、依頼のマージ先を使っていません"
+  grep -qF 'マージ先: <context の target>' "$SKILLS/review/SKILL.md" || fail "review が、観点の担当者にマージ先を渡していません"
+  grep -qF '基点・マージ先・Issue の番号' "$AGENT" || fail "perspective-reviewer が、依頼のマージ先を受け取っていません"
+  # PR のマージ先をそのまま使えなかった（fallback）ことを伝える
+  for f in pr-create task-auto; do
+    grep -qF '`fallback` が null でなければ' "$SKILLS/$f/SKILL.md" || fail "$f が、merge-target.sh の fallback を伝えていません"
+  done
+  grep -qF '`context` の `fallback` が null でなければ' "$SKILLS/review/SKILL.md" || fail "review が、context.fallback を伝えていません"
+  grep -qF '新しく作る PR のマージ先' "$SKILLS/pr-create/SKILL.md" || fail "pr-create の設定の一覧で、base_branch が PR のマージ先のままです"
+}
+
+# shellcheck disable=SC2016 # バッククォートはスキルの本文の文字で、展開させない
 @test "gh-pr-check は、needs_attention が true なら対応なしで終えず、スレッドの件数だけで未解決なしと言わない（#279）" {
   f="$SKILLS/gh-pr-check/SKILL.md"
   grep -q '`needs_attention` が true なら.*「対応はありません」で終えない' "$f" \
@@ -348,7 +383,7 @@ has() {
   has "手順2" "$(step "$f" 2)" '「衝突の直し方の確認」'
   has "手順3" "$(step "$f" 3)" '「衝突の直し方の確認」' '「直し方を変えるとき」'
   # 場面：pull・merge・手順3（push として進めたときの前の取り込みの分も）
-  has "節の場面" "$conf" 'git pull --no-rebase' '`origin/<base_branch>`' '`push` として進めた'
+  has "節の場面" "$conf" 'git pull --no-rebase' '`origin/<base>`' '`push` として進めた'
   # 箇条ごとの要の語
   bullet() { grep -e "^- \*\*$1\*\*" <<<"$conf"; }
   option() { grep -e "^ *- 「$1」：" <<<"$conf"; }
@@ -399,9 +434,9 @@ has() {
   # 次にすることは repair-next.sh が決め、SKILL.md には action ごとにすることだけを書く
   nx="$(sed -n '/^### 次にすることの決め方/,/^### 衝突の直し方/p' <<<"$un")"
   has "次にすることの決め方" "$nx" 'repair-next.sh' '`plan.fallback` は使わない' 'キューから外れたとき' '`confirm`・`infer`' '`unconfirmed`' \
-    '"dirty":<branch-status.sh の dirty>' '`push_check_ok` は null に戻す' '`push_check_ok` を null に戻す' 'repair-push-check.sh --base-branch <base_branch>' '通常の `git push origin' '値を組み合わせて決め直さない'
+    '"dirty":<branch-status.sh の dirty>' '`push_check_ok` は null に戻す' '`push_check_ok` を null に戻す' 'repair-push-check.sh --base-branch <base>' '通常の `git push origin' '値を組み合わせて決め直さない'
   for a in finish recheck pull merge checks fix push_check push stop; do
-    grep -qF "| \`$a\` |" <<<"$nx" || fail "repair-next.sh の action「$a」のすることが表にありません"
+    grep -qF "| \`$a\` |" <<<"$nx" || fail "repair-next.sh の action「${a}」のすることが表にありません"
   done
   has "衝突の直し方" "$(sed -n '/^### 衝突の直し方/,/^### PR のコメント/p' <<<"$un")" \
     '指示役が次のとおりに決める' '止まる衝突' '`repair-push-check.sh` が止めるパス' '正本は `repair-push-check.sh --help`' '同じ範囲'
@@ -831,6 +866,58 @@ has() {
   ! grep -qF 'review.max_rounds' <<<"$stopcond" || fail "止まる条件に、上限の周の指摘が残っています"
   grep -qF '| review 手順8 | 上限の周でも指摘が出たら、もう1周するか | もう1周しない。範囲内の指摘を反映してコミットし、テストとチェックが通れば、止まらずに PR の作成（手順6）へ進む' "$f" \
     || fail "表の review 手順8が、PR の作成へ進むことになっていません"
+}
+
+# shellcheck disable=SC2016 # バッククォートはスキルの本文の文字で、展開させない
+@test "task-auto は、既にある下書きの PR を使うときは下書きのまま残し（gh pr ready を実行しない）、人に ready にするよう伝える（#282）" {
+  f="$SKILLS/task-auto/SKILL.md"
+  grep -qF '既にある下書きの PR を使うときは、下書きのまま残し、`gh pr ready` は実行しない' "$f" || fail "決まりにありません"
+  table="$(section "$f" '## 確認の代わりに決めること')"
+  grep -qF '下書きなら下書きのまま残し（`gh pr ready` は実行しない）、人に ready にするよう伝える' <<<"$table" \
+    || fail "確認の代わりに決めることの表にありません"
+  has "task-auto の手順6" "$(step "$f" 6)" '`created: false`' '`draft` が true なら' '下書きのまま残す。`gh pr ready` は実行しない' \
+    '手順7で、人に ready にするよう伝える'
+  has "task-auto の手順7" "$(step "$f" 7)" '`created` が false で `draft` が true' '下書きのまま残したこと' \
+    '人が ready にする（`gh pr ready <PR番号>`）よう伝える'
+  # ready にする手順を書かない（実行するのは人。手順7の案内の中の `gh pr ready <PR番号>` と、実行しないと書いた句だけを許す）。
+  # 許した句を含む行をまるごと除くと、同じ行に足された別の実行の指示を見逃すので、句だけを取り除いてから探す
+  rest="$(cat "$f")"
+  rest="${rest//'`gh pr ready <PR番号>`'/}"
+  rest="${rest//'`gh pr ready` は実行しない'/}"
+  bad="$(grep -nF 'gh pr ready' <<<"$rest" || true)"
+  [ -z "$bad" ] || fail "gh pr ready を実行する手順があります: $bad"
+  grep -qF '下書きのまま残し、`gh pr ready` は実行しない' "$BATS_TEST_DIRNAME/../docs/design.md" || fail "設計書にありません"
+}
+
+# shellcheck disable=SC2016 # バッククォートはスキルの本文の文字で、展開させない
+@test "task-auto は、「起票した Issue：なし」と書く前と結果を伝えるときに、範囲外とした指摘の数と起票の内訳が合うかを確かめる（#307）" {
+  f="$SKILLS/task-auto/SKILL.md"
+  # 内訳の分け方と「内訳が合う」の定義は手順5の1か所にだけ書き、手順6・7と設計書はそれを参照する（書き写すと食い違うため）
+  s5="$(step "$f" 5)"
+  has "task-auto の手順5" "$s5" '分けられない指摘は、起票し忘れたもの' \
+    '- 起票した（' '- 重複していたので起票しなかった' '- 破壊的変更になるので起票しなかった' '- 上限で起票しなかった' '- 起票に失敗した' \
+    '**内訳が合う**とは、手順4のレビューのすべての周の一覧から、範囲外とした指摘（同じ指摘は1件）を数え直した数と、上で分けた数の合計が同じであること' \
+    '最後の周の一覧だけでは数えない' 'この書き出しや覚えた記録の数ではなく、レビューの一覧から数え直して確かめる'
+  # 「内訳が合う」の定義は1つだけ（書き出した数と比べる、という別の定義を書かない）
+  ! grep -qF '分けた数の合計が範囲外とした指摘の数と同じなら' <<<"$s5" || fail "手順5に、内訳が合うの別の定義が残っています"
+  [ "$(grep -cF '**内訳が合う**' <<<"$s5")" -eq 1 ] || fail "手順5に、内訳が合うの定義が1つではありません"
+  # 書き出しは、すべての周の一覧から、起票の繰り返しより前に行う（起票を飛ばしたら、書き出しも飛ばしてしまわないように）
+  before="$(step "$f" 5 '^1\. 開いている Issue を読み')"
+  has "task-auto の手順5の起票の繰り返しの前" "$before" \
+    '**範囲外の指摘の内訳**：起票を始める前に、task-auto の手順4のレビューのすべての周の一覧から、範囲外とした指摘（同じ指摘は1件と数える）の数と、1件ずつの要約'
+  s6="$(step "$f" 6)" s7="$(step "$f" 7)"
+  # 確かめるときは、手順5の記録どうしではなく、手順4のレビューのすべての周の一覧から数え直す（手順5を飛ばすと、空の記録どうしで合ってしまう）
+  has "task-auto の手順6" "$s6" '「起票した Issue」を「なし」と書く前に、手順5の「範囲外の指摘の内訳」が合うか（手順5の「内訳が合う」のとおり、手順4のレビューのすべての周の一覧から数え直す）を確かめる' \
+    '「なし」と書かずに、手順5に戻ってその指摘を起票してから本文を書く'
+  has "task-auto の手順7" "$s7" '手順5の「範囲外の指摘の内訳」を伝え、内訳が合うこと（手順5の「内訳が合う」のとおり、手順4のレビューのすべての周の一覧から数え直す）を確かめて伝える' \
+    '手順5に戻って起票し'
+  design="$(grep -F '**範囲外の指摘の起票**' "$BATS_TEST_DIRNAME/../docs/design.md")"
+  has "設計書の範囲外の指摘の起票" "$design" '分け方の正本は task-auto の SKILL.md の手順5「範囲外の指摘の内訳」' 'レビューのすべての周の一覧から範囲外とした指摘を数え直して'
+  for s in "$s6" "$s7" "$design"; do
+    for w in '破壊的変更' '起票の失敗' '起票に失敗'; do
+      ! grep -qF "$w" <<<"$s" || fail "手順6・7か設計書に、内訳の分け方（${w}）を書き写しています: $(grep -F "$w" <<<"$s")"
+    done
+  done
 }
 
 @test "スキルが直接実行するスクリプト（scripts/ と scripts/setup/ の .sh）は、git で実行権限が付いている（lib/ は読み込むだけなので除く）" {

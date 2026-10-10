@@ -240,3 +240,55 @@ mutation { x }'
   assert_failure
   assert_output --partial ".fake-gh/routes が見つかりません"
 }
+
+@test "gh pr create の本文を、渡し方（--body-file・-F・--body-file=・標準入力・--body・-b）によらず .fake-gh/pr-body に残す" {
+  fake_gh_write 'pr create*' 'https://github.com/me/demo/pull/98'
+  printf '本文の1行目\n起票した Issue：#99\n' >"$TMP/body.md"
+  local a
+  for a in --body-file -F; do
+    rm -f .fake-gh/pr-body
+    run_fake_gh pr create --base main "$a" "$TMP/body.md"
+    assert_success
+    assert_equal "$(cat .fake-gh/pr-body)" "$(cat "$TMP/body.md")"
+  done
+  rm -f .fake-gh/pr-body
+  run_fake_gh pr create "--body-file=$TMP/body.md"
+  assert_success
+  assert_equal "$(cat .fake-gh/pr-body)" "$(cat "$TMP/body.md")"
+  # 標準入力から読む（読み捨てずに残す）
+  rm -f .fake-gh/pr-body
+  # shellcheck disable=SC2016 # 子の bash に展開させるため、シングルクォートで渡す
+  run "${TEST_BASH:-bash}" -c '"$0" pr create --body-file - <"$1"' "$FAKE_GH" "$TMP/body.md"
+  assert_success
+  assert_equal "$(cat .fake-gh/pr-body)" "$(cat "$TMP/body.md")"
+  for a in --body -b; do
+    rm -f .fake-gh/pr-body
+    run_fake_gh pr create "$a" "直接の本文"
+    assert_success
+    assert_equal "$(cat .fake-gh/pr-body)" "直接の本文"
+  done
+  rm -f .fake-gh/pr-body
+  run_fake_gh pr create "--body=直接の本文"
+  assert_equal "$(cat .fake-gh/pr-body)" "直接の本文"
+}
+
+@test "gh pr create 以外の本文（gh api の -F・gh issue create --body-file）は、.fake-gh/pr-body に残さない" {
+  printf 'x' >"$TMP/body.md"
+  fake_gh_write 'issue create*' 'https://github.com/me/demo/issues/99'
+  run_fake_gh issue create --body-file "$TMP/body.md"
+  assert_success
+  run_fake_gh api -X POST repos/me/demo/pulls -F "body=@$TMP/body.md"
+  assert_success
+  [ ! -e .fake-gh/pr-body ] || fail "pr create 以外で pr-body ができました: $(cat .fake-gh/pr-body)"
+}
+
+@test "本文の無い gh pr create は、前の gh pr create の本文を .fake-gh/pr-body に残さない" {
+  fake_gh_write 'pr create*' 'https://github.com/me/demo/pull/98'
+  printf '前の本文\n' >"$TMP/body.md"
+  run_fake_gh pr create --base main --body-file "$TMP/body.md"
+  assert_success
+  assert_equal "$(cat .fake-gh/pr-body)" "前の本文"
+  run_fake_gh pr create --base main --fill
+  assert_success
+  [ ! -e .fake-gh/pr-body ] || fail "前の本文が残っています: $(cat .fake-gh/pr-body)"
+}

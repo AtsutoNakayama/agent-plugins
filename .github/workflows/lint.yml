@@ -76,11 +76,12 @@ jobs:
           args: -color
       - name: non-ASCII right after $var
         # macOS の bash 3.2 は "$var」" のように日本語が続くと、その文字のバイトまで変数名とみなすので "${var}」" と書く
-        # コメントの行は除く。grep の終了コードは 0 が見つかった、1 が見つからない、2 以上が失敗（正規表現の誤り・-P が使えないなど）。
+        # bats のテスト（*.bats）も、macOS の CI では bash 3.2 で動くので対象にする。
+        # コメントの行と、\$ でエスケープした（展開しない）$ は除く。$ の前のバックスラッシュが偶数個（\\$v）なら、\\ が1文字の \ になって $v は展開されるので、除かない。grep の終了コードは 0 が見つかった、1 が見つからない、2 以上が失敗（正規表現の誤り・-P が使えないなど）。
         # 失敗を「見つからない」と取り違えて通らないように、パイプでつながず grep 1つで調べて終了コードを見分ける
         run: |
           rc=0
-          grep -rnP '^(?!\s*#).*\$[A-Za-z_][A-Za-z0-9_]*[^\x00-\x7F]' --include='*.sh' --include='*.bash' --exclude-dir='bats-*' plugins tests .github/scripts || rc=$?
+          grep -rnP '^(?!\s*#).*?(?<!\\)(?:\\\\)*\K\$[A-Za-z_][A-Za-z0-9_]*[^\x00-\x7F]' --include='*.sh' --include='*.bash' --include='*.bats' --exclude-dir='bats-*' plugins tests .github/scripts || rc=$?
           case "$rc" in
             0)
               # ${var} は展開せず、書き方の例としてそのまま出す
