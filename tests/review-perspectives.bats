@@ -411,7 +411,7 @@ auto_branch() {
   run_script review-perspectives.sh --auto
   assert_success
   assert_equal "$(jq -c .context <<<"$output")" \
-    "{\"base\":\"$BASE\",\"target\":\"origin/main\",\"ahead\":0,\"issue\":17,\"type\":\"fix\",\"type_from\":\"issue\",\"max_rounds\":3,\"model\":null}"
+    "{\"base\":\"$BASE\",\"target\":\"origin/main\",\"ahead\":0,\"issue\":17,\"type\":\"fix\",\"type_from\":\"issue\",\"max_rounds\":3,\"model\":null,\"fallback\":null}"
   used regression-test || fail "Issue の type（fix）で regression-test が使われていません: $output"
   used issue-requirements || fail "$output"
   [ -n "$(skipped_reason main-drift)" ] || fail "$output"
@@ -456,8 +456,8 @@ auto_branch() {
   echo '[{"baseRefName": "release/v1", "isCrossRepository": false}]' >"$FIX/pr-list.json"
   run bash -c "${TEST_BASH:-bash} '$SCRIPTS/review-perspectives.sh' --auto 2>'$TMP/err'"
   assert_success
-  assert_equal "$(jq -c '[.context.target, .context.base]' <<<"$output")" "[\"origin/main\",\"$BASE\"]"
-  grep -qF "設定の base_branch（main）をマージ先にします" "$TMP/err" || fail "$(cat "$TMP/err")"
+  assert_equal "$(jq -c '[.context.target, .context.base, .context.fallback]' <<<"$output")" "[\"origin/main\",\"$BASE\",\"fetch_failed\"]"
+  grep -qF "マージ先を origin/main として判断します" "$TMP/err" || fail "$(cat "$TMP/err")"
 }
 
 @test "--auto は、base_branch がダッシュで始まれば、取得せずに止まる（git fetch のオプションとして扱わせない）" {

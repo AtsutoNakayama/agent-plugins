@@ -84,13 +84,19 @@ branch="$(git -C "$repo_root" symbolic-ref --short -q HEAD || true)"
 [ "$branch" != "$base" ] || dw_die "${base} には取り込めません。作業用のブランチで実行してください" 64
 
 # 取り込み先は、開いた PR があればその PR のマージ先にする（設定の base_branch と違うことがある。例：release/v1 に向いた PR）。
-# PR の選び方（fork の PR を除く）と、マージ先が無い・空・使えない値のときに設定の base_branch に戻すことは、dw_pr_pick が決める。
-# gh が無いか、失敗したか、JSON でない応答を返したときは、pr は null で、設定の base_branch を使う
+# PR の選び方と、マージ先を使えないとき（fallback）の規則は lib/common.sh の「PR のマージ先」が正本。branch-update はこの
+# 取り込み先を取り込む（変更を加える）ので、ここは止める側：PR のマージ先を使えない（ブランチ名として使えない、マージ先の違う
+# PR が複数ある）なら、取り違えたマージ先を取り込まないよう終了コード 2 で止まり、マージ先を取得できなくても止まる
+# （読むだけの merge-target.sh は、同じ状況で警告して base_branch で続ける）。
+# gh が無いか、失敗したか、JSON でない応答を返したときは、PR は無いものとし（pr は null）、設定の base_branch を使う
 pr=null
 if command -v gh >/dev/null 2>&1 \
   && prs="$(gh pr list --head "$branch" --state open --json number,url,mergeStateStatus,isCrossRepository,baseRefName 2>/dev/null)" \
   && picked="$(dw_pr_pick "$prs" "$base")"; then
-  { IFS= read -r base; IFS= read -r pr; } <<<"$picked"
+  { IFS= read -r pick_base; IFS= read -r pick_fallback; IFS= read -r pick_shown; IFS= read -r pr; } <<<"$picked"
+  [ -z "$pick_fallback" ] \
+    || dw_die "$(dw_pr_fallback_msg "$pick_fallback" "$pick_shown" "$pick_base")。取り込み先を決められないので止めます（PR のマージ先を確かめてください）" 2
+  base="$pick_base"
   [ "$pr" = null ] || pr="$(jq -c '{number, url, merge_state: .mergeStateStatus}' <<<"$pr")"
 fi
 

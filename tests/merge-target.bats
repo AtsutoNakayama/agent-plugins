@@ -34,7 +34,7 @@ run_target() {
   setup_branch
   run_target
   assert_success
-  assert_equal "$(jq -c . <<<"$output")" '{"branch":"feat/17-x","base_branch":"main","target":"main","ref":"origin/main","from":"base_branch","pr":null,"fetched":true}'
+  assert_equal "$(jq -c . <<<"$output")" '{"branch":"feat/17-x","base_branch":"main","target":"main","ref":"origin/main","from":"base_branch","pr":null,"fallback":null,"fetched":true}'
   assert_equal "$(args pr-list)" "--head feat/17-x --state open --json number,url,baseRefName,isCrossRepository"
 }
 
@@ -44,31 +44,43 @@ run_target() {
   echo '[{"number": 7, "url": "https://github.com/me/demo/pull/7", "isCrossRepository": false, "baseRefName": "release/v1"}]' >"$FIX/pr-list.json"
   run_target
   assert_success
-  assert_equal "$(jq -c '[.target, .ref, .from, .pr, .fetched]' <<<"$output")" '["release/v1","origin/release/v1","pr",{"number":7,"url":"https://github.com/me/demo/pull/7"},true]'
+  assert_equal "$(jq -c '[.target, .ref, .from, .pr, .fallback, .fetched]' <<<"$output")" '["release/v1","origin/release/v1","pr",{"number":7,"url":"https://github.com/me/demo/pull/7"},null,true]'
   assert_equal "$(git rev-parse origin/release/v1)" "$(git rev-parse main)"
 }
 
-@test "fork の PR だけ・JSON でない応答・使えないマージ先・gh が失敗したときは、設定の base_branch をマージ先にする（#284）" {
+@test "fork の PR だけ・JSON でない応答・gh が失敗したときは、PR は無いものとし、設定の base_branch をマージ先にする（fallback ではない）" {
   setup_branch
   remote_branch release/v1
   echo '[{"number": 9, "url": "u", "isCrossRepository": true, "baseRefName": "release/v1"}]' >"$FIX/pr-list.json"
   run_target
   assert_success
-  assert_equal "$(jq -c '[.target, .from, .pr]' <<<"$output")" '["main","base_branch",null]'
+  assert_equal "$(jq -c '[.target, .from, .pr, .fallback]' <<<"$output")" '["main","base_branch",null,null]'
   rm "$FIX/pr-list.json"
   echo 'not json' >"$FIX/pr-list.raw"
   run_target
   assert_success
-  assert_equal "$(jq -c '[.target, .from, .pr]' <<<"$output")" '["main","base_branch",null]'
+  assert_equal "$(jq -c '[.target, .from, .pr, .fallback]' <<<"$output")" '["main","base_branch",null,null]'
   rm "$FIX/pr-list.raw"
+  FAKE_FAIL=pr-list run_target
+  assert_success
+  assert_equal "$(jq -c '[.target, .pr, .fallback]' <<<"$output")" '["main",null,null]'
+}
+
+@test "PR のマージ先を使えなければ、警告して続け、理由を fallback に出す（読むだけの側。#284）" {
+  setup_branch
+  remote_branch release/v1
+  # ブランチ名として使えない：base_branch に戻す
   echo '[{"number": 7, "url": "u", "isCrossRepository": false, "baseRefName": "-x"}]' >"$FIX/pr-list.json"
   run_target
   assert_success
-  assert_equal "$(jq -c '[.target, .from, .pr.number]' <<<"$output")" '["main","base_branch",7]'
-  grep -qF "PR のマージ先（-x）は git のブランチ名として使えない" "$TMP/err" || fail "$(cat "$TMP/err")"
-  FAKE_FAIL=pr-list run_target
+  assert_equal "$(jq -c '[.target, .from, .pr.number, .fallback]' <<<"$output")" '["main","base_branch",7,"invalid_name"]'
+  grep -qF 'PR のマージ先（"-x"）は git のブランチ名として使えません。マージ先を origin/main として判断します' "$TMP/err" || fail "$(cat "$TMP/err")"
+  # マージ先の違う PR が複数：最初の PR のマージ先で続ける
+  echo '[{"number": 7, "url": "u", "isCrossRepository": false, "baseRefName": "release/v1"}, {"number": 8, "url": "u8", "isCrossRepository": false, "baseRefName": "main"}]' >"$FIX/pr-list.json"
+  run_target
   assert_success
-  assert_equal "$(jq -c '[.target, .pr]' <<<"$output")" '["main",null]'
+  assert_equal "$(jq -c '[.target, .from, .pr.number, .fallback]' <<<"$output")" '["release/v1","pr",7,"multiple_prs"]'
+  grep -qF "マージ先の違う開いた PR が複数あります（最初の PR のマージ先は release/v1）" "$TMP/err" || fail "$(cat "$TMP/err")"
 }
 
 @test "PR のマージ先を取得できず、手元にも無ければ、警告して設定の base_branch に戻す（#284）" {
@@ -77,8 +89,8 @@ run_target() {
   echo '[{"number": 7, "url": "u", "isCrossRepository": false, "baseRefName": "release/v1"}]' >"$FIX/pr-list.json"
   run_target
   assert_success
-  assert_equal "$(jq -c '[.target, .ref, .from, .pr.number, .fetched]' <<<"$output")" '["main","origin/main","base_branch",7,true]'
-  grep -qF "PR のマージ先の origin/release/v1 を取得できず、手元にもないので、設定の base_branch（main）をマージ先にします" "$TMP/err" \
+  assert_equal "$(jq -c '[.target, .ref, .from, .pr.number, .fallback, .fetched]' <<<"$output")" '["main","origin/main","base_branch",7,"fetch_failed",true]'
+  grep -qF 'PR のマージ先（"release/v1"）を origin から取得できず、手元にもありません。マージ先を origin/main として判断します' "$TMP/err" \
     || fail "$(cat "$TMP/err")"
 }
 
@@ -94,4 +106,12 @@ run_target() {
   run_target
   assert_failure 2
   grep -qF "マージ先が見つかりません: origin/main" "$TMP/err" || fail "$(cat "$TMP/err")"
+}
+
+@test "設定を読めなければ、merge-target.sh のメッセージで終了コード 2 で止まる" {
+  setup_branch
+  echo '{' >.claude/dev-workflow/config.json
+  run_target
+  assert_failure 2
+  grep -qF "設定を読めません（config.sh で確かめてください）" "$TMP/err" || fail "$(cat "$TMP/err")"
 }

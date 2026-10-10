@@ -122,14 +122,32 @@ run_status() {
   assert_equal "$(jq -r '[.base, .behind, .pr] | map(tostring) | join(" ")' <<<"$output")" "main 1 null"
 }
 
-@test "PR のマージ先が git のブランチ名として使えない値なら、警告して設定の base_branch を取り込み先にする（#284）" {
+@test "PR のマージ先を使えない（ブランチ名として使えない・マージ先の違う PR が複数ある）なら、取り込み先を決めずに終了コード 2 で止まる（#284）" {
   setup_branch
   advance_main 1
-  echo '[{"number": 5, "url": "u", "mergeStateStatus": "BEHIND", "isCrossRepository": false, "baseRefName": "-x"}]' >"$FIX/pr-list.json"
-  run bash -c "${TEST_BASH:-bash} '$SCRIPTS/branch-status.sh' 2>'$TMP/err'"
+  for b in -x +x HEAD; do
+    jq -nc --arg b "$b" '[{number: 5, url: "u", mergeStateStatus: "BEHIND", isCrossRepository: false, baseRefName: $b}]' >"$FIX/pr-list.json"
+    run_status
+    assert_failure 2
+    assert_output --partial "PR のマージ先（\"${b}\"）は git のブランチ名として使えません。取り込み先を決められないので止めます"
+  done
+  echo '[{"number": 5, "url": "u", "isCrossRepository": false, "baseRefName": "release/v1"}, {"number": 6, "url": "u", "isCrossRepository": false, "baseRefName": "main"}]' >"$FIX/pr-list.json"
+  run_status
+  assert_failure 2
+  assert_output --partial "マージ先の違う開いた PR が複数あります"
+  # 同じマージ先の PR が複数なら、そのマージ先を取り込み先にする
+  echo '[{"number": 5, "url": "u", "isCrossRepository": false, "baseRefName": "main"}, {"number": 6, "url": "u", "isCrossRepository": false, "baseRefName": "main"}]' >"$FIX/pr-list.json"
+  run_status
   assert_success
   assert_equal "$(jq -r '[.base, .behind, .pr.number] | map(tostring) | join(" ")' <<<"$output")" "main 1 5"
-  grep -qF "PR のマージ先（-x）は git のブランチ名として使えない" "$TMP/err" || fail "$(cat "$TMP/err")"
+}
+
+@test "PR のマージ先を取得できなければ、base_branch に戻さずに止まる（取り込む側なので。#284）" {
+  setup_branch
+  echo '[{"number": 5, "url": "u", "isCrossRepository": false, "baseRefName": "release/v1"}]' >"$FIX/pr-list.json"
+  run_status
+  assert_failure
+  assert_output --partial "origin/release/v1 を取得できませんでした"
 }
 
 @test "fork の PR のマージ先は使わない" {

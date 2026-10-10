@@ -9,9 +9,10 @@
 #                                          渡した値で絞り込む（--auto が決める値を自分で渡す）
 #
 #   --auto    次を決めて絞り込み、決めた値を context に出す
-#             - マージ先: merge-target.sh の ref（開いた PR があればその PR のマージ先、無ければ設定の base_branch。origin から取得し、
-#               できなければ警告して手元のものを使う。PR のマージ先が手元にも無ければ、警告して設定の base_branch に戻す。
-#               どれも無ければ終了コード 2。branch.pattern が正規表現として正しくないときも、設定の誤りとして終了コード 2）
+#             - マージ先: dw_merge_target（merge-target.sh と同じ）の ref（開いた PR があればその PR のマージ先、無ければ設定の
+#               base_branch。origin から取得し、できなければ警告して手元のものを使う。PR のマージ先を使えなければ（規則は lib/common.sh の
+#               「PR のマージ先」）、警告して続け、理由を context.fallback に出す。どれも無ければ終了コード 2。
+#               branch.pattern が正規表現として正しくないときも、設定の誤りとして終了コード 2）
 #             - 基点: git merge-base <マージ先> HEAD
 #             - Issue の番号: ブランチ名（branch.pattern の {issue_number}。先頭の 0 はそろえる）。番号として使えない値（0 など）なら
 #               Issue は無いものとする（警告）。gh で Issue を読み、見つからないか、番号が PR のものなら、Issue は無いものとする（警告）。
@@ -65,7 +66,8 @@
 #                 進んだコミットの数）・issue（番号か null）・type（null もある）・type_from（issue・branch・given・null）・
 #                 max_rounds（--auto のとき、設定 review.max_rounds の値。1以上の整数でなければ止まる。--auto でなければ null）・
 #                 model（--auto のとき、設定 review.model の値。
-#                 null か opus・sonnet・haiku・fable でなければ止まる。--auto でなければ null）
+#                 null か opus・sonnet・haiku・fable でなければ止まる。--auto でなければ null）・
+#                 fallback（--auto のとき、PR のマージ先をそのまま使えなかった理由（merge-target.sh の fallback）。ほかは null）
 set -euo pipefail
 
 # shellcheck source=lib/common.sh
@@ -95,6 +97,7 @@ while [ $# -gt 0 ]; do
 done
 
 type_from=null
+target_fallback=null
 max_rounds=null
 model=null
 if [ "$auto" = true ]; then
@@ -110,11 +113,12 @@ if [ "$auto" = true ]; then
   # review.model もほかの設定と同じく層を合わせた値を使う（ユーザーの層は、導入したリポジトリの中でだけ効く。設計書 §7）
   model="$(jq -c '.review.model' <<<"$config")"
   dw_review_model_ok "$model" || dw_die "review.model は null か $(dw_review_model_names) のどれかにしてください: ${model}" 2
-  # マージ先は merge-target.sh が決めて取得する（開いた PR があればそのマージ先、無ければ設定の base_branch。取得できなければ
-  # 手元のものを使い、PR のマージ先が手元にも無ければ base_branch に戻す。どれも無ければ終了コード 2）
-  merge_target="$("$BASH" "$DW_SCRIPTS_DIR/merge-target.sh")" || exit $?
-  target="$(jq -r .ref <<<"$merge_target")"
+  # マージ先は dw_merge_target が決めて取得する（merge-target.sh と同じ。読むだけなので、PR のマージ先を使えなければ
+  # 警告して続ける。規則は lib/common.sh の「PR のマージ先」）。設定とブランチは、ここで読んだものを渡す
   branch="$(git symbolic-ref --short -q HEAD || true)"
+  base_branch="$(dw_base_branch "$config")"
+  merge_target="$(dw_merge_target "$(dw_repo_root)" "$base_branch" "$branch")" || exit $?
+  { IFS= read -r target; IFS= read -r target_fallback; } <<<"$(jq -r '.ref, (.fallback | tojson)' <<<"$merge_target")"
   base="$(git merge-base "$target" HEAD)" || dw_die "${target} と HEAD の基点が見つかりません" 2
   parsed="$(dw_parse_branch "$config" "$branch")" || exit $?
   IFS='|' read -r branch_type branch_issue <<<"$parsed"
@@ -391,10 +395,10 @@ if [ "$filter" = true ]; then
     fi
   done < <(jq -c '.perspectives[]' <<<"$result")
   result="$(jq -c --argjson k "$kept" '.perspectives = $k' <<<"$result")"
-  context="$(jq -nc --arg b "$base" --arg t "$target" --argjson a "$ahead" --arg i "$issue" --arg ty "$type" --argjson mr "$max_rounds" --argjson m "$model" \
+  context="$(jq -nc --arg b "$base" --arg t "$target" --argjson a "$ahead" --arg i "$issue" --arg ty "$type" --argjson mr "$max_rounds" --argjson m "$model" --argjson fb "$target_fallback" \
     --argjson f "$(if [ "$type_from" = null ]; then echo null; else jq -n --arg x "$type_from" '$x'; fi)" \
     '{base: $b, target: $t, ahead: $a, issue: (if $i == "" then null else ($i | tonumber) end),
-      type: (if $ty == "" then null else $ty end), type_from: $f, max_rounds: $mr, model: $m}')"
+      type: (if $ty == "" then null else $ty end), type_from: $f, max_rounds: $mr, model: $m, fallback: $fb}')"
 fi
 
 jq --argjson s "$skipped" --argjson c "$context" \
