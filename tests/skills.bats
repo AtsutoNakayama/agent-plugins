@@ -484,23 +484,26 @@ has() {
 # shellcheck disable=SC2016 # バッククォートはスキルの本文の文字で、展開させない
 @test "review は、設定 review.code_review_effort があるときだけ、1周目と再レビューの /code-review にその段階を渡す（設計書 §7）" {
   f="$SKILLS/review/SKILL.md"
-  step1="$(step "$f" 1)"
-  grep -q '`context` の `code_review_effort`' <<<"$step1" \
-    || fail "手順1に、context の code_review_effort を読むことが書かれていません"
-  grep -q 'null なら段階を付けない' <<<"$step1" \
-    || fail "手順1に、設定が null なら段階を渡さないことが書かれていません"
   step3="$(step "$f" 3)"
-  grep -q '`code_review_effort` が null でなければ、引数の先頭にその段階を付ける（`<段階> <ブランチ名>`。サブエージェントに任せるときも同じ）' <<<"$step3" \
-    || fail "手順3に、/code-review（サブエージェントに任せるときも）に段階を渡すことが書かれていません"
-  # 指示役はコードブロックを「そのまま含める」ので、段階の入る場所はブロックの中に要る
-  block="$(awk '/^`\/code-review` を任せるサブエージェントへの指示/ {f = 1} f && /^```/ {n++; next} f && n == 1 {print} n >= 2 {exit}' <<<"$step3")"
-  grep -qF 'Skill ツールの code-review を、引数 [<段階> ]<引数> で実行する。' <<<"$block" \
-    || fail "/code-review を任せるサブエージェントへの指示のブロックに、段階の入る場所がありません: ${block}"
-  grep -q '`<段階>` は `context` の `code_review_effort`。null なら付けない' <<<"$step3" \
-    || fail "/code-review を任せるサブエージェントへの指示の説明に、<段階> に入れる値が書かれていません"
-  step8="$(step "$f" 8)"
-  grep -q '`code_review_effort` が null でなければ、手順3と同じく引数の先頭にその段階を付ける' <<<"$step8" \
-    || fail "再レビュー（手順8）の /code-review に段階を渡すことが書かれていません"
+  [ -n "$step3" ] || fail "手順3が見つかりません"
+  # 段階の付け方の決まりは、手順3の1か所（「`/code-review` に渡す引数」）だけに書く
+  rule="$(grep -F '`<段階> <対象>`' "$f" || true)"
+  [ "$(grep -c . <<<"$rule")" -eq 1 ] || fail "段階の付け方（<段階> <対象>）を書いた行が1つではありません: ${rule}"
+  grep -qF -e "$rule" <<<"$step3" || fail "段階の付け方の決まりが、手順3にありません: ${rule}"
+  has "段階の付け方の決まり" "$rule" '`context` の `code_review_effort` が null でなければ' 'null なら `<対象>` だけ'
+  target="$(grep -F '`<対象>` は' <<<"$step3" || true)"
+  has "<対象> の決まり" "$target" '1周目は今のブランチ名' '再レビューは反映したコミットの sha'
+  # 指示のブロックは「そのまま含める」ので、プレースホルダは決まりで決めた <引数> の1つだけにし、角括弧の書き方を使わない
+  grep -qF 'Skill ツールの code-review を、引数 <引数> で実行する。' <<<"$step3" \
+    || fail "/code-review を任せるサブエージェントへの指示が、引数 <引数> で実行する形になっていません"
+  ! grep -nF '[<段階>' "$f" || fail "段階を角括弧の書き方で書いています"
+  # 手順1・手順8は決まりを参照するだけにし、書き写さない
+  for n in 1 8; do
+    body="$(step "$f" "$n")"
+    grep -qF '「`/code-review` に渡す引数」' <<<"$body" || fail "手順${n}が、手順3の「/code-review に渡す引数」を参照していません"
+    ! grep -nF '<段階>' <<<"$body" || fail "手順${n}に、段階の付け方を書き写しています"
+  done
+  ! grep -nF '引数の先頭にその段階を付ける' "$f" || fail "段階の付け方を書き写した文が残っています"
 }
 
 @test "repo-setup は、レビューに使うモデルを決めていなければ、使うかと保存する層を聞き、使わないことも保存する" {
