@@ -911,27 +911,17 @@ dw_adr_dir() {
   printf '%s\n' "$d"
 }
 
-# 一覧が JSON の文字列の配列かを確かめる。違えば標準エラーに1行のメッセージを出して 1 を返す（dw_json_enum_ok・dw_json_enum_names が使う）
-# 使い方: dw_json_enum_list_ok <一覧の JSON>
-dw_json_enum_list_ok() {
-  jq -e 'type == "array" and all(.[]; type == "string")' <<<"$1" >/dev/null 2>&1 && return 0
-  printf 'error: 一覧が JSON の文字列の配列ではありません: %s\n' "$1" >&2
-  return 1
-}
-
 # 値が null か、一覧（JSON の文字列の配列）のどれかの文字列かを確かめる。どちらも JSON で渡す（例: '["a", "b"]' "a"）。
-# 当たれば 0、当たらなければ（読めない値の JSON も）1 を返す。一覧が文字列の配列でなければ、標準エラーに知らせて 2 を返す
+# 当たれば 0、当たらなければ 1 を返す。一覧が1つの配列でない（文字列で部分一致させない・複数の値を続けない）とき、
+# 値が読めない JSON のときも 1。一覧は common.sh の定数だけを渡す（定数の正しさは tests/common.bats で確かめる）
 # 使い方: dw_json_enum_ok <一覧の JSON> <値の JSON>
 dw_json_enum_ok() {
-  dw_json_enum_list_ok "$1" || return 2
-  jq -e --argjson v "$2" '$v == null or (($v | type) == "string" and index($v) != null)' <<<"$1" >/dev/null 2>&1 || return 1
+  jq -s -e --argjson v "$2" 'length == 1 and (.[0] | type == "array" and ($v == null or (($v | type) == "string" and index($v) != null)))' <<<"$1" >/dev/null 2>&1 || return 1
 }
 
-# 一覧（JSON の文字列の配列）を「a・b・c」の形で出力する（エラーのメッセージ用）。
-# 一覧が文字列の配列でなければ、標準エラーに知らせて 2 を返す
+# 一覧（JSON の文字列の配列）を「a・b・c」の形で出力する（エラーのメッセージ用）
 # 使い方: dw_json_enum_names <一覧の JSON>
 dw_json_enum_names() {
-  dw_json_enum_list_ok "$1" || return 2
   jq -r 'join("・")' <<<"$1"
 }
 

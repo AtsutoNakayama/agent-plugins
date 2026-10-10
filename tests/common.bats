@@ -408,18 +408,21 @@ run_common() {
   assert_output "low・medium・high"
 }
 
-@test "dw_json_enum_ok・dw_json_enum_names は、一覧が文字列の配列でなければ当てず、一覧の誤りを値の誤りと分けて知らせる" {
+@test "dw_json_enum_ok は、一覧が1つの配列でなければ（文字列・複数の値・オブジェクト・読めない JSON）当てない" {
   # 一覧が文字列だと、jq の index が部分文字列で当たってしまう（"slow" の中の "low"）
-  for list in '"slow"' '{"low": 1}' '["low", 1]' '[low' ''; do
+  for list in '"slow"' '1 ["low"]' '["low"] ["high"]' '{"low": 1}' '[low' ''; do
     run_common dw_json_enum_ok "$list" '"low"'
-    assert_failure 2
-    assert_output "error: 一覧が JSON の文字列の配列ではありません: ${list}"
-    run_common dw_json_enum_names "$list"
-    assert_failure 2
-    assert_output "error: 一覧が JSON の文字列の配列ではありません: ${list}"
+    assert_failure 1
+    assert_output ""
   done
-  # 値の誤りは、メッセージを出さずに 1 を返す
-  run_common dw_json_enum_ok '["low"]' '"slow"'
-  assert_failure 1
-  assert_output ""
+}
+
+@test "設定の値の一覧の定数（DW_REVIEW_MODELS・DW_CODE_REVIEW_EFFORTS）は、空でない文字列の配列" {
+  for name in DW_REVIEW_MODELS DW_CODE_REVIEW_EFFORTS; do
+    # shellcheck disable=SC2016 # 引数は、起動した bash の中で展開させる
+    run "${TEST_BASH:-bash}" -c '. "$1"; printf "%s" "${!2}"' _ "$SCRIPTS/lib/common.sh" "$name"
+    assert_success
+    jq -s -e 'length == 1 and (.[0] | type == "array" and length > 0 and all(.[]; type == "string" and . != ""))' <<<"$output" >/dev/null \
+      || fail "${name} が空でない文字列の配列ではありません: ${output}"
+  done
 }
