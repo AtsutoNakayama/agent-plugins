@@ -499,6 +499,13 @@ make_stash() {
   make_stash
   allowed "git stash pop" "git stash apply stash@{0}"
   denied "別のブランチ（main）で作られた stash" "git stash pop 1"
+  # 別のコミットの detached HEAD（別のワークツリーの作業など）で作った stash は、同じ (no branch) でも止める
+  git commit -q --allow-empty -m y
+  git checkout -q --detach
+  denied "別の detached HEAD" "git stash pop" "git stash drop 0"
+  # 同じコミットの detached HEAD に戻れば取り出せる
+  git checkout -q HEAD~1
+  allowed "git stash pop"
   # detached HEAD で作った stash を、ブランチの上で取り出すときも止める
   git checkout -q main
   denied "別のブランチ（(no branch)）で作られた stash" "git stash pop"

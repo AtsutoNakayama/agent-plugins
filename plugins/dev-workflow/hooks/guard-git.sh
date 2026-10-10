@@ -184,19 +184,26 @@ check_push() {
   done
 }
 
+# stash のサブコマンドが、check_stash が調べるもの（取り出し・破棄）なら成功する。使い方: stash_checked <stash のサブコマンド>
+stash_checked() {
+  case "$1" in
+    pop | apply | drop | branch | clear) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
 # git stash の取り出し・破棄を調べる。stash は全ワークツリーで共有されるので、別のブランチ（別のワークツリーの作業）で作った
 # stash を取り出す・消すと、その作業の変更が混ざる・失われる。そこで、pop・apply・drop・branch は、対象の stash の件名
 # （「WIP on <ブランチ>: …」「On <ブランチ>: …」）のブランチが今のブランチと違えば止め、clear はいつも止める。
 # 対象の stash を読めない（無い）ときは、git が失敗するので通す。今のブランチを読めないときは止める（target_unknown）
 # 使い方: check_stash <stash のサブコマンド> <引数>...
 check_stash() {
-  local sub="${1:-}" subj from current
+  local sub="${1:-}" subj from current base head
   [ $# -eq 0 ] || shift
-  case "$sub" in
-    clear) deny "git stash clear は、全ワークツリーで共有される stash をすべて消すので止めます。消すなら、今のブランチで作った stash を git stash list で探し、git stash drop <stash> で1つずつ消してください" ;;
-    pop | apply | drop | branch) gc_stash_args "$sub" "$@" ;;
-    *) return 0 ;;
-  esac
+  stash_checked "$sub" || return 0
+  [ "$sub" != clear ] \
+    || deny "git stash clear は、全ワークツリーで共有される stash をすべて消すので止めます。消すなら、今のブランチで作った stash を git stash list で探し、git stash drop <stash> で1つずつ消してください"
+  gc_stash_args "$sub" "$@"
   ! target_unknown || deny "$(unknown_target_message "stash の取り出し・破棄")"
   case "$gc_stash_ref" in -*) return 0 ;; esac
   subj="$(gc_git log -1 --format=%s "$gc_stash_ref" --)" || return 0
@@ -207,9 +214,19 @@ check_stash() {
   esac
   from="${from%%:*}"
   current="$(gc_branch)"
-  # detached HEAD で作った stash は「(no branch)」
-  [ -n "$current" ] || current="(no branch)"
-  [ "$from" != "$current" ] || return 0
+  if [ -n "$current" ]; then
+    [ "$from" != "$current" ] || return 0
+  else
+    # detached HEAD で作った stash は「(no branch)」。別のワークツリーの detached HEAD とも同じ名前になるので、
+    # stash を作ったときの HEAD（stash のコミットの1つ目の親）が、今の HEAD と同じときだけ通す
+    current="(no branch)"
+    if [ "$from" = "$current" ]; then
+      base="$(gc_git rev-parse -q --verify "${gc_stash_ref}^1" || true)"
+      head="$(gc_git rev-parse -q --verify HEAD || true)"
+      [ -z "$base" ] || [ "$base" != "$head" ] || return 0
+      deny "${gc_stash_ref} は別の detached HEAD（${base:0:7}）の上で作られた stash なので、取り出し・破棄はしません（stash は全ワークツリーで共有され、別の作業の変更が混ざるため）。今の HEAD で作った stash を git stash list で探して指定してください"
+    fi
+  fi
   deny "${gc_stash_ref} は別のブランチ（${from:-不明}）で作られた stash なので、取り出し・破棄はしません（stash は全ワークツリーで共有され、別の作業の変更が混ざるため）。今のブランチ（${current}）で作った stash を git stash list で探して指定してください"
 }
 
@@ -242,12 +259,7 @@ check_git() {
   local sub="$1" base
   shift
   # stash は、取り出し・破棄（check_stash）だけを調べる。作る・見るだけの操作では、対象を求めない
-  if [ "$sub" = stash ]; then
-    case "${1:-}" in
-      pop | apply | drop | branch | clear) ;;
-      *) return 0 ;;
-    esac
-  fi
+  [ "$sub" != stash ] || stash_checked "${1:-}" || return 0
   case "$sub" in
     commit | push | switch | checkout | branch | worktree | stash)
       # 操作の対象を求め、導入していないリポジトリなら何もしない（git がリポジトリを見つけられないときは、今までどおり調べる。ただし今のブランチを読めないので、コミットと push 先を書かない push（と HEAD・@ への push）と stash の取り出し・破棄は止める。target_unknown）。
