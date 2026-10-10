@@ -308,6 +308,8 @@ has() {
   grep -q '`feedback` が空で、`checks.state` が `failure` でもなければ、何も変えずに終える' "$f" \
     || fail "gh-pr-check の終える条件が、feedback が空で CI も失敗していないこと、になっていません"
   grep -q '`replied` は.*時刻だけで決めた目安' "$f" || fail "gh-pr-check に、replied が時刻だけの目安であることが書かれていません"
+  grep -q '選べる指摘・質問が1つも無ければ.*聞かずに' "$f" \
+    || fail "gh-pr-check に、選べる指摘・質問が無ければ聞かずに終える（担当の skill の分へ進む）ことが書かれていません"
   grep -q 'counts.threads.*だけを見て' "$f" || fail "gh-pr-check に、スレッドの件数だけで未解決なしと言わないことが書かれていません"
   grep -q '`reviews`・`comments`・`needs_attention`・`counts.unanswered` を落とさない' "$f" \
     || fail "gh-pr-check に、出力を絞って読むときも reviews・comments を落とさないことが書かれていません"
