@@ -21,6 +21,7 @@ Issue を指定されたら、ユーザーを介さずに、着手から PR の�
 スクリプト（どれも JSON を出力する）:
 
 - `${CLAUDE_PLUGIN_ROOT}/scripts/auto-check.sh`：始める前に、設定と Issue から、進めるか・止まるか（`action`）と、前の作業のブランチを使い回すか（`resume`）を決める。何も変えない（`--help` で使い方）
+- `${CLAUDE_PLUGIN_ROOT}/scripts/merge-target.sh`：今のブランチのマージ先（開いた PR があればそのマージ先、無ければ `base_branch`）を決め、origin から取得する（`--help` で使い方）
 - `${CLAUDE_PLUGIN_ROOT}/scripts/auto-hold.sh`：止まる理由とそれまでの判断を Issue にコメントし、保留の列に移す（`--help` で使い方）
 - 着手・コミット・レビュー・PR の作成は、それぞれのスキルのスクリプト（`task-start.sh`・`next-tasks.sh`・`commit.sh`・`review-perspectives.sh`・`adr-list.sh`・`pr-create.sh`・`issue-create.sh`）を、そのスキルの手順どおりに使う
 
@@ -145,7 +146,7 @@ Issue #<番号>: <タイトル>（type: <type>）
 報告を受けたら、うのみにせず、次を自分で確かめる。
 
 - `git -C <worktree> status` で、コミットしていない変更が無いこと
-- `git -C <worktree> log --oneline --no-show-signature origin/<base_branch>..HEAD` で、コミットがあること
+- `<worktree>` の中で `merge-target.sh` を実行し、`git -C <worktree> log --oneline --no-show-signature <ref>..HEAD`（`<ref>` は出力の `ref`。前の作業のブランチを使い回して、その PR が設定の `base_branch` と違うブランチに向いていれば、そのマージ先）で、コミットがあること
 - 報告の `checks` のコマンドを、自分でもワークツリーで実行して、通ること
 
 報告ごとに、次のように進める。作業役に頼み直すときは、SendMessage で同じ作業役に送る（文脈を引き継ぐため）。

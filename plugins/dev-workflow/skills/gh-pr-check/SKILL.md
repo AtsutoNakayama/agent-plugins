@@ -29,7 +29,7 @@ PR を出した後の任意の寄り道で、マージや task-finish はこの�
 - PR：`pr.title`・`pr.url`・`pr.state`（`draft` なら下書き）
 - CI：`checks.state`（`failure` なら `checks.failed` の名前と URL、`pending` なら実行中の名前）
 - レビュー：`pr.review_decision`（`APPROVED`・`CHANGES_REQUESTED`・`REVIEW_REQUIRED`、無ければ null）
-- マージできるか：`pr.mergeable`・`pr.merge_state`（`CLEAN` ならマージできる。`BLOCKED` はチェックの失敗・承認待ち・未解決のスレッドなど、`BEHIND` は base_branch の取り込み待ち、`DIRTY` はコンフリクト。`BEHIND`・`DIRTY` なら branch-update スキルを案内する）
+- マージできるか：`pr.mergeable`・`pr.merge_state`（`CLEAN` ならマージできる。`BLOCKED` はチェックの失敗・承認待ち・未解決のスレッドなど、`BEHIND` は PR のマージ先（`pr.base`）の取り込み待ち、`DIRTY` はコンフリクト。`BEHIND`・`DIRTY` なら branch-update スキルを案内する）
 
 `pr.state` が `OPEN` でなければ（マージ済み・閉じた）、状態だけを伝えて終える。`feedback` が空で、`checks.state` が `failure` でもなければ、何も変えずに終える。このとき、コメントが無いことに加えて、CI が `pending`（実行中）か、`pr.merge_state` が `CLEAN` でない（`BLOCKED` など）なら、「対応するコメントはありませんが、CI が実行中です」「マージはまだできません（`BLOCKED`）」のように、その状態も伝える（「対応するコメントはありません」だけだと、問題が無いと読めるため）。
 

@@ -46,7 +46,7 @@ description: 作業中のブランチの変更を、組み込みの /code-review
 
 `perspectives` の観点ごとに、次のどちらかを、まとめて並行して実行する。
 
-- **`builtin` が null の観点**：Agent ツールで、`subagent_type` を `dev-workflow:perspective-reviewer`（プラグインの agent。ファイルを編集するツールを持たない）にしたサブエージェントを1つずつ、同じメッセージの中で起動する。プロンプトには、観点ファイルのパス（`path`）・基点・Issue の番号（null なら「なし」）だけを書く（担当者への指示と返す JSON の形式は agent の定義にあるので、書き足さない）。手順1の `context` の `model` が null でなければ、Agent ツールの `model` にその値を渡す
+- **`builtin` が null の観点**：Agent ツールで、`subagent_type` を `dev-workflow:perspective-reviewer`（プラグインの agent。ファイルを編集するツールを持たない）にしたサブエージェントを1つずつ、同じメッセージの中で起動する。プロンプトには、観点ファイルのパス（`path`）・基点・マージ先（手順1の `context` の `target`）・Issue の番号（null なら「なし」）だけを書く（担当者への指示と返す JSON の形式は agent の定義にあるので、書き足さない）。手順1の `context` の `model` が null でなければ、Agent ツールの `model` にその値を渡す
 - **`builtin` が `code-review` の観点**：組み込みの `/code-review`（Skill ツールの `code-review`）を、今のブランチ名を引数にして実行する（基点の sha を渡すと、そのコミット1つだけをレビューしてしまう）。使えない環境では、その旨を最後に伝えて、ほかの観点だけで進める。手順1の `context` の `model` が null でなければ、自分では実行せず、Agent ツールでサブエージェントを1つ（`model` にその値を渡して）、ほかの観点と同じメッセージの中で起動し、下の「`/code-review` を任せるサブエージェントへの指示」をそのまま含める（Skill ツールで直接実行すると、セッションのモデルで動くため）
 
 `context` の `model` を Agent ツールに渡しても、組織の制限や契約で使えないモデルなら、Claude Code が別のモデルに置き換えて動かす。置き換えを知らせる警告が出たら、そのままユーザーに伝える。
@@ -64,6 +64,7 @@ Skill ツールを使えなければ、そのことだけを返す。
 ```
 観点ファイル: <path>
 基点: <基点>
+マージ先: <context の target>
 Issue: <Issue の番号、または なし>
 ```
 

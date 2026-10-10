@@ -13,6 +13,7 @@ push と PR の作成は GitHub に残るので、必ず手順5でユーザー�
 
 - `${CLAUDE_PLUGIN_ROOT}/scripts/config.sh`：合わせた設定の出力
 - `${CLAUDE_PLUGIN_ROOT}/scripts/pr-create.sh`：タイトルと本文の検証、push、PR の作成、列の移動、Issue のチェックの付与と項目の追加（`--help` で使い方）
+- `${CLAUDE_PLUGIN_ROOT}/scripts/merge-target.sh`：PR のマージ先（このブランチの開いた PR があればそのマージ先、無ければ `base_branch`）を決め、origin から取得する（`--help` で使い方）
 - `${CLAUDE_PLUGIN_ROOT}/scripts/adr-list.sh`：Issue の ADR の一覧と、その Issue で ADR の作成を提案するか（`proposal`。設定 `adr.suggest`・ADR の有無・Issue のチェックリストの ADR の項目から決める。Issue の本文も gh で読む）
 
 ## 手順
@@ -31,8 +32,8 @@ push と PR の作成は GitHub に残るので、必ず手順5でユーザー�
 ### 2. 変更を確かめる
 
 - `git status` で未コミットの変更が無いか見る。あれば commit スキルでコミットしてから進める（PR に入れない変更なら、ユーザーに確かめる）
-- PR のマージ先（`<マージ先>`）を決める。このブランチの開いた PR が既にあれば（`gh pr list --head <ブランチ> --state open --json baseRefName,isCrossRepository` の、`isCrossRepository` が false のもの）、その PR のマージ先（`baseRefName`。設定の `base_branch` と違うことがある）、無ければ `base_branch`
-- `git log --oneline --no-show-signature origin/<マージ先>..HEAD` と `git diff origin/<マージ先>...HEAD` で、PR に入る変更を読む
+- `merge-target.sh` を実行して、PR のマージ先を決めて取得する。出力の `ref`（`origin/<マージ先>`）を、以下の `<ref>` に使う（マージ先を自分で組み立てない。このブランチの PR が既にあれば、そのマージ先で、設定の `base_branch` と違うことがある）
+- `git log --oneline --no-show-signature <ref>..HEAD` と `git diff <ref>...HEAD` で、PR に入る変更を読む
 
 #### ADR を提案するかを決める
 
