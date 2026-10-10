@@ -49,12 +49,18 @@ load fake_gh
 }
 
 @test "ブランチ名を作るときも、branch.pattern が文字列でない・正規表現として正しくなければ、設定の誤りとして終了コード 2" {
-  for p in 5 null '{"a":1}'; do
+  for p in 5 false '{"a":1}'; do
     echo "{\"branch\": {\"pattern\": $p}}" >.claude/dev-workflow/config.json
     run_script branch-name.sh --issue 17 --type fix --slug x
     assert_failure 2
     assert_output --partial "branch.pattern（${p}）が文字列ではありません"
   done
+  # null は型の誤りではなく、設定されていないと報告する（ブランチ名を作れない）
+  echo '{"branch": {"pattern": null}}' >.claude/dev-workflow/config.json
+  run_script branch-name.sh --issue 17 --type fix --slug x
+  assert_failure 2
+  assert_output --partial "branch.pattern が設定されていません"
+  refute_output --partial "文字列ではありません"
   echo '{"branch": {"pattern": "{type}/{issue_number}-{slug}("}}' >.claude/dev-workflow/config.json
   run_script branch-name.sh --issue 17 --type fix --slug x
   assert_failure 2
@@ -65,7 +71,13 @@ load fake_gh
   echo '{"labels": {"types": null}}' >.claude/dev-workflow/config.json
   run_script branch-name.sh --issue 17 --type feat --slug x
   assert_failure 2
-  assert_output --partial "labels.types（null）が文字列の配列ではありません"
+  assert_output --partial "labels.types が設定されていません"
+  refute_output --partial "文字列の配列ではありません"
+  # false は null と取り違えず、その値で報告する
+  echo '{"labels": {"types": false}}' >.claude/dev-workflow/config.json
+  run_script branch-name.sh --issue 17 --type feat --slug x
+  assert_failure 2
+  assert_output --partial "labels.types（false）が文字列の配列ではありません"
   setup_fake_gh
   echo '{"labels": {"types": "feat"}}' >.claude/dev-workflow/config.json
   fake_issue 17 '["feat"]'
@@ -395,6 +407,11 @@ assert_config_error() {
   run_script branch-name.sh --issue 17 --type feat --slug x
   assert_failure 2
   assert_output --partial "labels.types を読めません"
+}
+
+@test "labels.types・branch.pattern が false のときは、設定されていない（null）と取り違えず、型の誤りとして報告する" {
+  assert_config_error '{"branch":{"pattern":"{type}/{issue_number}-{slug}"},"labels":{"types":false}}' 'labels.types（false）が文字列の配列ではありません'
+  assert_config_error '{"branch":{"pattern":false},"labels":{"types":["feat"]}}' 'branch.pattern（false）が文字列ではありません'
 }
 
 @test "branch.pattern が無い・null の設定では、dw_parse_branch は取り出せない（|）を出力し、エラーにしない" {

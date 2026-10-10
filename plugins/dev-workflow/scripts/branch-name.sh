@@ -71,7 +71,7 @@ if [ -n "$check" ]; then
     # ブランチ名が合わない（1）ではなく設定の誤り（2）にする。誤りは「!」、合わなければ「-」と branch.pattern、合えば「+」を出す
     # shellcheck disable=SC2016 # jq の変数（$b・$re）を bash に展開させない
     out="$(jq -R -s -r --arg b "$check" "$DW_JQ_BRANCH_RE"'
-      branch_config
+      branch_config(false)
       | if has("e") then "!" + .e
         elif (.c | branch_re) as $re | $re != null and ($b | test($re)) then "+"
         else "-" + (.c.branch.pattern | if type == "string" then . else tojson end) end' <<<"$config")" \
@@ -97,13 +97,13 @@ slug="$(printf '%s' "$slug" | LC_ALL=C tr '[:upper:]' '[:lower:]' \
 [ -n "$slug" ] || dw_die "短い説明に英数字がありません。英語で指定してください" 64
 
 config="$("$BASH" "$DW_SCRIPTS_DIR/config.sh")"
-# 設定の誤りは、--check と同じく終了コード 2 で止める（lib/common.sh の DW_JQ_BRANCH_RE の branch_config_strict）。type を
+# 設定の誤りは、--check と同じく終了コード 2 で止める（lib/common.sh の DW_JQ_BRANCH_RE の branch_config(true)）。type を
 # 確かめる前に行い、壊れた labels.types を「type は labels.types のどれかに」と取り違えない。ブランチ名を作るには、
 # 検査では通す無い・null の branch.pattern と labels.types も要るので、ここで止める（jq -r が「null」という名前にするため）。
 # 検査と branch.pattern の読み取りは、1回の jq で行う。誤りは「!」、branch.pattern は「=」を先頭に付けて出す
 # shellcheck disable=SC2016 # jq の変数を bash に展開させない
 out="$(jq -R -s -r "$DW_JQ_BRANCH_RE"'
-  branch_config_strict | if has("e") then "!" + .e else "=" + .c.branch.pattern end' <<<"$config")" \
+  branch_config(true) | if has("e") then "!" + .e else "=" + .c.branch.pattern end' <<<"$config")" \
   || dw_die "branch.pattern・labels.types の設定を検査できませんでした（jq が失敗しました）" 2
 case "$out" in
   '!'*) dw_die "${out#!}" 2 ;;
