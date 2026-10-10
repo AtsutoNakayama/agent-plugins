@@ -416,6 +416,20 @@ silent() {
   denied "main の上ではコミットしません" "git init proj && git commit -m x" "git init proj && cd proj && cd $REPO && git commit -m x"
 }
 
+@test "既にあるリポジトリの配下での git init は、成功した前提の && の並びでだけ新しいリポジトリとみなす" {
+  mkdir sub
+  silent "git init sub && cd sub && git commit -m x" "cd sub && git init && git commit -m x"
+  # init が失敗しても動く後ろは、親のリポジトリで判断する
+  denied "main の上ではコミットしません" "cd sub && git init; git commit -m x" \
+    "git init sub; git -C sub commit -m x" "git init sub && cd sub; git commit -m x" \
+    "cd sub && git init || git commit -m x" "$(printf 'cd sub && git init\ngit commit -m x')" \
+    "cd sub && git init & git commit -m x"
+  denied "強制 push" "cd sub && git init; git push --force origin main"
+  # リポジトリの外の既にあるディレクトリは、親のリポジトリを使うことがない
+  mkdir "$TMP/outside"
+  silent "git init $TMP/outside; git -C $TMP/outside commit -m x"
+}
+
 @test "git init した場所の配下や、--git-dir・GIT_DIR で別のリポジトリを指した git は、新しいリポジトリとみなさない" {
   # 外側に git init しても、内側の既にあるリポジトリ（main の上）の git は、そのリポジトリを使う
   denied "main の上ではコミットしません" "git init .. && git commit -m x" "git init $TMP && git commit -m x" \
