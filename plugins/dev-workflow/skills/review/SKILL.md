@@ -30,6 +30,7 @@ description: 作業中のブランチの変更を、組み込みの /code-review
 - 失敗したら（終了コードが 0 でない）、レビューを止め、標準エラーの1行のメッセージをそのまま伝える。絞り込まずに続けたり、自分で観点を選んだりしない
 - 標準エラーの警告（`warn:`。Issue を読めない・マージ先を最新にできないなど）は、そのままユーザーに伝える
 - 出力の `context` の `base` を基点、`issue` を Issue の番号（null なら Issue は無い）として、以下で使う
+- 出力の `context` の `fallback` が null でなければ（PR のマージ先をそのまま使えず、`context` の `target` で判断した）、標準エラーの警告をそのまま伝え、どのマージ先でレビューしたか（`target`）を最後の結果にも書く
 - 基点からの差分（`git diff <基点>`）が無ければ、レビューするものが無いと伝えて止める
 - 出力の `context` の `max_rounds` が、周回の上限（設定の `review.max_rounds`。スクリプトが、1以上の整数かを検査する）
 - 出力の `context` の `model` が、レビューに使うモデル（設定の `review.model`。スクリプトが、null か使える別名かを検査する）。null なら、手順3はセッションと同じモデルで動かす（Agent ツールに `model` を渡さない）
@@ -47,7 +48,7 @@ description: 作業中のブランチの変更を、組み込みの /code-review
 
 `perspectives` の観点ごとに、次のどちらかを、まとめて並行して実行する。
 
-- **`builtin` が null の観点**：Agent ツールで、`subagent_type` を `dev-workflow:perspective-reviewer`（プラグインの agent。ファイルを編集するツールを持たない）にしたサブエージェントを1つずつ、同じメッセージの中で起動する。プロンプトには、観点ファイルのパス（`path`）・基点・Issue の番号（null なら「なし」）だけを書く（担当者への指示と返す JSON の形式は agent の定義にあるので、書き足さない）。手順1の `context` の `model` が null でなければ、Agent ツールの `model` にその値を渡す
+- **`builtin` が null の観点**：Agent ツールで、`subagent_type` を `dev-workflow:perspective-reviewer`（プラグインの agent。ファイルを編集するツールを持たない）にしたサブエージェントを1つずつ、同じメッセージの中で起動する。プロンプトには、観点ファイルのパス（`path`）・基点・マージ先（手順1の `context` の `target`）・Issue の番号（null なら「なし」）だけを書く（担当者への指示と返す JSON の形式は agent の定義にあるので、書き足さない）。手順1の `context` の `model` が null でなければ、Agent ツールの `model` にその値を渡す
 - **`builtin` が `code-review` の観点**：組み込みの `/code-review`（Skill ツールの `code-review`）を、下の「`/code-review` に渡す引数」で決めた引数で実行する。使えない環境では、その旨を最後に伝えて、ほかの観点だけで進める。手順1の `context` の `model` が null でなければ、自分では実行せず、Agent ツールでサブエージェントを1つ（`model` にその値を渡して）、ほかの観点と同じメッセージの中で起動し、下の「`/code-review` を任せるサブエージェントへの指示」を、`<引数>` を下の「`/code-review` に渡す引数」で決めた値に置き換えて含める（Skill ツールで直接実行すると、セッションのモデルで動くため）
 
 `context` の `model` を Agent ツールに渡しても、組織の制限や契約で使えないモデルなら、Claude Code が別のモデルに置き換えて動かす。置き換えを知らせる警告が出たら、そのままユーザーに伝える。
@@ -70,6 +71,7 @@ Skill ツールを使えなければ、そのことだけを返す。
 ```
 観点ファイル: <path>
 基点: <基点>
+マージ先: <context の target>
 Issue: <Issue の番号、または なし>
 ```
 

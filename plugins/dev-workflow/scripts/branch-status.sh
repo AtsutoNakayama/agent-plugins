@@ -1,6 +1,10 @@
 #!/usr/bin/env bash
-# 今のブランチ（作業用のブランチ）が、マージ先のブランチ（base_branch）より遅れているかを調べる。
+# 今のブランチ（作業用のブランチ）が、マージ先のブランチより遅れているかを調べる。マージ先は、開いた PR があれば
+# その PR のマージ先、無ければ設定の base_branch にする。
 # 何も変更しない（fetch だけ行う）。取り込む作業は今のブランチに対して行うので、調べるのも今のブランチだけにする。
+# PR のマージ先を使えない（ブランチ名として使えない・マージ先の違う開いた PR が複数ある）か、取り込み先を取得できないか、
+# gh で PR を読めない（gh が失敗した・JSON でない応答）なら、取り違えたマージ先を取り込まないよう、終了コード 2 で止まる
+# （規則は lib/common.sh の「PR のマージ先」。gh が無いときだけは、PR が無いものとして設定の base_branch を使う）。
 #
 # 使い方: branch-status.sh [--merged-from <sha>] [--pulled-from <sha>]
 #   --merged-from <sha>   origin/<base> を取り込む前（branch-update の手順2の merge の前）の HEAD。今のブランチの祖先
@@ -12,7 +16,7 @@
 #   ないか、上の祖先の順になっていなければ、終了コード 64 で止まる
 #
 # 出力（JSON）:
-#   branch, base          今のブランチと、取り込み先（base_branch）
+#   branch, base          今のブランチと、取り込み先（開いた PR があればその PR のマージ先、無ければ設定の base_branch）
 #   behind                origin/<base> にあって、ブランチに無いコミットの数
 #   ahead                 ブランチにあって、origin/<base> に無いコミットの数
 #   up_to_date            behind が 0 か（取り込むものが無いか）
@@ -26,14 +30,14 @@
 #                         up_to_date が true でこれが 1 以上なら、手元では取り込み済みで、まだ push していない。
 #                         origin にブランチが無ければ null
 #   pushed_conflicts      origin/<ブランチ>（push 済みのブランチ）に origin/<base> を取り込むと衝突するか。conflicts と同じく
-#                         手元で確かめる。GitHub から見た PR が main と衝突しているかが、merge_state が UNKNOWN でも分かる
+#                         手元で確かめる。GitHub から見た PR がマージ先と衝突しているかが、merge_state が UNKNOWN でも分かる
 #                         （手元で取り込み済みで、まだ push していないときや、push していないコミットで手元だけ衝突しない
 #                         とき）。pushed_behind が 0 なら false。origin にブランチが無いか、
 #                         確かめられないときは null
 #   pr                    そのブランチの開いている PR（number・url・merge_state・merge_queue）。無ければ null
 #                         merge_state は GitHub の mergeStateStatus（BEHIND・DIRTY・BLOCKED・CLEAN など）。
-#                         fork の同じ名前のブランチからの PR は除く。PR が無い、gh が無い、
-#                         または gh で取得できないときは、pr は null になる（behind と ahead は gh が無くても出る）
+#                         fork の同じ名前のブランチからの PR は除く。PR が無いか gh が無いときは、pr は null になる
+#                         （behind と ahead は gh が無くても出る。gh で PR を読めないときは、上のとおり止まる）
 #                         pr.merge_queue はマージキューの状態（enabled・state・position・removed）。enabled は PR のマージ先で
 #                         キューが有効か、state・position は PR がキューに並んでいるときの状態（QUEUED・AWAITING_CHECKS・
 #                         MERGEABLE・UNMERGEABLE・LOCKED）と順番（1 が先頭）で、並んでいなければ null。
@@ -82,9 +86,26 @@ branch="$(git -C "$repo_root" symbolic-ref --short -q HEAD || true)"
 [ -n "$branch" ] || dw_die "ブランチの上にいません。取り込む作業用のブランチに切り替えてください" 64
 [ "$branch" != "$base" ] || dw_die "${base} には取り込めません。作業用のブランチで実行してください" 64
 
-git -C "$repo_root" fetch -q origin -- "$base" || dw_die "origin/${base} を取得できませんでした"
+# 取り込み先は、開いた PR があればその PR のマージ先にする（設定の base_branch と違うことがある。例：release/v1 に向いた PR）。
+# PR の選び方と、マージ先を使えないとき（fallback）の規則は lib/common.sh の「PR のマージ先」が正本。branch-update はこの
+# 取り込み先を取り込む（変更を加える）ので、ここは止める側：PR のマージ先を使えない（ブランチ名として使えない、マージ先の違う
+# PR が複数ある）なら、取り違えたマージ先を取り込まないよう終了コード 2 で止まり、マージ先を取得できなくても止まる
+# （読むだけの merge-target.sh は、同じ状況で警告して base_branch で続ける）。
+# gh が無いときだけ、PR は無いものとし（pr は null）、設定の base_branch を使う。gh が失敗したか、JSON でない応答を返したときは、
+# PR が別のマージ先に向いているかが分からないので、取り違えたマージ先を取り込まないよう終了コード 2 で止まる
+pr=null
+if command -v gh >/dev/null 2>&1; then
+  prs="$(gh pr list --head "$branch" --state open --json number,url,mergeStateStatus,isCrossRepository,baseRefName 2>/dev/null)" \
+    || dw_die "${branch} の PR を取得できませんでした。PR のマージ先が分からないので、取り込み先を決めずに止めます（gh auth status などで確かめてください）" 2
+  dw_pr_pick_strict "$prs" "$base" "取り込み先を決められないので止めます（PR のマージ先を確かめてください）" \
+    || dw_die "${branch} の PR を読めませんでした（gh の応答が JSON ではありません）。PR のマージ先が分からないので、取り込み先を決めずに止めます" 2
+  base="$DW_PICK_BASE" pr="$DW_PICK_PR"
+  [ "$pr" = null ] || pr="$(jq -c '{number, url, merge_state: .mergeStateStatus}' <<<"$pr")"
+fi
+
+# 取り込み先は、取得できなければ（手元の古いもので判断せず）終了コード 2 で止まる
+dw_fetch_target_strict "$repo_root" "$base"
 ref="refs/remotes/origin/$base"
-git -C "$repo_root" show-ref --verify --quiet "$ref" || dw_die "origin/${base} がありません"
 
 behind="$(git -C "$repo_root" rev-list --count "refs/heads/$branch..$ref")"
 ahead="$(git -C "$repo_root" rev-list --count "$ref..refs/heads/$branch")"
@@ -179,13 +200,6 @@ push_commits="$(printf '%s\n' "$commits" "$reach_m" "$reach_p" \
      main: (if $grouped then $c | pick($rm[.full] | not) else null end),
      pull: (if ($grouped | not) then null elif $p == "" then [] else $c | pick($rm[.full] and ($rp[.full] | not)) end),
      own: (if ($grouped | not) then null elif $p == "" then $c | pick($rm[.full]) else $c | pick($rp[.full]) end)}')"
-
-# --head はブランチ名だけで探すので、fork の同じ名前のブランチからの PR を除く
-pr=null
-if command -v gh >/dev/null 2>&1 \
-  && prs="$(gh pr list --head "$branch" --state open --json number,url,mergeStateStatus,isCrossRepository 2>/dev/null)"; then
-  pr="$(jq -c 'map(select(.isCrossRepository | not)) | first // null | if . then {number, url, merge_state: .mergeStateStatus} else null end' <<<"$prs")"
-fi
 
 # マージキューの状態は gh pr list にも REST にも無いので GraphQL で読む（設計書 §10）。PR の URL から引くので、
 # リポジトリの所有者と名前を別に調べなくてよい。取得できなければ merge_queue は null にする。

@@ -315,6 +315,41 @@ has() {
 }
 
 # shellcheck disable=SC2016 # バッククォートはスキルの本文の文字で、展開させない
+@test "branch-update は、設定の base_branch ではなく、branch-status.sh の取り込み先（開いた PR があればそのマージ先）を取り込む（#284）" {
+  f="$SKILLS/branch-update/SKILL.md"
+  has "branch-update の冒頭" "$(sed -n '/^# /,/^## /p' "$f")" '開いた PR があればその PR のマージ先'
+  ! grep -qF 'origin/<base_branch>' "$f" || fail "branch-update に、設定の base_branch を取り込む手順（origin/<base_branch>）が残っています"
+  has "手順2" "$(step "$f" 2)" '`git merge --no-edit origin/<base>`'
+}
+
+# shellcheck disable=SC2016 # バッククォートはスキルの本文の文字で、展開させない
+@test "pr-create は、既にある PR のマージ先が設定の base_branch と違えば、そのマージ先との差で PR に入る変更を読む（#284）" {
+  f="$SKILLS/pr-create/SKILL.md"
+  has "pr-create の手順2" "$(step "$f" 2)" 'merge-target.sh' '`git diff <ref>...HEAD`'
+}
+
+# shellcheck disable=SC2016 # バッククォートはスキルの本文の文字で、展開させない
+@test "マージ先との差を読むスキルと観点は、設定の base_branch を組み立てず、merge-target.sh か依頼のマージ先を使う（#284）" {
+  # マージ先をモデルに組み立てさせると、PR のマージ先が設定の base_branch と違うとき（release/v1 に向いた PR）に誤る
+  for f in "$SKILLS"/*/SKILL.md "$SKILLS/../review/"*.md "$AGENT"; do
+    ! grep -qF 'origin/<base_branch>' "$f" || fail "${f} に、設定の base_branch との差を読む手順（origin/<base_branch>）が残っています"
+  done
+  grep -qF '`merge-target.sh` を実行し' "$SKILLS/task-auto/SKILL.md" || fail "task-auto が、コミットがあるかを merge-target.sh のマージ先で確かめていません"
+  grep -qF '<ref>..HEAD' "$SKILLS/task-auto/SKILL.md" || fail "task-auto が、merge-target.sh の ref との差でコミットを確かめていません"
+  grep -qF '`BEHIND` は PR のマージ先' "$SKILLS/gh-pr-check/SKILL.md" || fail "gh-pr-check の BEHIND の説明が、PR のマージ先になっていません"
+  # main-drift は、review が渡すマージ先を使う（観点の担当者に渡るのは、パス・基点・マージ先・Issue だけ）
+  grep -qF '依頼に書かれたマージ先' "$SKILLS/../review/main-drift.md" || fail "main-drift が、依頼のマージ先を使っていません"
+  grep -qF 'マージ先: <context の target>' "$SKILLS/review/SKILL.md" || fail "review が、観点の担当者にマージ先を渡していません"
+  grep -qF '基点・マージ先・Issue の番号' "$AGENT" || fail "perspective-reviewer が、依頼のマージ先を受け取っていません"
+  # PR のマージ先をそのまま使えなかった（fallback）ことを伝える
+  for f in pr-create task-auto; do
+    grep -qF '`fallback` が null でなければ' "$SKILLS/$f/SKILL.md" || fail "$f が、merge-target.sh の fallback を伝えていません"
+  done
+  grep -qF '`context` の `fallback` が null でなければ' "$SKILLS/review/SKILL.md" || fail "review が、context.fallback を伝えていません"
+  grep -qF '新しく作る PR のマージ先' "$SKILLS/pr-create/SKILL.md" || fail "pr-create の設定の一覧で、base_branch が PR のマージ先のままです"
+}
+
+# shellcheck disable=SC2016 # バッククォートはスキルの本文の文字で、展開させない
 @test "gh-pr-check は、needs_attention が true なら対応なしで終えず、スレッドの件数だけで未解決なしと言わない（#279）" {
   f="$SKILLS/gh-pr-check/SKILL.md"
   grep -q '`needs_attention` が true なら.*「対応はありません」で終えない' "$f" \
@@ -348,7 +383,7 @@ has() {
   has "手順2" "$(step "$f" 2)" '「衝突の直し方の確認」'
   has "手順3" "$(step "$f" 3)" '「衝突の直し方の確認」' '「直し方を変えるとき」'
   # 場面：pull・merge・手順3（push として進めたときの前の取り込みの分も）
-  has "節の場面" "$conf" 'git pull --no-rebase' '`origin/<base_branch>`' '`push` として進めた'
+  has "節の場面" "$conf" 'git pull --no-rebase' '`origin/<base>`' '`push` として進めた'
   # 箇条ごとの要の語
   bullet() { grep -e "^- \*\*$1\*\*" <<<"$conf"; }
   option() { grep -e "^ *- 「$1」：" <<<"$conf"; }
@@ -399,7 +434,7 @@ has() {
   # 次にすることは repair-next.sh が決め、SKILL.md には action ごとにすることだけを書く
   nx="$(sed -n '/^### 次にすることの決め方/,/^### 衝突の直し方/p' <<<"$un")"
   has "次にすることの決め方" "$nx" 'repair-next.sh' '`plan.fallback` は使わない' 'キューから外れたとき' '`confirm`・`infer`' '`unconfirmed`' \
-    '"dirty":<branch-status.sh の dirty>' '`push_check_ok` は null に戻す' '`push_check_ok` を null に戻す' 'repair-push-check.sh --base-branch <base_branch>' '通常の `git push origin' '値を組み合わせて決め直さない'
+    '"dirty":<branch-status.sh の dirty>' '`push_check_ok` は null に戻す' '`push_check_ok` を null に戻す' 'repair-push-check.sh --base-branch <base>' '通常の `git push origin' '値を組み合わせて決め直さない'
   for a in finish recheck pull merge checks fix push_check push stop; do
     grep -qF "| \`$a\` |" <<<"$nx" || fail "repair-next.sh の action「${a}」のすることが表にありません"
   done

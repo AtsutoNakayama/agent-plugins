@@ -13,7 +13,7 @@
 # 何も変えない（読むだけ。push もしない）。
 #
 # 使い方: repair-push-check.sh --base-branch B [--branch X]
-#   --base-branch B  取り込んだ base_branch（例: main）。origin/B と同じ内容のパスは、取り込んだ main の変更なので数えない
+#   --base-branch B  取り込んだブランチ（branch-status.sh の出力の base。例: main）。origin/B と同じ内容のパスは、取り込んだ main の変更なので数えない
 #   --branch X       push するブランチ。省略すると今のブランチ。origin/X があれば、それとの差を見る。
 #                    origin/X が無い（初回の push）ときは、origin/B との差（PR の変更の全体）を見る
 #

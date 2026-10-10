@@ -9,8 +9,11 @@
 #                                          渡した値で絞り込む（--auto が決める値を自分で渡す）
 #
 #   --auto    次を決めて絞り込み、決めた値を context に出す
-#             - マージ先: origin/<base_branch>（git fetch origin <base_branch> で最新にする。できなければ警告して
-#               手元の origin/<base_branch> を使う。それも無ければ終了コード 2。branch.pattern などの設定に誤り（正規表現として正しくない・文字列でない・labels.types が正しくないなど）があるときも、設定の誤りとして終了コード 2）
+#             - マージ先: dw_merge_target（merge-target.sh と同じ）の ref（開いた PR があればその PR のマージ先、無ければ設定の
+#               base_branch。origin から取得し、できなければ警告して手元のものを使う。PR のマージ先を使えなければ（規則は lib/common.sh の
+#               「PR のマージ先」）、警告して続け、理由を context.fallback に出す。どれも無ければ終了コード 2。
+#               branch.pattern などの設定に誤り（正規表現として正しくない・文字列でない・labels.types が正しくないなど）が
+#               あるときも、設定の誤りとして終了コード 2）
 #             - 基点: git merge-base <マージ先> HEAD
 #             - Issue の番号: ブランチ名（branch.pattern の {issue_number}。先頭の 0 はそろえる）。番号として使えない値（0 など）なら
 #               Issue は無いものとする（警告）。gh で Issue を読み、見つからないか、番号が PR のものなら、Issue は無いものとする（警告）。
@@ -66,7 +69,8 @@
 #                 model（--auto のとき、設定 review.model の値。
 #                 null か opus・sonnet・haiku・fable でなければ止まる。--auto でなければ null）・
 #                 code_review_effort（--auto のとき、設定 review.code_review_effort の値。/code-review に渡す effort の段階。
-#                 null か low・medium・high・xhigh・max でなければ止まる。--auto でなければ null）
+#                 null か low・medium・high・xhigh・max でなければ止まる。--auto でなければ null）・
+#                 fallback（--auto のとき、PR のマージ先をそのまま使えなかった理由（merge-target.sh の fallback）。ほかは null）
 set -euo pipefail
 
 # shellcheck source=lib/common.sh
@@ -96,6 +100,7 @@ while [ $# -gt 0 ]; do
 done
 
 type_from=null
+target_fallback=null
 max_rounds=null
 model=null
 code_review_effort=null
@@ -103,7 +108,7 @@ if [ "$auto" = true ]; then
   if [ -n "$base$target$type$issue" ]; then
     dw_die "--auto と --base・--target・--type・--issue は一緒に使えません" 64
   fi
-  dw_repo_root >/dev/null || dw_die "git のリポジトリの中ではないので、絞り込めません" 2
+  auto_root="$(dw_repo_root)" || dw_die "git のリポジトリの中ではないので、絞り込めません" 2
   config="$("$BASH" "$DW_SCRIPTS_DIR/config.sh")" || dw_die "設定を読めません（config.sh で確かめてください）" 2
   max_rounds="$(jq -c '.review.max_rounds' <<<"$config")"
   case "$max_rounds" in
@@ -115,14 +120,13 @@ if [ "$auto" = true ]; then
   code_review_effort="$(jq -c '.review.code_review_effort' <<<"$config")"
   dw_json_enum_ok "$DW_CODE_REVIEW_EFFORTS" "$code_review_effort" \
     || dw_die "review.code_review_effort は null か $(dw_json_enum_names "$DW_CODE_REVIEW_EFFORTS") のどれかにしてください: ${code_review_effort}" 2
-  base_branch="$(dw_base_branch "$config")"
-  target="origin/$base_branch"
-  git fetch -q origin "$base_branch" 2>/dev/null \
-    || dw_warn "${target} を最新にできませんでした。手元の ${target} で判断します"
-  git rev-parse --verify --quiet "$target^{commit}" >/dev/null \
-    || dw_die "マージ先が見つかりません: ${target}（git fetch origin ${base_branch} で取得してください）" 2
-  base="$(git merge-base "$target" HEAD)" || dw_die "${target} と HEAD の基点が見つかりません" 2
+  # マージ先は dw_merge_target が決めて取得する（merge-target.sh と同じ。読むだけなので、PR のマージ先を使えなければ
+  # 警告して続ける。規則は lib/common.sh の「PR のマージ先」）。設定とブランチは、ここで読んだものを渡す
   branch="$(git symbolic-ref --short -q HEAD || true)"
+  base_branch="$(dw_base_branch "$config")"
+  merge_target="$(dw_merge_target "$auto_root" "$base_branch" "$branch")" || exit $?
+  { IFS= read -r target; IFS= read -r target_fallback; } <<<"$(jq -r '.ref, (.fallback | tojson)' <<<"$merge_target")"
+  base="$(git merge-base "$target" HEAD)" || dw_die "${target} と HEAD の基点が見つかりません" 2
   parsed="$(dw_parse_branch "$config" "$branch")" || exit $?
   IFS='|' read -r branch_type branch_issue <<<"$parsed"
   # ブランチ名の番号は、先頭の 0 をそろえる（017 は 17）。Issue の番号として使えない（0 など）ときは、止まらずに Issue は無いものとする
@@ -398,10 +402,10 @@ if [ "$filter" = true ]; then
     fi
   done < <(jq -c '.perspectives[]' <<<"$result")
   result="$(jq -c --argjson k "$kept" '.perspectives = $k' <<<"$result")"
-  context="$(jq -nc --arg b "$base" --arg t "$target" --argjson a "$ahead" --arg i "$issue" --arg ty "$type" --argjson mr "$max_rounds" --argjson m "$model" --argjson cre "$code_review_effort" \
+  context="$(jq -nc --arg b "$base" --arg t "$target" --argjson a "$ahead" --arg i "$issue" --arg ty "$type" --argjson mr "$max_rounds" --argjson m "$model" --argjson cre "$code_review_effort" --argjson fb "$target_fallback" \
     --argjson f "$(if [ "$type_from" = null ]; then echo null; else jq -n --arg x "$type_from" '$x'; fi)" \
     '{base: $b, target: $t, ahead: $a, issue: (if $i == "" then null else ($i | tonumber) end),
-      type: (if $ty == "" then null else $ty end), type_from: $f, max_rounds: $mr, model: $m, code_review_effort: $cre}')"
+      type: (if $ty == "" then null else $ty end), type_from: $f, max_rounds: $mr, model: $m, code_review_effort: $cre, fallback: $fb}')"
 fi
 
 jq --argjson s "$skipped" --argjson c "$context" \

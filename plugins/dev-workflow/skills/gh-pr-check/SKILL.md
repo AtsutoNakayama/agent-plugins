@@ -29,7 +29,7 @@ PR を出した後の任意の寄り道で、マージや task-finish はこの�
 - PR：`pr.title`・`pr.url`・`pr.state`（`draft` なら下書き）
 - CI：`checks.state`（`failure` なら `checks.failed` の名前と URL、`pending` なら実行中の名前）
 - レビュー：`pr.review_decision`（`APPROVED`・`CHANGES_REQUESTED`・`REVIEW_REQUIRED`、無ければ null）
-- マージできるか：`pr.mergeable`・`pr.merge_state`（`CLEAN` ならマージできる。`BLOCKED` はチェックの失敗・承認待ち・未解決のスレッドなど、`BEHIND` は base_branch の取り込み待ち、`DIRTY` はコンフリクト。`BEHIND`・`DIRTY` なら branch-update スキルを案内する）
+- マージできるか：`pr.mergeable`・`pr.merge_state`（`CLEAN` ならマージできる。`BLOCKED` はチェックの失敗・承認待ち・未解決のスレッドなど、`BEHIND` は PR のマージ先（`pr.base`）の取り込み待ち、`DIRTY` はコンフリクト。`BEHIND`・`DIRTY` なら branch-update スキルを案内する）
 
 `needs_attention` が true なら、返事をしていないものがあるので、「対応はありません」で終えない（true の項目は手順3で必ず一覧に入れる）。`needs_attention` が false でも、対応が要らないとは限らない。PR のコメント・レビュー本文の `replied` は、その後に PR の作者が PR のコメントを書いたかを時刻だけで決めた目安で、誰への返事かは見ていない（対応済みにするかは、手順3で `own_comments` と照らして決める。スレッドの `replied` は、スレッドの持ち主の最後のコメントの後に作者が書いたかで決まり、手順3で対応済みにする）。
 

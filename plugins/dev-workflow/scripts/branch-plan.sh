@@ -8,14 +8,14 @@
 # 出力（JSON）:
 #   action    次にすること。merge（取り込む）・push（手元で取り込み済みの分を push する）・none（取り込まない）・
 #             recheck（GitHub がまだ衝突を調べていて、手元でも確かめられない。待って調べ直す）・
-#             ask_base（GitHub は遅れや衝突があると言うが、手元では base_branch を取り込み済み。マージ先を聞く）
-#   reason    理由。behind（遅れている）・conflict（main と衝突する）・merged_not_pushed（手元では取り込み済みで、
-#             まだ push していない）・no_conflict（main と衝突しない）・up_to_date（遅れていない）・
+#             ask_base（GitHub は遅れや衝突があると言うが、手元では取り込み先（base）を取り込み済み。マージ先を聞く）
+#   reason    理由。behind（遅れている）・conflict（取り込み先（base）と衝突する）・merged_not_pushed（手元では取り込み済みで、
+#             まだ push していない）・no_conflict（取り込み先（base）と衝突しない）・up_to_date（遅れていない）・
 #             merge_state_unknown（衝突するか分からない）・base_mismatch（GitHub と手元で判断が食い違う）
 #   queue     キューの案内。キューを使い、action が none のときだけ。conflict（キューの中で先に並んだ PR と衝突した）・
 #             queued（並んでいる）・removed（外れたまま）・not_queued（入っていない）。ほかは null
 #   fallback  ユーザーに確かめてからすること（merge・push）。action が recheck なら、調べ直しても分からないとき。
-#             none なら、ユーザーが最新の main を求めたとき（取り込むものが無ければ null）。ほかは null
+#             none なら、ユーザーが最新の取り込み先（base）を求めたとき（取り込むものが無ければ null）。ほかは null
 #
 # 判断の表（上から順に当てはめる。P は、手元では取り込み済みで、まだ push していないこと：behind が 0 で、
 # pushed_behind が 1 以上。merge_state は PR の mergeStateStatus）
