@@ -31,7 +31,7 @@ write_adr() {
   assert_success
   assert_equal "$(jq -c '[.dir, .suggest, .issue]' <<<"$output")" '["docs/adr",true,null]'
   assert_equal "$(jq -c '.adrs' <<<"$output")" \
-    '[{"path":"docs/adr/000001-a.md","issue":1,"status":"proposed","title":"プラグインを1つにまとめる"},{"path":"docs/adr/000162-b.md","issue":162,"status":"accepted","title":"ワークツリーを作らない"}]'
+    '[{"path":"docs/adr/000001-a.md","issue":1,"status":"proposed","title":"プラグインを1つにまとめる","cited_in_supplements":[]},{"path":"docs/adr/000162-b.md","issue":162,"status":"accepted","title":"ワークツリーを作らない","cited_in_supplements":[]}]'
 }
 
 @test "--issue で、front matter の issue が同じ ADR だけを出す（ファイル名ではなく front matter で見る）" {
@@ -81,7 +81,7 @@ write_adr() {
   printf 'issue: 9\n' >>docs/adr/a.md
   run_script adr-list.sh
   assert_success
-  assert_equal "$(jq -c '.adrs' <<<"$output")" '[{"path":"docs/adr/a.md","issue":null,"status":"accepted","title":"見出し"}]'
+  assert_equal "$(jq -c '.adrs' <<<"$output")" '[{"path":"docs/adr/a.md","issue":null,"status":"accepted","title":"見出し","cited_in_supplements":[]}]'
 }
 
 @test "front matter も見出しも無いファイル（README など）は、issue・status・title を null にして出す" {
@@ -92,7 +92,7 @@ write_adr() {
   assert_success
   # 並びは文字の順（大文字が先）で、ロケールに左右されない
   assert_equal "$(jq -c '.adrs' <<<"$output")" \
-    '[{"path":"docs/adr/README.md","issue":null,"status":null,"title":null},{"path":"docs/adr/empty.md","issue":null,"status":null,"title":null}]'
+    '[{"path":"docs/adr/README.md","issue":null,"status":null,"title":null,"cited_in_supplements":[]},{"path":"docs/adr/empty.md","issue":null,"status":null,"title":null,"cited_in_supplements":[]}]'
 }
 
 @test "置き場所の下のディレクトリと、.md 以外のファイルは読まない" {
@@ -187,7 +187,7 @@ write_adr() {
   run_script adr-list.sh --issue 151
   assert_success
   assert_equal "$(jq -c '.adrs' <<<"$output")" \
-    '[{"path":"docs/adr/000151-bom.md","issue":151,"status":"accepted","title":"BOM"},{"path":"docs/adr/000151-crlf.md","issue":151,"status":"accepted","title":"CRLF"}]'
+    '[{"path":"docs/adr/000151-bom.md","issue":151,"status":"accepted","title":"BOM","cited_in_supplements":[]},{"path":"docs/adr/000151-crlf.md","issue":151,"status":"accepted","title":"CRLF","cited_in_supplements":[]}]'
 }
 
 @test "引用符で囲んでいない値の、空白の後の # からのコメントは外す" {
@@ -197,6 +197,322 @@ write_adr() {
   run_script adr-list.sh --issue 151
   assert_success
   assert_equal "$(jq -c '[.adrs[] | [.path, .status]]' <<<"$output")" '[["docs/adr/a.md","accepted"],["docs/adr/b.md","a # b"]]'
+}
+
+# 一部だけ変える ADR は、変えられる側を書き換えず、自分の「補足」にリンクを書く（#310）
+@test "cited_in_supplements：ほかの ADR の「補足」の節からリンクされていれば、リンクしている ADR のパスを出す" {
+  write_adr docs/adr/000010-a.md "issue: 10" "A"
+  write_adr docs/adr/000020-b.md "issue: 20" "B"
+  # 補足の外（背景）のリンクと、補足の後の節のリンクは数えない
+  cat >>docs/adr/000020-b.md <<'MD'
+## 背景と課題
+
+[ADR 000010](000010-a.md) を前提にする。
+
+## 補足
+
+* [ADR 000010](000010-a.md#判断の結果) の一部を変える。[同じ ADR](./000010-a.md) へのリンクは1つに数える
+* [自分](000020-b.md)・[外の URL](https://example.com/000030-c.md)・[無い ADR](000099-none.md) は数えない
+
+```md
+[コードブロックの中](000030-c.md)
+```
+
+### 補足の中の小見出し
+
+* [ADR 000030](<000030-c.md> "タイトル") は変えない
+
+## 補足の後の節
+
+[ADR 000040](000040-d.md)
+MD
+  write_adr docs/adr/000030-c.md "issue: 30" "C"
+  # MADR の元の見出し（More Information）と、置き場所の外を通る相対パス・ルートからのパスも読む。改行が \r\n でも読む
+  printf '%s\r\n' '## More Information' '' '[A](../adr/000010-a.md)・[B](/docs/adr/000020-b.md)・[外](../../../000010-a.md)' >>docs/adr/000030-c.md
+  write_adr docs/adr/000040-d.md "issue: 40" "D"
+  run_script adr-list.sh
+  assert_success
+  assert_equal "$(jq -c '[.adrs[] | [.path, .cited_in_supplements]]' <<<"$output")" \
+    '[["docs/adr/000010-a.md",["docs/adr/000020-b.md","docs/adr/000030-c.md"]],["docs/adr/000020-b.md",["docs/adr/000030-c.md"]],["docs/adr/000030-c.md",["docs/adr/000020-b.md"]],["docs/adr/000040-d.md",[]]]'
+}
+
+@test "cited_in_supplements：番号が同じ ADR もパスごとに分け、--issue で絞っても全部の ADR から逆引きする" {
+  write_adr docs/adr/000219-x.md "issue: 219" "X"
+  write_adr docs/adr/000219-y.md "issue: 219" "Y"
+  write_adr docs/adr/000231-z.md "issue: 231" "Z"
+  printf '## 補足\n\n[ADR 000219](000219-y.md)\n' >>docs/adr/000231-z.md
+  run_script adr-list.sh --issue 219
+  assert_success
+  assert_equal "$(jq -c '[.adrs[] | [.path, .cited_in_supplements]]' <<<"$output")" \
+    '[["docs/adr/000219-x.md",[]],["docs/adr/000219-y.md",["docs/adr/000231-z.md"]]]'
+}
+
+@test "cited_in_supplements：adr.dir を変えても、リンクを ADR のファイルからの相対パスとして解く" {
+  echo '{"adr": {"dir": "doc/decisions"}}' >.claude/dev-workflow/config.json
+  write_adr doc/decisions/000010-a.md "issue: 10" "A"
+  write_adr doc/decisions/000020-b.md "issue: 20" "B"
+  printf '## 補足\n\n[A](000010-a.md)\n' >>doc/decisions/000020-b.md
+  run_script adr-list.sh
+  assert_success
+  assert_equal "$(jq -c '[.adrs[] | [.path, .cited_in_supplements]]' <<<"$output")" \
+    '[["doc/decisions/000010-a.md",["doc/decisions/000020-b.md"]],["doc/decisions/000020-b.md",[]]]'
+}
+
+# adr-list.sh の出力から、000010-a.md の cited_in_supplements を出す。使い方: cited_of_a "$output"
+cited_of_a() { jq -c '[.adrs[] | select(.path | endswith("000010-a.md")) | .cited_in_supplements[]]' <<<"$1"; }
+
+@test "cited_in_supplements：? の後ろとタイトルを外し、参照形式のリンクの定義も数える" {
+  write_adr docs/adr/000010-a.md "issue: 10" "A"
+  for n in 20 30 40; do write_adr "docs/adr/0000$n-x$n.md" "issue: $n" "X$n"; done
+  printf '## 補足\n\n[A](000010-a.md?x=1)\n' >>docs/adr/000020-x20.md
+  printf '## 補足\n\n[A](000010-a.md "タイトル")\n' >>docs/adr/000030-x30.md
+  printf '## 補足\n\n[ADR 000010][a] を変える\n\n[a]: ./000010-a.md "A"\n' >>docs/adr/000040-x40.md
+  run_script adr-list.sh
+  assert_success
+  assert_equal "$(cited_of_a "$output")" '["docs/adr/000020-x20.md","docs/adr/000030-x30.md","docs/adr/000040-x40.md"]'
+}
+
+@test "cited_in_supplements：コードブロック・HTML のコメント・インラインのコードの中のリンクと、画像のリンクは数えない（md_scan と同じ）" {
+  write_adr docs/adr/000010-a.md "issue: 10" "A"
+  write_adr docs/adr/000020-b.md "issue: 20" "B"
+  cat >>docs/adr/000020-b.md <<'MD'
+## 補足
+
+~~~
+[~~~ の中](000010-a.md)
+```
+[~~~ の中の ``` の後](000010-a.md)
+~~~
+
+````md
+```
+[```` の中の ``` の後](000010-a.md)
+````
+
+```x``` の1行は囲みではないので、次の行は数える対象だが、リンクは画像だけ ![画像](000010-a.md)
+
+<!--
+[複数行のコメントの中](000010-a.md)
+-->
+
+<!-- [1行のコメントの中](000010-a.md) --> と `[インラインのコード](000010-a.md)` と ``[2つの ` で囲む](000010-a.md)``
+MD
+  run_script adr-list.sh
+  assert_success
+  assert_equal "$(cited_of_a "$output")" '[]'
+  # ```x``` の1行を囲みとみなすと、後ろの行が全部コードブロックになって数えないので、最後に数えるリンクを足して確かめる
+  printf '\n[数える](000010-a.md)\n' >>docs/adr/000020-b.md
+  run_script adr-list.sh
+  assert_success
+  assert_equal "$(cited_of_a "$output")" '["docs/adr/000020-b.md"]'
+}
+
+@test "cited_in_supplements：補足の後の「# 」の見出しより後ろのリンクは数えない" {
+  write_adr docs/adr/000010-a.md "issue: 10" "A"
+  write_adr docs/adr/000020-b.md "issue: 20" "B"
+  printf '## 補足\n\n本文\n\n# 別の見出し\n\n[A](000010-a.md)\n' >>docs/adr/000020-b.md
+  run_script adr-list.sh
+  assert_success
+  assert_equal "$(cited_of_a "$output")" '[]'
+}
+
+@test "cited_in_supplements：補足の見出しは、閉じの #・## の後のタブ・More Information の大文字と小文字の違いも許す" {
+  write_adr docs/adr/000010-a.md "issue: 10" "A"
+  for n in 20 30 40 50; do write_adr "docs/adr/0000$n-x$n.md" "issue: $n" "X$n"; done
+  printf '## 補足 ##\n\n[A](000010-a.md)\n' >>docs/adr/000020-x20.md
+  printf '##\t補足\n\n[A](000010-a.md)\n' >>docs/adr/000030-x30.md
+  printf '## More information\n\n[A](000010-a.md)\n' >>docs/adr/000040-x40.md
+  # 補足ではない節のリンクは数えない
+  printf '## 補足の後の節\n\n[A](000010-a.md)\n' >>docs/adr/000050-x50.md
+  run_script adr-list.sh
+  assert_success
+  assert_equal "$(cited_of_a "$output")" '["docs/adr/000020-x20.md","docs/adr/000030-x30.md","docs/adr/000040-x40.md"]'
+}
+
+@test "cited_in_supplements：adr.dir が ./docs/adr・docs//adr・docs/./adr でも当たる" {
+  write_adr docs/adr/000010-a.md "issue: 10" "A"
+  write_adr docs/adr/000020-b.md "issue: 20" "B"
+  # 自分へのリンクは、パスの書き方が違っても数えない
+  printf '## 補足\n\n[A](000010-a.md)・[自分](000020-b.md)\n' >>docs/adr/000020-b.md
+  for d in ./docs/adr docs//adr docs/./adr; do
+    echo "{\"adr\": {\"dir\": \"$d\"}}" >.claude/dev-workflow/config.json
+    run_script adr-list.sh
+    assert_success
+    assert_equal "$(jq -c '[.adrs[] | .cited_in_supplements | length]' <<<"$output")" '[1,0]'
+  done
+}
+
+# shellcheck disable=SC2016 # バッククォートは ADR の本文の文字で、展開させない
+@test "コードブロックの中の「# 」の行は見出しにしない" {
+  mkdir -p docs/adr
+  printf -- '---\nissue: 1\n---\n\n```sh\n# コメント\n```\n\n# 見出し\n' >docs/adr/000001-a.md
+  run_script adr-list.sh
+  assert_success
+  assert_equal "$(jq -c '[.adrs[].title]' <<<"$output")" '["見出し"]'
+}
+
+@test "複数行の HTML のコメントの中の見出しと補足は読まない" {
+  write_adr docs/adr/000010-a.md "issue: 10" "A"
+  mkdir -p docs/adr
+  printf -- '---\nissue: 20\n---\n\n<!--\n# コメントの中\n## 補足\n[A](000010-a.md)\n-->\n\n# 見出し\n' >docs/adr/000020-b.md
+  run_script adr-list.sh
+  assert_success
+  assert_equal "$(jq -c '[.adrs[].title]' <<<"$output")" '["A","見出し"]'
+  assert_equal "$(cited_of_a "$output")" '[]'
+}
+
+@test "見出しは md_scan の見出しから読む：字下げした「# 」も見出しで、見出しの中の HTML のコメントは外す" {
+  mkdir -p docs/adr
+  printf -- '---\nissue: 1\n---\n\n   # Title <!-- メモ --> #\n' >docs/adr/000001-a.md
+  run_script adr-list.sh
+  assert_success
+  assert_equal "$(jq -c '[.adrs[].title]' <<<"$output")" '["Title"]'
+}
+
+@test "cited_in_supplements：見出しに HTML のコメントがある補足も読み、下のレベルの見出しの節は含め、同じレベルの見出しで終わる" {
+  write_adr docs/adr/000010-a.md "issue: 10" "A"
+  for n in 20 30; do write_adr "docs/adr/0000$n-x$n.md" "issue: $n" "X$n"; done
+  printf '## 補足 <!-- メモ -->\n\n### 小見出し\n\n[A](000010-a.md)\n' >>docs/adr/000020-x20.md
+  printf '## 補足\n\n### 小見出し\n\n本文\n\n## 次の節\n\n[A](000010-a.md)\n' >>docs/adr/000030-x30.md
+  run_script adr-list.sh
+  assert_success
+  assert_equal "$(cited_of_a "$output")" '["docs/adr/000020-x20.md"]'
+}
+
+@test "cited_in_supplements：リンクの文に角括弧（入れ子・エスケープ）があっても数える" {
+  write_adr docs/adr/000010-a.md "issue: 10" "A"
+  for n in 20 30; do write_adr "docs/adr/0000$n-x$n.md" "issue: $n" "X$n"; done
+  printf '## 補足\n\n[ADR [10]](000010-a.md)\n' >>docs/adr/000020-x20.md
+  printf '## 補足\n\n[ADR \\] 10](000010-a.md)\n' >>docs/adr/000030-x30.md
+  run_script adr-list.sh
+  assert_success
+  assert_equal "$(cited_of_a "$output")" '["docs/adr/000020-x20.md","docs/adr/000030-x30.md"]'
+}
+
+@test "cited_in_supplements：補足で使った参照のリンクを、ファイル全体の定義で引き、定義の行と脚注は数えない" {
+  write_adr docs/adr/000010-a.md "issue: 10" "A"
+  for n in 20 30 40 50 60; do write_adr "docs/adr/0000$n-x$n.md" "issue: $n" "X$n"; done
+  # 補足で使い（[文][ref]・[ref][]・[ref]）、定義は後ろの節にある（大文字・小文字は区別しない）
+  printf '## 補足\n\n[ADR 000010][Ref-A] を変える\n\n## 後ろの節\n\n[ref-a]: 000010-a.md\n' >>docs/adr/000020-x20.md
+  printf '## 補足\n\n[a][] を変える\n\n## 後ろの節\n\n[A]: 000010-a.md\n' >>docs/adr/000030-x30.md
+  printf '## 補足\n\n[a] を変える\n\n## 後ろの節\n\n[a]: <000010-a.md> "A"\n' >>docs/adr/000040-x40.md
+  # ほかの節で使ったリンクの定義が補足にあるだけなら数えない
+  printf '## 背景と課題\n\n[ADR 000010][a] を前提にする\n\n## 補足\n\n[a]: 000010-a.md\n' >>docs/adr/000050-x50.md
+  # 脚注の定義は参照の定義とみなさない
+  printf '## 補足\n\n注[^1]\n\n[^1]: 000010-a.md\n' >>docs/adr/000060-x60.md
+  run_script adr-list.sh
+  assert_success
+  assert_equal "$(cited_of_a "$output")" '["docs/adr/000020-x20.md","docs/adr/000030-x30.md","docs/adr/000040-x40.md"]'
+}
+
+@test "title は、空のレベル1の見出し（# だけ・# #）を飛ばし、次の空でないレベル1の見出しにする" {
+  mkdir -p docs/adr
+  printf -- '---\nissue: 1\n---\n\n#\n\n# #\n\n## 二つ目のレベル\n\n# 見出し\n' >docs/adr/000001-a.md
+  printf -- '---\nissue: 2\n---\n\n#\n' >docs/adr/000002-b.md
+  run_script adr-list.sh
+  assert_success
+  assert_equal "$(jq -c '[.adrs[].title]' <<<"$output")" '["見出し",null]'
+}
+
+@test "cited_in_supplements：補足はレベル2の見出しだけで、# 補足・### 補足 は補足にせず、#### の下は含め、次の ## で終わる" {
+  write_adr docs/adr/000010-a.md "issue: 10" "A"
+  for n in 20 30 40; do write_adr "docs/adr/0000$n-x$n.md" "issue: $n" "X$n"; done
+  # # 補足 は補足ではないので、後ろの ## の節のリンクも数えない
+  printf '# 補足\n\n## 背景\n\n[A](000010-a.md)\n' >>docs/adr/000020-x20.md
+  printf '## 背景\n\n### 補足\n\n[A](000010-a.md)\n' >>docs/adr/000030-x30.md
+  printf '## 補足\n\n#### 小見出し\n\n[A](000010-a.md)\n' >>docs/adr/000040-x40.md
+  run_script adr-list.sh
+  assert_success
+  assert_equal "$(cited_of_a "$output")" '["docs/adr/000040-x40.md"]'
+  # 補足の後の ## の節のリンクは数えない
+  printf '## 補足\n\n本文\n\n## 次の節\n\n[A](000010-a.md)\n' >docs/adr/000040-x40.md
+  run_script adr-list.sh
+  assert_success
+  assert_equal "$(cited_of_a "$output")" '[]'
+}
+
+@test "cited_in_supplements：補足の見出しの後ろの :・：・全角の空白は外して比べる" {
+  write_adr docs/adr/000010-a.md "issue: 10" "A"
+  for n in 20 30 40; do write_adr "docs/adr/0000$n-x$n.md" "issue: $n" "X$n"; done
+  printf '## 補足：\n\n[A](000010-a.md)\n' >>docs/adr/000020-x20.md
+  printf '## More Information:\n\n[A](000010-a.md)\n' >>docs/adr/000030-x30.md
+  printf '## 補足　\n\n[A](000010-a.md)\n' >>docs/adr/000040-x40.md
+  run_script adr-list.sh
+  assert_success
+  assert_equal "$(cited_of_a "$output")" '["docs/adr/000020-x20.md","docs/adr/000030-x30.md","docs/adr/000040-x40.md"]'
+}
+
+@test "cited_in_supplements：タスクリストのチェックボックスは、参照の省略形 [x] と読まない" {
+  write_adr docs/adr/000010-a.md "issue: 10" "A"
+  write_adr docs/adr/000020-b.md "issue: 20" "B"
+  printf '## 補足\n\n- [x] 済んだ\n1. [ ] まだ\n* [X] 済んだ\n\n## 後ろの節\n\n[x]: 000010-a.md\n[ ]: 000010-a.md\n' >>docs/adr/000020-b.md
+  run_script adr-list.sh
+  assert_success
+  assert_equal "$(cited_of_a "$output")" '[]'
+  # チェックボックスの後ろの参照は数える
+  printf '## 補足\n\n- [x] [x] を変える\n\n## 後ろの節\n\n[x]: 000010-a.md\n' >docs/adr/000020-b.md
+  run_script adr-list.sh
+  assert_success
+  assert_equal "$(cited_of_a "$output")" '["docs/adr/000020-b.md"]'
+}
+
+@test "cited_in_supplements：エスケープした \\[ は数えず、逆スラッシュそのもの \\\\ の後の [ は数える" {
+  write_adr docs/adr/000010-a.md "issue: 10" "A"
+  for n in 20 30 40; do write_adr "docs/adr/0000$n-x$n.md" "issue: $n" "X$n"; done
+  printf '## 補足\n\n\\[A](000010-a.md)\n' >>docs/adr/000020-x20.md
+  printf '## 補足\n\n\\\\[A](000010-a.md)\n' >>docs/adr/000030-x30.md
+  printf '## 補足\n\n\\\\\\[A](000010-a.md)\n' >>docs/adr/000040-x40.md
+  run_script adr-list.sh
+  assert_success
+  assert_equal "$(cited_of_a "$output")" '["docs/adr/000030-x30.md"]'
+}
+
+@test "cited_in_supplements：参照の定義の先は空白まで読む（( を含む先、<先> の形）" {
+  write_adr "docs/adr/000010-a(old).md" "issue: 10" "A"
+  for n in 20 30; do write_adr "docs/adr/0000$n-x$n.md" "issue: $n" "X$n"; done
+  printf '## 補足\n\n[A][a]\n\n[a]: ../adr/000010-a(old).md "タイトル"\n' >>docs/adr/000020-x20.md
+  printf '## 補足\n\n[A][a]\n\n[a]: <000010-a(old).md>\n' >>docs/adr/000030-x30.md
+  run_script adr-list.sh
+  assert_success
+  assert_equal "$(jq -c '[.adrs[] | select(.path == "docs/adr/000010-a(old).md") | .cited_in_supplements[]]' <<<"$output")" '["docs/adr/000020-x20.md","docs/adr/000030-x30.md"]'
+}
+
+@test "cited_in_supplements：[文][ref] の ref が無ければ、[文] を省略形として引く" {
+  write_adr docs/adr/000010-a.md "issue: 10" "A"
+  write_adr docs/adr/000020-b.md "issue: 20" "B"
+  printf '## 補足\n\n[a][missing]\n\n[a]: 000010-a.md\n' >>docs/adr/000020-b.md
+  run_script adr-list.sh
+  assert_success
+  assert_equal "$(cited_of_a "$output")" '["docs/adr/000020-b.md"]'
+}
+
+@test "cited_in_supplements：同じ名前の定義が2つあれば、先の定義を使う" {
+  write_adr docs/adr/000010-a.md "issue: 10" "A"
+  write_adr docs/adr/000030-c.md "issue: 30" "C"
+  write_adr docs/adr/000020-b.md "issue: 20" "B"
+  cp docs/adr/000020-b.md "$BATS_TEST_TMPDIR/b.md"
+  printf '## 補足\n\n[x][r]\n\n[r]: 000010-a.md\n[R]: 000030-c.md\n' >>docs/adr/000020-b.md
+  run_script adr-list.sh
+  assert_success
+  assert_equal "$(jq -c '[.adrs[] | [.path, .cited_in_supplements]]' <<<"$output")" \
+    '[["docs/adr/000010-a.md",["docs/adr/000020-b.md"]],["docs/adr/000020-b.md",[]],["docs/adr/000030-c.md",[]]]'
+  # 定義の順を逆にすると、先の定義の ADR になる
+  cp "$BATS_TEST_TMPDIR/b.md" docs/adr/000020-b.md
+  printf '## 補足\n\n[x][r]\n\n[R]: 000030-c.md\n[r]: 000010-a.md\n' >>docs/adr/000020-b.md
+  run_script adr-list.sh
+  assert_success
+  assert_equal "$(jq -c '[.adrs[] | [.path, .cited_in_supplements]]' <<<"$output")" \
+    '[["docs/adr/000010-a.md",[]],["docs/adr/000020-b.md",[]],["docs/adr/000030-c.md",["docs/adr/000020-b.md"]]]'
+}
+
+@test "cited_in_supplements：参照の名前は空白の数の違いも区別せず、定義の無い参照は数えずに成功する" {
+  write_adr docs/adr/000010-a.md "issue: 10" "A"
+  for n in 20 30; do write_adr "docs/adr/0000$n-x$n.md" "issue: $n" "X$n"; done
+  printf '## 補足\n\n[x][Ref  A]\n\n[ref a]: 000010-a.md\n' >>docs/adr/000020-x20.md
+  printf '## 補足\n\n[x][none] と [none] と [][]\n' >>docs/adr/000030-x30.md
+  run_script adr-list.sh
+  assert_success
+  assert_equal "$(cited_of_a "$output")" '["docs/adr/000020-x20.md"]'
 }
 
 @test "--issue が無ければ、proposal と adr_tasks は null で、Issue を読まない" {

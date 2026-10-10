@@ -351,6 +351,8 @@ https://github.com/me/demo/pull/42"
 @test "push・commit ではないサブコマンドでは、push・commit の語があっても出さない" {
   silent "git stash push -m x" "git stash commit" "git log --grep commit" "git log --grep=push" "git-lfs push origin" \
     "git config alias.push x" "echo digit push"
+  # stash の取り出し・破棄（guard-git が調べる）も、push・commit ではないので出さない
+  silent "git stash pop" "git stash apply stash@{0}" "git stash drop 1" "git stash clear"
 }
 
 @test "push と、ブランチを作るコマンドを続けても、PR・CI は今のブランチ、Issue は両方のものを出す" {
@@ -564,6 +566,27 @@ EOF"
   [ "$(called issue-view)" -eq 0 ]
 }
 
+@test "同じコマンドの中で git init・git clone したリポジトリへ移った git の操作は、実行した後のそのリポジトリで判断する" {
+  # git init で作ったリポジトリは、導入していないので何も出さない
+  git init -q -b main "$TMP/proj"
+  git -C "$TMP/proj" commit -q --allow-empty -m x
+  run_hook "git init $TMP/proj && cd $TMP/proj && git commit -m x" "" "$TMP/proj"
+  assert_success
+  assert_output ""
+  # 導入したリポジトリを clone した先では、そのブランチの Issue を出す（コマンドの後に動くので、clone した先はもうある）
+  fake_issue 23 '["feat"]'
+  mark_set_up
+  git add .claude/dev-workflow/config.json
+  git commit -q -m setup
+  git clone -q "$REPO" "$TMP/d"
+  git -C "$TMP/d" switch -q -c feat/23-x
+  shows_wt "git clone $REPO $TMP/d && cd $TMP/d && git switch -c feat/23-x && git commit -m x" "$TMP/d"
+  # まだ無いディレクトリ（コマンドが失敗したなど）への cd の後は、移った先が分からないので出さない
+  silent "mkdir $TMP/none && cd $TMP/none && git commit -m x"
+  # コマンドの後にまだ無いディレクトリへの cd は失敗しているので、&& の後ろは動いていない。戻った先のリンクも出さない
+  silent "cd $TMP/nope && cd $REPO && git commit -m x" "cd $TMP/nope && cd .. && git commit -m x"
+}
+
 @test "ブランチを複数作るときは、作るブランチごとに Issue を出し、今のブランチの Issue を先に並べる" {
   fake_issue 23 '["feat"]'
   fake_issue 24 '["feat"]'
@@ -596,6 +619,43 @@ EOF"
   make_wt
   shows_wt "env -C ../wt git commit -m x"
   shows_wt "env --chdir=$TMP/wt git push"
+}
+
+@test "前に付くコマンド（sudo・stdbuf・setsid・ionice・chrt・taskset・flock）を飛ばして、git を拾い、sudo -D の先で判断する" {
+  shows "sudo git push" "PR を作る:"
+  shows "sudo -u root -- git commit -m x" "Issue #17: https://github.com/me/demo/issues/17"
+  shows "stdbuf -oL git push" "PR を作る:"
+  shows "setsid -w git commit -m x" "Issue #17: https://github.com/me/demo/issues/17"
+  shows "ionice -c3 git push" "PR を作る:"
+  shows "chrt -b 0 git commit -m x" "Issue #17: https://github.com/me/demo/issues/17"
+  shows "taskset -c 0 git commit -m x" "Issue #17: https://github.com/me/demo/issues/17"
+  shows "flock -w 5 $TMP/x.lock git commit -m x" "Issue #17: https://github.com/me/demo/issues/17"
+  make_wt
+  shows_wt "sudo -D ../wt git commit -m x"
+  shows_wt "sudo --chdir=$TMP/wt git push"
+  # sudo の後ろの cd は、外部のコマンドなので場所を移さない（( ) の中なので、移ったと読めば wt のリンクを出す）
+  run_hook "(sudo cd $TMP/wt; git commit -m x)"
+  assert_success
+  [[ "$output" == *"issues/17"* ]] || fail "sudo cd で移ったと読んだ: $output"
+}
+
+@test "sudo -i・-R と、sudo の前の GIT_DIR では、git を実行する場所が分からないので出さない。exec -c は前の GIT_DIR を使わない" {
+  make_wt
+  silent "sudo -i git commit -m x" "sudo -R / git push" "sudo -D $TMP/wt -i git commit -m x"
+  run_hook "sudo -i git commit -m x" "" "$TMP/wt"
+  assert_success
+  assert_output ""
+  # 導入した other（Issue 24 のブランチ）
+  fake_issue 24 '["feat"]'
+  git init -q -b feat/24-y "$TMP/other"
+  git -C "$TMP/other" commit -q --allow-empty -m init
+  mark_set_up "$TMP/other"
+  silent "GIT_DIR=$TMP/other/.git sudo git commit -m x"
+  # sudo の後ろに書いた代入は、そのコマンドに渡る
+  shows "sudo GIT_DIR=$TMP/other/.git git commit -m x" "Issue #24: https://github.com/me/demo/issues/24"
+  # exec -c は環境変数を消すので、今のリポジトリ（feat/17-demo）で判断する
+  shows "GIT_DIR=$TMP/other/.git exec -c git commit -m x" "Issue #17: https://github.com/me/demo/issues/17"
+  [[ "$output" != *"issues/24"* ]] || fail "exec -c で消えた GIT_DIR を使った: $output"
 }
 
 @test "git commit の略した --dry-run（--dry）も dry-run とみなし、-m などの値は --dry-run と読まない" {

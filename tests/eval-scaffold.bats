@@ -175,3 +175,16 @@ grader_pattern() { sed -n "s/^pattern: '\\(.*\\)'\$/\\1/p" "$EVALS/$1/graders/$2
   grep -qE "$(grader_pattern $c moves-to-hold)" .fake-gh/writes || fail "moves-to-hold に当たりません: $(cat .fake-gh/writes)"
   if grep -qE "$(grader_pattern $c no-other-writes)" .fake-gh/writes; then fail "no-other-writes に当たります: $(cat .fake-gh/writes)"; fi
 }
+
+@test "gh-pr-check の diff の外の指摘のケースの準備の後、pr-feedback.sh はスレッド 0 件で needs_attention を true にし、何も書き込まない" {
+  run "${TEST_BASH:-bash}" "$EVALS/gh-pr-check-outside-diff/fixture.sh"
+  assert_success
+  run "${TEST_BASH:-bash}" "$SCRIPTS/pr-feedback.sh" --pr 5
+  assert_success
+  assert_equal "$(jq -c '[.counts.threads, .counts.unanswered, .needs_attention, .checks.state, .pr.merge_state]' <<<"$output")" \
+    '[0,{"threads":0,"reviews":1,"comments":0},true,"success","CLEAN"]'
+  run "${TEST_BASH:-bash}" "$SCRIPTS/pr-feedback.sh"
+  assert_success
+  assert_equal "$(jq -c .needs_attention <<<"$output")" true
+  [ ! -s .fake-gh/writes ] || fail "書き込みが記録されました: $(cat .fake-gh/writes)"
+}

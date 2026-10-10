@@ -402,8 +402,169 @@ silent() {
   allowed "cd - && git -C $REPO commit -m x" "cd - && git -C $REPO push" "cd - && git -C $REPO push origin HEAD"
 }
 
+@test "同じコマンドの中で git init で作るリポジトリは、導入していないので、cd・-C で移った後のコミットを止めない" {
+  silent "git init proj && cd proj && git commit -m x" "git init -q -b main proj; cd proj; git commit -m x" \
+    "git init $TMP/new && cd $TMP/new && git commit -m x" \
+    "git init proj && git -C proj commit -m x" "git init proj && cd proj/ && git push -f origin main" \
+    "git -C $TMP init --template=x new && cd $TMP/new && git commit -m x" "git init proj && cd proj && mkdir a && cd a/.. && git commit -m x"
+  # 既にあるディレクトリでも、リポジトリのルートでなければ、git init は新しいリポジトリを作る
+  mkdir sub
+  silent "git init sub && cd sub && git commit -m x" "cd sub && git init && git commit -m x"
+  # 既にあるリポジトリのルートでの git init は、作り直すだけなので、そのリポジトリで判断する
+  denied "main の上ではコミットしません" "git init && git commit -m x" "git init . && git commit -m x" "git init $REPO && cd $REPO && git commit -m x"
+  # git init で作った場所と関係のない場所は、今までどおり判断する
+  denied "main の上ではコミットしません" "git init proj && git commit -m x" "git init proj && cd proj && cd $REPO && git commit -m x"
+}
+
+@test "既にあるリポジトリの配下での git init は、成功した前提の && の並びでだけ新しいリポジトリとみなす" {
+  mkdir sub
+  silent "git init sub && cd sub && git commit -m x" "cd sub && git init && git commit -m x"
+  # init が失敗しても動く後ろは、親のリポジトリで判断する
+  denied "main の上ではコミットしません" "cd sub && git init; git commit -m x" \
+    "git init sub; git -C sub commit -m x" "git init sub && cd sub; git commit -m x" \
+    "cd sub && git init || git commit -m x" "$(printf 'cd sub && git init\ngit commit -m x')" \
+    "cd sub && git init & git commit -m x"
+  denied "強制 push" "cd sub && git init; git push --force origin main"
+  # リポジトリの外の既にあるディレクトリは、親のリポジトリを使うことがない
+  mkdir "$TMP/outside"
+  silent "git init $TMP/outside; git -C $TMP/outside commit -m x"
+}
+
+@test "git init した場所の配下や、--git-dir・GIT_DIR で別のリポジトリを指した git は、新しいリポジトリとみなさない" {
+  # 外側に git init しても、内側の既にあるリポジトリ（main の上）の git は、そのリポジトリを使う
+  denied "main の上ではコミットしません" "git init .. && git commit -m x" "git init $TMP && git commit -m x" \
+    "git init $TMP && cd $TMP/repo && git commit -m x"
+  denied "強制 push" "git init .. && git push --force origin main"
+  denied "main へは push しません" "git init $TMP && git push"
+  # まだ無い場所の配下は、作る場所と同じではないので、分からないものとする
+  denied "対象のリポジトリが分からない" "git init proj && cd proj/sub && git commit -m x"
+  # 作った場所でも、--git-dir・GIT_DIR で別のリポジトリを指せば、そのリポジトリを使う（作る前なので、場所が分からない）
+  denied "コミットは止めます" "git init $TMP/n && git -C $TMP/n --git-dir=$REPO/.git commit -m x" \
+    "git init $TMP/n && cd $TMP/n && GIT_DIR=$REPO/.git git commit -m x"
+}
+
+@test "同じコマンドの中で git clone するリポジトリは、まだ無くて調べられないので、cd・-C で移った後のコミットを止める" {
+  denied "git clone" "git clone $REPO d && cd d && git commit -m x" "git clone https://example.com/me/demo.git && cd demo && git commit -m x" \
+    "git clone -b main --depth 1 git@example.com:me/demo && cd demo && git commit -m x" "git clone $REPO d && git -C d push" \
+    "git clone --bare $REPO && cd repo.git && git commit -m x" "git clone -- $REPO d/ && cd d && git commit -m x"
+  # push 先を書いた push は、書かれた先で判断する
+  allowed "git clone $REPO d && cd d && git push origin feat/1-x"
+  denied "main へは push しません" "git clone $REPO d && cd d && git push origin main"
+}
+
+@test "mkdir だけで git init の無いディレクトリへの cd の後は、どのリポジトリに入るか分からないので、コミットを止める" {
+  denied "対象のリポジトリが分からない" "mkdir d && cd d && git commit -m x" "mkdir -p a/b && cd a/b && git commit -m x" \
+    "git init proj && cd proj2 && git commit -m x"
+  # 移った先がまだ無いことを、理由で伝える
+  denied "はまだ無く" "mkdir d && cd d && git commit -m x"
+  # まだ無いディレクトリへの cd が失敗しても動く後ろ（; ・ || ・改行）では、cd は移らなかったかもしれない
+  # （cd /x/nope; git init は、今のリポジトリを作り直す）ので、git init の後でも分からないものとする
+  denied "対象のリポジトリが分からない" "cd $TMP/nope; git init; git commit -m x" "mkdir d && cd d; git init && git commit -m x" \
+    "cd $TMP/nope || git init && git commit -m x" "$(printf 'cd %s\ngit init && git commit -m x' "$TMP/nope")"
+}
+
+@test "まだ無いディレクトリへの cd の後ろで覚えた作る場所は、cd が失敗しても動く後ろでは使わない" {
+  # cd が失敗すると、&& でつないだ git init は動かず、; などの後ろの git commit は今のリポジトリ（main）で動く
+  # （cd が成功したかは分からないので、今の場所は分からないものとして止める）
+  denied "コミット" "cd $TMP/nope && git init; git commit -m x" \
+    "$(printf 'cd %s && git init\ngit commit -m x' "$TMP/nope")" \
+    "if cd $TMP/nope && git init; then :; fi; git commit -m x" "cd $TMP/nope && git init || true; git commit -m x" \
+    "cd $TMP/nope && git init & git commit -m x"
+  # 移った先にとどまる書き方も、cd が失敗したかもしれないので分からないものとする
+  denied "対象のリポジトリが分からない" "cd $TMP/nope && git init; cd $TMP/nope; git commit -m x"
+  # 前提の無いところで覚えた作る場所は、境目を越えても使う
+  silent "git init proj; cd proj; git commit -m x" "mkdir d && cd d && git init && git commit -m x" \
+    "git init proj && cd proj && git init sub; cd sub; git commit -m x"
+}
+
+@test "! の付いた cd がまだ無いディレクトリを指すときは、失敗しても後ろが動くので、今の場所を分からないものとする" {
+  git checkout -q -b feat/1-x
+  # cd nope が失敗すると、cd .. は REPO の外へ移るので、nope/..（REPO）とは言えない
+  denied "対象のリポジトリが分からない" "! cd nope && cd .. && git commit -m x" "! pushd nope && cd .. && git commit -m x"
+  allowed "! cd $TMP && cd repo && git commit -m x"
+}
+
+@test "まだ無いディレクトリへの cd の後も、&& でつないだ後ろでは、文字の上のパスで追い続ける" {
+  git checkout -q -b feat/1-x
+  # cd .. で既にある場所へ戻れば、そのリポジトリで判断する
+  allowed "mkdir build && cd build && cd .. && git commit -m x" "mkdir -p a/b && cd a/b && cd ../.. && git commit -m x"
+  # git init が作る場所へ、途中のディレクトリを通って移っても、新しいリポジトリとみなす
+  silent "git init a/b && cd a && cd b && git commit -m x" "mkdir -p $TMP/z && cd $TMP/z && git init && git commit -m x" \
+    "mkdir d && cd d && git init && git commit -m x" "git init proj; cd proj; git commit -m x"
+  denied "main へは push しません" "mkdir build && cd build && cd .. && git push origin main"
+}
+
 @test "対象のリポジトリが分からないときも、コミット・push 以外は止めない" {
   allowed "cd - && git switch -c feat/x" "cd - && git checkout -b feat/x" "cd - && git branch feat/x"
+}
+
+# 今のブランチで、追跡しているファイル f を変えて stash を作る。使い方: make_stash [メッセージ]
+make_stash() {
+  [ -f f ] || { echo a >f && git add f && git commit -q -m f; }
+  echo "$RANDOM" >>f
+  if [ $# -gt 0 ]; then git stash push -q -m "$1"; else git stash -q; fi
+}
+
+@test "別のブランチで作った stash の取り出し・破棄（pop・apply・drop・branch）を止める" {
+  make_stash
+  git checkout -q -b feat/1-x
+  denied "別のブランチ（main）で作られた stash" "git stash pop" "git stash apply" "git stash drop" "git stash pop 0" \
+    "git stash pop --index stash@{0}" "git stash apply -q 'stash@{0}'" "git stash drop -q stash@{0}" \
+    "git stash branch feat/2-y" "git stash branch feat/2-y stash@{0}" "git stash pop -- 0"
+  # 今のブランチで作った stash は取り出せる。番号で、別のブランチの stash を指せば止める
+  make_stash "fix: x"
+  allowed "git stash pop" "git stash apply stash@{0}" "git stash drop 0" "git stash branch feat/2-y"
+  denied "別のブランチ（main）で作られた stash" "git stash pop 1" "git stash apply stash@{1}" "git stash branch feat/2-y 1"
+  # 理由は1行で伝える
+  run_hook "git stash pop 1"
+  [ "${#lines[@]}" -eq 1 ]
+}
+
+@test "stash は全ワークツリーで共有されるので、別のワークツリーで作った stash も、ブランチが違えば止める" {
+  make_stash
+  git worktree add -q -b feat/1-x "$TMP/wt"
+  denied "別のブランチ（main）で作られた stash" "cd $TMP/wt && git stash pop" "git -C $TMP/wt stash apply"
+  allowed "git stash pop"
+}
+
+@test "detached HEAD で作った stash は、detached HEAD のまま取り出せ、ブランチで作った stash は止める" {
+  make_stash
+  git checkout -q --detach
+  denied "別のブランチ（main）で作られた stash" "git stash pop"
+  make_stash
+  allowed "git stash pop" "git stash apply stash@{0}"
+  denied "別のブランチ（main）で作られた stash" "git stash pop 1"
+  # 別のコミットの detached HEAD（別のワークツリーの作業など）で作った stash は、同じ (no branch) でも止める
+  git commit -q --allow-empty -m y
+  git checkout -q --detach
+  denied "別の detached HEAD" "git stash pop" "git stash drop 0"
+  # 同じコミットの detached HEAD に戻れば取り出せる
+  git checkout -q HEAD~1
+  allowed "git stash pop"
+  # detached HEAD で作った stash を、ブランチの上で取り出すときも止める
+  git checkout -q main
+  denied "別のブランチ（(no branch)）で作られた stash" "git stash pop"
+}
+
+@test "git stash clear は、どのブランチの上でも止める" {
+  denied "git stash clear" "git stash clear"
+  git checkout -q -b feat/1-x
+  denied "git stash clear" "git stash clear"
+}
+
+@test "stash を作る・見るだけの操作と、無い stash の取り出しは止めない" {
+  allowed "git stash pop" "git stash apply stash@{3}"
+  make_stash
+  git checkout -q -b feat/1-x
+  allowed "git stash" "git stash push -m x" "git stash list" "git stash show -p" "git stash show stash@{0}" "git stash pop stash@{5}"
+}
+
+@test "導入していないリポジトリでは stash を止めない。対象が分からないときの取り出しは止める" {
+  make_stash
+  git checkout -q -b feat/1-x
+  denied "対象のリポジトリが分からない" "cd - && git stash pop"
+  rm .claude/dev-workflow/config.json
+  silent "git stash pop" "git stash clear"
 }
 
 @test "規約に合わない名前でブランチを作るコマンドは、止めずに警告する" {
@@ -833,6 +994,51 @@ silent() {
   allowed "command -v git push -f" "command -pV git push -f"
 }
 
+@test "前に付くコマンド（sudo・stdbuf・setsid・ionice・chrt・taskset・flock）を、そのオプションと位置引数とともに飛ばして、git を調べる" {
+  denied "main へは push しません" "sudo git push origin main" "sudo -u root -g wheel git push origin main" \
+    "sudo -E -H -n -- git push origin main" "sudo --user=root git push origin main" "sudo -C 3 git push origin main" \
+    "sudo FOO=1 git push origin main"
+  git checkout -q -b feat/21-x
+  denied "強制 push" \
+    "stdbuf -oL git push -f" "stdbuf -i0 -o L -e 0 git push -f" "stdbuf --output=L --error 0 git push -f" \
+    "setsid git push -f" "setsid -w -f git push -f" "setsid --wait git push -f" \
+    "ionice -c3 git push -f" "ionice -c 2 -n 7 -t git push -f" "ionice --class=idle git push -f" \
+    "chrt 10 git push -f" "chrt -r 10 git push -f" "chrt -b 0 git push -f" "chrt -T 100 -D 200 -d 0 git push -f" \
+    "taskset 0x1 git push -f" "taskset -c 0,1 git push -f" "taskset -a 3 git push -f" \
+    "flock /tmp/x.lock git push -f" "flock -w 5 -x /tmp/x.lock git push -f" "flock -E 3 -n /tmp/x.lock git push -f" \
+    "sudo stdbuf -oL setsid ionice -c3 nice -n 5 git push -f"
+  # コマンドを実行しない使い方（sudo -l・-v・-K・-V・-e、ionice -p、chrt -p・-m、taskset -p、flock -u）は、git を調べない
+  allowed "sudo -l git push -f" "sudo -v" "sudo -K" "sudo -V" "sudo -e git" "ionice -p 1 git" "chrt -p 1 git" "chrt -m" \
+    "taskset -p 1 git" "taskset -cp 0 1 git" "flock -u 3"
+}
+
+@test "sudo -i・-R は別の場所で動き、sudo の前の GIT_DIR などは効くか決められないので、git を実行する場所を分からないものとする" {
+  git worktree add -q -b feat/21-x "$TMP/wt"
+  cd "$TMP/wt"
+  denied "対象のリポジトリが分からない" "sudo -i git commit -m x" "sudo -iu root git commit -m x" "sudo --login git commit -m x" \
+    "sudo -D $TMP/wt -i git commit -m x" "sudo -R / git commit -m x"
+  # 絶対パスの git -C なら、場所が分かる
+  allowed "sudo -i git -C $TMP/wt commit -m x"
+  # sudo の前の GIT_DIR は、env_reset で消えるかもしれず、env_keep・-E で残るかもしれない
+  git init -q -b main "$TMP/other"
+  denied "対象のリポジトリが分からない" "GIT_DIR=$TMP/other/.git sudo git commit -m x" "GIT_WORK_TREE=$TMP/other sudo -E git commit -m x"
+  # sudo の後ろに書いた代入は、そのコマンドに渡る（導入していない other を指すので、何もしない）
+  silent "sudo GIT_DIR=$TMP/other/.git git commit -m x"
+}
+
+@test "sudo の前の GIT_DIR などがあるときの git init・git clone は、作る場所が分からないので覚えない" {
+  git init -q -b main "$TMP/other"
+  denied "対象のリポジトリが分からない" "GIT_DIR=$TMP/other/.git sudo git init $TMP/n && cd $TMP/n && git commit -m x"
+}
+
+@test "sudo -D <dir> で移った先で、そのコマンドの git を判断する" {
+  git worktree add -q -b feat/21-x "$TMP/wt"
+  allowed "sudo -D $TMP/wt git commit -m x" "sudo -D ../wt git commit -m x" "sudo --chdir=$TMP/wt git commit -m x" \
+    "sudo -D$TMP/wt git commit -m x"
+  # sudo -D は、そのコマンドだけに効く
+  denied "main の上ではコミットしません" "sudo -D $TMP/wt true; git commit -m x" "cd $TMP/wt && sudo -D $REPO git commit -m x"
+}
+
 @test "env -S の値は、env と同じく引用符とエスケープを解いて分ける" {
   git checkout -q -b feat/21-x
   denied "main へは push しません" "env -S \"git push origin 'main'\"" "env -S 'git push origin \"main\"'" \
@@ -861,6 +1067,8 @@ EOF
   denied "main の上ではコミットしません" "GIT_DIR=$TMP/other/.git env -i git commit -m x" \
     "GIT_DIR=$TMP/other/.git env - git commit -m x" "GIT_DIR=$TMP/other/.git env -u GIT_DIR git commit -m x" \
     "GIT_DIR=$TMP/other/.git env --unset=GIT_DIR git commit -m x" "GIT_DIR=$TMP/other/.git env --ignore-env git commit -m x"
+  # exec -c も、環境変数をすべて消してから実行する
+  denied "main の上ではコミットしません" "GIT_DIR=$TMP/other/.git exec -c git commit -m x" "GIT_DIR=$TMP/other/.git exec -cl git commit -m x"
   # 消した後の代入と、ほかの変数を消すときは、GIT_DIR が効く
   silent "env -i GIT_DIR=$TMP/other/.git git commit -m x" "GIT_DIR=$TMP/other/.git env -u FOO git commit -m x"
 }
@@ -897,6 +1105,10 @@ EOF
   denied "main の上ではコミットしません" "cd -@ $TMP/wt; git commit -m x"
   denied "main の上ではコミットしません" "cd $TMP/wt && builtin cd $REPO && git commit -m x" \
     "cd $TMP/wt && builtin -- cd $REPO && git commit -m x"
+  # sudo・stdbuf・setsid などの後ろの cd も、外部のコマンドとして実行するので、場所を移さない
+  denied "main の上ではコミットしません" "sudo cd $TMP/wt; git commit -m x" "stdbuf -oL cd $TMP/wt; git commit -m x" \
+    "setsid cd $TMP/wt; git commit -m x" "ionice -c3 cd $TMP/wt; git commit -m x" "chrt 0 cd $TMP/wt; git commit -m x" \
+    "taskset 1 cd $TMP/wt; git commit -m x" "flock /tmp/x.lock cd $TMP/wt; git commit -m x"
 }
 
 @test "cd \"\" は移らない（引数の無い cd だけが \$HOME へ移る）" {

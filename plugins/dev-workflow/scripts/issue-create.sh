@@ -144,24 +144,15 @@ done
 
 # 親の Issue があるか（PR は除く）と、親子の深さが上限を超えないかを確かめる
 if [ -n "$parent" ]; then
-  # "2" のような文字列は認めないよう、JSON の形のまま比べる
-  max_depth="$(jq -c '.sub_issues.max_depth' <<<"$config")"
-  case "$max_depth" in
-    1 | 2 | 3) ;;
-    *) dw_die "sub_issues.max_depth は 1・2・3 のどれかにしてください: $max_depth" 2 ;;
-  esac
-  parent_issue="$(dw_gh_find gh api "repos/$repo_nwo/issues/$parent" | jq -c 'if . == null or .pull_request then null else . end')"
+  max_depth="$(dw_max_depth "$config")"
+  parent_issue="$(dw_rest_issue "$repo_nwo" "$parent")"
   [ "$parent_issue" != null ] || dw_die "親にする Issue #${parent} がありません（${repo_nwo}）"
-  # 親から上へたどり、起票する Issue が何層目になるかを数える（一番上の Issue が 1 層目）。
-  # 親の親は別のリポジトリにあることもあるので、応答の API の URL からパスを作る
-  depth=2
-  node="$parent_issue"
-  while [ "$depth" -le "$max_depth" ]; do
-    node="$(dw_gh_find gh api "repos/$(jq -r '.url | sub("^.*?/repos/"; "")' <<<"$node")/parent")"
-    [ "$node" != null ] || break
-    depth="$((depth + 1))"
-  done
-  [ "$depth" -le "$max_depth" ] \
+  # 起票する Issue は親の 1 層下。上限を超えると分かったら、それより上はたどらない（深さの規則は dw_sub_issue_depth）
+  depth_check="$(dw_sub_issue_depth "$parent_issue" 1 "$max_depth")"
+  # exceeds と depth（超えるときは空）を、jq を1回だけ起動して読む。空になりうる depth は後ろに置く
+  # （区切りの空白は read が続けて読み飛ばすので、前に置くと exceeds がずれる）
+  read -r exceeds depth <<<"$(jq -r '"\(.exceeds) \(.depth // "")"' <<<"$depth_check")"
+  [ "$exceeds" = false ] \
     || dw_die "#${parent} の子にすると、親子の深さが上限の ${max_depth} 層を超えます（sub_issues.max_depth）" 2
   if [ "$depth" -gt "$DW_SUB_ISSUE_DEPTH_GUIDE" ]; then
     dw_warn "#${parent} の子にすると ${depth} 層目になります（目安は ${DW_SUB_ISSUE_DEPTH_GUIDE} 層まで）"

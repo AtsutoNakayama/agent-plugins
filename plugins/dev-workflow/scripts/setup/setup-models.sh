@@ -50,8 +50,8 @@ if [ -n "$review_model" ]; then
     value=null
   else
     value="$(jq -n --arg m "$review_model" '$m')"
-    dw_review_model_ok "$value" \
-      || dw_die "--review-model は off か $(dw_review_model_names) のどれかにしてください: ${review_model}" 64
+    dw_json_enum_ok "$DW_REVIEW_MODELS" "$value" \
+      || dw_die "--review-model は off か $(dw_json_enum_names "$DW_REVIEW_MODELS") のどれかにしてください: ${review_model}" 64
   fi
   case "$scope" in
     local | team) ;;
