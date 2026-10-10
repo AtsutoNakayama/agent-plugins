@@ -126,8 +126,9 @@ elif [ "$p1" = view ] && { [ "$p0" = issue ] || [ "$p0" = pr ]; }; then
   done
   key="${p0} view${num:+ ${num}}${rest[0]+ ${rest[*]}}"
 fi
-# gh pr create の本文を残す（--body-file - なら標準入力から読む）
+# gh pr create の本文を残す（--body-file - なら標準入力から読む）。本文の無い呼び出しで前の本文が残らないよう、先に消す
 if [ "$p0" = pr ] && [ "$p1" = create ]; then
+  rm -f "$base/pr-body"
   if [ "$body_file" = - ]; then
     cat >"$base/pr-body"
     stdin_read=true

@@ -281,3 +281,14 @@ mutation { x }'
   assert_success
   [ ! -e .fake-gh/pr-body ] || fail "pr create 以外で pr-body ができました: $(cat .fake-gh/pr-body)"
 }
+
+@test "本文の無い gh pr create は、前の gh pr create の本文を .fake-gh/pr-body に残さない" {
+  fake_gh_write 'pr create*' 'https://github.com/me/demo/pull/98'
+  printf '前の本文\n' >"$TMP/body.md"
+  run_fake_gh pr create --base main --body-file "$TMP/body.md"
+  assert_success
+  assert_equal "$(cat .fake-gh/pr-body)" "前の本文"
+  run_fake_gh pr create --base main --fill
+  assert_success
+  [ ! -e .fake-gh/pr-body ] || fail "前の本文が残っています: $(cat .fake-gh/pr-body)"
+}
