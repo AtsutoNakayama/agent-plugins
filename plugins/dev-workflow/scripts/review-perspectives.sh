@@ -215,7 +215,7 @@ fm_list() {
 }
 
 # 1行に1つの値を JSON の配列にする
-lines_json() { jq -Rsc 'split("\n") | map(select(. != ""))'; }
+lines_json() { dw_json_str | jq -c 'split("\n") | map(select(. != ""))'; }
 
 records='[]'
 invalid='[]'

@@ -298,3 +298,13 @@ branch_off_main() {
   done
   [ ! -e "$WORKFLOW_USER_DIR/config.json" ] && [ ! -e "$WORKFLOW_USER_DIR/config.local.json" ]
 }
+
+@test "--save で、コマンドに絵文字があっても（4096 バイトを超える1行でも）壊さずに保存する" {
+  # 標準入力の jq -R は、約 4096 バイトの読み込みの区切りにまたがる BMP の外の文字（絵文字）を壊す
+  cmd="$(emoji_text 1500)"
+  run_script checks-commands.sh --save --scope team --command "$cmd" --command "make test"
+  assert_success
+  assert_equal "$(jq -r '.saved.commands[0]' <<<"$output")" "$cmd"
+  assert_equal "$(jq -r '.commands[0]' <<<"$output")" "$cmd"
+  assert_equal "$(jq -r '.checks.commands[0]' "$TEAM")" "$cmd"
+}

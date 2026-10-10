@@ -17,6 +17,38 @@ dw_warn() {
   printf 'warn: %s\n' "$1" >&2
 }
 
+# 標準入力の全体を、JSON の文字列にして出力する（jq の入力の `.` がその文字列になる）。
+# 長くなりうる文を `jq -R`・`jq -R -s` で読むと、1行が約 4096 バイトを超えるとき、その区切りにかかった BMP の外の文字（絵文字など）が壊れる
+# （jq の既知の不具合）。--rawfile（一時ファイル経由）なら壊れないので、文を jq に渡すときは、`jq -R` を使わずに、これを通す
+# 使い方: text="$(printf '%s' "$x" | dw_json_str | jq -r 'ascii_downcase')"
+dw_json_str() {
+  local tmp rc=0
+  tmp="$(mktemp)" || return
+  cat >"$tmp" || rc=$?
+  [ "$rc" -ne 0 ] || jq -n --rawfile s "$tmp" '$s' || rc=$?
+  rm -f "$tmp"
+  return "$rc"
+}
+
+# 標準入力の全体を、jq の変数 $dw_in（文字列）にして、jq を1回だけ起動する（jq -n --rawfile dw_in <一時ファイル> に引数を足す）。
+# 入力の文字列を、`.` ではなく `$dw_in` で読む以外は、dw_json_str と同じ（壊れない）。jq の起動の回数を増やしたくないときに使う
+# 使い方: dw_jq_text -r --arg b "$x" '$dw_in | split("\n") | .[0]' <<<"$text"
+dw_jq_text() {
+  local tmp rc=0
+  tmp="$(mktemp)" || return
+  cat >"$tmp" || rc=$?
+  [ "$rc" -ne 0 ] || jq -n --rawfile dw_in "$tmp" "$@" || rc=$?
+  rm -f "$tmp"
+  return "$rc"
+}
+
+# 標準入力の各行を、JSON の文字列の配列にして1行で出力する（`jq -R . | jq -sc .` と同じ。空行も1つと数える。
+# 最後の改行の後ろの空の行は数えない）。dw_json_str を通すので、絵文字が壊れない
+# 使い方: arr="$(printf '%s\n' "$a" "$b" | dw_json_lines)"
+dw_json_lines() {
+  dw_json_str | jq -c 'split("\n") | if .[-1] == "" then .[:-1] else . end'
+}
+
 # 必要なコマンドが無ければ終了する。
 dw_require() {
   local cmd
@@ -115,9 +147,9 @@ dw_issue_branches() {
   # 並べ方は jq の文字の順（ロケールに左右されない。重複を消すときに、別の名前を同じとみなさない）
   # shellcheck disable=SC2016 # jq の変数を bash に展開させない
   printf '%s\n%s\n' "$names" "$(sed -n 's|^[0-9a-f]*[[:space:]]*refs/heads/||p' <<<"$refs" | awk -v k=R 'NF { print k "\t" $0 }')" \
-    | jq -R -s -r --argjson c "$3" --arg n "$2" "$DW_JQ_BRANCH_RE"'
+    | dw_jq_text -r --argjson c "$3" --arg n "$2" "$DW_JQ_BRANCH_RE"'
       ($c | branch_re) as $re | ("(^|/)0*" + $n + "-") as $broad
-      | split("\n") | map(select(. != "") | split("\t")) | group_by(.[1])
+      | ($dw_in | split("\n")) | map(select(. != "") | split("\t")) | group_by(.[1])
       | map({name: .[0][1], l: any(.[]; .[0] == "L"), r: any(.[]; .[0] == "R")})
       | map(. + {confirmed: (((((try (.name | capture($re)) catch null) // {}).issue // "") | sub("^0+"; "")) == $n)})
       | map(select(.confirmed or (.name | test($broad))))
@@ -525,7 +557,7 @@ dw_config_regex_test() {
 #                  branch-name.sh）なら、ブランチ名を作れないので「設定されていません」と報告する。
 #                  正規表現の誤りでない jq の失敗（test の catch から投げ直したものなど）は、受け皿の
 #                  「branch.pattern・labels.types の設定を検査できません（理由）」で報告する
-#   branch_config($strict)  入力（設定の JSON の文字列。jq -R -s で読む）を {c: 設定} にする。JSON として読めなければ、
+#   branch_config($strict)  入力（設定の JSON の文字列。dw_jq_text の $dw_in で渡す）を {c: 設定} にする。JSON として読めなければ、
 #                  {e: メッセージ}。読めても branch_error_by($strict) が誤りを返せば {e: メッセージ}。jq の起動 1 回で、
 #                  JSON の読み取り・検査・解析までできるようにする
 # jq の変数（$t など）を bash に展開させないため、シングルクォートで書く
@@ -565,7 +597,8 @@ def branch_config($strict): (try {c: fromjson}
 # 使い方: dw_check_branch_pattern <設定の JSON>
 dw_check_branch_pattern() {
   local msg
-  msg="$(jq -R -s -r "$DW_JQ_BRANCH_RE"'branch_config(false) | .e // empty' <<<"$1")" \
+  # shellcheck disable=SC2016 # jq の変数（$dw_in）を bash に展開させない
+  msg="$(dw_jq_text -r "$DW_JQ_BRANCH_RE"'$dw_in | branch_config(false) | .e // empty' <<<"$1")" \
     || msg="branch.pattern・labels.types の設定を検査できませんでした（jq が失敗しました）"
   [ -z "$msg" ] || { printf '%s\n' "$msg"; return 1; }
 }
@@ -579,8 +612,8 @@ dw_parse_branch() {
   local out
   # 誤りは「!」を、解析の結果は「=」を先頭に付けて出し、取り違えないようにする
   # shellcheck disable=SC2016 # jq の変数（$b・$re）を bash に展開させない
-  out="$(jq -R -s -r --arg b "$2" "$DW_JQ_BRANCH_RE"'
-    branch_config(false)
+  out="$(dw_jq_text -r --arg b "$2" "$DW_JQ_BRANCH_RE"'
+    $dw_in | branch_config(false)
     | if has("e") then "!" + .e
       else .c | branch_re as $re
         | (try ($b | capture($re)) catch null) // {}

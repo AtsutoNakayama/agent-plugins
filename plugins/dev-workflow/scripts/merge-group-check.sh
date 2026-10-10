@@ -87,7 +87,7 @@ done
 [ -n "$branch" ] || dw_die "--branch を指定してください" 64
 
 checks_json="$(printf '%s\n' ${checks[@]+"${checks[@]}"} \
-  | jq -R -s -c --argjson e "$extra" 'split("\n") + $e | map(select(. != "")) | unique')"
+  | dw_json_str | jq -c --argjson e "$extra" 'split("\n") + $e | map(select(. != "")) | unique')"
 
 # 結果に、利用者に伝える文（messages）を添えて出力する。使い方: output <ワークフローの JSON> <チェックごとの結果の JSON>
 output() {

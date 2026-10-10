@@ -99,7 +99,7 @@ for dir in "$user_dir" "$team_dir"; do
   done
 done
 
-sources_json="$(printf '%s\n' ${sources[@]+"${sources[@]}"} | jq -R . | jq -sc 'map(select(. != ""))')"
+sources_json="$(printf '%s\n' ${sources[@]+"${sources[@]}"} | dw_json_lines | jq -c 'map(select(. != ""))')"
 
 printf '%s\n' "${layers[@]}" \
   | jq -s --argjson guides "$guides" --argjson sources "$sources_json" --argjson set_up "$set_up" \

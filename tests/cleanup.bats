@@ -758,3 +758,13 @@ make_bare_layout() {
   assert_equal "$(jq -c '[.main_root, .worktree, .removed.worktree, .removed.branch]' <<<"$json")" "[\"$SM\",\"$TMP/smwt\",true,true]"
   [ ! -e "$TMP/smwt" ]
 }
+
+@test "--abandon で、失うコミットの件名に絵文字があっても（4096 バイトを超える1行でも）壊さずに伝える" {
+  # 標準入力の jq -R -s は、約 4096 バイトの読み込みの区切りにまたがる BMP の外の文字（絵文字）を壊す
+  setup_branch
+  subject="feat: $(emoji_text 1500)"
+  git -C "$WT" commit -q --allow-empty -m "$subject"
+  run_cleanup --branch feat/17-x --abandon --dry-run
+  assert_success
+  assert_equal "$(jq -r '.lost.commits[0] | sub("^[0-9a-f]+ "; "")' <<<"$json")" "$subject"
+}

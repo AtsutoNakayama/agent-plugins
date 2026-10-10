@@ -464,6 +464,7 @@ run_common() {
 @test "設定の値の一覧の定数（DW_REVIEW_MODELS・DW_CODE_REVIEW_EFFORTS）は、空でない文字列の配列" {
   for name in DW_REVIEW_MODELS DW_CODE_REVIEW_EFFORTS; do
     # shellcheck disable=SC2016 # 引数は、起動した bash の中で展開させる
+    # shellcheck disable=SC2016 # 引数は、起動した bash の中で展開させる
     run "${TEST_BASH:-bash}" -c '. "$1"; printf "%s" "${!2}"' _ "$SCRIPTS/lib/common.sh" "$name"
     assert_success
     jq -s -e 'length == 1 and (.[0] | type == "array" and length > 0 and all(.[]; type == "string" and . != ""))' <<<"$output" >/dev/null \
@@ -620,6 +621,49 @@ SH
   run "${TEST_BASH:-bash}" -c '. "$1"; dw_warn_once "$2" "$4"; dw_warn_once "$3" "$4"' _ "$SCRIPTS/lib/common.sh" "$TMP/w1" "$TMP/w2" "$TMP/seen"
   assert_success
   assert_output $'warn: 読めません: gh: HTTP 502\nwarn: 別の種類\nwarn: 新しい種類: x'
+}
+
+# 1行が約 4096 バイトを超え、その区切りに絵文字がかかる入力を、標準入力の jq -R・-R -s で読むと、絵文字が壊れる（jq の不具合）。
+# 文を jq に渡すには、dw_json_str・dw_json_lines（--rawfile 経由）を使う
+@test "dw_json_str は、4096 バイトの区切りに絵文字がかかる文を、そのまま JSON の文字列にする" {
+  for pad in 4093 4094 4095 4096; do
+    text="$(head -c "$pad" /dev/zero | tr '\0' a)😀tail"
+    # shellcheck disable=SC2016 # 引数は、起動した bash の中で展開させる
+    run "${TEST_BASH:-bash}" -c '. "$1"; printf "%s" "$2" | dw_json_str' _ "$SCRIPTS/lib/common.sh" "$text"
+    assert_success
+    assert_equal "$(jq -r . <<<"$output")" "$text"
+  done
+  # shellcheck disable=SC2016 # 引数は、起動した bash の中で展開させる
+  run "${TEST_BASH:-bash}" -c '. "$1"; printf "" | dw_json_str' _ "$SCRIPTS/lib/common.sh"
+  assert_success
+  assert_output '""'
+}
+
+@test "dw_json_lines は、jq -R . | jq -sc . と同じ行の配列にする（最後の改行の後ろの空は数えず、空行は数える）" {
+  # shellcheck disable=SC2016 # 引数は、起動した bash の中で展開させる
+  run_lines() { run "${TEST_BASH:-bash}" -c '. "$1"; printf "$2" | dw_json_lines' _ "$SCRIPTS/lib/common.sh" "$1"; }
+  run_lines ''
+  assert_output '[]'
+  run_lines 'a'
+  assert_output '["a"]'
+  run_lines 'a\n'
+  assert_output '["a"]'
+  run_lines 'a\n\nb\n'
+  assert_output '["a","","b"]'
+  run_lines '\n'
+  assert_output '[""]'
+  text="$(head -c 4094 /dev/zero | tr '\0' a)😀"
+  # shellcheck disable=SC2016 # 引数は、起動した bash の中で展開させる
+  run "${TEST_BASH:-bash}" -c '. "$1"; printf "%s\n%s\n" "$2" "$2" | dw_json_lines' _ "$SCRIPTS/lib/common.sh" "$text"
+  assert_success
+  assert_equal "$(jq -c --arg t "$text" '. == [$t, $t]' <<<"$output")" true
+}
+
+@test "scripts/ と hooks/ に、標準入力の jq -R・-R -s（--raw-input）が残っていない（絵文字が壊れるため。dw_json_str を使う）" {
+  run grep -rnE 'jq( +-[A-Za-z-]+)* +(-[A-Za-z]*R[A-Za-z]*|--raw-input)( |$)' "$SCRIPTS" "$SCRIPTS/../hooks"
+  # コメントの行（# で始まる行）は除く
+  hits="$(grep -vE '^[^:]+:[0-9]+:[[:space:]]*#' <<<"$output" || true)"
+  assert_equal "$hits" ""
 }
 
 # md_scan を直接呼ぶ。使い方: md_scan_of <Markdown の本文> <jq のフィルター>
