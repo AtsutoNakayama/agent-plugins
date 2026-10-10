@@ -13,7 +13,8 @@
 #   base_branch   設定の base_branch
 #   target        マージ先のブランチの名前
 #   ref           マージ先の ref（origin/<target>）。git log <ref>..HEAD・git diff <ref>...HEAD のように使う
-#   from          マージ先をどこから決めたか。pr（開いた PR のマージ先）・base_branch（設定の base_branch）
+#   from          マージ先をどこから決めたか。pr（開いた PR の baseRefName をそのまま使った。base_branch と同じ値でも pr）・
+#                 base_branch（PR が無い、PR の baseRefName が無いか空、使えずに base_branch に戻した）
 #   pr            今のブランチの開いた PR（number・url）。無いか、gh で読めなければ null
 #   fallback      PR のマージ先をそのまま使えなかった理由。null・invalid_name（ブランチ名として使えない。target は base_branch）・
 #                 multiple_prs（マージ先の違う開いた PR が複数ある。target は最初の PR のもの）・fetch_failed（取得できず手元にも

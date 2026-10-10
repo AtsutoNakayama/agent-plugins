@@ -411,6 +411,10 @@ run_common() {
   pick '[{"number": 5, "baseRefName": "feat/日本語", "isCrossRepository": false}]' feat/日本語 '' '"feat/日本語"' '{"number":5,"baseRefName":"feat/日本語","isCrossRepository":false}'
   # 同じマージ先の PR が複数あっても、マージ先は1つに決まる
   pick '[{"number": 5, "baseRefName": "release/v1"}, {"number": 6, "baseRefName": "release/v1"}]' release/v1 '' '"release/v1"' '{"number":5,"baseRefName":"release/v1"}'
+  # マージ先が無いか空の PR は base_branch に向いているとみなして比べる（main の PR と並んでも multiple_prs にしない）
+  pick '[{"number": 5, "baseRefName": ""}, {"number": 6, "baseRefName": "main"}]' main '' '""' '{"number":5,"baseRefName":""}'
+  pick '[{"number": 5}, {"number": 6, "baseRefName": "main"}]' main '' '""' '{"number":5}'
+  pick '[{"number": 5, "baseRefName": ""}, {"number": 6, "baseRefName": "release/v1"}]' main multiple_prs '""' '{"number":5,"baseRefName":""}'
   # マージ先の違う PR が複数あれば multiple_prs（マージ先は最初の PR のもの）
   pick '[{"number": 5, "baseRefName": "release/v1"}, {"number": 6, "baseRefName": "main"}]' release/v1 multiple_prs '"release/v1"' '{"number":5,"baseRefName":"release/v1"}'
   # git のブランチ名として使えない値は invalid_name で、マージ先は base_branch

@@ -21,7 +21,9 @@
 #   --dry-run         push も PR の作成も Issue のチェックと項目の追加もせず、行う予定の操作と PR のタイトル・本文、
 #                     Issue のチェックリストの項目（tasks）・チェックを付ける項目（checked）・足す項目（added）を出力する。
 #                     dry-run ではマージ先を取得（git fetch）せず、手元の origin/<マージ先> で、マージ先に無いコミットがあるかを
-#                     確かめる。手元に無ければ確かめるのを飛ばし、警告して出力の ahead を null にする
+#                     確かめる（取得していない手元の ref で数えた値で、本番は取得し直して確かめる）。手元に無ければ確かめるのを
+#                     飛ばし、警告して出力の ahead を null にする。既にある PR のマージ先を使えないときは、本番と同じく止まる
+#                     （dry-run は本番で何が起きるかを先に見せるため）
 #
 # 行うこと:
 #   1. タイトルを設定の pr.title_pattern で検証する。type は Issue の type ラベルと同じにする。
@@ -30,7 +32,9 @@
 #      PR が既にあるときは、その PR のタイトルに ! が無い、または本文に BREAKING CHANGE が無いと、push の前に止める。
 #      本文に <pr.close_keyword> #N（既定: Closes #N）が無ければ末尾に足す。
 #      テンプレートの番号が空のままの行（Closes #）は消す
-#   3. origin に push する（-u で追跡させる）。未コミットの変更や、PR にするコミット（PR のマージ先（下の pr_base）に無いコミット）が無ければ止まる
+#   3. origin に push する（-u で追跡させる）。未コミットの変更や、PR にするコミット（PR のマージ先（下の pr_base）に無いコミット）が無ければ止まる。
+#      既にある PR のマージ先を使えない（ブランチ名として使えない・マージ先の違う開いた PR が複数ある）か、マージ先を取得できなければ、
+#      push せずに終了コード 2 で止まる（規則は lib/common.sh の「PR のマージ先」）
 #   4. base_branch に向けた PR を作り、Issue のラベルを引き継ぐ。pr.draft が true か --draft を付けたら下書きにする（--no-draft なら、pr.draft にかかわらず下書きにしない）
 #   5. PR を新しく作ったときだけ、status.pr_opened が設定されていれば Issue をその列に移す（status-set.sh）。
 #      既にある PR では移さない（手で先の列に移した Issue を戻さないため）
@@ -44,6 +48,7 @@
 # 新しく作るなら作る PR のマージ先（base_branch）。設定の base_branch は base に出す。
 # 出力の merge_queue は、pr_base へのマージがマージキューを通すか（true・false。ブランチに効いているルールを
 # 読めなければ null）。PR を出した後の案内（キューに入れるか、マージ先が進んだら取り込むか）を切り替えるのに使う
+# 出力の ahead は、origin/<pr_base> より先のコミットの数（dry-run で手元に origin/<pr_base> が無く、確かめていなければ null）
 set -euo pipefail
 
 # shellcheck source=lib/common.sh
@@ -161,10 +166,10 @@ to_add="$(printf '%s\n' "$adds" "$tasks" | jq -sc '.[1] as $t | .[0] | '"$missin
 # 止める側：PR のマージ先を使えない（ブランチ名として使えない、マージ先の違う PR が複数ある）なら、終了コード 2 で止まる
 prs="$(gh pr list --head "$branch" --state open --json number,url,title,body,isCrossRepository,isDraft,baseRefName)" \
   || dw_die "${branch} の PR を取得できませんでした"
-picked="$(dw_pr_pick "$prs" "$base")" || dw_die "${branch} の PR を取得できませんでした（gh の応答を JSON として読めません）"
-{ IFS= read -r pr_base; IFS= read -r pick_fallback; IFS= read -r pick_shown; IFS= read -r existing; } <<<"$picked"
-[ -z "$pick_fallback" ] \
-  || dw_die "$(dw_pr_fallback_msg "$pick_fallback" "$pick_shown" "$pr_base")。PR のマージ先を決められないので、push しません（PR のマージ先を確かめてください）" 2
+# --dry-run も、本番と同じく止まる（dry-run は本番で何が起きるかを先に見せるためのもの）
+dw_pr_pick_strict "$prs" "$base" "PR のマージ先を決められないので、push しません（PR のマージ先を確かめてください）" \
+  || dw_die "${branch} の PR を取得できませんでした（gh の応答を JSON として読めません）"
+pr_base="$DW_PICK_BASE" existing="$DW_PICK_PR"
 # 以下は、既にある PR を配列（無ければ空）として読む
 existing="$(jq -c 'if . == null then [] else [.] end' <<<"$existing")"
 pr_number="$(jq -r '.[0].number // empty' <<<"$existing")"
@@ -219,20 +224,25 @@ printf '%s' "$body" >"$body_tmp"
 # マージ先を取得してから、マージ先に無いコミットがあるかを確かめる。dry-run では、周りのスクリプト（task-start.sh など）と
 # 同じく fetch せず（手元の remote-tracking ref もネットワークも触らない）、手元の origin/<マージ先> で確かめる。手元に無ければ
 # （既にある PR のマージ先を一度も取得していないなど）、止めずに確かめるのを飛ばし、警告と出力（ahead が null）で伝える。
-# 本番の実行では必ず取得して確かめる
+# 本番の実行では必ず取得して確かめる（取得できなければ終了コード 2 で止まる）。dry-run の値は取得していない手元の ref で
+# 数えたものなので、本番で取得し直すと変わることがある（本番は push の前に確かめ直して止まるので、誤って push はしない）
 ahead=null
 if ! $dry_run; then
-  git -C "$repo_root" fetch -q origin -- "$pr_base" || dw_die "origin/${pr_base} を取得できませんでした"
+  dw_fetch_target_strict "$repo_root" "$pr_base"
 fi
-if git -C "$repo_root" rev-parse -q --verify "refs/remotes/origin/$pr_base" >/dev/null; then
+if dw_remote_ref_exists "$repo_root" "$pr_base"; then
   ahead="$(git -C "$repo_root" rev-list --count "refs/remotes/origin/$pr_base..HEAD")"
   [ "$ahead" -gt 0 ] || dw_die "origin/${pr_base} に無いコミットがありません。PR にする変更をコミットしてください" 2
-  note "${branch} を origin に push する（origin/${pr_base} より ${ahead} 個先のコミット）"
+  if $dry_run; then
+    note "${branch} を origin に push する（手元の origin/${pr_base}（取得していない）より ${ahead} 個先のコミット。本番は取得し直して確かめる）"
+  else
+    note "${branch} を origin に push する（origin/${pr_base} より ${ahead} 個先のコミット）"
+  fi
 else
-  $dry_run || dw_die "origin/${pr_base} がありません（git fetch origin ${pr_base} を実行してください）"
   dw_warn "手元に origin/${pr_base} が無いので、dry-run では origin/${pr_base} に無いコミットがあるかを確かめていません（本番の実行で取得して確かめます）"
   note "${branch} を origin に push する（origin/${pr_base} が手元に無いので、先行するコミットはまだ確かめていない。push の前に取得して確かめる）"
 fi
+
 if ! $dry_run; then
   # 出力は JSON だけにするため、git の出力は標準エラーに回す
   git -C "$repo_root" push -q -u origin "$branch" >&2 \

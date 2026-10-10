@@ -80,7 +80,42 @@ run_target() {
   run_target
   assert_success
   assert_equal "$(jq -c '[.target, .from, .pr.number, .fallback]' <<<"$output")" '["release/v1","pr",7,"multiple_prs"]'
-  grep -qF "マージ先の違う開いた PR が複数あります（最初の PR のマージ先は release/v1）" "$TMP/err" || fail "$(cat "$TMP/err")"
+  grep -qF 'マージ先の違う開いた PR が複数あります（最初の PR のマージ先は "release/v1"）' "$TMP/err" || fail "$(cat "$TMP/err")"
+}
+
+@test "from は、PR の baseRefName をそのまま使ったときだけ pr（base_branch と同じ値でも pr。無いか空なら base_branch。#284）" {
+  setup_branch
+  echo '[{"number": 7, "url": "u", "isCrossRepository": false, "baseRefName": "main"}]' >"$FIX/pr-list.json"
+  run_target
+  assert_success
+  assert_equal "$(jq -c '[.target, .from, .pr.number, .fallback]' <<<"$output")" '["main","pr",7,null]'
+  for pr in '{"number": 7, "url": "u", "isCrossRepository": false}' '{"number": 7, "url": "u", "isCrossRepository": false, "baseRefName": ""}'; do
+    echo "[$pr]" >"$FIX/pr-list.json"
+    run_target
+    assert_success
+    assert_equal "$(jq -c '[.target, .from, .pr.number, .fallback]' <<<"$output")" '["main","base_branch",7,null]'
+  done
+}
+
+@test "マージ先の違う PR が複数あり、最初の PR のマージ先も取得できなければ、両方を警告し、fallback は fetch_failed にする（#284）" {
+  setup_branch
+  # origin に release/v1 が無い
+  echo '[{"number": 7, "url": "u", "isCrossRepository": false, "baseRefName": "release/v1"}, {"number": 8, "url": "u8", "isCrossRepository": false, "baseRefName": "main"}]' >"$FIX/pr-list.json"
+  run_target
+  assert_success
+  assert_equal "$(jq -c '[.target, .from, .pr.number, .fallback]' <<<"$output")" '["main","base_branch",7,"fetch_failed"]'
+  grep -qF 'マージ先の違う開いた PR が複数あります（最初の PR のマージ先は "release/v1"）' "$TMP/err" || fail "$(cat "$TMP/err")"
+  grep -qF 'PR のマージ先（"release/v1"）を origin から取得できず、手元にもありません' "$TMP/err" || fail "$(cat "$TMP/err")"
+}
+
+@test "multiple_prs のメッセージの最初の PR のマージ先は、PR から読んだ値（空なら空）を出し、置き換えた base_branch を出さない（#284）" {
+  setup_branch
+  remote_branch release/v1
+  echo '[{"number": 7, "url": "u", "isCrossRepository": false, "baseRefName": ""}, {"number": 8, "url": "u8", "isCrossRepository": false, "baseRefName": "release/v1"}]' >"$FIX/pr-list.json"
+  run_target
+  assert_success
+  assert_equal "$(jq -c '[.target, .from, .fallback]' <<<"$output")" '["main","base_branch","multiple_prs"]'
+  grep -qF '（最初の PR のマージ先は ""）' "$TMP/err" || fail "$(cat "$TMP/err")"
 }
 
 @test "PR のマージ先を取得できず、手元にも無ければ、警告して設定の base_branch に戻す（#284）" {

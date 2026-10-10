@@ -2,6 +2,8 @@
 # 今のブランチ（作業用のブランチ）が、マージ先のブランチより遅れているかを調べる。マージ先は、開いた PR があれば
 # その PR のマージ先、無ければ設定の base_branch にする。
 # 何も変更しない（fetch だけ行う）。取り込む作業は今のブランチに対して行うので、調べるのも今のブランチだけにする。
+# PR のマージ先を使えない（ブランチ名として使えない・マージ先の違う開いた PR が複数ある）か、取り込み先を取得できなければ、
+# 取り違えたマージ先を取り込まないよう、終了コード 2 で止まる（規則は lib/common.sh の「PR のマージ先」）。
 #
 # 使い方: branch-status.sh [--merged-from <sha>] [--pulled-from <sha>]
 #   --merged-from <sha>   origin/<base> を取り込む前（branch-update の手順2の merge の前）の HEAD。今のブランチの祖先
@@ -92,17 +94,14 @@ branch="$(git -C "$repo_root" symbolic-ref --short -q HEAD || true)"
 pr=null
 if command -v gh >/dev/null 2>&1 \
   && prs="$(gh pr list --head "$branch" --state open --json number,url,mergeStateStatus,isCrossRepository,baseRefName 2>/dev/null)" \
-  && picked="$(dw_pr_pick "$prs" "$base")"; then
-  { IFS= read -r pick_base; IFS= read -r pick_fallback; IFS= read -r pick_shown; IFS= read -r pr; } <<<"$picked"
-  [ -z "$pick_fallback" ] \
-    || dw_die "$(dw_pr_fallback_msg "$pick_fallback" "$pick_shown" "$pick_base")。取り込み先を決められないので止めます（PR のマージ先を確かめてください）" 2
-  base="$pick_base"
+  && dw_pr_pick_strict "$prs" "$base" "取り込み先を決められないので止めます（PR のマージ先を確かめてください）"; then
+  base="$DW_PICK_BASE" pr="$DW_PICK_PR"
   [ "$pr" = null ] || pr="$(jq -c '{number, url, merge_state: .mergeStateStatus}' <<<"$pr")"
 fi
 
-git -C "$repo_root" fetch -q origin -- "$base" || dw_die "origin/${base} を取得できませんでした"
+# 取り込み先は、取得できなければ（手元の古いもので判断せず）終了コード 2 で止まる
+dw_fetch_target_strict "$repo_root" "$base"
 ref="refs/remotes/origin/$base"
-git -C "$repo_root" show-ref --verify --quiet "$ref" || dw_die "origin/${base} がありません"
 
 behind="$(git -C "$repo_root" rev-list --count "refs/heads/$branch..$ref")"
 ahead="$(git -C "$repo_root" rev-list --count "$ref..refs/heads/$branch")"

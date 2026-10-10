@@ -312,7 +312,7 @@ set_pr_opened() {
   assert_failure
   assert_equal "$(called pr-create)" 0
   assert_equal "$(jq -c '[.dry_run, .pr, .actions]' <<<"$json")" \
-    '[true,null,["feat/17-x を origin に push する（origin/main より 1 個先のコミット）","main に向けた PR「feat: 作業 17」を作る","PR にラベル feat を付ける"]]'
+    '[true,null,["feat/17-x を origin に push する（手元の origin/main（取得していない）より 1 個先のコミット。本番は取得し直して確かめる）","main に向けた PR「feat: 作業 17」を作る","PR にラベル feat を付ける"]]'
 }
 
 @test "未コミットの変更があれば止まる" {
@@ -873,6 +873,27 @@ fake_issue_tasks() {
   assert_equal "$(called pr-create)" 0
   run git ls-remote --heads origin feat/17-x
   assert_output ""
+}
+
+@test "既にある PR のマージ先を取得できなければ、push せずに終了コード 2 で止まる（#284）" {
+  setup_branch
+  fake_issue 17 '["feat"]'
+  # origin に release/v1 が無い
+  echo '[{"number": 7, "url": "https://github.com/me/demo/pull/7", "isCrossRepository": false, "baseRefName": "release/v1"}]' >"$FIX/pr-list.json"
+  run_pr --issue 17 --body-file "$TMP/body.md"
+  assert_failure 2
+  assert_output --partial "origin/release/v1 を取得できませんでした"
+  run git ls-remote --heads origin feat/17-x
+  assert_output ""
+}
+
+@test "dry-run の push の案内は、取得していない手元の origin/<マージ先> で数えた値だと書く（#284）" {
+  setup_branch
+  fake_issue 17 '["feat"]'
+  git fetch -q origin
+  run_pr --issue 17 --body-file "$TMP/body.md" --dry-run
+  assert_success
+  assert_equal "$(jq -r '.actions[0]' <<<"$json")" "feat/17-x を origin に push する（手元の origin/main（取得していない）より 1 個先のコミット。本番は取得し直して確かめる）"
 }
 
 @test "既にある PR のマージ先を使えない（ブランチ名として使えない・マージ先の違う PR が複数ある）なら、push せずに終了コード 2 で止まる（#284）" {

@@ -142,12 +142,21 @@ run_status() {
   assert_equal "$(jq -r '[.base, .behind, .pr.number] | map(tostring) | join(" ")' <<<"$output")" "main 1 5"
 }
 
-@test "PR のマージ先を取得できなければ、base_branch に戻さずに止まる（取り込む側なので。#284）" {
+@test "PR のマージ先を取得できなければ、base_branch に戻さずに終了コード 2 で止まる（取り込む側なので。#284）" {
   setup_branch
   echo '[{"number": 5, "url": "u", "isCrossRepository": false, "baseRefName": "release/v1"}]' >"$FIX/pr-list.json"
   run_status
-  assert_failure
+  assert_failure 2
   assert_output --partial "origin/release/v1 を取得できませんでした"
+}
+
+@test "マージ先が空の PR と base_branch に向いた PR が並んでも、マージ先の違う PR とはみなさずに base_branch を取り込み先にする（#284）" {
+  setup_branch
+  advance_main 1
+  echo '[{"number": 5, "url": "u", "isCrossRepository": false, "baseRefName": ""}, {"number": 6, "url": "u6", "isCrossRepository": false, "baseRefName": "main"}]' >"$FIX/pr-list.json"
+  run_status
+  assert_success
+  assert_equal "$(jq -r '[.base, .behind, .pr.number] | map(tostring) | join(" ")' <<<"$output")" "main 1 5"
 }
 
 @test "fork の PR のマージ先は使わない" {

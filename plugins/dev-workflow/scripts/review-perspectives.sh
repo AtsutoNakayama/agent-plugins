@@ -104,7 +104,7 @@ if [ "$auto" = true ]; then
   if [ -n "$base$target$type$issue" ]; then
     dw_die "--auto と --base・--target・--type・--issue は一緒に使えません" 64
   fi
-  dw_repo_root >/dev/null || dw_die "git のリポジトリの中ではないので、絞り込めません" 2
+  auto_root="$(dw_repo_root)" || dw_die "git のリポジトリの中ではないので、絞り込めません" 2
   config="$("$BASH" "$DW_SCRIPTS_DIR/config.sh")" || dw_die "設定を読めません（config.sh で確かめてください）" 2
   max_rounds="$(jq -c '.review.max_rounds' <<<"$config")"
   case "$max_rounds" in
@@ -117,7 +117,7 @@ if [ "$auto" = true ]; then
   # 警告して続ける。規則は lib/common.sh の「PR のマージ先」）。設定とブランチは、ここで読んだものを渡す
   branch="$(git symbolic-ref --short -q HEAD || true)"
   base_branch="$(dw_base_branch "$config")"
-  merge_target="$(dw_merge_target "$(dw_repo_root)" "$base_branch" "$branch")" || exit $?
+  merge_target="$(dw_merge_target "$auto_root" "$base_branch" "$branch")" || exit $?
   { IFS= read -r target; IFS= read -r target_fallback; } <<<"$(jq -r '.ref, (.fallback | tojson)' <<<"$merge_target")"
   base="$(git merge-base "$target" HEAD)" || dw_die "${target} と HEAD の基点が見つかりません" 2
   parsed="$(dw_parse_branch "$config" "$branch")" || exit $?
