@@ -1270,17 +1270,17 @@ gc_new_repo() {
 # 実行するときにはあるので戻さない（作るのに失敗したときは、その git も失敗する）。
 # after（コマンドの後）では、まだ無い場所への cd は gc_cd が不明にし、その後ろを調べないようにしている（cd_failed）。ここで戻す
 gc_settle_dir() {
-  local s="$new_repos" e kept=""
+  local s="$new_repos" e solid=""
   cd_failed=false
   while [ -n "$s" ]; do
     e="${s%%"$nl"*}"
     s="${s#*"$nl"}"
     case "$e" in
       [IC]*) ;;
-      *) kept+="$e$nl" ;;
+      *) solid+="$e$nl" ;;
     esac
   done
-  new_repos="$kept"
+  new_repos="$solid"
   [ -n "$gc_dir" ] && [ ! -d "$gc_dir" ] || return 0
   gc_new_repo_at "$gc_dir"
   [ -n "$gc_new_kind" ] || gc_dir=""
