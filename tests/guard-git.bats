@@ -449,6 +449,27 @@ silent() {
     "cd $TMP/nope || git init && git commit -m x" "$(printf 'cd %s\ngit init && git commit -m x' "$TMP/nope")"
 }
 
+@test "まだ無いディレクトリへの cd の後ろで覚えた作る場所は、cd が失敗しても動く後ろでは使わない" {
+  # cd が失敗すると、&& でつないだ git init は動かず、; などの後ろの git commit は今のリポジトリ（main）で動く
+  # （cd が成功したかは分からないので、今の場所は分からないものとして止める）
+  denied "コミット" "cd $TMP/nope && git init; git commit -m x" \
+    "$(printf 'cd %s && git init\ngit commit -m x' "$TMP/nope")" \
+    "if cd $TMP/nope && git init; then :; fi; git commit -m x" "cd $TMP/nope && git init || true; git commit -m x" \
+    "cd $TMP/nope && git init & git commit -m x"
+  # 移った先にとどまる書き方も、cd が失敗したかもしれないので分からないものとする
+  denied "対象のリポジトリが分からない" "cd $TMP/nope && git init; cd $TMP/nope; git commit -m x"
+  # 前提の無いところで覚えた作る場所は、境目を越えても使う
+  silent "git init proj; cd proj; git commit -m x" "mkdir d && cd d && git init && git commit -m x" \
+    "git init proj && cd proj && git init sub; cd sub; git commit -m x"
+}
+
+@test "! の付いた cd がまだ無いディレクトリを指すときは、失敗しても後ろが動くので、今の場所を分からないものとする" {
+  git checkout -q -b feat/1-x
+  # cd nope が失敗すると、cd .. は REPO の外へ移るので、nope/..（REPO）とは言えない
+  denied "対象のリポジトリが分からない" "! cd nope && cd .. && git commit -m x" "! pushd nope && cd .. && git commit -m x"
+  allowed "! cd $TMP && cd repo && git commit -m x"
+}
+
 @test "まだ無いディレクトリへの cd の後も、&& でつないだ後ろでは、文字の上のパスで追い続ける" {
   git checkout -q -b feat/1-x
   # cd .. で既にある場所へ戻れば、そのリポジトリで判断する
