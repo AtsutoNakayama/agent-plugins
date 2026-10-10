@@ -1214,7 +1214,11 @@ DW_JQ_ISSUE_TYPES='
 # ` の囲みの後ろに ` がある行（```x``` のようなインラインのコード）は囲みとみなさない。
 # リストの中のコードブロックも拾うため、囲みの字下げは問わない。
 # 複数行の HTML のコメント（行頭の <!-- から --> まで。囲みと同じく字下げは問わない）の中の行も、GitHub に表示されないので項目とみなさない。
-# GitHub と同じく、行の途中の <!--（インラインのコードや項目の補足）はコメントの始まりとみなさない。
+# GitHub と同じく、行の途中の <!--（インラインのコードや項目の補足）はコメントの始まりとみなさない
+# （gh api markdown で確かめた。段落や項目の中の <!-- は、閉じる --> が後の行にあっても、文字としてそのまま表示され、間の行も表示される）。
+# コメントを閉じる行の --> の後ろの文字は、GitHub に表示されるので、lines の行にする。ただし HTML ブロックの続きとして
+# そのまま表示される（Markdown としては読まれない）ので、項目にも見出しにもしない。その後ろに閉じない <!-- があれば、GitHub は
+# 文書の最後までを隠すので、以降の行は読まない。
 # 項目の文は、前後の空白を外す。source した側で使う
 # 使い方: jq "$DW_JQ_MD_SCAN"' .body | md_scan | .items'
 # shellcheck disable=SC2016,SC2034 # jq のプログラムなので、$ は展開しない
@@ -1223,8 +1227,13 @@ DW_JQ_MD_SCAN='
     def item: "^\\s*(?:[-*+]|[0-9]+[.)])\\s+\\[(?<c>[ xX])\\](?:\\s+(?<t>.*))?$";
     reduce (split("\n") | to_entries[]) as $e ({fence: null, comment: false, items: [], headings: [], lines: []};
       ($e.value | sub("\r$"; "")) as $l | .fence as $f
-      | if .comment then
-          (if $l | test("-->") then .comment = false else . end)
+      | if .comment == "eof" then .
+        elif .comment then
+          (if $l | test("-->") then
+            ($l | sub("^.*?-->"; "")) as $tail
+            | .comment = ($tail | test("<!--(?!.*-->)") | if . then "eof" else false end)
+            | if $tail != "" then .lines += [{line: $e.key, text: $tail}] else . end
+          else . end)
         elif $f != null then
           (if $l | test("^\\s*" + $f + "+\\s*$") then .fence = null else . end)
         elif $l | test("^\\s*(`{3,}[^`]*|~{3,}.*)$") then .fence = ($l | capture("^\\s*(?<f>`{3,}|~{3,})").f)

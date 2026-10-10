@@ -621,3 +621,42 @@ SH
   assert_success
   assert_output $'warn: 読めません: gh: HTTP 502\nwarn: 別の種類\nwarn: 新しい種類: x'
 }
+
+# md_scan を直接呼ぶ。使い方: md_scan_of <Markdown の本文> <jq のフィルター>
+md_scan_of() {
+  # shellcheck disable=SC2016 # DW_JQ_MD_SCAN と $b は jq のプログラムなので、bash に展開させない
+  run "${TEST_BASH:-bash}" -c '. "$1"; jq -nc --arg b "$2" "$DW_JQ_MD_SCAN"'"'"'$b | md_scan | '"'"'"$3"' _ "$SCRIPTS/lib/common.sh" "$1" "$2"
+}
+
+@test "md_scan：複数行のコメントを閉じる行の --> の後ろの文字は、本文の行として lines に残す（項目や見出しにはしない）" {
+  md_scan_of $'<!-- 例:\n- [ ] 隠れる\n--> 後ろの文字\n- [ ] 見える' '[.lines[] | [.line, .text]], [.items[].text], .headings'
+  assert_success
+  assert_output $'[[2," 後ろの文字"],[3,"- [ ] 見える"]]\n["見える"]\n[]'
+  # GitHub では、--> の後ろは HTML ブロックの続きとして表示され、Markdown としては読まれない（gh api markdown で確かめた）
+  md_scan_of $'<!-- a\n--> - [ ] x\n- [ ] y' '[.items[].text], [.lines[].text]'
+  assert_output $'["y"]\n[" - [ ] x","- [ ] y"]'
+  md_scan_of $'<!-- a\n--> # h\n- [ ] y' '.headings, [.lines[].text]'
+  assert_output $'[]\n[" # h","- [ ] y"]'
+}
+
+@test "md_scan：コメントを閉じる行の --> だけの行（後ろが空）は、lines に残さない" {
+  md_scan_of $'<!-- a\n-->\n- [ ] y' '[.lines[] | [.line, .text]]'
+  assert_output '[[2,"- [ ] y"]]'
+}
+
+@test "md_scan：コメントを閉じる行の --> の後ろに閉じない <!-- があれば、GitHub と同じく文書の最後まで隠す" {
+  # gh api markdown で確かめた：閉じない <!-- は、後ろの --> があっても、文書の最後までを隠す
+  md_scan_of $'<!-- a\n--> x <!-- b\n-->\n- [ ] y' '[.lines[] | [.line, .text]], [.items[].text]'
+  assert_output $'[[1," x <!-- b"]]\n[]'
+  # 後ろでコメントが閉じていれば、続きは読む
+  md_scan_of $'<!-- a\n--> x <!-- b -->\n- [ ] y' '[.items[].text]'
+  assert_output '["y"]'
+}
+
+@test "md_scan：行の途中で始まる複数行のコメントは、コメントとみなさない（GitHub は <!-- を文字として表示し、間の行も表示する）" {
+  # gh api markdown で確かめた：段落や項目の中の <!-- は、閉じる --> が後の行にあっても、そのまま表示され、間の項目も項目になる
+  md_scan_of $'text <!-- start\n- [ ] 見える\nend -->\n- [ ] b' '[.items[] | [.line, .text]], [.lines[].text]'
+  assert_output $'[[1,"見える"],[3,"b"]]\n["text <!-- start","- [ ] 見える","end -->","- [ ] b"]'
+  md_scan_of $'- [ ] foo <!-- note\n- [ ] bar\n-->' '[.items[].text]'
+  assert_output '["foo <!-- note","bar"]'
+}
