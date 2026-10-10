@@ -11,7 +11,7 @@
 #
 # 決まり（設計書 §9）:
 #   - 同じリンクも、連続で毎回出す（常に見えるようにするため）
-#   - git のコマンドは、操作の対象（cd・pushd・popd・git -C・env -C で移った先、--git-dir・GIT_DIR で指したリポジトリ。gc_target）の
+#   - git のコマンドは、操作の対象（cd・pushd・popd・git -C・env -C・sudo -D で移った先、--git-dir・GIT_DIR で指したリポジトリ。gc_target）の
 #     リポジトリ・ブランチで判断する。cd - の後と、プロジェクトのルートからの相対パスへの cd の後は、
 #     移った先が分からないので出さない（scripts/lib/git-command.sh の gc_scan の after）
 #   - Issue の番号が分からないブランチ（main など）では、ブランチから導くリンクは出さない（作った PR・Issue は出す）
