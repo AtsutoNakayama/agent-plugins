@@ -192,7 +192,7 @@ base_ahead: required
 - ADR は Issue ごとではなく、判断ごとに作ります。判断をした Issue でだけ作り、1つの Issue から2つ以上の ADR ができてもかまいません。過去の判断を後から残すときは、残す作業の Issue の PR で作り、ADR の `issue` と `date` を、判断をした Issue と日にします（`adr-create.sh` の `--issue`・`--date`）。
 - ファイル名は `docs/adr/<Issue 番号を6桁に0埋め>-<短い名前>.md` です（例：`docs/adr/000107-use-madr.md`）。連番ではなく Issue 番号なので、ワークツリーで並行して作業しても名前がぶつかりません。
 - テンプレートは判断に合わせて選びます。他の案と比べて選んだ判断・破壊的変更・元に戻しにくい判断は全部の節がある `adr-template.md`、記録しておけば足りる判断は `adr-template-minimal.md` です。説明のない2つ（`bare`）は、手で書く人向けです。
-- 採択した ADR の本文は書き換えません。変えるのは、置き換えたときの `status` の行（`superseded by <新しい ADR>` にします）と、`proposed` の ADR を採択するときの `status` と `date` の行だけです。採択するときは、`status` を `accepted` に書き換え、`date` を採択した日に更新します。それ以外では、`date` は判断をした日のまま変えません。
+- 採択した（`accepted` 以降の）ADR の本文は書き換えません。採択した後に変えるのは、置き換えたときの `status` の行だけで、`superseded by <新しい ADR>` にします。`date` も、判断をした日のまま変えません。まだ採択していない `proposed` の ADR を採択するときは、`status` を `accepted` に書き換え、`date` を採択した日（判断をした日）に更新します（この2つの行だけを書き換えます）。
 - 過去の判断を一部だけ変える・覆す新しい ADR は、「補足」に、その ADR へのリンクと、何を変えるかを書きます（MADR の判断 0009）。変えられる側の ADR は書き換えません。変えられた側から、変えている ADR を探すには、`adr-list.sh` の各 ADR の `cited_in_supplements`（「補足」の節からその ADR にリンクしているほかの ADR の一覧）を見ます。全部を覆すときは、今までどおり置き換え（`superseded`）にします。
 - 置き場所は、設定（`.claude/dev-workflow/config.json`）の `adr.dir` で変えられます（既定は `docs/adr`。リポジトリのルートからの相対パス）。
 

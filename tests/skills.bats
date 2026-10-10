@@ -666,12 +666,12 @@ has() {
 }
 
 # shellcheck disable=SC2016 # バッククォートはスキルの本文の文字で、展開させない
-@test "proposed の ADR を採択するときは、status を accepted に、date を採択した日に書き換え、それだけを例外にする（#311・ADR 000338）" {
+@test "proposed の ADR を採択するときは、status を accepted に、date を採択した日に書き換え、ほかの行は書き換えない（#311・ADR 000338）" {
   adr="$SKILLS/adr-create/SKILL.md"
   has "adr-create の手順3" "$(step "$adr" 3)" \
     '`proposed` の ADR を採択するときは、`status` を `accepted` に書き換え、`date` を採択した日に更新する' \
-    '置き換えたときの status の行と、`proposed` の ADR を採択するときの `status` と `date` の行だけ' \
-    'この2つの行の書き換えだけで、ほかの行は書き換えない'
+    '採択した ADR の本文は書き換えない（`accepted` 以降の ADR。`proposed` の ADR はまだ採択していない）。採択した後に変えてよいのは、置き換えたときの status の行だけ' \
+    '採択のときに書き換えるのはこの2つの行だけで、ほかの行は書き換えない'
   has "adr-create の手順4" "$(step "$adr" 4)" '後で採択するときは、手順3のとおり `status` と `date` の行だけを書き換える'
   grep -qF '`proposed` の ADR を採択するときは、`status` を `accepted` に書き換え、`date` を採択した日に更新する**' "$BATS_TEST_DIRNAME/../docs/design.md" \
     || fail "設計書に、採択するときの status と date の扱いがありません"
