@@ -102,7 +102,7 @@ dw_read_issue() {
 #     Issue の作業と決めつけたりしない
 # PR からは探さない（Closes #17, #18 の PR やリリース用の PR のように、別の Issue のブランチまで拾うため）。
 # origin を読めなければ止まる（「origin に無い」と区別できないまま出すと、使う側が片付けを誤るため）。
-# branch.pattern の設定に誤り（正規表現として正しくないなど）があれば、メッセージを出して終了コード 2 で止まる（dw_check_branch_pattern）。
+# branch.pattern などの設定に誤り（正規表現として正しくない・文字列でない・labels.types が正しくないなど）があれば、メッセージを出して終了コード 2 で止まる（dw_check_branch_pattern）。
 # 使い方: dw_issue_branches <メインのワークツリー> <Issue の番号（dw_issue_number でそろえたもの）> <設定の JSON>
 dw_issue_branches() {
   local names refs msg
@@ -133,7 +133,7 @@ dw_issue_branches() {
 #   open_prs    Issue を閉じる PR のうち開いているもの（フォークや別のリポジトリの PR も含む）。[{number, url, branch,
 #               cross（フォークか別のリポジトリの PR なら true。branch は、今のリポジトリのブランチとは限らない）}]
 #   merged_prs  Issue を閉じる PR のうちマージ済みの、今のリポジトリのもの。[{number, url, branch}]
-# origin・PR を読めなければ止まる。branch.pattern の設定に誤り（正規表現として正しくないなど）があれば、終了コード 2 で止まる（dw_issue_branches）。
+# origin・PR を読めなければ止まる。branch.pattern などの設定に誤り（正規表現として正しくない・文字列でない・labels.types が正しくないなど）があれば、終了コード 2 で止まる（dw_issue_branches）。
 # 使い方: dw_issue_work <メインのワークツリー> <Issue の番号> <設定の JSON> <Issue の JSON（closedByPullRequestsReferences を含む）>
 dw_issue_work() {
   local found branches='[]' candidates='[]' open_prs='[]' merged_prs='[]' cross b is_local is_remote confirmed wt nwo="" url pr_repo pr head

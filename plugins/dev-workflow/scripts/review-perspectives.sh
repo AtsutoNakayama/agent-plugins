@@ -10,7 +10,7 @@
 #
 #   --auto    次を決めて絞り込み、決めた値を context に出す
 #             - マージ先: origin/<base_branch>（git fetch origin <base_branch> で最新にする。できなければ警告して
-#               手元の origin/<base_branch> を使う。それも無ければ終了コード 2。branch.pattern が正規表現として正しくないときも、設定の誤りとして終了コード 2）
+#               手元の origin/<base_branch> を使う。それも無ければ終了コード 2。branch.pattern などの設定に誤り（正規表現として正しくない・文字列でない・labels.types が正しくないなど）があるときも、設定の誤りとして終了コード 2）
 #             - 基点: git merge-base <マージ先> HEAD
 #             - Issue の番号: ブランチ名（branch.pattern の {issue_number}。先頭の 0 はそろえる）。番号として使えない値（0 など）なら
 #               Issue は無いものとする（警告）。gh で Issue を読み、見つからないか、番号が PR のものなら、Issue は無いものとする（警告）。
