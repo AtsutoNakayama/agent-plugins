@@ -141,3 +141,45 @@ check() {
   done
   check "$VERIFY" '.fix_attempts = null | .max_fix_attempts = null | .status.dirty = null' "push ready"
 }
+
+@test "--stop-reasons は、判断の表（--help）の stop の reason の一覧と同じ（#332）" {
+  run_script repair-next.sh --stop-reasons
+  assert_success
+  listed="$(jq -r '.[]' <<<"$output" | sort -u)"
+  [ -n "$listed" ] || fail "--stop-reasons が空です"
+  run_script repair-next.sh --help
+  assert_success
+  # 判断の表の「→ stop（<reason>）」「上限以上 → stop（<reason>）」から取り出す
+  table="$(grep -o 'stop（[a-z][a-z_0-9]*）' <<<"$output" | sed 's/^stop（//; s/）$//' | sort -u)"
+  assert_equal "$listed" "$table"
+}
+
+@test "stop を返すとき、reason は --stop-reasons の一覧のどれか" {
+  run_script repair-next.sh --stop-reasons
+  stops="$output"
+  for input in \
+    '{"step":"start","status":{"plan":{"action":"ask_base"}}}' \
+    '{"step":"start","rechecks":3,"status":{"plan":{"action":"recheck"}}}' \
+    '{"step":"start","status":{"dirty":true,"plan":{"action":"merge"}}}' \
+    '{"step":"start","status":{"plan":{"action":"what"}}}' \
+    '{"step":"verify","checks":"unconfirmed"}' \
+    '{"step":"verify","checks":"fail","fix_attempts":3}' \
+    '{"step":"verify","checks":"pass","push_check_ok":false}'; do
+    run_script repair-next.sh <<<"$input"
+    assert_success
+    assert_equal "$(jq -r .action <<<"$output")" stop
+    jq -e --argjson s "$stops" '.reason | IN($s[])' <<<"$output" >/dev/null || fail "一覧に無い reason: $output"
+  done
+}
+
+@test "一覧（stop_reasons）に無い stop の reason を返そうとしたら、1行のメッセージを出して終了コード 2 で止まる" {
+  # 一覧から dirty を外した写しで、dirty の stop を返させる
+  mkdir -p "$TMP/s"
+  cp -R "$SCRIPTS/lib" "$TMP/s/"
+  sed 's/"dirty",//' "$SCRIPTS/repair-next.sh" >"$TMP/s/repair-next.sh"
+  run "${TEST_BASH:-bash}" "$TMP/s/repair-next.sh" <<<'{"step":"verify","status":{"dirty":true},"checks":"pass"}'
+  assert_failure 2
+  assert_output --partial "stop の reason が一覧（stop_reasons）にありません: dirty"
+  assert_equal "${#lines[@]}" 1
+  refute_output --partial '"action"'
+}

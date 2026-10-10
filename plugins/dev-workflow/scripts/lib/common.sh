@@ -550,6 +550,12 @@ dw_gh_find() {
 DW_JQ_SAME_REPO='def same_repo($a; $b): (($a // "") | ascii_downcase) == (($b // "") | ascii_downcase);'
 dw_same_repo() { [ "$(printf '%s' "$1" | tr '[:upper:]' '[:lower:]')" = "$(printf '%s' "$2" | tr '[:upper:]' '[:lower:]')" ]; }
 
+# GitHub のログイン名を、大文字小文字と末尾の [bot] を除いて比べられる形にする。GitHub App のログインは、gh pr view（GraphQL）では
+# app、gh api（REST）では app[bot] と綴りが違い、設定にはどちらで書かれることもあるため。pr-feedback.sh・pr-watch.sh・
+# repair-run-count.sh で、比べる両側に使う。jq の中では、プログラムの先頭に "$DW_JQ_LOGIN_NORM" を足して <ログイン> | norm を使う。
+# shellcheck disable=SC2034 # source した側で使う
+DW_JQ_LOGIN_NORM='def norm: ascii_downcase | sub("\\[bot\\]$"; "");'
+
 # Issue の親を、近い順に（親、親の親、…）たどって、JSON の配列を出力する。要素は {number, title, state, state_reason}。
 # 親が無ければ []。別のリポジトリの親に当たったら、そこで打ち切る（その親も、さらに上の親も含めない。設計書 §4：親子は同じリポジトリだけ扱う）。
 # GitHub の親子は8層までなので、念のため層の数で打ち切る。
@@ -560,7 +566,7 @@ dw_issue_parents() {
     # 関数は if の中から呼ばれると set -e が効かないので、失敗は明示して返す
     p="$(dw_gh_find gh api "repos/$repo/issues/$cur/parent")" || return 1
     [ "$p" != null ] || break
-    dw_same_repo "$(jq -r '.repository_url | sub("^.*/repos/"; "")' <<<"$p")" "$repo" || break
+    dw_same_repo "$(jq -r '.repository_url | sub("^.*?/repos/"; "")' <<<"$p")" "$repo" || break
     # 親の JSON は本文を含んで長くなりうるので、引数ではなく標準入力で jq に渡す（引数1つの長さには上限がある）
     out="$(printf '%s\n' "$out" "$p" | jq -sc '.[0] + [.[1] | {number, title, state, state_reason: (.state_reason // null)}]')" || return 1
     cur="$(jq -r .number <<<"$p")"
@@ -736,6 +742,61 @@ DW_STORY_POINT_SPLIT=21
 # これより深い Issue を作るときは警告する（一番上の Issue が 1 層目）。source した側で使う
 # shellcheck disable=SC2034
 DW_SUB_ISSUE_DEPTH_GUIDE=2
+
+# 設定（config.sh の出力）から sub_issues.max_depth を読み、1・2・3 のどれかなら出力する。それ以外なら終了コード 2 で止まる。
+# "2" のような文字列は認めないよう、JSON の形のまま比べる。
+# 使い方: max_depth="$(dw_max_depth "$config")"
+dw_max_depth() {
+  local v
+  v="$(jq -c '.sub_issues.max_depth' <<<"$1")" || return 1
+  case "$v" in
+    1 | 2 | 3) printf '%s\n' "$v" ;;
+    *) dw_die "sub_issues.max_depth は 1・2・3 のどれかにしてください: $v" 2 ;;
+  esac
+}
+
+# REST の Issue（repos/<所有者/名前>/issues/<番号>）を読んで出力する。無いか PR の番号なら null。
+# 使い方: json="$(dw_rest_issue <OWNER/NAME> <番号>)"
+dw_rest_issue() {
+  local out
+  out="$(dw_gh_find gh api "repos/$1/issues/$2")" || return 1
+  jq -c 'if . == null or .pull_request then null else . end' <<<"$out"
+}
+
+# 親子の深さの規則をまとめた関数。<Issue の JSON> の下に <下の層の数> の層の Issue を紐付けたとき、一番深い Issue が何層目になるか
+# （一番上の Issue が 1 層目。<Issue> は 1 + 上の親の数 層目で、一番深い Issue はその <下の層の数> 層下）と、
+# 上限 <max_depth> を超えるかを調べ、{depth（一番深い Issue の層。上限を超えると分かってたどるのを止めたときは null）,
+# exceeds（上限を超えるか）, first（一番近い親の {number, repo}。親が無いか、たどらなかったときは null）} を出力する。
+# 上へ issues/{番号}/parent をたどり、上限を超えると分かった時点で止める（API の呼び出しは max_depth - <下の層の数> 回まで）。
+# <最低の回数> を渡すと、上限に関わらず、少なくともその回数はたどる（親があるかを知りたいとき 1。既定 0）。
+# 親の親は別のリポジトリにあることもあるので、たどる API のパスは応答の url から作り、別のリポジトリの親もたどる。
+# first の repo は repository_url から作り、無ければ url から作る。
+# 使い方: dw_sub_issue_depth <Issue の JSON> <下の層の数> <max_depth> [<最低の回数>]
+dw_sub_issue_depth() {
+  local node="$1" levels="$2" max="$3" limit count=0 first=null out path
+  limit=$((max - levels))
+  [ "$limit" -ge "${4:-0}" ] || limit="${4:-0}"
+  # 関数は if の中から呼ばれると set -e が効かないので、失敗は明示して返す
+  path="$(jq -r '.url | sub("^.*?/repos/"; "repos/")' <<<"$node")" || return 1
+  while [ "$count" -lt "$limit" ]; do
+    node="$(dw_gh_find gh api "$path/parent")" || return 1
+    [ "$node" != null ] || break
+    count=$((count + 1))
+    # 1つの応答から、次にたどるパス（1行目）と、親の {number, repo}（2行目）を、jq を1回だけ起動して作る
+    out="$(jq -r '(.url | sub("^.*?/repos/"; "repos/")),
+      ({number, repo: (if .repository_url then .repository_url | sub("^.*?/repos/"; "")
+        else .url | sub("^.*?/repos/"; "") | sub("/issues/[0-9]+$"; "") end)} | tojson)' <<<"$node")" || return 1
+    path="${out%%
+*}"
+    [ "$first" != null ] || first="${out#*
+}"
+  done
+  # 上限の回数までたどった（その上にも親があるかもしれない）なら、一番深い Issue は 1 + count + levels 層より深く、
+  # 上限を超える（count が max - levels に達したか、<最低の回数> で levels だけで上限に届いているため）
+  jq -nc --argjson c "$count" --argjson l "$levels" --argjson m "$max" --argjson lim "$limit" --argjson f "$first" '
+    if $c >= $lim then {depth: null, exceeds: true, first: $f}
+    else (1 + $c + $l) as $d | {depth: $d, exceeds: ($d > $m), first: $f} end'
+}
 
 # 破壊的変更を表すラベル。type ラベルとは別に付け、PR のタイトルの type の後に ! を付ける（設計書 §5）。source した側で使う
 # shellcheck disable=SC2034
@@ -1165,7 +1226,7 @@ dw_project_item() {
   [ -z "${4:-}" ] || args+=(-f fields="$4")
   gh api --paginate "$1/items" -X GET "${args[@]}" \
     | jq -sc --arg r "$2" --argjson n "$3" "$DW_JQ_SAME_REPO"'
-        [add // [] | .[] | select(.content.number == $n and same_repo((.content.repository_url // "") | sub("^.*/repos/"; ""); $r))][0]'
+        [add // [] | .[] | select(.content.number == $n and same_repo((.content.repository_url // "") | sub("^.*?/repos/"; ""); $r))][0]'
 }
 
 # Project の項目から、<Issue の URL> の項目の id（node id）を探して出力する。無ければ何も出さずに失敗する。

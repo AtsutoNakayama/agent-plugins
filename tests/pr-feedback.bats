@@ -75,7 +75,8 @@ out_of() { jq -c "$1" <<<"$output"; }
   run_script pr-feedback.sh
   assert_success
   assert_equal "$(out_of '.pr | [.number, .state, .author, .head, .head_sha, .merge_state, .review_decision]')" '[5,"OPEN","me","feat/5-x","abc","CLEAN",null]'
-  assert_equal "$(out_of '[.feedback, .own_comments, .counts, .checks.state]')" '[[],[],{"threads":0,"reviews":0,"comments":0},"none"]'
+  assert_equal "$(out_of '[.feedback, .own_comments, .counts, .needs_attention, .checks.state]')" \
+    '[[],[],{"threads":0,"reviews":0,"comments":0,"unanswered":{"threads":0,"reviews":0,"comments":0}},false,"none"]'
   # 番号を指定しなければ、今のブランチの PR を読む
   assert_equal "$(args PrView)" "--json number,url,title,state,isDraft,author,headRefName,headRefOid,baseRefName,mergeable,mergeStateStatus,reviewDecision,reviews,comments,statusCheckRollup"
   # スレッドは今のリポジトリで読む
@@ -135,9 +136,77 @@ out_of() { jq -c "$1" <<<"$output"; }
   assert_equal "$(out_of '[.feedback[].author]')" '["alice","bob"]'
   assert_equal "$(out_of '[.feedback[] | {author, r: [.reviews[].id], c: [.comments[].id]}]')" \
     '[{"author":"alice","r":["R1"],"c":[]},{"author":"bob","r":["R3"],"c":["C1"]}]'
-  assert_equal "$(out_of .counts)" '{"threads":0,"reviews":2,"comments":1}'
+  assert_equal "$(out_of '.counts | del(.unanswered)')" '{"threads":0,"reviews":2,"comments":1}'
   # PR の作者のコメントは、返信済みかの判断に使えるよう own_comments に出す
   assert_equal "$(out_of '[.own_comments[] | [.id, .body]]')" '[["C2","返信です"]]'
+}
+
+@test "スレッドが 0 件でも、返事の無いレビュー本文（diff の外の指摘）があれば needs_attention が true になる（#279）" {
+  setup_fake_gh
+  pr_view '{reviews: [
+    {id: "R1", author: {login: "reviewer"}, state: "COMMENTED", body: "Outside diff range comments: x.sh の 10 行目も直してください",
+     submittedAt: "2026-10-01T00:00:01Z", commit: {oid: "abc"}}]}'
+  run_script pr-feedback.sh
+  assert_success
+  assert_equal "$(out_of '[.counts.threads, .counts.unanswered, .needs_attention]')" \
+    '[0,{"threads":0,"reviews":1,"comments":0},true]'
+  assert_equal "$(out_of '.feedback[0].reviews[0] | [.id, .replied, .needs_attention]')" '["R1",false,true]'
+}
+
+@test "返事の無い PR のコメントがあれば、スレッドが 0 件でも needs_attention が true になる" {
+  setup_fake_gh
+  pr_view '{comments: [{id: "C1", author: {login: "alice"}, body: "なぜこの名前に？", createdAt: "2026-10-01T00:00:01Z", url: "u1"}]}'
+  run_script pr-feedback.sh
+  assert_success
+  assert_equal "$(out_of '[.counts.unanswered, .needs_attention, .feedback[0].comments[0].replied]')" \
+    '[{"threads":0,"reviews":0,"comments":1},true,false]'
+}
+
+@test "返事済みのレビュー本文・コメント、本文の無い承認、PR の作者のコメントだけなら needs_attention は false" {
+  setup_fake_gh
+  # 作者の PR のコメント（00:00:05）より前のものは返事済み。本文の無い承認は、返事が無くても対応は要らない
+  pr_view '{
+    reviews: [
+      {id: "R1", author: {login: "reviewer"}, state: "COMMENTED", body: "diff の外の指摘", submittedAt: "2026-10-01T00:00:01Z", commit: {oid: "abc"}},
+      {id: "R2", author: {login: "reviewer"}, state: "CHANGES_REQUESTED", body: "", submittedAt: "2026-10-01T00:00:02Z", commit: {oid: "abc"}},
+      {id: "R3", author: {login: "bob"}, state: "APPROVED", body: "", submittedAt: "2026-10-01T00:00:10Z", commit: {oid: "abc"}},
+      {id: "R4", author: {login: "me"}, state: "COMMENTED", body: "自分のメモ", submittedAt: "2026-10-01T00:00:09Z", commit: {oid: "abc"}}],
+    comments: [
+      {id: "C1", author: {login: "alice"}, body: "質問です", createdAt: "2026-10-01T00:00:03Z", url: "u1"},
+      {id: "C2", author: {login: "me"}, body: "@reviewer @alice 直しました", createdAt: "2026-10-01T00:00:05Z", url: "u2"},
+      {id: "C3", author: {login: "me"}, body: "自分のメモ", createdAt: "2026-10-01T00:00:09Z", url: "u3"}]}'
+  # 返事済みのスレッド
+  thread false '[["alice", "指摘"], ["me", "直しました"]]'
+  write_threads
+  run_script pr-feedback.sh
+  assert_success
+  assert_equal "$(out_of '[.counts.unanswered, .needs_attention]')" '[{"threads":0,"reviews":0,"comments":0},false]'
+  assert_equal "$(out_of '[.feedback[] | .reviews[], .comments[] | [.id, .replied, .needs_attention]]')" \
+    '[["C1",true,false],["R3",false,false],["R1",true,false],["R2",true,false]]'
+}
+
+@test "変更の要求は、本文が無くても、返事をしていなければ needs_attention が true。返事の後に付いたレビュー・コメントは、新しく返事をしていないものになる" {
+  setup_fake_gh
+  pr_view '{
+    reviews: [
+      {id: "R1", author: {login: "reviewer"}, state: "CHANGES_REQUESTED", body: "", submittedAt: "2026-10-01T00:00:06Z", commit: {oid: "abc"}}],
+    comments: [
+      {id: "C1", author: {login: "me"}, body: "直しました", createdAt: "2026-10-01T00:00:05Z", url: "u1"},
+      {id: "C2", author: {login: "alice"}, body: "まだ直っていません", createdAt: "2026-10-01T00:00:07Z", url: "u2"}]}'
+  run_script pr-feedback.sh
+  assert_success
+  assert_equal "$(out_of '[.counts.unanswered, .needs_attention]')" '[{"threads":0,"reviews":1,"comments":1},true]'
+}
+
+@test "返事の無い resolved でないスレッドがあれば needs_attention が true、返事済みのスレッドだけなら false" {
+  setup_fake_gh
+  thread false '[["alice", "指摘"]]'
+  thread false '[["bob", "指摘"], ["me", "直しました"]]'
+  write_threads
+  run_script pr-feedback.sh
+  assert_success
+  assert_equal "$(out_of '[.counts.unanswered, .needs_attention]')" '[{"threads":1,"reviews":0,"comments":0},true]'
+  assert_equal "$(out_of '[.feedback[] | .threads[] | [.replied, .needs_attention]]')" '[[false,true],[true,false]]'
 }
 
 @test "resolved でないスレッドだけを出し、PR の作者以外の投稿者のものにする" {
@@ -325,6 +394,6 @@ out_of() { jq -c "$1" <<<"$output"; }
   mv "$TMP/v.json" "$FIX/pr-view.json"
   run_script pr-feedback.sh
   assert_success
-  assert_equal "$(out_of .counts)" '{"threads":1,"reviews":1,"comments":1}'
+  assert_equal "$(out_of '.counts | del(.unanswered)')" '{"threads":1,"reviews":1,"comments":1}'
   assert_equal "$(out_of '.feedback[0].threads[0].comments[0].body | length')" 60000
 }

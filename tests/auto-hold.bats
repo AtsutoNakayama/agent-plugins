@@ -173,3 +173,62 @@ run_hold() {
   assert_equal "$(cat "$TMP/issue-comment-body")" "$(printf '<!-- dev-workflow:task-auto run=r1 -->\n\n%s' "$(cat "$TMP/reason.md")")"
   assert_equal "$(jq -r .comment <<<"$output")" "$(cat "$TMP/issue-comment-body")"
 }
+
+@test "--repair-reason を渡すと、実行の印の次の行に、止まった理由の種類の印を足す（#332）" {
+  setup_hold
+  set_comments "別の話"
+  run_hold --issue 17 --reason-file "$TMP/reason.md" --repair-reason same_failure
+  assert_success
+  assert_equal "$(head -n 2 "$TMP/issue-comment-body")" "$(printf '%s\n%s' '<!-- dev-workflow:task-auto run=r1 -->' '<!-- dev-workflow:repair-stopped reason=same_failure -->')"
+  assert_equal "$(sed -n '4,$p' "$TMP/issue-comment-body")" "$(cat "$TMP/reason.md")"
+  # 出力の comment にも同じ本文が入る
+  assert_equal "$(jq -r .comment <<<"$output")" "$(cat "$TMP/issue-comment-body")"
+}
+
+@test "--repair-reason があっても、同じ実行のコメントがあれば付け直さない（先頭は実行の印のまま）" {
+  setup_hold
+  set_comments "$(printf '<!-- dev-workflow:task-auto run=r1 -->\n<!-- dev-workflow:repair-stopped reason=dirty -->\n\n理由')"
+  run_hold --issue 17 --reason-file "$TMP/reason.md" --repair-reason dirty
+  assert_success
+  assert_equal "$(jq -r .commented <<<"$output")" false
+  assert_equal "$(called issue-comment)" 0
+  assert_equal "$(called SetField)" 1
+}
+
+@test "--repair-reason が無ければ、理由の種類の印を足さない" {
+  setup_hold
+  set_comments "別の話"
+  run_hold --issue 17 --reason-file "$TMP/reason.md"
+  assert_success
+  refute_output --partial "repair-stopped"
+}
+
+@test "--repair-reason に使えない文字があれば、何もせずに止まる（印を閉じさせない）" {
+  setup_hold
+  for r in 'Dirty' 'same-failure' 'x -->' '1abc' '_x' 'a;b'; do
+    run_hold --issue 17 --reason-file "$TMP/reason.md" --repair-reason "$r"
+    assert_failure 64
+    assert_output --partial "--repair-reason"
+  done
+  run_hold --issue 17 --reason-file "$TMP/reason.md" --repair-reason
+  assert_failure 64
+  assert_equal "$(called issue-view)" 0
+  assert_equal "$(called issue-comment)" 0
+}
+
+@test "repair-next.sh の stop の reason は、どれも --repair-reason にそのまま渡せる（#332）" {
+  setup_hold
+  set_comments "別の話"
+  run_script repair-next.sh --stop-reasons
+  assert_success
+  reasons="$(jq -r '.[]' <<<"$output")"
+  [ -n "$reasons" ] || fail "repair-next.sh --stop-reasons が空です"
+  while IFS= read -r r; do
+    run_hold --issue 17 --reason-file "$TMP/reason.md" --repair-reason "$r" --dry-run
+    assert_success
+    assert_equal "$(jq -r .comment <<<"$output" | sed -n 2p)" "<!-- dev-workflow:repair-stopped reason=${r} -->"
+  done <<<"$reasons"
+  # 表の外で止まるときの other も渡せる
+  run_hold --issue 17 --reason-file "$TMP/reason.md" --repair-reason other --dry-run
+  assert_success
+}

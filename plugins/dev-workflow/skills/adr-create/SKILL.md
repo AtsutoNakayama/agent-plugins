@@ -12,7 +12,7 @@ description: 設計上の判断を、MADR 4.0.0 の書式（日本語に訳し�
 スクリプトとテンプレート:
 
 - `${CLAUDE_PLUGIN_ROOT}/scripts/config.sh`：合わせた設定の出力（`adr.dir` が ADR の置き場所。既定 `docs/adr`）
-- `${CLAUDE_PLUGIN_ROOT}/scripts/adr-list.sh`：置き場所にある ADR の一覧と、提案するかの設定 `adr.suggest`。`--issue N` では、front matter の `issue` が N の ADR だけに絞り、その Issue で ADR の作成を提案するか（`proposal`。Issue の本文も gh で読んで決める）と、読んだ ADR の項目（`adr_tasks`）も出す
+- `${CLAUDE_PLUGIN_ROOT}/scripts/adr-list.sh`：置き場所にある ADR の一覧と、提案するかの設定 `adr.suggest`。`--issue N` では、front matter の `issue` が N の ADR だけに絞り、その Issue で ADR の作成を提案するか（`proposal`。Issue の本文も gh で読んで決める）と、読んだ ADR の項目（`adr_tasks`）も出す。各 ADR の `cited_in_supplements` は、その ADR に「補足」の節からリンクしているほかの ADR の一覧（一部だけ変えている ADR の逆引き。リンクしているだけで変えていないこともある）
 - `${CLAUDE_PLUGIN_ROOT}/scripts/adr-create.sh`：ファイル名を決めてテンプレートから作る。置き換える ADR の status も書き換える（`--help` で使い方）
 - `${CLAUDE_PLUGIN_ROOT}/templates/adr/`：MADR 4.0.0 を日本語に訳した4つのテンプレート（元にした版とライセンスは同じ場所の `README.md`）
 
@@ -66,7 +66,7 @@ task-create と pr-create は、上の「ADR にすべき判断」に当たる�
 - 起きる結果（良い点・悪い点）と、守られているかの確かめ方
 - 古い ADR を置き換えるか、一部だけ変えるか
 
-既にある ADR（`adr-list.sh` の `adrs`。`title` で見当を付け、近いものは本文も読む）を見て、同じ判断の ADR が無いかを確かめる。同じ判断なら新しく作らず、その ADR を直すか、置き換えるかをユーザーに聞く。
+既にある ADR（`adr-list.sh` の `adrs`。`title` で見当を付け、近いものは本文も読む）を見て、同じ判断の ADR が無いかを確かめる。近い ADR の `cited_in_supplements` に ADR があれば、その「補足」も読み、近い ADR の判断を一部だけ変えていないかを確かめる（一部だけ変える ADR は、変えられる側に何も書かないので、近い ADR の本文だけでは分からない。補足でリンクしているだけで、変えていないこともある）。同じ判断なら新しく作らず、その ADR を直すか、置き換えるかをユーザーに聞く。
 
 ### 2. テンプレートを選ぶ
 
@@ -85,7 +85,8 @@ task-create と pr-create は、上の「ADR にすべき判断」に当たる�
 - 短い名前は、判断が分かる**英語**の2〜5語にする（例：`use madr`）。日本語は使わない（ファイル名は `[a-z0-9-]` だけになる）
 - ファイル名は `<adr.dir>/<Issue 番号を6桁に0埋め>-<短い名前>.md` になる。同じ名前があれば止まる（終了コード 3）ので、名前を変える
 - front matter の `date` は判断をした日にする。今の判断なら `--date` は省く（今日の日付になる）。過去の判断を後から残すときは、判断をした日（Issue を閉じた日や PR をマージした日）を `--date` に渡す
-- 採択した ADR の本文は書き換えない。変えてよいのは、置き換えたときの status の行だけ
+- 書き終えた ADR の本文は、後から書き換えない。例外は、置き換えたときの status の行と、`proposed` の ADR を採択するときの `status` と `date` の2つの行だけ
+- `proposed` の ADR を採択するときは、`status` を `accepted` に書き換え、`date` を採択した日に更新する（採択した日が、判断をした日になる）。ADR を書き換えない決まりの例外は、置き換えたときの status の行のほかは、この2つの行の書き換えだけで、ほかの行は書き換えない
 - 古い ADR を全部覆す（置き換える）ときは、`--supersedes` に古い ADR を渡す。古い ADR は書き換えず、status の行だけが `superseded by <新しい ADR>` になる（終了コード 4 で止まったら、何も変わっていない。メッセージのとおりに直す）
 
 失敗したら、標準エラーの1行のメッセージをそのまま伝える。
@@ -94,7 +95,7 @@ task-create と pr-create は、上の「ADR にすべき判断」に当たる�
 
 作ったファイルの `{...}` と `<!-- ... -->` の説明を、手順1の内容で埋める。ADR を書く言語は、設定の `language` に合わせる。
 
-- front matter の `status` は、判断が決まっていれば `accepted`、これから決めるなら `proposed` にする。`date` と `issue` は入っている。`decision-makers` などは、分かるものだけ書き、分からなければ項目ごと消す
+- front matter の `status` は、判断が決まっていれば `accepted`、これから決めるなら `proposed` にする（後で採択するときは、手順3のとおり `status` と `date` の行だけを書き換える）。`date` と `issue` は入っている。`decision-makers` などは、分かるものだけ書き、分からなければ項目ごと消す
 - 任意の節（「判断の決め手」「確認」「各案の長所と短所」「補足」など）は、書くことが無ければ節ごと消す。テンプレートの説明（`{...}` やコメント）は残さない
 - 過去の判断を一部だけ変える・覆す ADR（全部を覆すなら `--supersedes` で置き換える）は、「補足」に、その ADR へのリンクと、何を変えるかを書く（MADR の判断 0009）。変えられる側の ADR には何も書き足さない（例外の一覧などを追記しない）
 - 推測や、聞いていないことは書かない。足りなければユーザーに聞く
