@@ -818,19 +818,23 @@ dw_fetch_target_strict() {
 # 今のブランチのマージ先を決め、origin から取得して、JSON を出力する（merge-target.sh の本体。読むだけの処理が使う）。
 # 規則は上の「PR のマージ先」のとおり。fallback があれば警告して続ける。origin/<マージ先> を取得できなければ、手元にあれば
 # 警告してそれを使い（fetched が false）、PR のマージ先が手元にも無ければ fetch_failed として base_branch に戻す。
-# base_branch も取得できず手元にも無ければ、終了コード 2 で止まる。gh が無いか、失敗したか、JSON でない応答なら PR は無いものとする。
+# base_branch も取得できず手元にも無ければ、終了コード 2 で止まる。gh が失敗するか応答を読めなければ pr_unreadable として
+# base_branch を使う。gh が無ければ PR は無いものとする。
 # 出力: {branch, base_branch, target, ref, from, pr, fallback, fetched}（merge-target.sh --help）
 # 使い方: dw_merge_target <リポジトリのルート> <設定の base_branch> <今のブランチ（detached HEAD なら空）>
 dw_merge_target() {
   local root="$1" base_branch="$2" branch="$3" target="$2" from="base_branch" pr=null reason="" shown=null prs picked rc fetched=true
-  if [ -n "$branch" ] && command -v gh >/dev/null 2>&1 \
-    && prs="$(gh pr list --head "$branch" --state open --json number,url,baseRefName,isCrossRepository 2>/dev/null)" \
-    && picked="$(dw_pr_pick "$prs" "$base_branch")"; then
-    { IFS= read -r target; IFS= read -r reason; IFS= read -r shown; IFS= read -r pr; } <<<"$picked"
-    if [ "$pr" != null ]; then
-      pr="$(jq -c '{number, url}' <<<"$pr")"
-      # from は、PR の baseRefName をそのまま使ったときだけ pr（base_branch と同じ値でも）。使えない値・無いか空なら base_branch
-      [ "$reason" = invalid_name ] || [ "$shown" = '""' ] || from="pr"
+  if [ -n "$branch" ] && command -v gh >/dev/null 2>&1; then
+    if prs="$(gh pr list --head "$branch" --state open --json number,url,baseRefName,isCrossRepository 2>/dev/null)" \
+      && picked="$(dw_pr_pick "$prs" "$base_branch")"; then
+      { IFS= read -r target; IFS= read -r reason; IFS= read -r shown; IFS= read -r pr; } <<<"$picked"
+      if [ "$pr" != null ]; then
+        pr="$(jq -c '{number, url}' <<<"$pr")"
+        # from は、PR の baseRefName をそのまま使ったときだけ pr（base_branch と同じ値でも）。使えない値・無いか空なら base_branch
+        [ "$reason" = invalid_name ] || [ "$shown" = '""' ] || from="pr"
+      fi
+    else
+      reason=pr_unreadable
     fi
   fi
   rc=0

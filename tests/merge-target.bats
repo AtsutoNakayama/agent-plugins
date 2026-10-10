@@ -48,22 +48,29 @@ run_target() {
   assert_equal "$(git rev-parse origin/release/v1)" "$(git rev-parse main)"
 }
 
-@test "fork の PR だけ・JSON でない応答・gh が失敗したときは、PR は無いものとし、設定の base_branch をマージ先にする（fallback ではない）" {
+@test "fork の PR だけなら、設定の base_branch をマージ先にする（fallback ではない）" {
   setup_branch
   remote_branch release/v1
   echo '[{"number": 9, "url": "u", "isCrossRepository": true, "baseRefName": "release/v1"}]' >"$FIX/pr-list.json"
   run_target
   assert_success
   assert_equal "$(jq -c '[.target, .from, .pr, .fallback]' <<<"$output")" '["main","base_branch",null,null]'
-  rm "$FIX/pr-list.json"
-  echo 'not json' >"$FIX/pr-list.raw"
-  run_target
-  assert_success
-  assert_equal "$(jq -c '[.target, .from, .pr, .fallback]' <<<"$output")" '["main","base_branch",null,null]'
+}
+
+@test "PR の応答を読めなければ、設定の base_branch を使い、fallback に pr_unreadable を出す" {
+  setup_branch
+  for response in 'not json' '{}'; do
+    echo "$response" >"$FIX/pr-list.raw"
+    run_target
+    assert_success
+    assert_equal "$(jq -c '[.target, .from, .pr, .fallback, .fetched]' <<<"$output")" '["main","base_branch",null,"pr_unreadable",true]'
+    grep -qF 'pr_unreadable' "$TMP/err" || fail "$(cat "$TMP/err")"
+  done
   rm "$FIX/pr-list.raw"
   FAKE_FAIL=pr-list run_target
   assert_success
-  assert_equal "$(jq -c '[.target, .pr, .fallback]' <<<"$output")" '["main",null,null]'
+  assert_equal "$(jq -c '[.target, .from, .pr, .fallback, .fetched]' <<<"$output")" '["main","base_branch",null,"pr_unreadable",true]'
+  grep -qF 'pr_unreadable' "$TMP/err" || fail "$(cat "$TMP/err")"
 }
 
 @test "PR のマージ先を使えなければ、警告して続け、理由を fallback に出す（読むだけの側。#284）" {
